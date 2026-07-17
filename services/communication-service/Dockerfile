@@ -1,0 +1,28 @@
+FROM node:20-alpine AS base
+RUN npm install -g pnpm@9.15.0
+WORKDIR /app
+
+FROM base AS deps
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/service-auth/package.json packages/service-auth/
+COPY services/communication-service/package.json services/communication-service/
+RUN echo "shamefully-hoist=true" > .npmrc
+RUN pnpm install --frozen-lockfile
+
+FROM deps AS builder
+COPY tsconfig.base.json ./
+COPY packages/service-auth/ packages/service-auth/
+COPY services/communication-service/ services/communication-service/
+RUN pnpm --filter @crm/service-auth build
+RUN pnpm --filter @crm/communication-service build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/packages/service-auth/dist ./packages/service-auth/dist
+COPY --from=builder /app/services/communication-service/dist ./services/communication-service/dist
+COPY packages/service-auth/package.json ./packages/service-auth/
+COPY services/communication-service/package.json ./services/communication-service/
+EXPOSE 4005
+CMD ["node", "services/communication-service/dist/server.js"]

@@ -1,4 +1,4 @@
-import type { UserRole } from '@crm/auth-constants';
+import type { UserRole } from '@platform/auth-constants';
 
 // A single sidebar/nav entry. Each product app owns its own list of these (LMS
 // leads/follow-ups/…, HR leave/attendance, Task tasks) and passes it into the

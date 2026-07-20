@@ -33,14 +33,14 @@ async function request<T>(
 
 export const auth = {
   login: (email: string, password: string, org_id?: string) =>
-    request<{ success: true; data: { user: import('@crm/types').SessionUser } }>('/auth/login', {
+    request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password, org_id }),
     }),
 
   logout: () => request<{ success: true; data: null }>('/auth/logout', { method: 'POST' }),
 
-  me: () => request<{ success: true; data: { user: import('@crm/types').SessionUser } }>('/auth/me'),
+  me: () => request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/me'),
 };
 
 // ── Lookups ───────────────────────────────────────────────────────────────────

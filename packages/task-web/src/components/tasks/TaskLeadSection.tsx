@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import { canViewTeamTasks } from '@task/authz';
 import { tasks as tasksApi } from '../../lib/api/client';
 import type { TaskView } from '../../lib/tasks/types';

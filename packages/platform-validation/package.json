@@ -21,7 +21,7 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
-    "@crm/auth-constants": "workspace:*",
+    "@platform/auth-constants": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

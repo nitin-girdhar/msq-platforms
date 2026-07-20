@@ -1,10 +1,10 @@
 import { UnauthorizedError, BadRequestError, ForbiddenError } from '../../../lib/errors.js';
-import type { JwtPayload, UserOrgOption, PlatformRole, ProductKey } from '@crm/types';
-import { getActiveTenantModulesByTenantId } from '@crm/db';
+import type { JwtPayload, UserOrgOption, PlatformRole, ProductKey } from '@platform/types';
+import { getActiveTenantModulesByTenantId } from '@platform/db';
 import { modulesToProducts } from '@platform/authz';
 import { comparePassword, hashPassword } from '../../../lib/password.js';
 import { signJwt, verifyJwt, revokeJti, isJtiRevoked, revokeAllUserSessions, decodeJwtUnchecked } from '../../../lib/jwt.js';
-import { logActivity } from '@crm/audit-log';
+import { logActivity } from '@platform/audit-log';
 import { AUTH_COOKIE_NAME } from '../../../lib/cookies.js';
 import * as repo from './auth.repository.js';
 import { toSessionUser } from './auth.types.js';

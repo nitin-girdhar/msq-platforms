@@ -1,5 +1,5 @@
 import { asc, eq } from 'drizzle-orm';
-import { withServiceTx } from '@crm/db';
+import { withServiceTx } from '@platform/db';
 import {
   organizationsTable,
   tenantsTable,
@@ -7,7 +7,7 @@ import {
   citiesTable,
   statesTable,
   countriesTable,
-} from '@crm/db/schema';
+} from '@platform/db/schema';
 
 type OrganizationInsert = typeof organizationsTable.$inferInsert;
 type OrganizationUpdate = Partial<OrganizationInsert>;

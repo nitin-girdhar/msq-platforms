@@ -42,7 +42,7 @@ export type ProductKey = 'lms' | 'hr' | 'task';
 export function hasProduct(session: SessionUser, product: ProductKey): Promise<boolean>;
 export function assertProduct(session: SessionUser, product: ProductKey): Promise<void>; // throws 403
 ```
-Backed by `entity.tenant_modules` (PR-C), read through a 60s per-tenant cache. The DB source is *injected* via `configureProductSource()` at backend startup (not a static `@crm/db` import) so the package stays safe to import from the Next.js apps.
+Backed by `entity.tenant_modules` (PR-C), read through a 60s per-tenant cache. The DB source is *injected* via `configureProductSource()` at backend startup (not a static `@platform/db` import) so the package stays safe to import from the Next.js apps.
 
 ### Migration mechanics
 1. Create the four package folders under `packages/` with `package.json` + `tsconfig` (copy an existing package's shape). Names: `@platform/authz`, `@lms/authz`, `@hr/authz`, `@task/authz`.

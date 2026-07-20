@@ -1,4 +1,4 @@
-import { ROLES } from '@crm/auth-constants';
+import { ROLES } from '@platform/auth-constants';
 import type { NavItem } from '@platform/ui-kit/shell';
 
 // Task product nav. The team view is role-gated inside the page; the top rail

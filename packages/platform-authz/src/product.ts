@@ -1,13 +1,13 @@
-import type { SessionUser, ProductKey } from '@crm/types';
+import type { SessionUser, ProductKey } from '@platform/types';
 
 // ── Product entitlement primitive (D6) ──────────────────────────────────────
 // "Does this tenant have this product enabled?" — backed by entity.tenant_modules
 // via a cached read (PR-C). The actual DB access is *injected* (configureProduct-
 // Source) rather than imported: this package is also consumed by the Next.js
-// frontends (apps/web, apps/lookup-admin), and a static @crm/db dependency would
+// frontends (apps/web, apps/lookup-admin), and a static @platform/db dependency would
 // pull the pg driver into the browser bundle. Backends wire the source at startup.
 
-// ProductKey is defined in @crm/types (shared with the shrunk JWT's
+// ProductKey is defined in @platform/types (shared with the shrunk JWT's
 // licensed_products) and re-exported here so existing `@platform/authz` imports
 // keep resolving.
 export type { ProductKey };
@@ -38,7 +38,7 @@ type ModuleReader = (tenantId: string) => Promise<string[]>;
 let readActiveModules: ModuleReader | null = null;
 
 /**
- * Wire the entity.tenant_modules read (typically @crm/db's
+ * Wire the entity.tenant_modules read (typically @platform/db's
  * `getActiveTenantModulesByTenantId`). Call once at backend startup before any
  * {@link getTenantProducts}/{@link hasProduct} call.
  */

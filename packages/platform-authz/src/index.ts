@@ -1,5 +1,5 @@
-import { ROLE_RANK } from '@crm/auth-constants';
-import type { SessionUser, UserRole } from '@crm/types';
+import { ROLE_RANK } from '@platform/auth-constants';
+import type { SessionUser, UserRole } from '@platform/types';
 
 export { RANKS, platformRank } from './ranks.js';
 export * from './scope.js';

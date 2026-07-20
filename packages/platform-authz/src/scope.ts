@@ -1,4 +1,4 @@
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 
 export function resolveActorOrgIds(actor: SessionUser): string[] | null {
   if (actor.role === 'super_admin' || actor.role === 'tenant_admin') return null;

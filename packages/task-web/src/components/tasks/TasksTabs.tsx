@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import { canViewTeamTasks } from '@task/authz';
 
 interface Props {

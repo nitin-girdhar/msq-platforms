@@ -1,6 +1,6 @@
 import { asc, eq } from 'drizzle-orm';
-import { withServiceTx } from '@crm/db';
-import { userRolesTable } from '@crm/db/schema';
+import { withServiceTx } from '@platform/db';
+import { userRolesTable } from '@platform/db/schema';
 
 type UserRoleInsert = typeof userRolesTable.$inferInsert;
 type UserRoleUpdate = Partial<UserRoleInsert>;

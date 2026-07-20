@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { SessionUser, UserOrgOption } from '@crm/types';
+import type { SessionUser, UserOrgOption } from '@platform/types';
 import { auth } from '../api/resources';
 
 interface Props {

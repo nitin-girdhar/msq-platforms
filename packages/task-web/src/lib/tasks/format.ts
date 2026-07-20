@@ -1,5 +1,5 @@
 // Pure tasks-module helpers — no React, no I/O. Shared by the tasks composites
-// and the server pages. Rank gating itself lives in @crm/permissions
+// and the server pages. Rank gating itself lives in @task/authz
 // (canViewTeamTasks / canViewOrgTasks / canAdministerTasks), already built
 // specifically for tasks — imported directly by callers rather than re-derived
 // here.

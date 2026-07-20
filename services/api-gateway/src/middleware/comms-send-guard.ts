@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { resolveMemberRole } from '@crm/db';
+import { resolveMemberRole } from '@platform/db';
 
 // P1.3 — communication-service is a stateless cross-product relay that does no
 // authorization of its own (it trusts its caller). For the DIRECT user-facing

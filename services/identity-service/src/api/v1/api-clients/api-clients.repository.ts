@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@crm/db';
-import type { RoleTxContext, DrizzleTx } from '@crm/db';
+import { withRoleTx, withServiceTx } from '@platform/db';
+import type { RoleTxContext, DrizzleTx } from '@platform/db';
 
 export interface ApiClientRow extends Record<string, unknown> {
   id: string;

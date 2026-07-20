@@ -11,7 +11,7 @@
 //     (rank ≥ 60) and org admins (rank ≥ 80).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { logActivity } from '@crm/audit-log';
+import { logActivity } from '@platform/audit-log';
 import { canViewTeamTasks, canViewOrgTasks, canAdministerTasks } from '@task/authz';
 import { ForbiddenError, NotFoundError } from '../../../lib/errors.js';
 import { publishTaskEvent } from '../../../lib/events.js';

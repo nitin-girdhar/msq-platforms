@@ -1,4 +1,4 @@
-import { pgNotify } from '@crm/db';
+import { pgNotify } from '@platform/db';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // In-app notifications for task events. Reuses the existing notifications

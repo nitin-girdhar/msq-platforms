@@ -1,9 +1,9 @@
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
-import { AUTH_COOKIE_NAME } from '@crm/auth-constants';
+import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
 import { configureProductSource } from '@platform/authz';
-import { getActiveTenantModulesByTenantId } from '@crm/db';
+import { getActiveTenantModulesByTenantId } from '@platform/db';
 import { config } from './config.js';
 import { proxyTo, proxyToRaw, proxySSE } from './lib/proxy.js';
 import { authPreHandler } from './middleware/auth.js';

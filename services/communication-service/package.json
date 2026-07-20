@@ -14,7 +14,7 @@
     "dev:local": "tsx watch --env-file .env src/server.ts"
   },
   "dependencies": {
-    "@crm/service-auth": "workspace:*",
+    "@platform/service-auth": "workspace:*",
     "fastify": "^5.2.1",
     "nodemailer": "^6.10.0",
     "pino": "^9.6.0",

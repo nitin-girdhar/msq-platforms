@@ -1,4 +1,4 @@
-import type { RoleTxContext } from '@crm/db';
+import type { RoleTxContext } from '@platform/db';
 import { ForbiddenError, NotFoundError } from '../../../lib/errors.js';
 import * as repo from './orgs.repository.js';
 import type { LocationFilter } from './orgs.repository.js';

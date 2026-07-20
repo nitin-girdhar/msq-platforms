@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { UserRole } from '@crm/auth-constants';
+import type { UserRole } from '@platform/auth-constants';
 import { filterNavByRole, type NavItem } from './nav';
 
 const TOGGLE_EVENT = 'fc:sidebar-toggle';

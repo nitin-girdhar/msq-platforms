@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import { tasks as tasksApi } from '../../lib/api/client';
 import type { TaskCommentView, TaskListView, TaskStatusHistoryView, TaskView } from '../../lib/tasks/types';
 import { TASK_PRIORITY_OPTIONS, TASK_STATUS_OPTIONS, formatDateTime } from '../../lib/tasks/format';

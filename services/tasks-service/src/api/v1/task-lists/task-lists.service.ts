@@ -1,4 +1,4 @@
-import { logActivity } from '@crm/audit-log';
+import { logActivity } from '@platform/audit-log';
 import { canViewTeamTasks, canViewOrgTasks, canAdministerTasks } from '@task/authz';
 import { ForbiddenError, NotFoundError } from '../../../lib/errors.js';
 import * as repo from './task-lists.repository.js';

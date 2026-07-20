@@ -1,4 +1,4 @@
-import type { ProductKey } from '@crm/types';
+import type { ProductKey } from '@platform/types';
 
 // Cross-app SSO origins. In the split topology each product UI is a separate
 // origin (lms.app.com / hr.app.com / todo.app.com) and login lives at

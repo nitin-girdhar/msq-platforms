@@ -1,8 +1,8 @@
 import { sql } from 'drizzle-orm';
 import { appDrizzle, type DrizzleTx } from './drizzle.js';
 
-// Local copy of the product union (kept in sync with @crm/types' ProductKey).
-// Inlined so @crm/db takes no new package dependency for a three-value literal.
+// Local copy of the product union (kept in sync with @platform/types' ProductKey).
+// Inlined so @platform/db takes no new package dependency for a three-value literal.
 type ProductKey = 'lms' | 'hr' | 'task';
 
 // Runs a resolver query with the same role selection as withRoleTx's app path:

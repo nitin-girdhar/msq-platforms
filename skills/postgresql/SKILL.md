@@ -10,7 +10,7 @@ description: >
 # PostgreSQL — CRM Monorepo Skill
 
 > This describes how the database is *actually* built. The SQL in `db_scripts/*.sql` is the
-> **authoritative source of truth**; the Drizzle schema in `@crm/db` mirrors it for typed queries.
+> **authoritative source of truth**; the Drizzle schema in `@platform/db` mirrors it for typed queries.
 > Follow every rule so new SQL reads like the existing schema.
 
 Stack facts: multi-schema database, **Row-Level Security as the tenancy boundary**, time-ordered
@@ -64,7 +64,7 @@ security; it sets session context and lets policies enforce it.
 - `tenant_admin` — `NOLOGIN NOINHERIT`; tenant-wide access across its orgs.
 - `root_service` — `LOGIN … BYPASSRLS`; the service account for system operations only.
 
-**Session GUCs** set per transaction by `@crm/db`'s `withRoleTx` (see the Node skill):
+**Session GUCs** set per transaction by `@platform/db`'s `withRoleTx` (see the Node skill):
 `app.current_org_id`, `app.current_tenant_id`, `app.current_user_id`.
 
 **Policy pattern:**
@@ -273,7 +273,7 @@ defines `public.gen_uuidv7()`, `public.set_updated_at()`, `public.soft_delete_ro
 - Hard-delete a domain row — soft delete via `is_deleted` (the `soft_delete_row` trigger handles it).
 - Read GUCs without the `NULLIF(current_setting(…, true), '')::uuid` guard.
 - Edit an already-applied `db_scripts` file to change shipped structure — add a new numbered script.
-- Forget to mirror a schema change into `@crm/db` and `docs/DB_model.md`.
+- Forget to mirror a schema change into `@platform/db` and `docs/DB_model.md`.
 
 ---
 

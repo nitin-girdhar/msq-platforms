@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { AUTH_COOKIE_NAME } from '@crm/auth-constants';
+import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
 import { verifySessionJwt } from './auth/verify-edge';
 import { authOrigin } from './auth/sso';
 

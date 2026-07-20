@@ -44,13 +44,13 @@ export const <resource> = {
           .map(([k, v]) => [k, String(v)]),
       ),
     ).toString();
-    return request<{ success: true; data: import('@crm/types').<Resource>View[]; total: number; page: number; page_size: number }>(
+    return request<{ success: true; data: import('@platform/types').<Resource>View[]; total: number; page: number; page_size: number }>(
       `/<resource>${qs ? `?${qs}` : ''}`,
     );
   },
 
   get: (id: string) =>
-    request<{ success: true; data: import('@crm/types').<Resource>View }>(`/<resource>/${id}`),
+    request<{ success: true; data: import('@platform/types').<Resource>View }>(`/<resource>/${id}`),
 
   create: (data: Record<string, unknown>) =>
     request<{ success: true; data: { id: string } }>('/<resource>', {
@@ -74,7 +74,7 @@ export const <resource> = {
 // hooks/use<Domain>.ts
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import type { <Domain>View } from '@crm/types';
+import type { <Domain>View } from '@platform/types';
 import { <resource> as <resource>Api } from '@/src/lib/api/client';
 
 interface Use<Domain>Return {
@@ -142,7 +142,7 @@ export function use<Domain>(orgId?: string) {
 // components/<domain>/<Domain>Shell.tsx
 'use client';
 import { useState } from 'react';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import { <resource> } from '@/src/lib/api/client';
 import { use<Domain> } from '@/hooks/use<Domain>';
 import <Domain>Table from './<Domain>Table';

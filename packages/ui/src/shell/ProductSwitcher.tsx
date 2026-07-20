@@ -1,4 +1,4 @@
-import type { ProductKey } from '@crm/types';
+import type { ProductKey } from '@platform/types';
 
 const PRODUCT_LABELS: Record<ProductKey, string> = {
   lms: 'CRM',

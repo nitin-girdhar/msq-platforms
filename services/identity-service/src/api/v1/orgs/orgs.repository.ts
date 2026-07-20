@@ -1,7 +1,7 @@
 import { sql, asc } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { leadSourcesTable } from '@crm/db/schema';
+import { withRoleTx, withServiceTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { leadSourcesTable } from '@platform/db/schema';
 
 export interface LocationFilter {
   cityIds?:    number[];

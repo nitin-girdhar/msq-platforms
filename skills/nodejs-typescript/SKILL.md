@@ -9,16 +9,16 @@ behind an **API gateway**, and share code through workspace packages:
 
 | Package            | Provides                                                                 |
 |--------------------|--------------------------------------------------------------------------|
-| `@crm/db`          | DB pools, Drizzle clients, **`withRoleTx` / `withServiceTx`** (the RLS boundary), schema (`@crm/db/schema`) |
+| `@platform/db`          | DB pools, Drizzle clients, **`withRoleTx` / `withServiceTx`** (the RLS boundary), schema (`@platform/db/schema`) |
 | `@crm/validation`  | Shared Zod request schemas + inferred input types                        |
 | `@platform/authz`  | Shared `RANKS` ladder, identity/tenancy checks, org-scope resolution, user-management rank gates, async product entitlement (`hasProduct`/`assertProduct` — cached read of `entity.tenant_modules`; source injected via `configureProductSource`) |
 | `@lms/authz`       | Sales roles + LMS per-tenant business rules and access checks             |
 | `@hr/authz`        | HR authority helpers (leave / attendance / employee management)           |
 | `@task/authz`      | Task scope gates                                                          |
 | `@crm/permissions` | **Deprecated compat barrel** re-exporting the four `*/authz` packages — existing imports still resolve; prefer the product package for new code |
-| `@crm/service-auth`| `readAuthContext(headers, secret)` — verifies gateway-injected identity  |
-| `@crm/audit-log`   | `logActivity(...)`                                                        |
-| `@crm/types`       | Shared domain/view types                                                  |
+| `@platform/service-auth`| `readAuthContext(headers, secret)` — verifies gateway-injected identity  |
+| `@platform/audit-log`   | `logActivity(...)`                                                        |
+| `@platform/types`       | Shared domain/view types                                                  |
 
 ## When this skill applies
 
@@ -65,7 +65,7 @@ services/<name>-service/
 │   └── server.ts                             ← Fastify factory + setErrorHandler + listen
 ```
 
-Note: services do **not** own DB schema or migrations — those live in `@crm/db` (Drizzle
+Note: services do **not** own DB schema or migrations — those live in `@platform/db` (Drizzle
 schema) and `db_scripts/*.sql` (authoritative SQL). See the PostgreSQL skill.
 
 ### Layer responsibilities
@@ -153,7 +153,7 @@ export class <Domain>Controller {
 }
 ```
 
-- `request.auth` shape: `{ org_id, user_id, role, tenant_id, rank }` (see `@crm/service-auth`).
+- `request.auth` shape: `{ org_id, user_id, role, tenant_id, rank }` (see `@platform/service-auth`).
 - Pass the first four as the `RoleTxContext` (`{ role, org_id, tenant_id, user_id }`) to the service.
 - Coarse gates (rank thresholds, `checkXAccess` from `@crm/permissions`) live here; deep
   business rules live in the service.
@@ -169,8 +169,8 @@ Services are **modules of exported functions**, not classes. First param is alwa
 
 ```ts
 // api/v1/<domain>/<domain>.service.ts
-import type { RoleTxContext } from '@crm/db';
-import { logActivity } from '@crm/audit-log';
+import type { RoleTxContext } from '@platform/db';
+import { logActivity } from '@platform/audit-log';
 import { NotFoundError, AppError, ForbiddenError } from '../../../lib/errors.js';
 import { publishEvent } from '../../../events/publisher.js';
 import * as repo from './<domain>.repository.js';
@@ -205,14 +205,14 @@ export async function create<Entity>(ctx: RoleTxContext, data: Create<Entity>Inp
 
 Repositories are also **modules of functions**. Every DB operation is wrapped in
 `withRoleTx(ctx, async (tx) => …)`. Reads target **views** (`<schema>.vw_<name>`); writes target
-base tables via the Drizzle table objects from `@crm/db/schema`.
+base tables via the Drizzle table objects from `@platform/db/schema`.
 
 ```ts
 // api/v1/<domain>/<domain>.repository.ts
 import { sql, and, eq, asc } from 'drizzle-orm';
-import { withRoleTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { <entity>Table } from '@crm/db/schema';
+import { withRoleTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { <entity>Table } from '@platform/db/schema';
 
 export interface List<Entity>Filters {
   page: number; page_size: number; search?: string;
@@ -263,7 +263,7 @@ export async function create<Entity>(ctx: RoleTxContext, data: Create<Entity>Inp
 ```ts
 // middleware/auth.middleware.ts
 import type { FastifyRequest } from 'fastify';
-import { readAuthContext } from '@crm/service-auth';
+import { readAuthContext } from '@platform/service-auth';
 import { UnauthorizedError } from '../lib/errors.js';
 
 const INTERNAL_SECRET = process.env['INTERNAL_SERVICE_SECRET'];
@@ -326,7 +326,7 @@ import { ZodError } from 'zod';
 import { config } from './config/index.js';
 import { v1Router } from './api/v1/index.js';
 import { AppError } from './lib/errors.js';
-import { closeAllPools } from '@crm/db';
+import { closeAllPools } from '@platform/db';
 
 const app = Fastify({
   logger: {

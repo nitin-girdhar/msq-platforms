@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { UserOrgOption } from '@crm/types';
+import type { UserOrgOption } from '@platform/types';
 import { auth } from '@/src/lib/api/client';
 
 interface Props {

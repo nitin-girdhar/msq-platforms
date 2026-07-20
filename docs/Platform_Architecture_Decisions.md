@@ -27,7 +27,7 @@ The lead-management product is **LMS (Lead Management System)** — it is a lead
 
 | Today | Becomes | What it is |
 |---|---|---|
-| `@crm/*` packages (`@crm/db`, `@crm/types`, `@crm/permissions`, `@platform/ui-kit`…) | `@platform/*` | **Platform** packages shared by every product — misnamed because the repo began as a CRM. Renamed as part of Phase 0. |
+| `@crm/*` packages (`@platform/db`, `@platform/types`, `@crm/permissions`, `@platform/ui-kit`…) | `@platform/*` | **Platform** packages shared by every product — misnamed because the repo began as a CRM. Renamed as part of Phase 0. |
 | the "crm" *product* (leads/marketing/meta domain) | `lms` | The **Lead Management System** product: `lms` schema (renamed from `crm` — see P1.0), `lms-repo`, `@lms/*` packages, `lms` entitlement key, `lms_svc` DB role, `(lms)` web route group. |
 | `crm_service` DB role (BYPASSRLS, used by every service's `withServiceTx`) | `root_service` | The **platform** BYPASSRLS role — misnamed "crm". Renamed to `root_service` (`ALTER ROLE` + `DATABASE_URL_SERVICE` + `APP_ROLE_TO_PG_ROLE` + `db_scripts` literals). Note: it is BYPASSRLS, *not* a Postgres superuser. Done in the P1.0 rename pass. |
 

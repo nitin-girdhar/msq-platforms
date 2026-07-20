@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { jwtVerify } from 'jose';
-import { AUTH_COOKIE_NAME, JWT_ISSUER, JWT_AUDIENCE } from '@crm/auth-constants';
+import { AUTH_COOKIE_NAME, JWT_ISSUER, JWT_AUDIENCE } from '@platform/auth-constants';
 import LoginForm from '@/components/auth/LoginForm';
 
 export const metadata: Metadata = {

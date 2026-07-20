@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { UserRole } from '@crm/types';
+import type { UserRole } from '@platform/types';
 import { users as usersApi, type UserRow } from '@/src/lib/api/client';
 import Modal from '../lookups/Modal';
 import RoleSelector from './RoleSelector';

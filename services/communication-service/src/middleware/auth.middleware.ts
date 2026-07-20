@@ -1,5 +1,5 @@
 import type { FastifyRequest } from 'fastify';
-import { readAuthContext, checkInternalSecret } from '@crm/service-auth';
+import { readAuthContext, checkInternalSecret } from '@platform/service-auth';
 import { UnauthorizedError } from '../lib/errors.js';
 
 const INTERNAL_SECRET = process.env['INTERNAL_SERVICE_SECRET'];

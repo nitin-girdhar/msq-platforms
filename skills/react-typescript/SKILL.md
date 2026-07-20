@@ -8,7 +8,7 @@
 
 Stack: **Next.js 15 App Router · React 19 · TypeScript · Tailwind CSS v4 · SWR + hand-rolled
 hooks · AG Grid · Zod · `jose`**. Shared UI + fetch primitives live in the `@platform/ui-kit` workspace
-package; shared types in `@crm/types`; permission ranks in `@crm/permissions`.
+package; shared types in `@platform/types`; permission ranks in `@crm/permissions`.
 
 ---
 
@@ -141,7 +141,7 @@ export const leads = {
     ).toString();
     return request<{
       success: true;
-      data: import('@crm/types').LeadView[];
+      data: import('@platform/types').LeadView[];
       total: number; page: number; page_size: number;
       stage_options: unknown[]; stage_outcomes: unknown[];
     }>(`/leads${qs ? `?${qs}` : ''}`);
@@ -155,7 +155,7 @@ export const leads = {
 **Rules for `client.ts`:**
 - One `export const <resource> = { ... }` namespace per backend resource; group by comment banner.
 - Response envelope is typed **inline** on each call: `{ success: true; data: ...; total?; page?; page_size? }`.
-- Use `import('@crm/types').X` inline type references for domain shapes; promote to a named
+- Use `import('@platform/types').X` inline type references for domain shapes; promote to a named
   import only when reused heavily.
 - `snake_case` for every param and body field. Build query strings with the
   `URLSearchParams(Object.entries(...).filter(...).map(...))` pattern shown above.
@@ -199,7 +199,7 @@ and handles mutations. It is the only layer that coordinates async + state for i
 ```tsx
 'use client';
 import { useLeads } from '@/hooks/useLeads';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 
 export default function LeadDashboardShell({ actor, enabledModules }: {
   actor: SessionUser;
@@ -316,8 +316,8 @@ apps/modules. Otherwise build it under `apps/web/components/<domain>/`.
 
 1. **No `any`.** Use `unknown` + narrowing; opaque server fields stay `unknown` / `unknown[]`.
 2. **`interface` for component props and hook return types.** `type` for unions/aliases.
-3. **Domain types come from `@crm/types`** (`LeadView`, `SessionUser`, `UserOrgOption`, …) —
-   imported normally or via inline `import('@crm/types').X` in the api layer. Web-only types
+3. **Domain types come from `@platform/types`** (`LeadView`, `SessionUser`, `UserOrgOption`, …) —
+   imported normally or via inline `import('@platform/types').X` in the api layer. Web-only types
    live in `apps/web/src/types`.
 4. **Error narrowing:** `err instanceof Error ? err.message : 'Unknown error'`. When you need
    HTTP status, the thrown object is an `ApiRequestError` (`.status`, `.body`).

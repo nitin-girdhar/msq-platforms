@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import { users as usersApi } from '@platform/ui-kit';
 
 // Fetches the org's assignable users once, mapped into SessionUser shape for

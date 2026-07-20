@@ -510,7 +510,7 @@ The `(user, product, role)` **grant** (P1.1, `17_init-per-product-roles.sql`). O
 **Grants:** `SELECT, INSERT, UPDATE` to app_user/tenant_admin (revoke = `is_active=false`, no DELETE grant); `ALL` to root_service.  
 **Triggers:** `set_member_role_tenant_id` (BEFORE INSERT/UPDATE, derives `tenant_id` from `org_id` so a client cannot spoof it), `set_updated_at`.  
 **Helper:** `<product>.fn_member_rank(user, org)` — SECURITY DEFINER, returns the user's active rank in that product+org or **-1** if no grant (how "no product access" is encoded); safe to call inside other tables' RLS policies.  
-**Helper (P1.3, `20_member-role-resolver-fn.sql`):** `<product>.fn_member_role(user, org)` — SECURITY DEFINER, returns `(role TEXT, rank INT)` for the active grant, or `(NULL, -1)` if none. Sibling of `fn_member_rank` that also returns the role **name** the authz packages need. Each product service resolves the acting user's product role/rank through this (via `@crm/db`'s `resolveMemberRole`) instead of trusting a JWT/header rank. `GRANT EXECUTE` to `app_user`, `tenant_admin`, and the product's `*_svc` login (+ `lead_svc` for lms).  
+**Helper (P1.3, `20_member-role-resolver-fn.sql`):** `<product>.fn_member_role(user, org)` — SECURITY DEFINER, returns `(role TEXT, rank INT)` for the active grant, or `(NULL, -1)` if none. Sibling of `fn_member_rank` that also returns the role **name** the authz packages need. Each product service resolves the acting user's product role/rank through this (via `@platform/db`'s `resolveMemberRole`) instead of trusting a JWT/header rank. `GRANT EXECUTE` to `app_user`, `tenant_admin`, and the product's `*_svc` login (+ `lead_svc` for lms).  
 **View:** `<product>.vw_member_roles` (`security_invoker`) resolves `role`/`role_label`/`rank` + `org_name` + user.
 
 ---
@@ -566,7 +566,7 @@ Versioned default-catalog registry + provisioning seeder that gives a brand-new 
 - `entity.reset_tenant_catalog(tenant_id, catalog_key, version?)` → restores one catalog to a default version (defaults to current): re-adds deleted defaults and restores default label/flags/sort_order **without changing row ids** (FK-safe); leaves tenant-custom rows untouched.
 - `entity._apply_catalog_rows(tenant_id, catalog_key, version, reset)` → shared per-catalog copy helper.
 
-TS wrappers: `seedTenantDefaults()` / `resetTenantCatalog()` / `getTenantCatalogVersions()` in `@crm/db` (`packages/db/src/seed-tenant-defaults.ts`).
+TS wrappers: `seedTenantDefaults()` / `resetTenantCatalog()` / `getTenantCatalogVersions()` in `@platform/db` (`packages/db/src/seed-tenant-defaults.ts`).
 
 ---
 

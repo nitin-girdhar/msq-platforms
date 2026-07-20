@@ -1,5 +1,5 @@
 import type { FastifyRequest } from 'fastify';
-import { getActiveTenantModules } from '@crm/db';
+import { getActiveTenantModules } from '@platform/db';
 import { ForbiddenError } from '../lib/errors.js';
 
 export type PlatformModule = 'lms' | 'leave' | 'attendance' | 'tasks';
@@ -21,7 +21,7 @@ async function resolveActiveModules(request: FastifyRequest): Promise<Set<string
 
 // Rejects requests to a module the tenant hasn't licensed (entity.tenant_modules).
 // In-process cached for 60s per tenant to avoid a query on every request. Mirrors
-// hr-service's requireModule; the shared getActiveTenantModules helper lives in @crm/db.
+// hr-service's requireModule; the shared getActiveTenantModules helper lives in @platform/db.
 export function requireModule(module: PlatformModule) {
   return async (request: FastifyRequest): Promise<void> => {
     const modules = await resolveActiveModules(request);

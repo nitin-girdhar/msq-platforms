@@ -1,6 +1,6 @@
 import { jwtVerify, importSPKI, decodeProtectedHeader } from 'jose';
-import type { JwtPayload } from '@crm/types';
-import { JWT_ISSUER, JWT_AUDIENCE } from '@crm/auth-constants';
+import type { JwtPayload } from '@platform/types';
+import { JWT_ISSUER, JWT_AUDIENCE } from '@platform/auth-constants';
 
 // Edge- and Node-safe session-token verification shared by every product web
 // app (its `middleware.ts`) and the server session helpers. Depends only on

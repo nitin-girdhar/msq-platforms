@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { findKnownUserContacts, uniqContacts, last10Digits } from '@crm/db';
+import { findKnownUserContacts, uniqContacts, last10Digits } from '@platform/db';
 import { config } from '../config.js';
 
 interface CommsBody {

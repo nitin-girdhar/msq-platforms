@@ -1,7 +1,7 @@
-import type { RoleTxContext } from '@crm/db';
-import { generateApiKey, hashApiKey } from '@crm/db';
+import type { RoleTxContext } from '@platform/db';
+import { generateApiKey, hashApiKey } from '@platform/db';
 import type { CreateApiClientInput, UpdateApiClientInput } from '@platform/validation';
-import { logActivity } from '@crm/audit-log';
+import { logActivity } from '@platform/audit-log';
 import { config } from '../../../config/index.js';
 import { BadRequestError, NotFoundError } from '../../../lib/errors.js';
 import * as repo from './api-clients.repository.js';

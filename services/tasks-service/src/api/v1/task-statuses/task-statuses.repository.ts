@@ -1,7 +1,7 @@
 import { asc, and, eq } from 'drizzle-orm';
-import { withTenantConfigTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { taskStatusesTable } from '@crm/db/schema';
+import { withTenantConfigTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { taskStatusesTable } from '@platform/db/schema';
 
 type TaskStatusInsert = typeof taskStatusesTable.$inferInsert;
 type TaskStatusUpdate = Partial<TaskStatusInsert>;

@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { AUTH_COOKIE_NAME } from '@crm/auth-constants';
-import type { JwtPayload } from '@crm/types';
+import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
+import type { JwtPayload } from '@platform/types';
 import { verifyJwtEdge } from '../lib/jwt-verify.js';
 import type { UserContext } from '../lib/proxy.js';
 

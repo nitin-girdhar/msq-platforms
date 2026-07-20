@@ -1,6 +1,6 @@
 import { asc, eq } from 'drizzle-orm';
-import { withServiceTx } from '@crm/db';
-import { orgTypesTable } from '@crm/db/schema';
+import { withServiceTx } from '@platform/db';
+import { orgTypesTable } from '@platform/db/schema';
 
 type OrgTypeInsert = typeof orgTypesTable.$inferInsert;
 type OrgTypeUpdate = Partial<OrgTypeInsert>;

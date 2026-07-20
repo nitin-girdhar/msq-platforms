@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { withServiceTx } from '@crm/db';
+import { withServiceTx } from '@platform/db';
 
 // Public read endpoints run under the service role but with a MANDATORY explicit
 // tenant filter and a whitelisted column list — never the tenant_admin role, and

@@ -1,4 +1,4 @@
-import { PLATFORM_RANK, type PlatformRole } from '@crm/auth-constants';
+import { PLATFORM_RANK, type PlatformRole } from '@platform/auth-constants';
 
 // ── Platform rank tiers (P1.3) ──────────────────────────────────────────────
 // The shared global ladder is dissolved: each product package now owns its own

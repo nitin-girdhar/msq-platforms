@@ -1,4 +1,4 @@
-import { AUTH_COOKIE_NAME, JWT_MAX_AGE_SECONDS } from '@crm/auth-constants';
+import { AUTH_COOKIE_NAME, JWT_MAX_AGE_SECONDS } from '@platform/auth-constants';
 import { config } from '../config/index.js';
 
 export interface CookieOptions {

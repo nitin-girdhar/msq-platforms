@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { API_SCOPES } from '@crm/auth-constants';
+import { API_SCOPES } from '@platform/auth-constants';
 
 export const createApiClientSchema = z.object({
   name: z.string().min(1).max(120),

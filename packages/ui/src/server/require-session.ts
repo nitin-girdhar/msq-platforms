@@ -1,7 +1,7 @@
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import type { JwtPayload, SessionUser } from '@crm/types';
-import { AUTH_COOKIE_NAME } from '@crm/auth-constants';
+import type { JwtPayload, SessionUser } from '@platform/types';
+import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
 import { verifySessionJwt } from '../auth/verify-edge';
 import { buildLoginUrl, authOrigin } from '../auth/sso';
 

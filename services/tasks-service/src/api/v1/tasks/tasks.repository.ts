@@ -18,7 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { sql } from 'drizzle-orm';
-import { withRoleTx, withServiceTx, type RoleTxContext, type DrizzleTx } from '@crm/db';
+import { withRoleTx, withServiceTx, type RoleTxContext, type DrizzleTx } from '@platform/db';
 import { BadRequestError, NotFoundError } from '../../../lib/errors.js';
 import type { CreateTaskInput, UpdateTaskInput, ListTasksInput, ListMineTasksInput } from '@task/validation';
 

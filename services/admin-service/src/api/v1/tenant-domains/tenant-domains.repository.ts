@@ -1,6 +1,6 @@
 import { asc, eq } from 'drizzle-orm';
-import { withServiceTx } from '@crm/db';
-import { tenantDomainsTable } from '@crm/db/schema';
+import { withServiceTx } from '@platform/db';
+import { tenantDomainsTable } from '@platform/db/schema';
 
 type TenantDomainInsert = typeof tenantDomainsTable.$inferInsert;
 type TenantDomainUpdate = Partial<TenantDomainInsert>;

@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import type { SessionUser, ProductKey } from '@crm/types';
+import type { SessionUser, ProductKey } from '@platform/types';
 import UserMenu from './UserMenu';
 import BranchSwitcher from './BranchSwitcher';
 import HamburgerButton from './HamburgerButton';

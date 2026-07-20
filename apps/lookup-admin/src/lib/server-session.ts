@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { jwtVerify } from 'jose';
-import type { SessionUser } from '@crm/types';
-import { AUTH_COOKIE_NAME, JWT_ISSUER, JWT_AUDIENCE } from '@crm/auth-constants';
+import type { SessionUser } from '@platform/types';
+import { AUTH_COOKIE_NAME, JWT_ISSUER, JWT_AUDIENCE } from '@platform/auth-constants';
 
 export const GATEWAY_URL = process.env['API_GATEWAY_INTERNAL_URL'] ?? 'http://localhost:4000';
 

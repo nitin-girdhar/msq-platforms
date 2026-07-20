@@ -308,7 +308,7 @@ Phases 2–4 all depend on the Phase 1 credential spine.
   gateway routes `GET /public/v1/branches|users` (`branches:read`/`users:read`).
   User DTO whitelists `id, full_name, email, org_id, role_label, is_active`.
 - **Comms:** scope `comms:send` (+ additive `comms:send:adhoc`); gateway
-  `publicCommsGuard` (`public-comms.ts`) + `@crm/db` `findUnknownRecipients`
+  `publicCommsGuard` (`public-comms.ts`) + `@platform/db` `findUnknownRecipients`
   (email exact / phone last-10 match against tenant users + leads);
   communication-service `POST /api/v1/communications/public-send`
   (internal-secret only, no rank floor — scope is the authz).

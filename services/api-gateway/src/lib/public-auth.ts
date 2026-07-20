@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { hashApiKey, getApiClientByHash, recordApiClientUsage, type ResolvedApiClient } from '@crm/db';
-import type { ApiScope } from '@crm/auth-constants';
+import { hashApiKey, getApiClientByHash, recordApiClientUsage, type ResolvedApiClient } from '@platform/db';
+import type { ApiScope } from '@platform/auth-constants';
 import { config } from '../config.js';
 import type { UserContext } from './proxy.js';
 

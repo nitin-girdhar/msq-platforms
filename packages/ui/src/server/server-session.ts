@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
-import type { JwtPayload, SessionUser } from '@crm/types';
-import { AUTH_COOKIE_NAME } from '@crm/auth-constants';
+import type { JwtPayload, SessionUser } from '@platform/types';
+import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
 import { verifySessionJwt } from '../auth/verify-edge';
 
 // Server-only session helpers — consumed via `@platform/ui-kit/server`, never

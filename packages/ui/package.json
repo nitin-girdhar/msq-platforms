@@ -21,8 +21,8 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
-    "@crm/auth-constants": "workspace:*",
-    "@crm/types": "workspace:*",
+    "@platform/auth-constants": "workspace:*",
+    "@platform/types": "workspace:*",
     "jose": "^6.2.3",
     "xlsx": "^0.18.5"
   },

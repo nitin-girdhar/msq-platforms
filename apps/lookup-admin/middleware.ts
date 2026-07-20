@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { jwtVerify, importSPKI, decodeProtectedHeader } from 'jose';
 
 type ImportedKey = Awaited<ReturnType<typeof importSPKI>>;
-import type { JwtPayload } from '@crm/types';
-import { AUTH_COOKIE_NAME, JWT_ISSUER, JWT_AUDIENCE } from '@crm/auth-constants';
+import type { JwtPayload } from '@platform/types';
+import { AUTH_COOKIE_NAME, JWT_ISSUER, JWT_AUDIENCE } from '@platform/auth-constants';
 
 const PUBLIC_PATHS = new Set(['/login', '/change-password', '/api/auth/login', '/api/auth/logout']);
 const PROTECTED_PREFIXES = ['/dashboard', '/api/'];

@@ -179,7 +179,7 @@ export const <table>Table = lmsSchema.table('<table>', {
 });
 ```
 
-Register it in `packages/db/src/schema/index.ts` so services can `import { <table>Table } from '@crm/db/schema'`.
+Register it in `packages/db/src/schema/index.ts` so services can `import { <table>Table } from '@platform/db/schema'`.
 
 ---
 

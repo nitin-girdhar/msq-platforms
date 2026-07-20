@@ -1,4 +1,4 @@
-import { toApiRow, toApiRows } from '@crm/db';
+import { toApiRow, toApiRows } from '@platform/db';
 import { ConflictError, NotFoundError } from '../../../lib/errors.js';
 import * as repo from './tenant-domains.repository.js';
 import type { CreateTenantDomainInput, UpdateTenantDomainInput } from './tenant-domains.schema.js';

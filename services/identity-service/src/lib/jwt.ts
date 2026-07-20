@@ -6,12 +6,12 @@ import {
   JWT_AUDIENCE,
   JWT_ALGORITHM,
   JWT_MAX_AGE_SECONDS,
-} from '@crm/auth-constants';
-import type { JwtPayload, JwtVerifyResult } from '@crm/types';
+} from '@platform/auth-constants';
+import type { JwtPayload, JwtVerifyResult } from '@platform/types';
 import {
   revokeToken as dbRevokeToken,
   isTokenRevoked as dbIsTokenRevoked,
-} from '@crm/db';
+} from '@platform/db';
 import { config } from '../config/index.js';
 
 export { JWT_MAX_AGE_SECONDS };

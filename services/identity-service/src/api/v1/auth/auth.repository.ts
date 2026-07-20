@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
-import { withServiceTx } from '@crm/db';
-import type { DatabaseUser } from '@crm/types';
+import { withServiceTx } from '@platform/db';
+import type { DatabaseUser } from '@platform/types';
 
 export async function getUserByEmail(
   email: string,

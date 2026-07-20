@@ -1,8 +1,8 @@
 import { jwtVerify, importSPKI, decodeProtectedHeader } from 'jose';
-import { JWT_ISSUER, JWT_AUDIENCE } from '@crm/auth-constants';
-import type { JwtPayload, JwtVerifyResult } from '@crm/types';
+import { JWT_ISSUER, JWT_AUDIENCE } from '@platform/auth-constants';
+import type { JwtPayload, JwtVerifyResult } from '@platform/types';
 import { config } from '../config.js';
-import { isTokenRevoked, revokeToken } from '@crm/db';
+import { isTokenRevoked, revokeToken } from '@platform/db';
 
 const encoder = new TextEncoder();
 

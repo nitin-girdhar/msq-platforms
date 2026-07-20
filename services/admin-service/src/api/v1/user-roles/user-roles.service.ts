@@ -1,4 +1,4 @@
-import { toApiRow, toApiRows } from '@crm/db';
+import { toApiRow, toApiRows } from '@platform/db';
 import { ConflictError, NotFoundError } from '../../../lib/errors.js';
 import * as repo from './user-roles.repository.js';
 import type { CreateUserRoleInput, UpdateUserRoleInput } from './user-roles.schema.js';

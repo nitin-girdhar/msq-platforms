@@ -1,5 +1,5 @@
 {
-  "name": "@crm/audit-log",
+  "name": "@platform/audit-log",
   "version": "0.0.1",
   "private": true,
   "files": [
@@ -21,7 +21,7 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
-    "@crm/db": "workspace:*",
+    "@platform/db": "workspace:*",
     "drizzle-orm": "^0.44.0"
   },
   "devDependencies": {

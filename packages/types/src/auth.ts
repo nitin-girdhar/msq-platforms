@@ -1,4 +1,4 @@
-import type { ROLES, PlatformRole } from '@crm/auth-constants';
+import type { ROLES, PlatformRole } from '@platform/auth-constants';
 
 export type UserRole = (typeof ROLES)[number];
 

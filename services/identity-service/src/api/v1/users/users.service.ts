@@ -1,13 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import type { RoleTxContext } from '@crm/db';
-import { toApiRow, toApiRows } from '@crm/db';
-import { ROLE_RANK } from '@crm/auth-constants';
-import type { UserRole } from '@crm/auth-constants';
+import type { RoleTxContext } from '@platform/db';
+import { toApiRow, toApiRows } from '@platform/db';
+import { ROLE_RANK } from '@platform/auth-constants';
+import type { UserRole } from '@platform/auth-constants';
 import { canGrantRole, canManageUser, canSeeOrgFilter, checkMoveUserBranchAccess } from '@platform/authz';
 import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, AddOrgMappingInput } from '@platform/validation';
 import { NotFoundError, ConflictError, ForbiddenError, BadRequestError } from '../../../lib/errors.js';
-import { logActivity } from '@crm/audit-log';
+import { logActivity } from '@platform/audit-log';
 import { revokeAllUserSessions } from '../../../lib/jwt.js';
 import { config } from '../../../config/index.js';
 import * as repo from './users.repository.js';

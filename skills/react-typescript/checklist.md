@@ -25,7 +25,7 @@ Run every item before marking a frontend task complete or opening a PR.
 
 ## TypeScript
 - [ ] No `any` / `as any` / `@ts-ignore`
-- [ ] Domain types imported from `@crm/types`; web-only types in `src/types`
+- [ ] Domain types imported from `@platform/types`; web-only types in `src/types`
 - [ ] Error narrowing uses `err instanceof Error`; HTTP status read from `ApiRequestError.status`
 
 ## Styling

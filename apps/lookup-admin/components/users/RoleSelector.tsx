@@ -1,7 +1,7 @@
 'use client';
 
-import { ROLES, ROLE_LABELS } from '@crm/auth-constants';
-import type { UserRole } from '@crm/types';
+import { ROLES, ROLE_LABELS } from '@platform/auth-constants';
+import type { UserRole } from '@platform/types';
 
 interface Props {
   id: string;

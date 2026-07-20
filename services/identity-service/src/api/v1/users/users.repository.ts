@@ -1,6 +1,6 @@
 import { sql, eq, and, desc } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
+import { withRoleTx, withServiceTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
 import {
   usersTable,
   userRolesTable,
@@ -8,7 +8,7 @@ import {
   vwUserTeamMembers,
   vwUserOrgChart,
   vwUserOrgAccess,
-} from '@crm/db/schema';
+} from '@platform/db/schema';
 // Auto-assignment eligibility bounds on the iam.user_roles ladder (read_only 0 ..
 // lms_admin 80). Inlined rather than imported so this repository takes no authz
 // dependency; matches packages/db/src/assignment.ts.

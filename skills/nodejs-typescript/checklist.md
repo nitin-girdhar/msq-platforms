@@ -45,7 +45,7 @@ Run every item before marking a backend task complete or opening a PR.
 ## Data reads
 - [ ] Multi-table reads query a `<schema>.vw_*` view (created `WITH (security_invoker = true)`) — no ad-hoc TS joins
 - [ ] Soft delete uses `is_deleted = true`; reads filter `NOT is_deleted`
-- [ ] Any new/changed view is confirmed and added to `db_scripts/*.sql` + `@crm/db/schema` (see PostgreSQL skill)
+- [ ] Any new/changed view is confirmed and added to `db_scripts/*.sql` + `@platform/db/schema` (see PostgreSQL skill)
 
 ## Docs & tests
 - [ ] Bruno files in `/api-testing/` updated for any API change

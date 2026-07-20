@@ -98,8 +98,8 @@ export class <Domain>Controller {
 ## 4. Service (function module)
 
 ```ts
-import type { RoleTxContext } from '@crm/db';
-import { logActivity } from '@crm/audit-log';
+import type { RoleTxContext } from '@platform/db';
+import { logActivity } from '@platform/audit-log';
 import { NotFoundError } from '../../../lib/errors.js';
 import { publishEvent } from '../../../events/publisher.js';
 import * as repo from './<domain>.repository.js';
@@ -144,9 +144,9 @@ export async function delete<Entity>(ctx: RoleTxContext, id: string) {
 
 ```ts
 import { sql, and, eq } from 'drizzle-orm';
-import { withRoleTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { <entity>Table } from '@crm/db/schema';
+import { withRoleTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { <entity>Table } from '@platform/db/schema';
 
 export interface List<Entity>Filters {
   page: number; page_size: number; search?: string; org_ids?: string[];
@@ -266,7 +266,7 @@ export function validate(schemas: Schemas) {
 
 ```ts
 // events/publisher.ts  — fire-and-forget domain events (pg NOTIFY / bus)
-import { notify } from '@crm/db';
+import { notify } from '@platform/db';
 
 export function publishEvent(event: string, payload: Record<string, unknown>) {
   void notify(event, payload);   // never block the request on delivery
@@ -302,7 +302,7 @@ export const config = {
 
 ```ts
 // global.d.ts
-import type { AuthContext } from '@crm/service-auth';
+import type { AuthContext } from '@platform/service-auth';
 declare module 'fastify' {
   interface FastifyRequest { auth: AuthContext; }   // { org_id, user_id, role, tenant_id, rank }
 }
@@ -313,7 +313,7 @@ declare module 'fastify' {
 ## 11. System operation (bypass RLS deliberately)
 
 ```ts
-import { withServiceTx } from '@crm/db';
+import { withServiceTx } from '@platform/db';
 
 // ONLY for genuine system work with no user context (cross-tenant job, gateway-less intake).
 // Document why RLS is bypassed every time.

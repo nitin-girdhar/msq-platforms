@@ -6,7 +6,7 @@ import { withServiceTx } from './transaction.js';
 // (e.g. an LMS lead — checked by the owning product service; see P-1/D8).
 // This prevents the platform being used as an open relay to arbitrary
 // addresses. This module only knows about iam.users — the shared, platform-
-// owned side of that check; @crm/db must not query a product schema
+// owned side of that check; @platform/db must not query a product schema
 // (lms.marketing_leads) directly post-D8-grants.
 
 export function toTextArrayLiteral(items: string[]): string {

@@ -1,5 +1,5 @@
-import type { DatabaseUser, SessionUser } from '@crm/types';
-import type { UserRole } from '@crm/auth-constants';
+import type { DatabaseUser, SessionUser } from '@platform/types';
+import type { UserRole } from '@platform/auth-constants';
 
 export type { DatabaseUser, SessionUser };
 

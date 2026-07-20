@@ -1,7 +1,7 @@
 import { uuid, text, integer, numeric } from 'drizzle-orm/pg-core';
-import { crmSchema } from '../pg-schemas';
+import { lmsSchema } from '../pg-schemas';
 
-export const vwRepPerformance = crmSchema.view('vw_rep_performance', {
+export const vwRepPerformance = lmsSchema.view('vw_rep_performance', {
   orgId:               uuid('org_id').notNull(),
   orgName:             text('org_name').notNull(),
   repId:               uuid('rep_id').notNull(),

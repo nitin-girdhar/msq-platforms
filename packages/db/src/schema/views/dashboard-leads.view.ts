@@ -1,7 +1,7 @@
 import { uuid, text, boolean, timestamp, jsonb } from 'drizzle-orm/pg-core';
-import { crmSchema } from '../pg-schemas';
+import { lmsSchema } from '../pg-schemas';
 
-export const vwDashboardLeads = crmSchema.view('vw_dashboard_leads', {
+export const vwDashboardLeads = lmsSchema.view('vw_dashboard_leads', {
   leadId:           uuid('lead_id').notNull(),
   orgId:            uuid('org_id').notNull(),
   orgName:          text('org_name').notNull(),

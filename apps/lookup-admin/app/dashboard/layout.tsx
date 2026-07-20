@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { RANKS } from '@crm/permissions';
+import { RANKS } from '@platform/authz';
 import { getServerSession } from '@/src/lib/server-session';
 import LogoutButton from '@/components/auth/LogoutButton';
 

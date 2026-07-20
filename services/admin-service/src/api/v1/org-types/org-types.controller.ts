@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { RANKS } from '@crm/permissions';
+import { RANKS } from '@platform/authz';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './org-types.service.js';
 import type { CreateOrgTypeInput, UpdateOrgTypeInput } from './org-types.schema.js';

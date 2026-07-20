@@ -2,9 +2,13 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import { AUTH_COOKIE_NAME } from '@crm/auth-constants';
+import { configureProductSource } from '@platform/authz';
+import { getActiveTenantModulesByTenantId } from '@crm/db';
 import { config } from './config.js';
 import { proxyTo, proxyToRaw, proxySSE } from './lib/proxy.js';
 import { authPreHandler } from './middleware/auth.js';
+import { productGuard } from './middleware/require-product.js';
+import { communicationSendGuard } from './middleware/comms-send-guard.js';
 import { verifyJwtEdge, revokeJti } from './lib/jwt-verify.js';
 import { createRateLimiter } from './lib/rate-limit.js';
 import { publicApiKeyAuth, publicUserContext, publicScopeHeaders } from './lib/public-auth.js';
@@ -162,7 +166,14 @@ app.post('/public/v1/communications/send', { preHandler: [publicApiKeyAuth('comm
 });
 
 // ── Protected routes ────────────────────────────────────────────────────────
-const withAuth = { preHandler: [authPreHandler] };
+// Every protected route runs authPreHandler (JWT → req.userCtx) then productGuard
+// (D6 entitlement choke point: 403 if the tenant hasn't licensed the route's
+// product). Public routes above register no auth and are never product-gated.
+configureProductSource(getActiveTenantModulesByTenantId);
+const withAuth = { preHandler: [authPreHandler, productGuard] };
+// Communication send routes: additionally enforce the read_only send-block here
+// (communication-service itself is a stateless relay — see comms-send-guard).
+const withCommsSend = { preHandler: [authPreHandler, productGuard, communicationSendGuard] };
 
 // Notifications (SSE — long-lived connection)
 app.get('/notifications/stream', { ...withAuth }, async (req, reply) => {
@@ -324,82 +335,10 @@ app.patch('/lookups/user-roles/:id', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.adminServiceUrl, `/api/v1/lookups/user-roles/${id}`, req, reply, req.userCtx);
 });
 
-app.get('/lookups/lead-stage', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/lead-stage', req, reply, req.userCtx);
-});
-app.post('/lookups/lead-stage', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/lead-stage', req, reply, req.userCtx);
-});
-app.patch('/lookups/lead-stage/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/lead-stage/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/lead-stage-outcome', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/lead-stage-outcome', req, reply, req.userCtx);
-});
-app.post('/lookups/lead-stage-outcome', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/lead-stage-outcome', req, reply, req.userCtx);
-});
-app.patch('/lookups/lead-stage-outcome/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/lead-stage-outcome/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/interaction-types', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/interaction-types', req, reply, req.userCtx);
-});
-app.post('/lookups/interaction-types', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/interaction-types', req, reply, req.userCtx);
-});
-app.patch('/lookups/interaction-types/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/interaction-types/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/follow-up-statuses', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/follow-up-statuses', req, reply, req.userCtx);
-});
-app.post('/lookups/follow-up-statuses', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/follow-up-statuses', req, reply, req.userCtx);
-});
-app.patch('/lookups/follow-up-statuses/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/follow-up-statuses/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/lead-sources', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/lead-sources', req, reply, req.userCtx);
-});
-app.post('/lookups/lead-sources', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/lead-sources', req, reply, req.userCtx);
-});
-app.patch('/lookups/lead-sources/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/lead-sources/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/marketing-platforms', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/marketing-platforms', req, reply, req.userCtx);
-});
-app.post('/lookups/marketing-platforms', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/marketing-platforms', req, reply, req.userCtx);
-});
-app.patch('/lookups/marketing-platforms/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/marketing-platforms/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/campaign-statuses', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/campaign-statuses', req, reply, req.userCtx);
-});
-app.post('/lookups/campaign-statuses', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/campaign-statuses', req, reply, req.userCtx);
-});
-app.patch('/lookups/campaign-statuses/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/campaign-statuses/${id}`, req, reply, req.userCtx);
-});
+// The 7 LMS marketing lookups (lead-stage, lead-stage-outcome, interaction-types,
+// follow-up-statuses, lead-sources, marketing-platforms, campaign-statuses) are
+// now tenant-scoped and owned by leads-service (N-6 Half B) — registered via the
+// TENANT_LOOKUP_TARGETS map below, not here.
 
 app.get('/lookups/tenants', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.adminServiceUrl, '/api/v1/lookups/tenants', req, reply, req.userCtx);
@@ -423,27 +362,42 @@ app.patch('/lookups/organizations/:id', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.adminServiceUrl, `/api/v1/lookups/organizations/${id}`, req, reply, req.userCtx);
 });
 
-app.get('/lookups/task-statuses', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/task-statuses', req, reply, req.userCtx);
-});
-app.post('/lookups/task-statuses', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/task-statuses', req, reply, req.userCtx);
-});
-app.patch('/lookups/task-statuses/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/task-statuses/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/task-priorities', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/task-priorities', req, reply, req.userCtx);
-});
-app.post('/lookups/task-priorities', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/task-priorities', req, reply, req.userCtx);
-});
-app.patch('/lookups/task-priorities/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/task-priorities/${id}`, req, reply, req.userCtx);
-});
+// Tenant-scoped lookup/role admin (N-6 Half A): super_admin manages a SELECTED
+// tenant's product reference data. These 8 slugs are owned by their product
+// service (which writes its own schema under tenant RLS — never root_service via
+// admin-service). Ungated at the entitlement layer (super_admin is platform
+// staff, not a product licensee); the product service enforces the super_admin
+// gate. The `?tenant_id=` query is forwarded verbatim by proxyTo.
+const TENANT_LOOKUP_TARGETS: Record<string, string> = {
+  'task-statuses':      config.tasksServiceUrl,
+  'task-priorities':    config.tasksServiceUrl,
+  'task-roles':         config.tasksServiceUrl,
+  'leave-types':        config.hrServiceUrl,
+  'employment-types':   config.hrServiceUrl,
+  'attendance-statuses':config.hrServiceUrl,
+  'hr-roles':           config.hrServiceUrl,
+  'lms-roles':          config.leadsServiceUrl,
+  // N-6 Half B — 7 tenant-scoped LMS marketing lookups
+  'lead-stage':         config.leadsServiceUrl,
+  'lead-stage-outcome': config.leadsServiceUrl,
+  'interaction-types':  config.leadsServiceUrl,
+  'follow-up-statuses': config.leadsServiceUrl,
+  'lead-sources':       config.leadsServiceUrl,
+  'marketing-platforms':config.leadsServiceUrl,
+  'campaign-statuses':  config.leadsServiceUrl,
+};
+for (const [slug, target] of Object.entries(TENANT_LOOKUP_TARGETS)) {
+  app.get(`/lookups/${slug}`, { ...withAuth }, async (req, reply) => {
+    return proxyTo(target, `/api/v1/lookups/${slug}`, req, reply, req.userCtx);
+  });
+  app.post(`/lookups/${slug}`, { ...withAuth }, async (req, reply) => {
+    return proxyTo(target, `/api/v1/lookups/${slug}`, req, reply, req.userCtx);
+  });
+  app.patch(`/lookups/${slug}/:id`, { ...withAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return proxyTo(target, `/api/v1/lookups/${slug}/${id}`, req, reply, req.userCtx);
+  });
+}
 
 // Users
 app.get('/users', { ...withAuth }, async (req, reply) => {
@@ -591,16 +545,16 @@ app.patch('/meta/integration', { ...withAuth }, async (req, reply) => {
 app.get('/communications/status', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.communicationServiceUrl, '/api/v1/communications/status', req, reply, req.userCtx);
 });
-app.post('/communications/email', { ...withAuth }, async (req, reply) => {
+app.post('/communications/email', { ...withCommsSend }, async (req, reply) => {
   return proxyTo(config.communicationServiceUrl, '/api/v1/communications/email', req, reply, req.userCtx);
 });
-app.post('/communications/whatsapp/text', { ...withAuth }, async (req, reply) => {
+app.post('/communications/whatsapp/text', { ...withCommsSend }, async (req, reply) => {
   return proxyTo(config.communicationServiceUrl, '/api/v1/communications/whatsapp/text', req, reply, req.userCtx);
 });
-app.post('/communications/whatsapp/template', { ...withAuth }, async (req, reply) => {
+app.post('/communications/whatsapp/template', { ...withCommsSend }, async (req, reply) => {
   return proxyTo(config.communicationServiceUrl, '/api/v1/communications/whatsapp/template', req, reply, req.userCtx);
 });
-app.post('/communications/send', { ...withAuth }, async (req, reply) => {
+app.post('/communications/send', { ...withCommsSend }, async (req, reply) => {
   return proxyTo(config.communicationServiceUrl, '/api/v1/communications/send', req, reply, req.userCtx);
 });
 

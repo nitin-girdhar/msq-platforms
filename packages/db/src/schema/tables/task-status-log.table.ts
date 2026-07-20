@@ -6,7 +6,7 @@ import { tasksTable } from './tasks.table';
 import { usersTable } from './users.table';
 import { taskStatusesTable } from './task-statuses.table';
 
-// Append-only status-transition log (mirrors crm.lead_status_log /
+// Append-only status-transition log (mirrors lms.lead_status_log /
 // hr.leave_request_status_log). Written by the task.log_task_status_change
 // trigger only — INSERT is revoked for app_user/tenant_admin.
 export const taskStatusLogTable = taskSchema.table('task_status_log', {

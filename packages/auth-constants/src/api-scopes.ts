@@ -1,4 +1,4 @@
-// Scopes grantable to public/partner API clients (ext.api_clients). Each key
+// Scopes grantable to public/partner API clients (iam.api_clients). Each key
 // carries an explicit subset; a route requires exactly one scope. Least
 // privilege: read and write are separate, and comms is always its own scope.
 

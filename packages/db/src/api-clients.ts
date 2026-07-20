@@ -45,8 +45,8 @@ export async function getApiClientByHash(keyHash: string): Promise<ResolvedApiCl
       c.id, c.tenant_id, c.scopes, c.rate_limit_per_min, c.scope_all_orgs,
       c.is_active, c.expires_at, c.revoked_at,
       COALESCE(array_agg(o.org_id) FILTER (WHERE o.org_id IS NOT NULL), '{}') AS org_ids
-    FROM ext.api_clients c
-    LEFT JOIN ext.api_client_orgs o ON o.api_client_id = c.id
+    FROM iam.api_clients c
+    LEFT JOIN iam.api_client_orgs o ON o.api_client_id = c.id
     WHERE c.key_hash = ${keyHash}
     GROUP BY c.id
     LIMIT 1
@@ -57,5 +57,5 @@ export async function getApiClientByHash(keyHash: string): Promise<ResolvedApiCl
 // Best-effort last-used stamp; callers should not await this on the hot path.
 export async function recordApiClientUsage(id: string): Promise<void> {
   const db = serviceDrizzle();
-  await db.execute(sql`UPDATE ext.api_clients SET last_used_at = NOW() WHERE id = ${id}::uuid`);
+  await db.execute(sql`UPDATE iam.api_clients SET last_used_at = NOW() WHERE id = ${id}::uuid`);
 }

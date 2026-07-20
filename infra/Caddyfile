@@ -1,0 +1,31 @@
+# Local SSO topology — fronts the four product web images on *.app.localhost
+# subdomains so the shared parent-domain (.app.localhost) session cookie is
+# exercised exactly as the production *.app.com deployment would.
+#
+# Used by the compose `caddy` service (profile: sso-proxy). Pair with:
+#   COOKIE_DOMAIN=.app.localhost   COOKIE_SECURE=false
+#   NEXT_PUBLIC_AUTH_URL=http://auth.app.localhost
+#   NEXT_PUBLIC_LMS_URL=http://lms.app.localhost
+#   NEXT_PUBLIC_HR_URL=http://hr.app.localhost
+#   NEXT_PUBLIC_TASK_URL=http://todo.app.localhost
+# then rebuild the web images so the NEXT_PUBLIC_* origins bake in.
+
+{
+	auto_https off
+}
+
+auth.app.localhost:80 {
+	reverse_proxy auth-web:3000
+}
+
+lms.app.localhost:80 {
+	reverse_proxy lms-web:3001
+}
+
+hr.app.localhost:80 {
+	reverse_proxy hr-web:3002
+}
+
+todo.app.localhost:80 {
+	reverse_proxy todo-web:3003
+}

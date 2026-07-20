@@ -32,7 +32,7 @@ Run every item before marking a frontend task complete or opening a PR.
 - [ ] Tailwind utility classes inline in JSX (consistent with neighbouring components)
 - [ ] No new `*.module.css` files or token/theme layer introduced
 - [ ] Conditional classes composed with template strings (no `clsx`)
-- [ ] Reused generic primitives come from `@crm/ui` (`Modal`, `Pagination`, …), not re-implemented
+- [ ] Reused generic primitives come from `@platform/ui-kit` (`Modal`, `Pagination`, …), not re-implemented
 
 ## Auth & access
 - [ ] Session resolved server-side via `getServerSession()` and passed down as props
@@ -42,5 +42,5 @@ Run every item before marking a frontend task complete or opening a PR.
 ## UX
 - [ ] Loading, empty, and error states handled for every async view
 - [ ] Mutations show inline errors (from `ApiRequestError.message`, which flattens server details)
-- [ ] Modals use `@crm/ui` `Modal` (Escape-to-close, `role="dialog"`, `aria-modal`)
+- [ ] Modals use `@platform/ui-kit` `Modal` (Escape-to-close, `role="dialog"`, `aria-modal`)
 - [ ] Icon-only buttons have `aria-label`

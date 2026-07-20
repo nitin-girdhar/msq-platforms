@@ -4,9 +4,8 @@ import { config } from '../config.js';
 
 export interface UserContext {
   user_id: string;
-  user_role: string;
+  platform_role: string;
   org_id: string;
-  rank: string;
   tenant_id?: string;
 }
 
@@ -25,9 +24,10 @@ function withUserHeaders(
   base['X-Internal-Secret'] = config.serviceSecret;
   if (userCtx) {
     base['X-User-Id'] = userCtx.user_id;
-    base['X-User-Role'] = userCtx.user_role;
+    // P1.3: inject only the coarse platform_role. Product role/rank is no longer
+    // carried in the token or forwarded — each service resolves it from the DB.
+    base['X-Platform-Role'] = userCtx.platform_role;
     base['X-Org-Id'] = userCtx.org_id;
-    base['X-Rank'] = userCtx.rank;
     if (userCtx.tenant_id) base['X-Tenant-Id'] = userCtx.tenant_id;
   }
   return base;

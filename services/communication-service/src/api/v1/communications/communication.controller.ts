@@ -1,6 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as service from './communication.service.js';
-import { ForbiddenError } from '../../../lib/errors.js';
 import type {
   SendEmailInput,
   SendWhatsAppTextInput,
@@ -8,15 +7,10 @@ import type {
   SendCommunicationInput,
 } from './communication.schema.js';
 
-// Minimum rank permitted to send outbound email/WhatsApp. read_only (rank 0)
-// users must never be able to use the org's SMTP/WhatsApp credentials.
-const MIN_RANK_TO_SEND = 20; // RANKS.SE
-
-function assertCanSend(request: FastifyRequest): void {
-  if ((request.auth?.rank ?? 0) < MIN_RANK_TO_SEND) {
-    throw new ForbiddenError('Insufficient permissions to send communications');
-  }
-}
+// P1.3: this service does no rank authz — it is a stateless relay. The direct
+// user-facing send permission (block read_only from org SMTP/WhatsApp) is enforced
+// at the gateway (comms-send-guard); internal cross-product callers authorize
+// before invoking. Handlers below just dispatch what the caller passed.
 
 export class CommunicationController {
   getStatus = async (_request: FastifyRequest, reply: FastifyReply) => {
@@ -25,7 +19,6 @@ export class CommunicationController {
   };
 
   sendEmail = async (request: FastifyRequest, reply: FastifyReply) => {
-    assertCanSend(request);
     const { org_id, user_id, role, tenant_id } = request.auth;
     const input = request.body as SendEmailInput;
     const data = await service.sendEmail({ org_id, user_id, role, tenant_id }, input);
@@ -33,7 +26,6 @@ export class CommunicationController {
   };
 
   sendWhatsAppText = async (request: FastifyRequest, reply: FastifyReply) => {
-    assertCanSend(request);
     const { org_id, user_id, role, tenant_id } = request.auth;
     const input = request.body as SendWhatsAppTextInput;
     const data = await service.sendWhatsAppText({ org_id, user_id, role, tenant_id }, input);
@@ -41,7 +33,6 @@ export class CommunicationController {
   };
 
   sendWhatsAppTemplate = async (request: FastifyRequest, reply: FastifyReply) => {
-    assertCanSend(request);
     const { org_id, user_id, role, tenant_id } = request.auth;
     const input = request.body as SendWhatsAppTemplateInput;
     const data = await service.sendWhatsAppTemplate({ org_id, user_id, role, tenant_id }, input);
@@ -49,7 +40,6 @@ export class CommunicationController {
   };
 
   send = async (request: FastifyRequest, reply: FastifyReply) => {
-    assertCanSend(request);
     const { org_id, user_id, role, tenant_id } = request.auth;
     const input = request.body as SendCommunicationInput;
     const data = await service.send({ org_id, user_id, role, tenant_id }, input);

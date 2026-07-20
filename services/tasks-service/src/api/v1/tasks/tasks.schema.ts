@@ -5,11 +5,11 @@ export {
   listMineTasksSchema,
   createTaskCommentSchema,
   idParamSchema,
-} from '@crm/validation';
+} from '@task/validation';
 export type {
   CreateTaskInput,
   UpdateTaskInput,
   ListTasksInput,
   ListMineTasksInput,
   CreateTaskCommentInput,
-} from '@crm/validation';
+} from '@task/validation';

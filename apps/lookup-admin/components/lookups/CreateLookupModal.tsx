@@ -12,6 +12,7 @@ interface Props {
   onClose: () => void;
   table: string;
   config: LookupTableDef;
+  tenantId?: string | undefined;
 }
 
 type FormValues = Record<string, string | number | boolean>;
@@ -32,7 +33,7 @@ function initialValues(config: LookupTableDef): FormValues {
   return values;
 }
 
-export default function CreateLookupModal({ open, onClose, table, config }: Props) {
+export default function CreateLookupModal({ open, onClose, table, config, tenantId }: Props) {
   const router = useRouter();
   const [values, setValues] = useState<FormValues>(() => initialValues(config));
   const [pending, setPending] = useState(false);
@@ -49,7 +50,11 @@ export default function CreateLookupModal({ open, onClose, table, config }: Prop
     for (const field of selectFields) {
       const parentTable = field.selectOptionsFrom;
       if (!parentTable) continue;
-      lookupAdmin.list(parentTable)
+      // Parent lookups (e.g. lead-stage for a stage-outcome) are tenant-scoped
+      // (N-6), so the options fetch must carry the selected tenant or the backend
+      // rejects it (required tenant_id). tenantId is undefined for the few
+      // global parents, which is fine.
+      lookupAdmin.list(parentTable, tenantId)
         .then((res) => {
           const rows = (res.data as unknown as SelectOptionRow[]).filter((r) => r.is_active);
           setSelectOptions((prev) => ({ ...prev, [field.key]: rows }));
@@ -107,7 +112,7 @@ export default function CreateLookupModal({ open, onClose, table, config }: Prop
 
     setPending(true);
     try {
-      await lookupAdmin.create(table, body);
+      await lookupAdmin.create(table, body, tenantId);
       router.refresh();
       handleClose();
     } catch (err) {

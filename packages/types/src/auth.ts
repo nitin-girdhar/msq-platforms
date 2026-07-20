@@ -1,6 +1,15 @@
-import type { ROLES } from '@crm/auth-constants';
+import type { ROLES, PlatformRole } from '@crm/auth-constants';
 
 export type UserRole = (typeof ROLES)[number];
+
+export type { PlatformRole };
+
+/**
+ * Coarse product identifier. Also declared as the source of truth here so the
+ * shrunk JWT (`licensed_products`) and `@platform/authz` share one definition
+ * without a circular import (`@platform/authz` re-exports this).
+ */
+export type ProductKey = 'lms' | 'hr' | 'task';
 
 export interface SessionUser {
   id: string;
@@ -35,13 +44,23 @@ export interface UserOrgOption {
   is_home: boolean;
 }
 
+/**
+ * The shrunk platform JWT (P1.3). Carries only identity, the coarse
+ * `platform_role`, tenancy, and the tenant's licensed products — NO global
+ * product role/rank. Each product service resolves the acting user's product
+ * role/rank from its own `<product>.member_roles` table; identity-service
+ * resolves the global-ladder rank from `iam`. See docs/Architecture.md.
+ */
 export interface JwtPayload {
   sub: string;
   email: string;
-  role: UserRole;
-  rank: number;
+  /** Coarse cross-product role; drives PG-role selection (RLS) + platform gates. */
+  platform_role: PlatformRole;
   org_id: string;
   tenant_id: string;
+  /** Products the acting tenant has licensed (UX convenience; the gateway's
+   *  entitlement gate remains the authoritative DB-backed check). */
+  licensed_products: ProductKey[];
   pwd_iat: number;
   jti: string;
   /** Set to true when the user must change their password before any other action */

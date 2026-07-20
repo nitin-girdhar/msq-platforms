@@ -1,12 +1,13 @@
 # React / Next.js — CRM Monorepo Skill
 
-> **Authoritative baseline for all frontend work in `apps/web` (and `apps/lookup-admin`).**
+> **Authoritative baseline for all frontend work in the product web apps (`apps/lms-web`, `apps/hr-web`, `apps/todo-web`, `apps/auth-web`) and `apps/lookup-admin`.**
+> **P4.3 update:** the former single `apps/web` was split into one thin Next app per product (`lms-web`/`hr-web`/`todo-web`, each its own image on its own subdomain) plus `auth-web` (login/change-password/select-branch at `auth.app.com`). Shared chrome (navbar, sidebars, product switcher, user/branch menus) now lives in `@platform/ui-kit/shell` and is product-agnostic — apps pass nav items, product origins, home targets, and any product-specific UI (e.g. the LMS notification bell) in as props/slots. SSO: identity-service sets the `fc_session` cookie on `COOKIE_DOMAIN`; product apps verify via `@platform/ui-kit/middleware`'s `createProductMiddleware()` and bounce to the auth origin. Each app keeps its own `@/*`-aliased `app/`, `middleware.ts`, `next.config.ts`, and `src/config/navigation.ts`; wherever this doc says `apps/web`, read it as "the relevant product app".
 > This skill documents how the frontend is *actually* built in this repo. When you add or
 > refactor code, match these patterns exactly so every screen reads the same way. If a
 > requirement seems to demand a different approach, flag it before diverging.
 
 Stack: **Next.js 15 App Router · React 19 · TypeScript · Tailwind CSS v4 · SWR + hand-rolled
-hooks · AG Grid · Zod · `jose`**. Shared UI + fetch primitives live in the `@crm/ui` workspace
+hooks · AG Grid · Zod · `jose`**. Shared UI + fetch primitives live in the `@platform/ui-kit` workspace
 package; shared types in `@crm/types`; permission ranks in `@crm/permissions`.
 
 ---
@@ -19,14 +20,14 @@ package; shared types in `@crm/types`; permission ranks in `@crm/permissions`.
 
 2. **All browser data access flows through `apps/web/src/lib/api/client.ts`.** That file builds
    typed `api.*` namespaces on top of the generic `request()` returned by `createApiClient()`
-   from `@crm/ui`. Components and hooks call `api.<resource>.<method>()` — never `fetch` directly.
+   from `@platform/ui-kit`. Components and hooks call `api.<resource>.<method>()` — never `fetch` directly.
 
 3. **Styling is Tailwind utility classes written inline in JSX.** There is no CSS-module design
    system and no per-tenant CSS theming. Multi-tenancy is enforced by the backend (RLS +
    gateway), not by the frontend. A handful of `*.module.css` files exist only for a few
    complex widgets — do not introduce new ones without reason.
 
-4. **Reusable, domain-agnostic UI primitives live in `@crm/ui`** (`Modal`, `Pagination`,
+4. **Reusable, domain-agnostic UI primitives live in `@platform/ui-kit`** (`Modal`, `Pagination`,
    `DownloadButton`, `MonthGrid`, `Placeholder`, plus `useDropdown` / `useIsMobile`). Build
    there when a component is generic; build in `apps/web/components/<domain>` when it carries
    CRM domain knowledge.
@@ -36,65 +37,87 @@ package; shared types in `@crm/types`; permission ranks in `@crm/permissions`.
 
 ---
 
-## 1. Directory Structure (`apps/web`)
+## 1. Directory Structure (`apps/web` + `@<product>/web` packages)
 
-Path alias: `@/*` → `apps/web/*`. So `@/components/...`, `@/hooks/...`, `@/src/lib/...`.
+**Since P4.2**, `apps/web` is the thin shell app (route groups, session/product-switcher chrome,
+platform-admin pages) and each product's page-level components/hooks/api-client live in their
+own workspace package — `@lms/web` (`packages/lms-web`), `@hr/web` (`packages/hr-web`),
+`@task/web` (`packages/task-web`) — consumed as TypeScript source via `transpilePackages`, same
+as `@platform/ui-kit`. Route groups (`(lms)`, `(hr)`, `(todo)`) are purely organizational — they
+add no URL segment, so every existing route/bookmark is unchanged.
+
+Path alias `@/*` → `apps/web/*` (still `@/components/...`, `@/hooks/...`, `@/src/lib/...`) is
+**only valid inside `apps/web` itself**. The `@<product>/web` packages use plain relative imports
+(no path alias), matching `@platform/ui-kit`'s convention — this keeps them portable to a
+standalone Next app in P4.3.
 
 ```
-apps/web/
-├── app/                                ← App Router. Routes + route-handler proxies ONLY.
+apps/web/                               ← Shell app: chrome + platform-admin only
+├── app/
 │   ├── layout.tsx                      ← Root layout (fonts, <body> chrome)
-│   ├── globals.css                     ← `@import "tailwindcss"` + a few global rules
 │   ├── login/ | change-password/ | select-branch/
 │   ├── api/                            ← Route handlers that proxy to the gateway (server-side)
 │   ├── dashboard/
-│   │   ├── layout.tsx                  ← Dashboard shell (navbar, module gating)
-│   │   ├── leads/page.tsx              ← Server Component: session → render Shell
-│   │   ├── team/ | users/ | assignments/ | follow-ups/ | analytics/ | api-clients/ …
-│   ├── attendance/ | leave/ | tasks/   ← HR/attendance/task modules
+│   │   ├── layout.tsx                  ← Dashboard shell (navbar, product switcher)
+│   │   ├── (lms)/                      ← Route group: leads/follow-ups/leads-history/my-leads/assignments/analytics
+│   │   ├── team/ | users/ | api-clients/   ← Platform-admin, not product-owned
+│   ├── (hr)/leave/ | (hr)/attendance/  ← Route group, each with its own layout.tsx (moved intact)
+│   ├── (todo)/tasks/                   ← Route group, own layout.tsx
 │
 ├── components/
-│   ├── <domain>/                       ← One folder per domain (leads, users, assignments, …)
-│   │   ├── <Domain>Shell.tsx           ← 'use client' orchestrator: owns state + hooks
-│   │   ├── <Domain>Table.tsx | *Modal.tsx | *Selector.tsx …
-│   ├── dashboard/                      ← DashboardNavbar, LeadDashboardShell, MultiSelect, RoleBadge
-│   ├── layout/                         ← App chrome
-│   ├── common/                         ← Small shared bits (UserPicker, SearchBar-like)
-│   └── auth/
+│   ├── dashboard/                      ← Shell chrome only: DashboardNavbar, ProductSwitcher,
+│   │                                     DashboardSidebar, ModuleShell, MyDayWidget (cross-product)
+│   ├── layout/ | auth/ | common/       ← Shared chrome
+│   └── users/ | api-clients/           ← Platform-admin pages' components
 │
-├── hooks/                              ← Client data/UI hooks — NO JSX. `useLeads`, `useOrgs`, …
-│
+├── src/lib/api/client.ts               ← auth + apiClients namespaces ONLY (platform-admin)
+├── src/lib/permissions/                ← Rank gates for platform-admin pages
+└── next.config.ts (transpilePackages: ui-kit + the three @<product>/web packages)
+
+packages/<product>-web/                 ← @lms/web · @hr/web · @task/web
+├── package.json                        ← main/types → src/index.ts, deps on @platform/ui-kit +
+│                                          its own @<product>/authz
 ├── src/
-│   ├── lib/
-│   │   ├── api/client.ts               ← THE browser API layer (api.auth, api.leads, …)
-│   │   ├── server-session.ts           ← getServerSession() for Server Components
-│   │   ├── require-session.ts
-│   │   ├── modules.ts                  ← getEnabledModules() (tenant module gating)
-│   │   ├── permissions/ | leads/ | leave/ | attendance/ | tasks/ | export/
-│   ├── types/                          ← Web-only types + re-exports (index.ts, leads.ts)
-│   └── config/navigation.ts            ← Nav config (no JSX)
-│
-├── next.config.ts · postcss.config.mjs · tsconfig.json
+│   ├── index.ts                        ← Public barrel: page-level Shells + the few types/helpers
+│   │                                      a Server Component page needs (named exports only)
+│   ├── components/<domain>/            ← <Domain>Shell.tsx + leaves — internal, relative imports
+│   ├── hooks/                          ← Client data hooks — internal
+│   └── lib/
+│       ├── api/client.ts               ← This product's `api.*` namespaces
+│       └── <domain>/                   ← format/types/filter helpers
 ```
+
+Cross-product code that 2+ products (or apps/web's own chrome) need — `orgs`/`users` api
+namespaces, `UserPicker`, `MultiSelect`, `NotificationProvider`, `getEnabledModules`/
+`PlatformModule`, generic `exportRows`/`buildFilename`, the shared `ag-grid.css` theme — lives in
+`@platform/ui-kit` (or `@platform/ui-kit/server` for session/module helpers), never duplicated
+per package. **No product package may depend on a sibling product package** — the boundary is
+enforced by `.dependency-cruiser.cjs` (Phase5 F-0). Where a screen genuinely needs another
+product's data (e.g. a lead showing its linked tasks), read that product's endpoints through the
+shared gateway in a local component — see `packages/lms-web/.../LeadTasksSection.tsx`, which reads
+`/tasks` via `createApiClient` instead of importing `@task/web` (the former sibling exception,
+reconciled in Phase5 P-4).
 
 ### Enforcement table
 
-| Location                     | Allowed                                                     | Never allowed                                              |
-|------------------------------|------------------------------------------------------------|------------------------------------------------------------|
-| `app/**/page.tsx`            | `await getServerSession()`, redirect, render a Shell       | `useState`/`useEffect`, event handlers, business logic     |
-| `app/**/layout.tsx`          | Chrome, module gating, providers                           | Domain data fetching                                       |
-| `app/api/**/route.ts`        | Proxy to gateway, forward cookies/headers                  | Business logic, DB access                                  |
-| `components/<domain>/*Shell` | `'use client'`, state, hooks, mutation handlers            | `fetch` (use `api.*`), server-only imports                 |
-| `components/<domain>/*` (leaf)| Props in, typed callbacks out, Tailwind classes           | Data fetching, owning cross-cutting state                  |
-| `hooks/`                     | State, effects, `api.*` calls, return named object         | JSX / returning component trees                            |
-| `src/lib/api/client.ts`      | All `request()` calls, typed `api.*` namespaces            | React imports, JSX                                         |
-| `@crm/ui`                    | Domain-agnostic primitives, `createApiClient`              | CRM domain types, CRM endpoints                            |
+| Location                          | Allowed                                                     | Never allowed                                              |
+|------------------------------------|--------------------------------------------------------------|--------------------------------------------------------------|
+| `app/**/page.tsx`                  | `await getServerSession()`, redirect, render a Shell from `@<product>/web` | `useState`/`useEffect`, event handlers, business logic |
+| `app/**/layout.tsx`                | Chrome, module/product gating, providers                     | Domain data fetching                                          |
+| `app/api/**/route.ts`              | Proxy to gateway, forward cookies/headers                    | Business logic, DB access                                    |
+| `<product>-web/src/components/<domain>/*Shell` | `'use client'`, state, hooks, mutation handlers    | `fetch` (use this package's `api.*`), imports from `apps/web` or a sibling product package |
+| `<product>-web/src/components/<domain>/*` (leaf) | Props in, typed callbacks out, Tailwind classes  | Data fetching, owning cross-cutting state                     |
+| `<product>-web/src/hooks/`         | State, effects, `api.*` calls, return named object            | JSX / returning component trees                               |
+| `<product>-web/src/lib/api/client.ts` | This product's `request()` calls, typed `api.*` namespaces | React imports, JSX; namespaces another product owns          |
+| `<product>-web/src/index.ts`       | Named re-exports of page-level Shells + page-needed types    | Re-exporting every internal leaf component                    |
+| `@platform/ui-kit`                 | Domain-agnostic primitives, `createApiClient`, cross-product (`orgs`/`users`) namespaces | Single-product domain types, single-product endpoints |
+| `@platform/ui-kit/server`          | Server-only session/module helpers (`getServerSession`, `requireSession`, `getEnabledModules`) | Import from a `'use client'` module            |
 
 ---
 
 ## 2. The API Layer
 
-### `@crm/ui` provides the generic fetch wrapper — never add endpoints here
+### `@platform/ui-kit` provides the generic fetch wrapper — never add endpoints here
 
 `createApiClient(basePath)` returns `{ request<T>() }`. It handles credentials, JSON headers,
 204/empty-body, and normalizes errors into an `ApiRequestError` (`.status`, `.body`) whose
@@ -103,7 +126,7 @@ message flattens Zod `details`. See `packages/ui/src/api/http.ts`.
 ### `apps/web/src/lib/api/client.ts` — the CRM domain layer
 
 ```ts
-import { createApiClient } from '@crm/ui';
+import { createApiClient } from '@platform/ui-kit';
 
 const { request } = createApiClient('/api');   // '/api' → Next route handlers → gateway
 
@@ -146,11 +169,10 @@ export const leads = {
 Pages resolve the session, gate access, and render a client Shell. No state, no handlers.
 
 ```tsx
-// app/dashboard/leads/page.tsx
+// app/dashboard/(lms)/leads/page.tsx — URL is still /dashboard/leads (route groups add no segment)
 import { redirect } from 'next/navigation';
-import { getServerSession } from '@/src/lib/server-session';
-import { getEnabledModules } from '@/src/lib/modules';
-import LeadDashboardShell from '@/components/dashboard/LeadDashboardShell';
+import { getServerSession, getEnabledModules } from '@platform/ui-kit/server';
+import { LeadDashboardShell } from '@lms/web';
 
 export const dynamic = 'force-dynamic';
 
@@ -163,7 +185,7 @@ export default async function LeadsPage() {
 ```
 
 - Add `export const dynamic = 'force-dynamic'` for any authenticated, per-request page.
-- `getServerSession()` returns `{ session, cookieHeader }` or `null`; redirect to `/login`
+- `getServerSession()` returns `{ session, cookieHeader, licensedProducts }` or `null`; redirect to `/login`
   with an encoded `callbackUrl` when null.
 - Pass the resolved `actor` (session user) and any gating data **down as props** to the Shell.
 
@@ -198,9 +220,9 @@ export default function LeadDashboardShell({ actor, enabledModules }: {
 ```
 
 - Default-export Shells and page-level components (matches `LeadDashboardShell`) — **component
-  files use `export default`; hooks and the api layer are named exports.** (Note: `@crm/ui`
+  files use `export default`; hooks and the api layer are named exports.** (Note: `@platform/ui-kit`
   re-exports its primitives as *named* exports from the barrel, so consume them as
-  `import { Modal } from '@crm/ui'`.)
+  `import { Modal } from '@platform/ui-kit'`.)
 - Keep mutation error handling in the Shell (or hook) and show it inline near the action.
 - Tables are **AG Grid** (`ag-grid-react`) configured in the Shell/Table component.
 
@@ -275,9 +297,9 @@ key, `revalidateOnFocus: false`, and return the same named-object shape.
 
 ---
 
-## 7. Shared UI Primitives (`@crm/ui`)
+## 7. Shared UI Primitives (`@platform/ui-kit`)
 
-Import generic building blocks from `@crm/ui` rather than re-implementing:
+Import generic building blocks from `@platform/ui-kit` rather than re-implementing:
 
 - `Modal` — controlled (`open`, `onClose`, `title`, `maxWidth`, `locked`); Escape-to-close,
   `role="dialog"` + `aria-modal`. See `packages/ui/src/components/Modal/Modal.tsx`.
@@ -285,7 +307,7 @@ Import generic building blocks from `@crm/ui` rather than re-implementing:
 - Hooks: `useDropdown`, `useIsMobile`.
 - `createApiClient` (fetch wrapper).
 
-Build a component in `@crm/ui` when it has **zero CRM domain knowledge** and is reused across
+Build a component in `@platform/ui-kit` when it has **zero CRM domain knowledge** and is reused across
 apps/modules. Otherwise build it under `apps/web/components/<domain>/`.
 
 ---
@@ -305,8 +327,10 @@ apps/modules. Otherwise build it under `apps/web/components/<domain>/`.
 
 ## 9. Auth, Session & Roles
 
-- **Server side:** `getServerSession()` (`@/src/lib/server-session`) reads the session cookie
-  and returns `{ session, cookieHeader }`. Use it in pages/layouts; pass results down as props.
+- **Server side:** `getServerSession()` / `requireSession()` (from `@platform/ui-kit/server`)
+  verify the JWT and resolve the session from the gateway, returning `{ session, cookieHeader }`.
+  Use them in pages/layouts; pass results down as props. These are server-only (they pull in
+  `next/headers` + `jose`) — never import them from a `'use client'` module.
 - **Role/rank gating:** ranks come from `@crm/permissions` (`RANKS`, numeric ladder). Gate UI on
   the actor's rank/role, but treat the frontend as advisory only — the backend RLS + gateway are
   the real enforcement. Never rely on hiding a button for security.

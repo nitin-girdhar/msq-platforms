@@ -1,10 +1,13 @@
 import { uuid, text, integer, boolean } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import { crmSchema } from '../pg-schemas';
+import { lmsSchema } from '../pg-schemas';
+import { tenantsTable } from './tenants.table';
 
-export const leadStageTable = crmSchema.table('lead_stage', {
+// Tenant-scoped (RLS, db_scripts/26 — N-6 Half B). Unique per (tenant_id, name).
+export const leadStageTable = lmsSchema.table('lead_stage', {
   id:               uuid('id').primaryKey().default(sql`gen_uuidv7()`),
-  name:             text('name').notNull().unique(),
+  tenantId:         uuid('tenant_id').notNull().references(() => tenantsTable.id, { onDelete: 'cascade' }),
+  name:             text('name').notNull(),
   label:            text('label').notNull(),
   description:      text('description'),
   sortOrder:        integer('sort_order').notNull().default(0),

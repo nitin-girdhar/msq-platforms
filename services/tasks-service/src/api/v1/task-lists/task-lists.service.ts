@@ -1,9 +1,9 @@
 import { logActivity } from '@crm/audit-log';
-import { canViewTeamTasks, canViewOrgTasks, canAdministerTasks } from '@crm/permissions';
+import { canViewTeamTasks, canViewOrgTasks, canAdministerTasks } from '@task/authz';
 import { ForbiddenError, NotFoundError } from '../../../lib/errors.js';
 import * as repo from './task-lists.repository.js';
 import type { TaskCtx } from './task-lists.repository.js';
-import type { CreateTaskListInput, UpdateTaskListInput, ListTaskListsInput } from '@crm/validation';
+import type { CreateTaskListInput, UpdateTaskListInput, ListTaskListsInput } from '@task/validation';
 
 export async function listTaskLists(ctx: TaskCtx, filters: ListTaskListsInput) {
   if (filters.scope === 'team' && !canViewTeamTasks(ctx.rank)) {

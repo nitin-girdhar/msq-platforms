@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { RANKS } from '@crm/permissions';
-import type { CreateApiClientInput, UpdateApiClientInput } from '@crm/validation';
+import { RANKS } from '@platform/authz';
+import type { CreateApiClientInput, UpdateApiClientInput } from '@platform/validation';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './api-clients.service.js';
 

@@ -59,8 +59,8 @@ Isolation: RLS on app.current_tenant_id (tenant) + per-product DB role GRANTs (p
 
 **Package taxonomy (after Phase 0):**
 ```
-@platform/{authz, db, types, service-auth, service-kit, ui-kit, audit-log}
-@lms/{authz, types}      @hr/{authz, types}      @task/{authz, types}
+@platform/{authz, db, types, validation, service-auth, service-kit, ui-kit, audit-log}
+@lms/{authz, types, validation}      @hr/{authz, types, validation}      @task/{authz, types, validation}
 ```
 Product packages depend on `@platform/*`, never on each other (enforced by dependency-cruiser).
 
@@ -86,24 +86,25 @@ Each phase is non-breaking and independently shippable. Order matters where note
 - **Depends on:** Phase 0.
 
 ### Phase 2 — Hierarchy decoupling
-- **2A** `hr.reporting_lines` (effective-dated: `user_id, manager_id, effective_from/to`, tenant/org scoped).
-- **2B** Repoint HR approver resolution (`resolve-approvers.ts`) to walk `hr.reporting_lines` instead of `iam.users.manager_id`.
-- **2C** Degrade `iam.users.manager_id` to an optional org default (or retire once no product depends on it); LMS keeps its own assignment hierarchy.
+- **2A** ✅ `hr.reporting_lines` (effective-dated: `user_id, manager_id, effective_from/to`, tenant/org scoped, RLS + no-overlap exclusion). Backfilled from `iam.users.manager_id`. `db_scripts/21_init-reporting-lines.sql`.
+- **2B** ✅ Repoint HR approver resolution (`resolve-approvers.ts`) to walk `hr.reporting_lines` (as of the apply date) instead of `iam.users.manager_id`. Pure `buildApproverChain` + unit tests unchanged.
+- **2C** _(pending)_ Degrade `iam.users.manager_id` to an optional org default (or retire once no product depends on it); LMS keeps its own assignment hierarchy. Deferred: `manager_id` still feeds the LMS/team `vw_user_team_members` tree, so retirement waits on the LMS assignment-hierarchy carve-out.
+- **2.2** ✅ Tests + docs for the hierarchy split: unit/integration tests proving `resolveApprovers` reads only `hr.reporting_lines` and never `iam.vw_user_team_members`/`manager_id` (`resolve-approvers.integration.test.ts`); Architecture.md/DB_model.md + HR-Leave Bruno docs updated.
 - **Acceptance:** HR leave/attendance approval chain is independent of LMS sales hierarchy; changing an HR reporting line does not affect lead assignment.
 - **Depends on:** Phase 1 (product roles), can parallel Phase 3.
 
 ### Phase 3 — Tenant-scoped configuration & seeding (D7)
 - **3A** Add `tenant_id NOT NULL` + `tenant_isolation_policy` to every lookup currently global (`task-statuses`, `task-priorities`, HR `leave_types`/`employment_types`/`attendance_statuses`, plus the new per-tenant role tables).
-- **3B** `seedTenantDefaults(tenantId)` provisioning step + versioned default catalogs (JSON/SQL fixtures per product).
+- **3B** ✅ `seedTenantDefaults(tenantId)` provisioning step + versioned default catalogs per product. `db_scripts/23_tenant-default-catalogs.sql`: `entity.catalog_defaults` (immutable versioned rows) + `entity.catalog_versions` (current version + module gating) + `entity.tenant_catalog_versions` (per-tenant seeded/reset record, RLS) + `entity.seed_tenant_defaults()`/`reset_tenant_catalog()` functions. TS wrappers `seedTenantDefaults()`/`resetTenantCatalog()`/`getTenantCatalogVersions()` in `@crm/db`. Seeds a private copy of each licensed product's catalog; editing a default (new version) never touches existing tenants; explicit opt-in reset restores defaults FK-safely. Backfilled existing tenants. Wiring into a provisioning API + `lookup-admin` reset UI is 3C.
 - **3C** Make `lookup-admin` tenant-context-aware (act *within* a tenant, never edit global rows).
 - **Acceptance:** editing a tenant's lookup never affects another tenant; a new tenant provisions with a full default catalog per licensed product.
 - **Depends on:** Phase 0; parallel to Phase 2.
 
 ### Phase 4 — Web product split (D2)
-- **4A** Extract `@platform/ui-kit` (design system, session + API-client hooks) from `apps/web`.
-- **4B** Move each product's screens into a product feature package + route group: `(lms)`, `(hr)`, `(todo)`; product switcher shows only licensed products.
-- **4C** Split into separate Next apps/images: `lms-web`, `hr-web`, `todo-web`; single SSO cookie on `.app.com`; login once at `auth.app.com`.
-- **Acceptance:** each product UI deploys/shuts down independently; switching products needs no re-login; unlicensed product hidden.
+- **4A** ✅ Extract `@platform/ui-kit` (design system, session + API-client hooks) from `apps/web`.
+- **4B** ✅ Move each product's screens into a product feature package + route group: `(lms)`, `(hr)`, `(todo)`; product switcher shows only licensed products.
+- **4C** ✅ **Split into separate Next apps/images** (P4.3). `apps/web` was retired and replaced by four thin Next apps: `apps/auth-web` (`auth.app.com`, port 3000 — login/change-password/select-branch), `apps/lms-web` (`lms.app.com`, 3001), `apps/hr-web` (`hr.app.com`, 3002), `apps/todo-web` (`todo.app.com`, 3003). Shared chrome (navbar, sidebars, product switcher, user/branch menus) moved into `@platform/ui-kit/shell` (product-agnostic — nav items, product origins, and the LMS-only notification bell come in as props/slots). **SSO:** identity-service sets the `fc_session` cookie on `COOKIE_DOMAIN` (`.app.com`) so all subdomains share one session; product apps verify it via `JWT_PUBLIC_KEY` (RS256) only — a reusable `createProductMiddleware()` bounces unauthenticated users to `auth.app.com/login` with the full return URL. auth-web validates its post-login `callbackUrl` against an origin allowlist (open-redirect guard). Local dev: on `localhost` the cookie is shared across ports 3000–3003 (port is ignored), so SSO works with no proxy; an optional Caddy profile (`--profile sso-proxy`, `infra/Caddyfile`) fronts `*.app.localhost` to simulate the real cross-subdomain topology.
+- **Acceptance:** ✅ each product UI deploys/shuts down independently (own image); switching products needs no re-login (shared cookie); unlicensed product hidden by the switcher + blocked at the gateway.
 - **Depends on:** Phase 0 (feature-package boundaries); best after Phase 1 (licensed_products in JWT).
 
 ### Phase 5 — Repo extraction + local Docker delivery (D1, D5)

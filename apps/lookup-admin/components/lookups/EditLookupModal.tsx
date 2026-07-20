@@ -14,6 +14,7 @@ interface Props {
   table: string;
   config: LookupTableDef;
   row: LookupRow;
+  tenantId?: string | undefined;
 }
 
 type FormValues = Record<string, string | number | boolean>;
@@ -36,7 +37,7 @@ function valuesFromRow(config: LookupTableDef, row: LookupRow): FormValues {
   return values;
 }
 
-export default function EditLookupModal({ open, onClose, table, config, row }: Props) {
+export default function EditLookupModal({ open, onClose, table, config, row, tenantId }: Props) {
   const router = useRouter();
   const [values, setValues] = useState<FormValues>(() => valuesFromRow(config, row));
   const [pending, setPending] = useState(false);
@@ -56,7 +57,9 @@ export default function EditLookupModal({ open, onClose, table, config, row }: P
     for (const field of selectFields) {
       const parentTable = field.selectOptionsFrom;
       if (!parentTable) continue;
-      lookupAdmin.list(parentTable)
+      // Tenant-scoped parent lookups (N-6) require the selected tenant on the
+      // options fetch; undefined for global parents.
+      lookupAdmin.list(parentTable, tenantId)
         .then((res) => {
           const rows = (res.data as unknown as SelectOptionRow[]).filter((r) => r.is_active);
           setSelectOptions((prev) => ({ ...prev, [field.key]: rows }));
@@ -127,7 +130,7 @@ export default function EditLookupModal({ open, onClose, table, config, row }: P
 
     setPending(true);
     try {
-      await lookupAdmin.update(table, row.id, patch);
+      await lookupAdmin.update(table, row.id, patch, tenantId);
       router.refresh();
       handleClose();
     } catch (err) {
@@ -141,7 +144,7 @@ export default function EditLookupModal({ open, onClose, table, config, row }: P
     setError(null);
     setStatusPending(true);
     try {
-      await lookupAdmin.update(table, row.id, { is_active: !row.is_active });
+      await lookupAdmin.update(table, row.id, { is_active: !row.is_active }, tenantId);
       router.refresh();
       handleClose();
     } catch (err) {

@@ -87,11 +87,13 @@ export function publicApiKeyAuth(requiredScope: ApiScope) {
 // X-Allowed-Org-Ids / X-Scope-All-Orgs headers (see publicScopeHeaders).
 export function publicUserContext(client: ResolvedApiClient): UserContext {
   const singleOrg = !client.scope_all_orgs && client.org_ids.length === 1 ? client.org_ids[0] : undefined;
+  // Synthetic actor for the public/partner API. platform_role is 'member' (least
+  // privileged); the public downstream routes are scope-gated (publicScopeHeaders)
+  // and tenant/org-bound, not platform_role-driven.
   return {
     user_id: `api_client:${client.id}`,
-    user_role: 'api_client',
+    platform_role: 'member',
     org_id: singleOrg ?? '',
-    rank: '0',
     tenant_id: client.tenant_id,
   };
 }

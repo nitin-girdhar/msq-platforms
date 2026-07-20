@@ -10,7 +10,7 @@ Copy-paste templates that match `apps/web` conventions. Replace `<Domain>` / `<d
 ```tsx
 // app/dashboard/<domain>/page.tsx
 import { redirect } from 'next/navigation';
-import { getServerSession } from '@/src/lib/server-session';
+import { getServerSession } from '@platform/ui-kit/server';
 import <Domain>Shell from '@/components/<domain>/<Domain>Shell';
 
 export const dynamic = 'force-dynamic';
@@ -177,10 +177,10 @@ export default function <Domain>Shell({ actor }: { actor: SessionUser }) {
 
 ---
 
-## 6. Modal usage (from `@crm/ui`)
+## 6. Modal usage (from `@platform/ui-kit`)
 
 ```tsx
-import { Modal } from '@crm/ui';   // named export from the @crm/ui barrel
+import { Modal } from '@platform/ui-kit';   // named export from the @platform/ui-kit barrel
 import { useState } from 'react';
 import { <resource> } from '@/src/lib/api/client';
 

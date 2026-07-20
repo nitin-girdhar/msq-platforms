@@ -48,6 +48,15 @@
 
 All steps run on your Windows development machine where the source code lives.
 
+> **P4.3 — the web UI is now four images, not one.** `crm-web` was split into
+> per-product images: **`crm-auth-web`** (port 3000, `auth.app.com` — login),
+> **`crm-lms-web`** (3001), **`crm-hr-web`** (3002), **`crm-todo-web`** (3003).
+> Wherever this runbook says `crm-web`, build/save/run all four instead. For SSO
+> across them set `COOKIE_DOMAIN=.app.com` (+ `COOKIE_SECURE=true`) and the
+> `NEXT_PUBLIC_AUTH_URL`/`NEXT_PUBLIC_LMS_URL`/`NEXT_PUBLIC_HR_URL`/`NEXT_PUBLIC_TASK_URL`
+> origins in `.env`; product apps carry only `JWT_PUBLIC_KEY` (verify), never the
+> signing secret. Front the subdomains with a reverse proxy (see `infra/Caddyfile`).
+
 ### Step 1 — Build all Docker images
 
 Open a terminal in the project root:
@@ -57,7 +66,7 @@ docker compose build
 docker compose build --no-cache # force buid
 ```
 
-This builds all 10 images (7 services + api-gateway + web + lookup-admin). First build takes 5–15 minutes; subsequent builds use layer caching and are faster. When you only changed a subset of services, `docker compose build` alone will only rebuild what changed.
+This builds all 13 images (7 services + api-gateway + 4 web apps + lookup-admin). First build takes 5–15 minutes; subsequent builds use layer caching and are faster. When you only changed a subset of services, `docker compose build` alone will only rebuild what changed.
 
 ### Step 2 — Verify images
 
@@ -75,7 +84,10 @@ crm-meta-conversion-api
 crm-notifications-service
 crm-admin-service
 crm-api-gateway
-crm-web
+crm-auth-web
+crm-lms-web
+crm-hr-web
+crm-todo-web
 crm-lookup-admin
 ```
 
@@ -90,7 +102,7 @@ Save all images into a single file.
 **Option A — Without compression (PowerShell, faster):**
 
 ```powershell
-docker save -o crm-images.tar postgres:18.4 crm-identity-service crm-leads-service crm-communication-service crm-meta-conversion-api crm-notifications-service crm-admin-service crm-api-gateway crm-web crm-lookup-admin
+docker save -o crm-images.tar postgres:18.4 crm-identity-service crm-leads-service crm-communication-service crm-meta-conversion-api crm-notifications-service crm-admin-service crm-api-gateway crm-auth-web crm-lms-web crm-hr-web crm-todo-web crm-lookup-admin
 ```
 
 Resulting file will be approximately 3–4 GB (uncompressed).
@@ -98,7 +110,7 @@ Resulting file will be approximately 3–4 GB (uncompressed).
 **Option B — With compression (Git Bash, smaller file):**
 
 ```bash
-docker save postgres:18.4 crm-identity-service crm-leads-service crm-communication-service crm-meta-conversion-api crm-notifications-service crm-admin-service crm-api-gateway crm-web crm-lookup-admin | gzip > crm-images.tar.gz
+docker save postgres:18.4 crm-identity-service crm-leads-service crm-communication-service crm-meta-conversion-api crm-notifications-service crm-admin-service crm-api-gateway crm-auth-web crm-lms-web crm-hr-web crm-todo-web crm-lookup-admin | gzip > crm-images.tar.gz
 ```
 
 Resulting file will be approximately 1.5–2.5 GB.
@@ -162,13 +174,23 @@ DB_LEAD_SVC_USER=lead_svc
 DB_LEAD_SVC_PASSWORD=<STRONG-PASSWORD>
 DB_TENANT_SVC_USER=tenant_dash_svc
 DB_TENANT_SVC_PASSWORD=<STRONG-PASSWORD>
-DB_SERVICE_USER=crm_service
+DB_SERVICE_USER=root_service
 DB_SERVICE_PASSWORD=<STRONG-PASSWORD>
+
+# Per-product DB logins (P1.2/D8) — MUST match what 19_init-per-product-db-grants.sql
+# / 10_init-hr-task-schemas.sql create. Used by leads-service + meta-conversion-api
+# (lms_svc), hr-service (hr_svc), tasks-service (task_svc) — see docker-compose.yml.
+DB_LMS_SVC_USER=lms_svc
+DB_LMS_SVC_PASSWORD=<STRONG-PASSWORD>
+DB_HR_SVC_USER=hr_svc
+DB_HR_SVC_PASSWORD=<STRONG-PASSWORD>
+DB_TASK_SVC_USER=task_svc
+DB_TASK_SVC_PASSWORD=<STRONG-PASSWORD>
 
 # Composed DATABASE_URLs (overridden by docker-compose for container networking)
 DATABASE_URL=postgres://lead_svc:<LEAD-PWD>@localhost:5432/crm
 DATABASE_URL_TENANT=postgres://tenant_dash_svc:<TENANT-PWD>@localhost:5432/crm
-DATABASE_URL_SERVICE=postgres://crm_service:<SERVICE-PWD>@localhost:5432/crm
+DATABASE_URL_SERVICE=postgres://root_service:<SERVICE-PWD>@localhost:5432/crm
 
 # PostgreSQL pool tuning
 PG_MAX=10
@@ -233,8 +255,9 @@ FOLLOWUP_LOOKAHEAD_MINUTES=5
 
 If you change service-role passwords from the defaults, you **must** also update `db_scripts/01_init-db.sql` where the roles are created:
 
-- Line 100: `crm_service` role password (default: `CrmSvc_Dev2025`)
+- Line 100: `root_service` role password (default: `CrmSvc_Dev2025`)
 - Search for `lead_svc` and `tenant_dash_svc` roles and update their passwords to match `.env`
+- Search for `lms_svc`/`hr_svc`/`task_svc` in `19_init-per-product-db-grants.sql` (`lms_svc`) and `10_init-hr-task-schemas.sql` (`hr_svc`/`task_svc`) and update their passwords too
 
 The passwords in `.env` and `01_init-db.sql` must be identical — the SQL script creates the database roles, and `.env` provides the connection strings that services use.
 
@@ -371,7 +394,10 @@ Apply this change to **every service** (the `postgres` service already uses `ima
 | `notifications-service` | `crm-notifications-service` |
 | `admin-service`         | `crm-admin-service`         |
 | `api-gateway`           | `crm-api-gateway`           |
-| `web`                   | `crm-web`                   |
+| `auth-web`              | `crm-auth-web`              |
+| `lms-web`               | `crm-lms-web`               |
+| `hr-web`                | `crm-hr-web`                |
+| `todo-web`              | `crm-todo-web`              |
 | `lookup-admin`          | `crm-lookup-admin`          |
 
 > **Tip:** Confirm exact image names from `docker images` output. Names depend on the project folder name on the build machine.
@@ -461,7 +487,7 @@ sudo ufw allow 5432/tcp comment "Postgres"
 sudo ufw status
 ```
 
-> **Security:** Do NOT expose ports 4001–4006 or 5432. Docker handles inter-container networking internally. Only 3000 (web), 3001 (lookup-admin, super_admin-only), and 4000 (API gateway) should be reachable from the LAN.
+> **Security:** Do NOT expose ports 4001–4006 or 5432. Docker handles inter-container networking internally. Only 3000 (auth-web), 3001 (lms-web), 3002 (hr-web), 3003 (todo-web), 3005 (lookup-admin, super_admin-only), and 4000 (API gateway) should be reachable from the LAN (or, with the reverse proxy, just 80/443 for the *.app.com subdomains + 4000).
 
 ---
 
@@ -1025,8 +1051,11 @@ This is ngrok's local web dashboard — accessible only from the laptop itself.
 | 6   | notifications-service | `crm-notifications-service` | 4004 (internal)    | postgres     |
 | 7   | admin-service         | `crm-admin-service`         | 4006 (internal)    | postgres     |
 | 8   | api-gateway           | `crm-api-gateway`           | **4000 (exposed)** | all services |
-| 9   | web                   | `crm-web`                   | **3000 (exposed)** | api-gateway  |
-| 10  | lookup-admin          | `crm-lookup-admin`          | **3001 (exposed)** | api-gateway  |
+| 9   | auth-web              | `crm-auth-web`              | **3000 (exposed)** | api-gateway  |
+| 10  | lms-web               | `crm-lms-web`               | **3001 (exposed)** | api-gateway  |
+| 11  | hr-web                | `crm-hr-web`                | **3002 (exposed)** | api-gateway  |
+| 12  | todo-web              | `crm-todo-web`              | **3003 (exposed)** | api-gateway  |
+| 13  | lookup-admin          | `crm-lookup-admin`          | **3005 (exposed)** | api-gateway  |
 
 ---
 
@@ -1069,7 +1098,7 @@ docker compose ps
 docker compose ps postgres
 
 # Check if the service credentials work
-docker exec -it crm-db-server psql -U crm_service -d crm -c "SELECT 1"
+docker exec -it crm-db-server psql -U root_service -d crm -c "SELECT 1"
 ```
 
 Common causes:

@@ -1,14 +1,23 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, UpdateAssignmentWeightsInput, AddOrgMappingInput } from '@crm/validation';
-import { RANKS } from '@crm/permissions';
+import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, UpdateAssignmentWeightsInput, AddOrgMappingInput } from '@platform/validation';
+import { RANKS } from '@platform/authz';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './users.service.js';
 import type { ListUsersQuery, GetAssignableQuery } from './users.schema.js';
 
+// User management runs on the GLOBAL iam.user_roles ladder (P1.1/P1.2), not on
+// any single product's rank scale — identity is platform-shared and must not
+// take a product-authz dependency (N-1). This threshold is numerically the
+// same tier LMS calls "senior_sales_executive" (see lms.roles.rank), but it's
+// inlined here rather than imported so identity-service takes no @lms/authz
+// dependency. Matches the RANK_READ_ONLY/RANK_ADMIN inlining already used in
+// users.repository.ts and packages/db/src/assignment.ts.
+const USER_MGMT_MIN_RANK = 40;
+
 export class UsersController {
   list = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (rank < RANKS.SSE) throw new ForbiddenError('Insufficient permissions to view iam.users');
+    if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to view iam.users');
     const q = request.query as ListUsersQuery;
     const result = await service.listUsers({ org_id, user_id, role, tenant_id }, rank, q.page, q.page_size, q.org_id);
     return reply.send({ success: true, data: result.users, total: result.total, page: result.page, page_size: result.page_size });
@@ -56,7 +65,7 @@ export class UsersController {
 
   create = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (rank < RANKS.SSE) throw new ForbiddenError('Insufficient permissions to create iam.users');
+    if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to create iam.users');
     const data = request.body as CreateUserInput;
     const result = await service.createUser({ org_id, user_id, role, tenant_id }, rank, data);
     return reply.status(201).header('Cache-Control', 'no-store').send({ success: true, data: { id: result.id, email: result.email }, temporary_password: result.temporary_password });
@@ -64,7 +73,7 @@ export class UsersController {
 
   update = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (rank < RANKS.SSE) throw new ForbiddenError('Insufficient permissions to update iam.users');
+    if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to update iam.users');
     const { id } = request.params as { id: string };
     const data = request.body as UpdateUserInput;
     await service.updateUser({ org_id, user_id, role, tenant_id }, rank, id, data);

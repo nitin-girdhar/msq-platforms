@@ -6,7 +6,7 @@ import { leaveRequestsTable } from './leave-requests.table';
 import { usersTable } from './users.table';
 import { leaveRequestStatusesTable } from './leave-request-statuses.table';
 
-// Append-only status-transition log (mirrors crm.lead_status_log). Written by
+// Append-only status-transition log (mirrors lms.lead_status_log). Written by
 // the hr.log_leave_status_change trigger only.
 export const leaveRequestStatusLogTable = hrSchema.table('leave_request_status_log', {
   id:          uuid('id').primaryKey().default(sql`gen_uuidv7()`),

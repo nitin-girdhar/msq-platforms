@@ -1,6 +1,6 @@
 import { uuid, text, boolean, timestamp, jsonb, integer, smallint } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import { crmSchema } from '../pg-schemas';
+import { lmsSchema } from '../pg-schemas';
 import { organizationsTable } from './organizations.table';
 import { citiesTable } from './cities.table';
 import { statesTable } from './states.table';
@@ -11,7 +11,7 @@ import { adCampaignsTable } from './ad-campaigns.table';
 import { leadSourcesTable } from './lead-sources.table';
 import { usersTable } from './users.table';
 
-export const marketingLeadsTable = crmSchema.table('marketing_leads', {
+export const marketingLeadsTable = lmsSchema.table('marketing_leads', {
   id:              uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   orgId:           uuid('org_id').notNull().references(() => organizationsTable.id, { onDelete: 'restrict' }),
   firstName:       text('first_name').notNull(),

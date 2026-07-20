@@ -32,7 +32,18 @@ export async function withRoleTx<T>(ctx: RoleTxContext, fn: (tx: DrizzleTx) => P
     });
   }
   return appDrizzle().transaction(async (tx) => {
-    await tx.execute(sql.raw(`SET LOCAL ROLE app_user`));
+    // Product-scoped logins (lms_svc/hr_svc/task_svc — see
+    // db_scripts/19_init-per-product-db-grants.sql) must NOT switch to the
+    // shared app_user role: app_user's own grants span every product's
+    // schema, so doing so would undo the per-product GRANT-level isolation
+    // (D8) these logins exist for. They already satisfy every
+    // `TO app_user` RLS policy via role membership alone (membership checks
+    // ignore INHERIT), so skipping this SET ROLE only drops the *extra*
+    // cross-schema privileges app_user would otherwise hand them — RLS
+    // enforcement is unaffected.
+    if (process.env['DB_PRODUCT_SCOPED_LOGIN'] !== 'true') {
+      await tx.execute(sql.raw(`SET LOCAL ROLE app_user`));
+    }
     await tx.execute(sql`SELECT set_config('app.current_org_id', ${ctx.org_id}, true)`);
     await tx.execute(sql`SELECT set_config('app.current_user_id', ${ctx.user_id}, true)`);
     return fn(tx);
@@ -41,4 +52,32 @@ export async function withRoleTx<T>(ctx: RoleTxContext, fn: (tx: DrizzleTx) => P
 
 export async function withServiceTx<T>(fn: (tx: DrizzleTx) => Promise<T>): Promise<T> {
   return serviceDrizzle().transaction(fn);
+}
+
+// Admin config path (N-6): a super_admin managing a SELECTED tenant's product
+// lookups/roles. Runs as the product-scoped login (member of app_user) with
+// app.current_tenant_id pinned to the target tenant — NOT root_service/BYPASSRLS.
+// The tenant-scoped admin write RLS policies (db_scripts/25, keyed on
+// app.current_tenant_id) then make it physically impossible to read or write any
+// other tenant's rows. `tenantId` is the admin-selected tenant, never the actor's
+// own — the actor is a platform super_admin acting cross-tenant by choice.
+//
+// Callers MUST enforce the super_admin authorization gate before using this
+// (belt-and-suspenders with the RLS): this helper only pins tenant context, it
+// does not check who the actor is.
+export async function withTenantConfigTx<T>(
+  params: { actorUserId: string; tenantId: string },
+  fn: (tx: DrizzleTx) => Promise<T>,
+): Promise<T> {
+  return appDrizzle().transaction(async (tx) => {
+    // Same rationale as withRoleTx's app_user branch: product-scoped logins keep
+    // their narrow per-product grants (D8) and satisfy `TO app_user` policies via
+    // membership, so only non-product-scoped services SET ROLE app_user here.
+    if (process.env['DB_PRODUCT_SCOPED_LOGIN'] !== 'true') {
+      await tx.execute(sql.raw(`SET LOCAL ROLE app_user`));
+    }
+    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${params.tenantId}, true)`);
+    await tx.execute(sql`SELECT set_config('app.current_user_id', ${params.actorUserId}, true)`);
+    return fn(tx);
+  });
 }

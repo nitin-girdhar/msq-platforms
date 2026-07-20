@@ -20,7 +20,7 @@
 import { sql } from 'drizzle-orm';
 import { withRoleTx, withServiceTx, type RoleTxContext, type DrizzleTx } from '@crm/db';
 import { BadRequestError, NotFoundError } from '../../../lib/errors.js';
-import type { CreateTaskInput, UpdateTaskInput, ListTasksInput, ListMineTasksInput } from '@crm/validation';
+import type { CreateTaskInput, UpdateTaskInput, ListTasksInput, ListMineTasksInput } from '@task/validation';
 
 export type TaskCtx = RoleTxContext & { rank: number };
 type Row = Record<string, unknown>;

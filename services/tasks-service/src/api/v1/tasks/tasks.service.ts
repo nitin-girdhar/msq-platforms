@@ -12,7 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { logActivity } from '@crm/audit-log';
-import { canViewTeamTasks, canViewOrgTasks, canAdministerTasks } from '@crm/permissions';
+import { canViewTeamTasks, canViewOrgTasks, canAdministerTasks } from '@task/authz';
 import { ForbiddenError, NotFoundError } from '../../../lib/errors.js';
 import { publishTaskEvent } from '../../../lib/events.js';
 import * as repo from './tasks.repository.js';
@@ -22,7 +22,7 @@ import type {
   UpdateTaskInput,
   ListTasksInput,
   ListMineTasksInput,
-} from '@crm/validation';
+} from '@task/validation';
 
 // ── Visibility / authorization ──────────────────────────────────────────────
 async function canViewTask(ctx: TaskCtx, row: TaskRow): Promise<boolean> {

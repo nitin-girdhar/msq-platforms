@@ -2,7 +2,7 @@ import type { FastifyRequest } from 'fastify';
 import { getActiveTenantModules } from '@crm/db';
 import { ForbiddenError } from '../lib/errors.js';
 
-export type PlatformModule = 'crm' | 'leave' | 'attendance' | 'tasks';
+export type PlatformModule = 'lms' | 'leave' | 'attendance' | 'tasks';
 
 const CACHE_TTL_MS = 60_000;
 const cache = new Map<string, { modules: Set<string>; expiresAt: number }>();

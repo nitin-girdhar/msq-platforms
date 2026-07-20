@@ -27,7 +27,7 @@ The lead-management product is **LMS (Lead Management System)** — it is a lead
 
 | Today | Becomes | What it is |
 |---|---|---|
-| `@crm/*` packages (`@crm/db`, `@crm/types`, `@crm/permissions`, `@crm/ui`…) | `@platform/*` | **Platform** packages shared by every product — misnamed because the repo began as a CRM. Renamed as part of Phase 0. |
+| `@crm/*` packages (`@crm/db`, `@crm/types`, `@crm/permissions`, `@platform/ui-kit`…) | `@platform/*` | **Platform** packages shared by every product — misnamed because the repo began as a CRM. Renamed as part of Phase 0. |
 | the "crm" *product* (leads/marketing/meta domain) | `lms` | The **Lead Management System** product: `lms` schema (renamed from `crm` — see P1.0), `lms-repo`, `@lms/*` packages, `lms` entitlement key, `lms_svc` DB role, `(lms)` web route group. |
 | `crm_service` DB role (BYPASSRLS, used by every service's `withServiceTx`) | `root_service` | The **platform** BYPASSRLS role — misnamed "crm". Renamed to `root_service` (`ALTER ROLE` + `DATABASE_URL_SERVICE` + `APP_ROLE_TO_PG_ROLE` + `db_scripts` literals). Note: it is BYPASSRLS, *not* a Postgres superuser. Done in the P1.0 rename pass. |
 
@@ -132,7 +132,8 @@ Distribution evolves with how builds happen — start with the lightest thing th
 
 **Stage 1 (now) — local pnpm workspace, no registry, no git-tags.**
 All repos are cloned side-by-side under a parent folder with a root `pnpm-workspace.yaml` globbing every repo. pnpm symlinks `@platform/*` into each product exactly as inside a monorepo. Docker images are built **on the laptop** where all repos exist, so no cross-machine code fetch is needed.
-- **Self-contained images:** build each service/app with `pnpm --filter <pkg> deploy ./build/<pkg> --prod`, which flattens all workspace deps into a real, symlink-free `node_modules`; the Dockerfile copies that folder. Ship images via `docker save | gzip` → copy to server → `docker load`. (Verify `pnpm deploy` flags against pnpm 9.x when wiring the first Dockerfile.)
+- **Self-contained images:** each service/app `Dockerfile` builds its workspace deps (`pnpm --filter <pkg>... build`) and then runs `pnpm --filter <pkg> deploy --prod /app` *inside the builder stage*, which flattens all workspace deps into a real `node_modules` and copies only `dist`/`.next`+`public` (every deployable package.json carries a `"files"` field so source, tests, and tsconfigs aren't shipped). The `pnpm deploy` step must run in the same stage/path that the runner stage copies from — its virtual-store symlinks can be absolute, so moving the folder to a different path breaks them. Verified against pnpm 9.15.0.
+- **Shipping:** `scripts/docker-ship.sh` builds + `docker save | gzip`s each image to `dist/images/*.tar.gz`; `scripts/docker-load.md` covers copying those to the server, `docker load`, and running via `docker compose up -d` or `docker run` — no repo clone, pnpm, or registry access needed server-side.
 
 **Stage 2 (when builds move off the laptop — CI or a second builder) — git-tag deps.**
 Product `package.json` pins `"@platform/authz": "github:org/shared-repo#v1.3.0&path:/packages/authz"`. shared-repo tags releases (`git tag v1.3.0`); consumers bump the tag. The local workspace still overrides for live dev, so devs edit shared code without re-tagging. Requires each shared package to build on install (`prepare` script) or commit its `dist/`; private repo needs a CI read token.

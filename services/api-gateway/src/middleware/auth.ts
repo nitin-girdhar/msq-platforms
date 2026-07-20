@@ -27,12 +27,19 @@ export async function authPreHandler(
   }
 
   const payload = result.payload as JwtPayload;
+
+  // P1.3 hard cutover: a token minted before the shrink has no platform_role.
+  // Fail closed so its holder must re-authenticate and pick up a shrunk token,
+  // rather than silently defaulting to some role.
+  if (!payload.platform_role) {
+    return reply.status(401).send({ error: 'Session expired' });
+  }
+
   request.userCtx = {
     user_id: payload.sub,
-    user_role: payload.role,
+    platform_role: payload.platform_role,
     org_id: payload.org_id,
     tenant_id: payload.tenant_id,
-    rank: String(payload.rank),
   };
 }
 

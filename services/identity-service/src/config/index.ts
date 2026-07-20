@@ -14,6 +14,10 @@ export const config = {
   databaseUrlService: requireEnv('DATABASE_URL_SERVICE'),
   logLevel: process.env['LOG_LEVEL'] ?? 'info',
   secureCookies: process.env['COOKIE_SECURE'] === 'true',
+  // Parent domain the session cookie is scoped to, e.g. `.app.com`, so every
+  // product UI on a subdomain (lms./hr./todo./auth.) shares one SSO session.
+  // Unset in local single-host dev → host-only cookie (the pre-split behavior).
+  cookieDomain: process.env['COOKIE_DOMAIN'] || undefined,
   // Server-side pepper for HMAC-hashing public API keys. Must match the gateway's
   // value. Required in production; without it, API-client issuance is disabled.
   publicApiKeyPepper: process.env['PUBLIC_API_KEY_PEPPER'],
@@ -23,6 +27,9 @@ export const config = {
   jwtPrivateKey: process.env['JWT_PRIVATE_KEY'],
   jwtPublicKey: process.env['JWT_PUBLIC_KEY'],
   jwtKid: process.env['JWT_KID'],
+  // leads-service owns lms.marketing_leads (N-5) — identity invokes it for the
+  // branch-move/deactivation lead-reassignment saga rather than writing lms.*.
+  leadsServiceUrl: process.env['LEADS_SERVICE_URL'] ?? 'http://localhost:4002',
 } as const;
 
 if (config.nodeEnv === 'production' && !config.publicApiKeyPepper) {

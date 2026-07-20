@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { RANKS } from '@crm/permissions';
+import { RANKS } from '@platform/authz';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './user-roles.service.js';
 import type { CreateUserRoleInput, UpdateUserRoleInput } from './user-roles.schema.js';

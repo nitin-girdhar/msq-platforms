@@ -7,7 +7,7 @@ import type {
   ListTasksInput,
   ListMineTasksInput,
   CreateTaskCommentInput,
-} from '@crm/validation';
+} from '@task/validation';
 
 function ctxOf(request: FastifyRequest): TaskCtx {
   const { org_id, user_id, role, tenant_id, rank } = request.auth;

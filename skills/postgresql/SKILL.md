@@ -42,15 +42,15 @@ Objects live in domain schemas, **not** a flat `public`:
 | `geo`       | Reference data: countries, states, cities                   |
 | `entity`    | Tenants, organizations, org/tenant lookups                  |
 | `iam`       | Users, roles, org mappings                                  |
-| `crm`       | Leads, stages, interactions, follow-ups, assignments        |
+| `lms`       | Leads, stages, interactions, follow-ups, assignments        |
 | `marketing` | Campaigns, platforms, campaign statuses                     |
 | `audit`     | Activity log, history, audit trail                          |
 | `ext`       | External integration (API clients, Meta CAPI)               |
 | `hr`, `task`| HR / leave / attendance / tasks                             |
 | `public`    | Shared functions (`gen_uuidv7`, `set_updated_at`, …), `schema_versions` |
 
-Always schema-qualify (`crm.marketing_leads`, `entity.organizations`). Drizzle mirrors this via
-`pgSchema('crm')` etc. in `packages/db/src/schema/pg-schemas.ts`.
+Always schema-qualify (`lms.marketing_leads`, `entity.organizations`). Drizzle mirrors this via
+`pgSchema('lms')` etc. in `packages/db/src/schema/pg-schemas.ts`.
 
 ---
 
@@ -62,7 +62,7 @@ security; it sets session context and lets policies enforce it.
 **Roles** (`01_init-db.sql`):
 - `app_user` — `NOLOGIN NOINHERIT`; org-scoped end users. Default path.
 - `tenant_admin` — `NOLOGIN NOINHERIT`; tenant-wide access across its orgs.
-- `crm_service` — `LOGIN … BYPASSRLS`; the service account for system operations only.
+- `root_service` — `LOGIN … BYPASSRLS`; the service account for system operations only.
 
 **Session GUCs** set per transaction by `@crm/db`'s `withRoleTx` (see the Node skill):
 `app.current_org_id`, `app.current_tenant_id`, `app.current_user_id`.
@@ -70,16 +70,16 @@ security; it sets session context and lets policies enforce it.
 **Policy pattern:**
 
 ```sql
-ALTER TABLE crm.some_table ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lms.some_table ENABLE ROW LEVEL SECURITY;
 
 -- org-scoped end users
-CREATE POLICY org_isolation_policy ON crm.some_table
+CREATE POLICY org_isolation_policy ON lms.some_table
   AS PERMISSIVE FOR ALL TO app_user
   USING      (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
   WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
 
 -- tenant admins (all orgs in their tenant)
-CREATE POLICY tenant_isolation_policy ON crm.some_table
+CREATE POLICY tenant_isolation_policy ON lms.some_table
   AS PERMISSIVE FOR ALL TO tenant_admin
   USING (org_id IN (
     SELECT id FROM entity.organizations
@@ -96,7 +96,7 @@ CREATE POLICY tenant_isolation_policy ON crm.some_table
   `true` (missing_ok) + `NULLIF` guards against unset context.
 - Always include `WITH CHECK` so writes can't escape scope (this is what pins an `app_user` to
   its own `org_id` on insert/update).
-- The `crm_service` role bypasses RLS — reserved for `withServiceTx` system work only.
+- The `root_service` role bypasses RLS — reserved for `withServiceTx` system work only.
 
 ---
 
@@ -104,7 +104,7 @@ CREATE POLICY tenant_isolation_policy ON crm.some_table
 
 | Table kind                                            | PK type                                              |
 |-------------------------------------------------------|------------------------------------------------------|
-| Domain + most lookup tables (crm/entity/marketing/…)  | `UUID PRIMARY KEY DEFAULT public.gen_uuidv7()`       |
+| Domain + most lookup tables (lms/entity/marketing/…)  | `UUID PRIMARY KEY DEFAULT public.gen_uuidv7()`       |
 | `geo` reference data (countries/states/cities)        | `SMALLINT` / `INTEGER … GENERATED ALWAYS AS IDENTITY`|
 | A few internal id tables (e.g. `iam.user_roles`)      | `SMALLINT … GENERATED ALWAYS AS IDENTITY`            |
 
@@ -122,10 +122,10 @@ id SMALLINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,          -- geo reference 
 ## 4. Lookup tables (normalization)
 
 Bounded, label-able, repeating values go in a lookup table — never a bare enum-`TEXT` column.
-The house shape (see `crm.lead_stage`, `crm.interaction_types`, `marketing.marketing_platforms`):
+The house shape (see `lms.lead_stage`, `lms.interaction_types`, `marketing.marketing_platforms`):
 
 ```sql
-CREATE TABLE IF NOT EXISTS crm.<concept> (
+CREATE TABLE IF NOT EXISTS lms.<concept> (
   id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   name        TEXT    NOT NULL UNIQUE,   -- machine key used in app logic / API (stable, never rename)
   label       TEXT    NOT NULL,          -- human display text (freely editable)
@@ -149,7 +149,7 @@ Reads go through views that resolve FKs to human-readable `name`/`label` and joi
 tables, so the app never assembles joins ad hoc.
 
 ```sql
-CREATE OR REPLACE VIEW crm.vw_<purpose> WITH (security_invoker = true) AS
+CREATE OR REPLACE VIEW lms.vw_<purpose> WITH (security_invoker = true) AS
 SELECT
   ml.id AS lead_id,
   ml.org_id,
@@ -158,9 +158,9 @@ SELECT
   u.full_name AS assigned_rep_name,
   ml.is_deleted,      -- expose so the repository can filter
   ml.created_at, ml.updated_at
-FROM crm.marketing_leads ml
+FROM lms.marketing_leads ml
 JOIN      entity.organizations o  ON o.id  = ml.org_id
-LEFT JOIN crm.lead_stage       ls ON ls.id = ml.stage_id
+LEFT JOIN lms.lead_stage       ls ON ls.id = ml.stage_id
 LEFT JOIN iam.users            u  ON u.id  = ml.assigned_user_id;
 ```
 
@@ -213,7 +213,7 @@ CREATE TRIGGER trg_<table>_soft_delete BEFORE DELETE ON <schema>.<table>
 ```
 
 Timestamps default to `CLOCK_TIMESTAMP()` (not `NOW()`). Computed columns use
-`GENERATED ALWAYS AS (…) STORED` (e.g. `iam.users.full_name`, `crm.marketing_leads.full_name`) —
+`GENERATED ALWAYS AS (…) STORED` (e.g. `iam.users.full_name`, `lms.marketing_leads.full_name`) —
 never insert them directly.
 
 ---

@@ -4,8 +4,8 @@ import type { RoleTxContext } from '@crm/db';
 import { toApiRow, toApiRows } from '@crm/db';
 import { ROLE_RANK } from '@crm/auth-constants';
 import type { UserRole } from '@crm/auth-constants';
-import { canGrantRole, canManageUser, canSeeOrgFilter, checkMoveUserBranchAccess, getRulesForTenant } from '@crm/permissions';
-import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, AddOrgMappingInput } from '@crm/validation';
+import { canGrantRole, canManageUser, canSeeOrgFilter, checkMoveUserBranchAccess } from '@platform/authz';
+import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, AddOrgMappingInput } from '@platform/validation';
 import { NotFoundError, ConflictError, ForbiddenError, BadRequestError } from '../../../lib/errors.js';
 import { logActivity } from '@crm/audit-log';
 import { revokeAllUserSessions } from '../../../lib/jwt.js';
@@ -47,7 +47,7 @@ export async function listUsers(
   // Only actors whose scope actually crosses orgs (tenant admin+) may look up another
   // org's users — same threshold as the Leads History org filter. Anyone else's org_id
   // param is ignored and they get their own org, same as before this param existed.
-  const canQueryOtherOrg = canSeeOrgFilter(getRulesForTenant(ctx.tenant_id), actorRank);
+  const canQueryOtherOrg = canSeeOrgFilter(ctx.role);
   const effectiveOrgId = orgId && canQueryOtherOrg ? orgId : undefined;
   // Tenant admin+ with no explicit org_id sees every branch in the tenant, not just
   // their own — mirrors the Leads History "tenant" scope instead of silently
@@ -66,7 +66,7 @@ export async function getAssignableUsers(ctx: RoleTxContext, actorRank: number, 
   // Same threshold as listUsers' org filter — only actors who can already see
   // other branches may request assignable candidates for one of them (e.g. the
   // walk-in-lead form's org picker on the Assignments page).
-  const canQueryOtherOrg = canSeeOrgFilter(getRulesForTenant(ctx.tenant_id), actorRank);
+  const canQueryOtherOrg = canSeeOrgFilter(ctx.role);
   const effectiveOrgId = orgId && canQueryOtherOrg ? orgId : undefined;
   return repo.getAssignableUsers(ctx, actorRank, effectiveOrgId);
 }
@@ -185,7 +185,7 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
   const isMovingBranch = data.org_id !== undefined && data.org_id !== targetOrgId;
   let branchMove: { newOrgName: string; reassignedLeadsCount: number } | null = null;
   if (isMovingBranch) {
-    if (!checkMoveUserBranchAccess(getRulesForTenant(ctx.tenant_id), actorRank)) {
+    if (!checkMoveUserBranchAccess(ctx.role)) {
       throw new ForbiddenError('You cannot move a user to a different branch');
     }
     const roleId = fields.role_id ?? (beforeUser as Record<string, unknown>)['role_id'] as string;

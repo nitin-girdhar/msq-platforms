@@ -48,7 +48,7 @@ export async function <domain>Router(app: FastifyInstance) {
 ```ts
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { Create<Entity>Input, Update<Entity>Input } from '@crm/validation';
-import { RANKS } from '@crm/permissions';
+import { RANKS } from '@platform/authz';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './<domain>.service.js';
 import type { List<Entity>Query } from './<domain>.schema.js';

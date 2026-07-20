@@ -37,10 +37,12 @@ Add the entitlement check that D6 needs (even before the JWT carries it — defi
 ```ts
 // @platform/authz
 export type ProductKey = 'lms' | 'hr' | 'task';
-export function hasProduct(session: SessionUser, product: ProductKey): boolean;
-export function assertProduct(session: SessionUser, product: ProductKey): void; // throws 403
+// PR-C update: these are async (backed by a cached DB read) — the fail-open sync
+// stub shipped in PR-A had no call sites, so PR-C changed the signature.
+export function hasProduct(session: SessionUser, product: ProductKey): Promise<boolean>;
+export function assertProduct(session: SessionUser, product: ProductKey): Promise<void>; // throws 403
 ```
-Backed by `entity.tenant_modules` (PR-C). Wire the data source in PR-C; ship the interface here.
+Backed by `entity.tenant_modules` (PR-C), read through a 60s per-tenant cache. The DB source is *injected* via `configureProductSource()` at backend startup (not a static `@crm/db` import) so the package stays safe to import from the Next.js apps.
 
 ### Migration mechanics
 1. Create the four package folders under `packages/` with `package.json` + `tsconfig` (copy an existing package's shape). Names: `@platform/authz`, `@lms/authz`, `@hr/authz`, `@task/authz`.

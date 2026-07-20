@@ -3,9 +3,9 @@ export {
   updateTaskListSchema,
   listTaskListsSchema,
   idParamSchema,
-} from '@crm/validation';
+} from '@task/validation';
 export type {
   CreateTaskListInput,
   UpdateTaskListInput,
   ListTaskListsInput,
-} from '@crm/validation';
+} from '@task/validation';

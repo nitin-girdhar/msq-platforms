@@ -17,6 +17,11 @@ export const usersTable = iamSchema.table('users', {
   mobile:              text('mobile'),
   passwordHash:        text('password_hash').notNull(),
   roleId:              uuid('role_id').notNull().references(() => userRolesTable.id, { onDelete: 'restrict' }),
+  // Coarse cross-product role that survives in the shrunk JWT (P1.1). Nullable
+  // until the Phase E contract makes it NOT NULL. Values: super_admin |
+  // tenant_admin | org_admin | member. Drives PG-role selection + platform-wide
+  // capability only; product authority lives in <product>.member_roles.
+  platformRole:        text('platform_role'),
   managerId:           uuid('manager_id').references((): any => usersTable.id, { onDelete: 'set null' }),
   isActive:            boolean('is_active').notNull().default(true),
   isDeleted:           boolean('is_deleted').notNull().default(false),

@@ -50,7 +50,7 @@
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    SCHEMA: crm                                              │
+│                                    SCHEMA: lms                                              │
 │                                                                                             │
 │  ┌──────────────┐  ┌───────────────────┐  ┌──────────────────┐  ┌────────────────────┐      │
 │  │  lead_stage  │──│ lead_stage_outcome│  │ interaction_types│  │ follow_up_statuses │      │
@@ -100,7 +100,7 @@
 │  ┌──────────────────────────┐  ┌──────────────────┐  ┌──────────────┐                       │
 │  │ marketing_leads_history  │  │    audit_log     │  │  activities  │                       │
 │  │ (field-level diff for    │  │ (generic for all │  │ (fire-and-   │                       │
-│  │  crm.marketing_leads)    │  │  other tables)   │  │  forget log) │                       │
+│  │  lms.marketing_leads)    │  │  other tables)   │  │  forget log) │                       │
 │  └──────────────────────────┘  └──────────────────┘  └──────────────┘                       │
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 
@@ -138,10 +138,12 @@
 | `geo`       | Geographic lookup tables (countries/states/cities) |
 | `entity`    | Tenant, organization, and related lookups          |
 | `iam`       | Users, roles, org mappings, token blocklist       |
-| `crm`       | Leads, interactions, follow-ups, stage pipeline   |
+| `lms`       | Leads, interactions, follow-ups, stage pipeline   |
 | `marketing` | Ad campaigns, platforms, statuses                |
 | `audit`     | Audit logs, lead history, activity log           |
 | `ext`       | External integrations (Meta Lead Ads / CAPI)     |
+| `hr`        | Employee profiles, leave, attendance, effective-dated reporting lines (`reporting_lines`) |
+| `task`      | To-do lists, tasks, comments                     |
 
 ---
 
@@ -151,8 +153,8 @@
 | ----------------- | ------------ | --------- | --------------------------------------------- |
 | `app_user`        | NOLOGIN      | Subject   | Standard app role — DML on operational tables |
 | `tenant_admin`    | NOLOGIN      | Subject   | Cross-org admin within a tenant               |
-| `crm_service`     | LOGIN        | BYPASSRLS | Service superuser — unrestricted DML          |
-| `lead_svc`        | LOGIN        | via app_user | Leads microservice                        |
+| `root_service`     | LOGIN        | BYPASSRLS | Service superuser — unrestricted DML          |
+| `lead_svc`        | LOGIN        | via app_user | Shared/legacy login — identity-service, notifications-service, admin-service (unrestricted; not yet re-plumbed to a per-product role) |
 | `campaign_svc`    | LOGIN        | via app_user | Campaign management service               |
 | `user_mgmt_svc`   | LOGIN        | via app_user | User management service                   |
 | `notif_svc`       | LOGIN        | via app_user | Notifications service                     |
@@ -160,6 +162,9 @@
 | `meta_svc`        | LOGIN        | via app_user | Meta Conversion API service               |
 | `tenant_dash_svc` | LOGIN        | via tenant_admin | Tenant dashboard service              |
 | `analytics_svc`   | LOGIN        | BYPASSRLS | Read-only analytics (SELECT only)          |
+| `lms_svc`         | LOGIN        | membership only (P1.2/D8) | leads-service, meta-conversion-api — direct GRANTs on `lms`/`marketing`/`ext` only + read-only `iam`/`entity`/`geo`; member of `app_user`/`tenant_admin` for RLS matching only (NOINHERIT — no cross-schema privilege) |
+| `hr_svc`          | LOGIN        | membership only (P1.2/D8) | hr-service — direct GRANTs on `hr` only + read-only `iam`/`entity`/`geo`; cannot read `lms.*`/`task.*` |
+| `task_svc`        | LOGIN        | membership only (P1.2/D8) | tasks-service — direct GRANTs on `task` only + read-only `iam`/`entity`/`geo`; cannot read `lms.*`/`hr.*` |
 
 ---
 
@@ -313,9 +318,33 @@ Business unit / location within a tenant.
 
 ---
 
+### entity.tenant_modules
+
+Per-tenant **product/module entitlements** (D6). Gates which products a tenant has licensed. Created in `10_init-hr-task-schemas.sql`; the `lms`→`lms` key rename + `lms` backfill land in `15_tenant-modules-lms-rename.sql`.
+
+| Column     | Type        | Constraints                                            |
+| ---------- | ----------- | ------------------------------------------------------ |
+| id         | UUID        | PK (UUIDv7)                                            |
+| tenant_id  | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE    |
+| module     | TEXT        | NOT NULL, CHECK IN (`lms`, `leave`, `attendance`, `tasks`) |
+| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                 |
+| enabled_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                    |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                    |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                    |
+
+**Unique:** `(tenant_id, module)`  
+**`module` values:** `lms` is the lead product's entitlement key (renamed from legacy `lms`; the `lms` *schema* rename is deferred to Phase 1). `leave`/`attendance` are the HR sub-modules; `tasks` is the to-do product.  
+**RLS:** `FORCE`d. tenant_admin `SELECT`s its own tenant's rows (`app.current_tenant_id`); app_user `SELECT`s rows for the tenant owning its current org. **Writes are platform-only** (`root_service`/super_admin) — tenants cannot self-grant entitlements.  
+**Enforcement:** the **api-gateway** is the central choke point — a route-prefix→product map (`/leads*`,`/assignments*`,`/analytics*`→`lms`; `/hr/*` except `/hr/employees*`,`/hr/modules`→`hr` = active `leave`OR`attendance`; `/tasks*`,`/task-lists*`→`task`) returns `403 PRODUCT_NOT_ENABLED` after JWT verify. Per-service `require-module` middleware (leads/hr/tasks) stays as defense-in-depth. `@platform/authz.hasProduct()` reads this table via a 60s cached read.  
+**Triggers:** `set_updated_at`
+
+---
+
 ### iam.user_roles
 
 Role definitions with rank-based hierarchy.
+
+> **Legacy (P1.1):** this single global ladder is being replaced by per-product ladders (`lms.roles`, `hr.roles`, `task.roles`) plus per-product grants (`<product>.member_roles`). During the migration it stays authoritative (Phases A–C); the Phase E contract deprecates it. See those sections below.
 
 | Column      | Type | Constraints                       |
 | ----------- | ---- | --------------------------------- |
@@ -357,6 +386,7 @@ User accounts. `full_name` is a GENERATED STORED column.
 | mobile                | TEXT        |                                            |
 | password_hash         | TEXT        | NOT NULL                                   |
 | role_id               | UUID        | NOT NULL, FK → iam.user_roles(id)          |
+| platform_role         | TEXT        | CHECK IN (`super_admin`,`tenant_admin`,`org_admin`,`member`); nullable until Phase E (P1.1). Coarse cross-product role that survives in the shrunk JWT; drives PG-role selection + platform-wide capability only. |
 | manager_id            | UUID        | FK → iam.users(id), self-referential       |
 | is_active             | BOOLEAN     | NOT NULL, DEFAULT TRUE                     |
 | is_deleted            | BOOLEAN     | NOT NULL, DEFAULT FALSE                    |
@@ -396,6 +426,165 @@ Multi-org access control. Source of truth for which orgs a user can access.
 
 ---
 
+### hr.reporting_lines
+
+Effective-dated HR managerial hierarchy (P2.1, `21_init-reporting-lines.sql`) — the **sole**
+source of truth for the leave/attendance approval chain
+(`resolveApprovers`/`buildApproverChain` in `services/hr-service/.../resolve-approvers.ts`).
+Deliberately **decoupled** from the LMS assignment hierarchy: `iam.users.manager_id` /
+`iam.vw_user_team_members` drive lead auto-assignment and the LMS "Assigned To" subtree
+(`can_assign_to`), and are never read on the HR approval path. `manager_id` only backfills the
+initial `reporting_lines` rows once, then is an optional default — re-orging HR reporting or
+reassigning LMS leads cannot affect the other tree. See P2.2 tests proving this independence.
+
+| Column         | Type        | Constraints                                                    |
+| -------------- | ----------- | --------------------------------------------------------------- |
+| id             | UUID        | PK (UUIDv7)                                                     |
+| tenant_id      | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE              |
+| org_id         | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE        |
+| user_id        | UUID        | NOT NULL, FK → iam.users(id) ON DELETE CASCADE                   |
+| manager_id     | UUID        | NOT NULL, FK → iam.users(id) ON DELETE RESTRICT                  |
+| effective_from | DATE        | NOT NULL, DEFAULT CURRENT_DATE                                   |
+| effective_to   | DATE        | NULL = currently-open line; CHECK effective_to > effective_from  |
+| is_active      | BOOLEAN     | NOT NULL, DEFAULT TRUE                                           |
+| is_deleted     | BOOLEAN     | NOT NULL, DEFAULT FALSE                                          |
+
+**Constraints:** `user_id <> manager_id`; `EXCLUDE USING gist (org_id WITH =, user_id WITH =, daterange(effective_from, effective_to, '[)') WITH &&) WHERE (NOT is_deleted)` — at most one active line per user per org at any instant.  
+**RLS:** `app_user` reads (SELECT-only) rows in `app.current_org_id`; `tenant_admin` reads/writes (no delete) within `app.current_tenant_id`; `hr_svc` reads/writes under RLS; `root_service` full access.  
+**Triggers:** `set_updated_at`, `soft_delete_row`, `set_org_id`, `set_created_by`, audit on UPDATE/DELETE  
+**Backfill:** one open-ended row per user with a non-null `manager_id`, idempotent (`NOT EXISTS` guard). Users without a line resolve via the approver resolver's deterministic `org_admin`/`hr_admin` fallback, not an inferred manager.
+
+---
+
+### lms.roles / hr.roles / task.roles
+
+Per-product role **catalogs** (P1.1, `17_init-per-product-roles.sql`). Each product owns its own ladder; **ranks are only comparable within a product**. Machine key is `name` (stable), display is `label`.
+
+> **Tenant-scoped (`22_tenant-scope-lookups.sql`):** originally global reference data; now carries `tenant_id NOT NULL` and RLS. Every tenant starts with an identical copy of the seeded ladder below. **P3.3** added the per-tenant customization API; **N-6 (Half A)** then moved that API from admin-service to the **owning product service** (`{lms,hr,task}-roles` → leads/hr/tasks-service), each `GET/POST /lookups/{…}-roles` + `PATCH …/:id` requiring a `tenant_id` query param (super_admin JWTs carry no tenant). The write runs as the product-scoped login via `withTenantConfigTx` (pins `app.current_tenant_id` to the selected tenant); `25_lookup-admin-write-rls.sql` adds the tenant-pinned admin write policy (`FOR ALL TO app_user` keyed on `app.current_tenant_id`) + `INSERT,UPDATE` GRANTs to the product role — **no `root_service`/BYPASSRLS**. `apps/lookup-admin` gates editing behind a tenant selector. See "Lookup table administration" in Architecture.md.
+
+| Column      | Type    | Constraints                                          |
+| ----------- | ------- | ----------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                           |
+| tenant_id   | UUID    | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE   |
+| name        | TEXT    | NOT NULL, UNIQUE per `(tenant_id, name)`              |
+| label       | TEXT    | NOT NULL                                              |
+| description | TEXT    |                                                        |
+| rank        | INT     | NOT NULL, DEFAULT 0 (range 0-100)                     |
+| sort_order  | INT     | NOT NULL, DEFAULT 0                                   |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                |
+
+**Seeded ladders** (per tenant):
+
+| `lms.roles` (rank) | `hr.roles` (rank) | `task.roles` (rank) |
+| ------------------ | ----------------- | ------------------- |
+| read_only (0)      | hr_viewer (0)     | task_member (20)    |
+| sales_representative (20) | hr_staff (40) | task_lead (40)   |
+| senior_sales_executive (40) | hr_manager (70) | task_admin (80) |
+| org_manager (60)   | hr_admin (80)     |                     |
+| org_sr_manager (70)|                   |                     |
+| lms_admin (80)     |                   |                     |
+
+**RLS:** app_user `SELECT`s rows for the tenant owning its current org (`org_isolation_policy`); tenant_admin `SELECT`s rows for its own tenant directly (`tenant_isolation_policy`). Matches the `hr.leave_policies`/`hr.hr_settings` read-only-tenant-data pattern.
+**Grants:** `SELECT` to app_user/tenant_admin (unchanged — no write access added); `ALL` to root_service.
+**Known follow-up:** tenant provisioning doesn't auto-seed these rows for a brand-new tenant yet (same gap as `hr.hr_settings`).
+
+---
+
+### lms.member_roles / hr.member_roles / task.member_roles
+
+The `(user, product, role)` **grant** (P1.1, `17_init-per-product-roles.sql`). Org-grained (preserves multi-org users), tenant-isolated via RLS. Shape mirrors `iam.user_org_mapping`. Backfilled from the old ladder in `18_backfill-per-product-roles.sql`.
+
+| Column     | Type        | Constraints                                              |
+| ---------- | ----------- | ------------------------------------------------------- |
+| user_id    | UUID        | NOT NULL, FK → iam.users(id) ON DELETE CASCADE, PK (composite) |
+| org_id     | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE, PK (composite) |
+| tenant_id  | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE; **set by trigger from org_id** — never written directly |
+| role_id    | UUID        | NOT NULL, FK → `<product>`.roles(id) ON DELETE RESTRICT  |
+| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                   |
+| granted_by | UUID        | FK → iam.users(id) ON DELETE SET NULL                   |
+| granted_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                     |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                     |
+
+**PK:** `(user_id, org_id)` — one role per user per org per product.  
+**RLS:** `FORCE`d. app_user: `org_id = app.current_org_id` (ALL, incl. `WITH CHECK`); tenant_admin: `tenant_id = app.current_tenant_id`; root_service bypasses.  
+**Grants:** `SELECT, INSERT, UPDATE` to app_user/tenant_admin (revoke = `is_active=false`, no DELETE grant); `ALL` to root_service.  
+**Triggers:** `set_member_role_tenant_id` (BEFORE INSERT/UPDATE, derives `tenant_id` from `org_id` so a client cannot spoof it), `set_updated_at`.  
+**Helper:** `<product>.fn_member_rank(user, org)` — SECURITY DEFINER, returns the user's active rank in that product+org or **-1** if no grant (how "no product access" is encoded); safe to call inside other tables' RLS policies.  
+**Helper (P1.3, `20_member-role-resolver-fn.sql`):** `<product>.fn_member_role(user, org)` — SECURITY DEFINER, returns `(role TEXT, rank INT)` for the active grant, or `(NULL, -1)` if none. Sibling of `fn_member_rank` that also returns the role **name** the authz packages need. Each product service resolves the acting user's product role/rank through this (via `@crm/db`'s `resolveMemberRole`) instead of trusting a JWT/header rank. `GRANT EXECUTE` to `app_user`, `tenant_admin`, and the product's `*_svc` login (+ `lead_svc` for lms).  
+**View:** `<product>.vw_member_roles` (`security_invoker`) resolves `role`/`role_label`/`rank` + `org_name` + user.
+
+---
+
+### Tenant-scoped lookups — task.task_statuses / task.task_priorities / hr.leave_types / hr.employment_types / hr.attendance_statuses
+
+Originally global lookups (`10_init-hr-task-schemas.sql`, `14_init-tasks.sql`), converted to tenant-scoped by `22_tenant-scope-lookups.sql`. Every tenant starts with an identical seeded catalog, but **P3.3** added the per-tenant customization API, and **N-6 (Half A)** moved it from admin-service to the **owning product service**: `GET/POST /lookups/{task-statuses,task-priorities}` (tasks-service) and `/lookups/{leave-types,employment-types,attendance-statuses}` (hr-service), plus the matching `PATCH .../:id`, each requiring a `tenant_id` query param. Instead of the old super_admin→BYPASSRLS path (which needed an explicit `WHERE tenant_id`), the write now runs as the product-scoped login via `withTenantConfigTx`, pinning `app.current_tenant_id` to the selected tenant; `25_lookup-admin-write-rls.sql` adds a tenant-pinned admin write policy (`FOR ALL TO app_user` keyed on `app.current_tenant_id`) + `INSERT,UPDATE` GRANTs to `hr_svc`/`task_svc`, so a write physically cannot touch another tenant's rows (the explicit `WHERE tenant_id` is kept as defense-in-depth). `apps/lookup-admin` gates editing behind a tenant selector. See "Lookup table administration" in Architecture.md. `hr.leave_request_statuses` was deliberately **not** converted and remains global.
+
+| Column      | Type    | Constraints                                          |
+| ----------- | ------- | ----------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                           |
+| tenant_id   | UUID    | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE   |
+| name        | TEXT    | NOT NULL, UNIQUE per `(tenant_id, name)`              |
+| label       | TEXT    | NOT NULL                                              |
+| description | TEXT    |                                                        |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                |
+
+Plus per table: `task.task_statuses.is_terminal` (BOOLEAN), `task.task_statuses`/`task.task_priorities`/`hr.leave_types`.`sort_order` (INT), `hr.leave_types.is_paid` (BOOLEAN).
+
+**RLS:** app_user `SELECT`s rows for the tenant owning its current org (`org_isolation_policy`); tenant_admin `SELECT`s rows for its own tenant directly (`tenant_isolation_policy`).
+**Grants:** `SELECT` to app_user/tenant_admin (unchanged); `ALL` to root_service.
+**Dependents repointed by the migration:** `task.tasks.status_id`/`priority_id`, `task.task_status_log.old_status_id`/`new_status_id`, `hr.employee_profiles.employment_type_id`, `hr.leave_policies.leave_type_id`, `hr.leave_requests.leave_type_id`, `hr.leave_ledger.leave_type_id`, `hr.attendance_days.status_id`, `hr.attendance_regularizations.requested_status_id`.
+**Provisioning:** a brand-new tenant is seeded from the versioned default catalogs below via `entity.seed_tenant_defaults()` (Phase 3B, `23_tenant-default-catalogs.sql`). `hr.hr_settings`/`hr.leave_policies` remain a separate follow-up.
+
+---
+
+### Tenant default catalogs (P3B, `23_tenant-default-catalogs.sql`)
+
+Versioned default-catalog registry + provisioning seeder that gives a brand-new tenant a **private copy** of each licensed product's lookup catalog, and an explicit opt-in "reset to defaults" path. Editing a default never retroactively changes an existing tenant — their copy was made from the version current at provisioning time.
+
+**`entity.catalog_defaults`** — immutable, versioned default rows for every catalog (append-only: a new default = a new `version`, never an UPDATE of a shipped version).
+
+| Column                        | Type    | Notes                                                    |
+| ----------------------------- | ------- | -------------------------------------------------------- |
+| id                            | UUID    | PK (UUIDv7)                                              |
+| catalog_key                   | TEXT    | schema-qualified target, e.g. `task.task_statuses`       |
+| product                       | TEXT    | owning product (`lms`/`leave`/`attendance`/`tasks`)      |
+| version                       | INT     | catalog version this row belongs to                      |
+| name / label / description    | TEXT    | copied verbatim into the tenant's row                    |
+| sort_order                    | INT     | NOT NULL DEFAULT 0                                        |
+| is_active                     | BOOLEAN | NOT NULL DEFAULT TRUE                                     |
+| is_terminal / is_paid / rank  |         | NULLABLE per-catalog extras (task statuses / leave types / roles) |
+
+`UNIQUE (catalog_key, version, name)`.
+
+**`entity.catalog_versions`** — one row per catalog: `current_version` (which version a NEW tenant gets) + `modules TEXT[]` (seed only if the tenant has ANY of these active `entity.tenant_modules`). Editing a catalog for future tenants = insert v N+1 rows into `catalog_defaults` and bump `current_version`. The eight registered catalogs and their gating modules: `lms.roles`→`{lms}`; `task.task_statuses`/`task.task_priorities`/`task.roles`→`{tasks}`; `hr.leave_types`→`{leave}`; `hr.attendance_statuses`→`{attendance}`; `hr.roles`/`hr.employment_types`→`{leave,attendance}` (HR-wide).
+
+**`entity.tenant_catalog_versions`** — per-tenant record of the seeded/reset version per catalog. `UNIQUE (tenant_id, catalog_key)`; `tenant_id` FK → `entity.tenants` ON DELETE CASCADE. Drives seeder idempotency (a catalog already recorded is never re-seeded). **RLS:** SELECT-only, mirroring `entity.tenant_modules` (app_user via current org, tenant_admin own tenant); only `root_service` writes.
+
+**Functions** (all `REVOKE`d from PUBLIC, `EXECUTE` to `root_service` only — they cross tenant boundaries and run under `withServiceTx`):
+
+- `entity.seed_tenant_defaults(tenant_id)` → provisioning entry point; copies each licensed, not-yet-seeded catalog's current version into the tenant's private tables (`ON CONFLICT DO NOTHING`) and records the version. Idempotent; call **after** the tenant's `tenant_modules` rows exist.
+- `entity.reset_tenant_catalog(tenant_id, catalog_key, version?)` → restores one catalog to a default version (defaults to current): re-adds deleted defaults and restores default label/flags/sort_order **without changing row ids** (FK-safe); leaves tenant-custom rows untouched.
+- `entity._apply_catalog_rows(tenant_id, catalog_key, version, reset)` → shared per-catalog copy helper.
+
+TS wrappers: `seedTenantDefaults()` / `resetTenantCatalog()` / `getTenantCatalogVersions()` in `@crm/db` (`packages/db/src/seed-tenant-defaults.ts`).
+
+---
+
+### Per-product DB role GRANTs (P1.2, D8, `19_init-per-product-db-grants.sql`)
+
+`lms_svc` / `hr_svc` / `task_svc` are the three product-operational logins (leads-service + meta-conversion-api / hr-service / tasks-service). Each is `NOINHERIT` and:
+
+- Has **direct** `SELECT`/`INSERT`/`UPDATE` grants on its own product schema's tables only (`lms`/`marketing`/`ext` for `lms_svc`, `hr` for `hr_svc`, `task` for `task_svc`) — mirrors exactly what `app_user` already granted per table.
+- Has **`SELECT`-only** on the shared `iam`/`entity`/`geo` schemas (D8: "read shared"), except `iam.users`/`iam.user_org_mapping` which stay `SELECT, INSERT, UPDATE` because every product's "manage team" UI still writes org-role assignment through these tables under `app_user`'s existing RLS policies.
+- Has **zero** privilege on the other two products' schemas (explicitly `REVOKE`d as a defense-in-depth statement, not just an absence).
+- Is a **member** of `app_user`/`tenant_admin` for RLS-policy matching only — Postgres checks `TO app_user` policies by role membership, independent of `INHERIT`, so this membership satisfies every existing RLS policy without granting any of `app_user`'s (cross-schema) table privileges.
+
+`@platform/db`'s `withRoleTx` (`packages/db/src/transaction.ts`) skips `SET LOCAL ROLE app_user` when `DB_PRODUCT_SCOPED_LOGIN=true` (set in these three services' env) — running `SET ROLE app_user` would otherwise hand the connection every schema `app_user` can touch, undoing the isolation. `identity-service`/`notifications-service`/`admin-service` still connect as the shared `lead_svc` (unrestricted, `SET ROLE app_user` unchanged) — they are shared-repo/platform services that legitimately manage `iam`/`entity` directly; not in scope for this pass.
+
+`tenant_dash_svc` (tenant_admin pool) and `root_service` (BYPASSRLS) are unchanged — both are intentionally shared, cross-product roles.
+
+---
+
 ### iam.token_blocklist
 
 DB-backed JWT revocation supporting multiple scope levels.
@@ -416,14 +605,17 @@ DB-backed JWT revocation supporting multiple scope levels.
 
 ---
 
-### crm.lead_stage
+### lms.lead_stage
 
 Pipeline stages for leads.
+
+> **Tenant-scoped (`26_tenant-scope-lms-lookups.sql`, N-6 Half B):** this and the other 6 LMS marketing lookups (`lead_stage_outcome`, `interaction_types`, `follow_up_statuses`, `lead_sources`, `marketing.marketing_platforms`, `marketing.campaign_statuses`) were originally **global** reference data. Script 26 added `tenant_id NOT NULL` + RLS, replaced the global `UNIQUE(name)` with `UNIQUE(tenant_id, name)`, migrated each global row into one copy per tenant, and repointed every dependent FK (`marketing_leads`, `lead_follow_ups`, `lead_status_log`, `lead_interactions`, `ad_campaigns`, `ext.lead_stage_capi_event_map`, self-ref `lead_stage_outcome.stage_id`) at the correct tenant's copy. The follow-up-status default/sync triggers, which resolved statuses by name globally, were rewritten to scope by the follow-up's own tenant. Runtime RLS is SELECT-only for `app_user`/`tenant_admin`; super_admin management CRUD moved to **leads-service** under the tenant-pinned admin write policy (see `lms.roles` note and Architecture.md → "Tenant-scoped lookup tables"). Seed values below are the per-tenant defaults each existing tenant was backfilled with.
 
 | Column            | Type    | Constraints      |
 | ----------------- | ------- | ---------------- |
 | id                | UUID    | PK (UUIDv7)      |
-| name              | TEXT    | NOT NULL, UNIQUE |
+| tenant_id         | UUID    | NOT NULL, FK → entity.tenants(id) |
+| name              | TEXT    | NOT NULL; UNIQUE per (tenant_id, name) |
 | label             | TEXT    | NOT NULL         |
 | description       | TEXT    |                  |
 | sort_order        | INT     | NOT NULL, DEFAULT 0 |
@@ -448,14 +640,14 @@ Pipeline stages for leads.
 
 ---
 
-### crm.lead_stage_outcome
+### lms.lead_stage_outcome
 
 Outcome options per stage.
 
 | Column           | Type    | Constraints                               |
 | ---------------- | ------- | ----------------------------------------- |
 | id               | UUID    | PK (UUIDv7)                               |
-| stage_id         | UUID    | NOT NULL, FK → crm.lead_stage(id)         |
+| stage_id         | UUID    | NOT NULL, FK → lms.lead_stage(id)         |
 | name             | TEXT    | NOT NULL                                  |
 | label            | TEXT    | NOT NULL                                  |
 | description      | TEXT    |                                           |
@@ -474,7 +666,7 @@ Outcome options per stage.
 
 ---
 
-### crm.interaction_types
+### lms.interaction_types
 
 | Column      | Type    | Constraints             |
 | ----------- | ------- | ------------------------ |
@@ -488,7 +680,7 @@ Outcome options per stage.
 
 ---
 
-### crm.follow_up_statuses
+### lms.follow_up_statuses
 
 | Column      | Type    | Constraints             |
 | ----------- | ------- | ------------------------ |
@@ -502,7 +694,7 @@ Outcome options per stage.
 
 ---
 
-### crm.lead_sources
+### lms.lead_sources
 
 | Column      | Type    | Constraints             |
 | ----------- | ------- | ------------------------ |
@@ -515,7 +707,7 @@ Outcome options per stage.
 
 ---
 
-### crm.marketing_leads
+### lms.marketing_leads
 
 Core lead entity. `full_name` is GENERATED STORED.
 
@@ -537,14 +729,14 @@ Core lead entity. `full_name` is GENERATED STORED.
 | city_id           | INTEGER     | FK → geo.cities(id)                          |
 | state_id          | SMALLINT    | FK → geo.states(id)                          |
 | country_id        | SMALLINT    | FK → geo.countries(id)                       |
-| stage_id          | UUID        | FK → crm.lead_stage(id)                      |
-| outcome_id        | UUID        | FK → crm.lead_stage_outcome(id)              |
+| stage_id          | UUID        | FK → lms.lead_stage(id)                      |
+| outcome_id        | UUID        | FK → lms.lead_stage_outcome(id)              |
 | outcome_comment   | TEXT        |                                              |
 | campaign_id       | UUID        | FK → marketing.ad_campaigns(id)              |
-| source_id         | UUID        | FK → crm.lead_sources(id)                    |
+| source_id         | UUID        | FK → lms.lead_sources(id)                    |
 | assigned_user_id  | UUID        | FK → iam.users(id)                           |
 | is_active         | BOOLEAN     | NOT NULL, DEFAULT TRUE; FALSE when superseded or transferred out |
-| superseded_by     | UUID        | FK → crm.marketing_leads(id) self-ref; old row → newer active row |
+| superseded_by     | UUID        | FK → lms.marketing_leads(id) self-ref; old row → newer active row |
 | raw_webhook_data  | JSONB       | NOT NULL, DEFAULT '{}'                       |
 | metadata          | JSONB       | NOT NULL, DEFAULT '{}'                       |
 | tags              | TEXT[]      | NOT NULL, DEFAULT '{}'                       |
@@ -561,16 +753,16 @@ Core lead entity. `full_name` is GENERATED STORED.
 
 ---
 
-### crm.lead_links
+### lms.lead_links
 
 Audit trail for all lead-to-lead relationships. `link_type = 'merge'` covers same-org re-submission dedup and walk-in dedup (replaces the old `duplicate_lead_id`). `link_type = 'transfer'` covers executive cross-org transfers. Both orgs involved in a record can read it via RLS.
 
 | Column         | Type        | Notes                                                  |
 |----------------|-------------|--------------------------------------------------------|
 | id             | UUID        | PK, gen_uuidv7()                                       |
-| source_lead_id | UUID        | NOT NULL, FK → crm.marketing_leads(id)                 |
+| source_lead_id | UUID        | NOT NULL, FK → lms.marketing_leads(id)                 |
 | source_org_id  | UUID        | NOT NULL, FK → entity.organizations(id)                |
-| dest_lead_id   | UUID        | FK → crm.marketing_leads(id); nullable until dest created |
+| dest_lead_id   | UUID        | FK → lms.marketing_leads(id); nullable until dest created |
 | dest_org_id    | UUID        | NOT NULL, FK → entity.organizations(id)                |
 | link_type      | TEXT        | NOT NULL; `'merge'` or `'transfer'`                    |
 | created_by     | UUID        | FK → iam.users(id)                                     |
@@ -584,7 +776,7 @@ Audit trail for all lead-to-lead relationships. `link_type = 'merge'` covers sam
 
 ---
 
-### crm.lead_interactions
+### lms.lead_interactions
 
 Append-only interaction log (no updated_at).
 
@@ -592,9 +784,9 @@ Append-only interaction log (no updated_at).
 | ------------------- | ----------- | -------------------------------------------- |
 | id                  | UUID        | PK (UUIDv7)                                  |
 | org_id              | UUID        | NOT NULL, FK → entity.organizations(id)      |
-| lead_id             | UUID        | NOT NULL, FK → crm.marketing_leads(id)       |
+| lead_id             | UUID        | NOT NULL, FK → lms.marketing_leads(id)       |
 | user_id             | UUID        | NOT NULL, FK → iam.users(id)                 |
-| interaction_type_id | UUID        | FK → crm.interaction_types(id)               |
+| interaction_type_id | UUID        | FK → lms.interaction_types(id)               |
 | notes               | TEXT        |                                              |
 | duration_seconds    | INT         |                                              |
 | occurred_at         | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()          |
@@ -609,7 +801,7 @@ Append-only interaction log (no updated_at).
 
 ---
 
-### crm.lead_follow_ups
+### lms.lead_follow_ups
 
 Scheduled follow-up tasks.
 
@@ -617,9 +809,9 @@ Scheduled follow-up tasks.
 | ---------------- | ----------- | -------------------------------------------- |
 | id               | UUID        | PK (UUIDv7)                                  |
 | org_id           | UUID        | NOT NULL, FK → entity.organizations(id)      |
-| lead_id          | UUID        | NOT NULL, FK → crm.marketing_leads(id)       |
+| lead_id          | UUID        | NOT NULL, FK → lms.marketing_leads(id)       |
 | assigned_user_id | UUID        | NOT NULL, FK → iam.users(id)                 |
-| status_id        | UUID        | NOT NULL, FK → crm.follow_up_statuses(id)    |
+| status_id        | UUID        | NOT NULL, FK → lms.follow_up_statuses(id)    |
 | scheduled_at     | TIMESTAMPTZ | NOT NULL                                     |
 | completed_at     | TIMESTAMPTZ |                                              |
 | notes            | TEXT        |                                              |
@@ -635,7 +827,7 @@ Scheduled follow-up tasks.
 
 ---
 
-### crm.lead_assignment_log
+### lms.lead_assignment_log
 
 Immutable log of lead assignment changes. Auto-populated by trigger.
 
@@ -643,7 +835,7 @@ Immutable log of lead assignment changes. Auto-populated by trigger.
 | -------------------- | ----------- | ------------------------------------------- |
 | id                   | UUID        | PK (UUIDv7)                                 |
 | org_id               | UUID        | NOT NULL, FK → entity.organizations(id)     |
-| lead_id              | UUID        | NOT NULL, FK → crm.marketing_leads(id)      |
+| lead_id              | UUID        | NOT NULL, FK → lms.marketing_leads(id)      |
 | assigned_by_id       | UUID        | FK → iam.users(id)                          |
 | assigned_to_id       | UUID        | FK → iam.users(id)                          |
 | previous_assignee_id | UUID        | FK → iam.users(id)                          |
@@ -656,7 +848,7 @@ Immutable log of lead assignment changes. Auto-populated by trigger.
 
 ---
 
-### crm.lead_status_log
+### lms.lead_status_log
 
 Immutable stage/outcome transition log. Written by trigger.
 
@@ -664,12 +856,12 @@ Immutable stage/outcome transition log. Written by trigger.
 | ---------------- | ----------- | -------------------------------------------- |
 | id               | UUID        | PK (UUIDv7)                                  |
 | org_id           | UUID        | NOT NULL, FK → entity.organizations(id)      |
-| lead_id          | UUID        | NOT NULL, FK → crm.marketing_leads(id)       |
+| lead_id          | UUID        | NOT NULL, FK → lms.marketing_leads(id)       |
 | changed_by_id    | UUID        | FK → iam.users(id)                           |
-| old_stage_id     | UUID        | FK → crm.lead_stage(id)                      |
-| new_stage_id     | UUID        | NOT NULL, FK → crm.lead_stage(id)            |
-| old_outcome_id   | UUID        | FK → crm.lead_stage_outcome(id)              |
-| new_outcome_id   | UUID        | FK → crm.lead_stage_outcome(id)              |
+| old_stage_id     | UUID        | FK → lms.lead_stage(id)                      |
+| new_stage_id     | UUID        | NOT NULL, FK → lms.lead_stage(id)            |
+| old_outcome_id   | UUID        | FK → lms.lead_stage_outcome(id)              |
+| new_outcome_id   | UUID        | FK → lms.lead_stage_outcome(id)              |
 | assigned_user_id | UUID        | FK → iam.users(id)                           |
 | transition_note  | TEXT        |                                              |
 | changed_at       | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()          |
@@ -733,24 +925,24 @@ Immutable stage/outcome transition log. Written by trigger.
 
 ### audit.marketing_leads_history
 
-Field-level diff audit for `crm.marketing_leads`. Written by trigger.
+Field-level diff audit for `lms.marketing_leads`. Written by trigger.
 
 | Column             | Type        | Constraints                               |
 | ------------------ | ----------- | ----------------------------------------- |
 | id                 | UUID        | PK (UUIDv7)                               |
-| lead_id            | UUID        | NOT NULL, FK → crm.marketing_leads(id)    |
+| lead_id            | UUID        | NOT NULL, FK → lms.marketing_leads(id)    |
 | changed_by_user_id | UUID        | FK → iam.users(id)                        |
 | operation          | CHAR(1)     | NOT NULL, CHECK IN ('I','U','D')          |
 | changed_fields     | JSONB       | diff format: `{"field": {"old": v, "new": v}}` |
 | changed_at         | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()       |
 
-**RLS:** SELECT-only, org + tenant isolation via join to `crm.marketing_leads`
+**RLS:** SELECT-only, org + tenant isolation via join to `lms.marketing_leads`
 
 ---
 
 ### audit.audit_log
 
-Generic audit for all operational tables except `crm.marketing_leads`.
+Generic audit for all operational tables except `lms.marketing_leads`.
 
 | Column         | Type        | Constraints                               |
 | -------------- | ----------- | ----------------------------------------- |
@@ -851,7 +1043,7 @@ Raw Meta lead data linked to CRM marketing leads.
 | ----------------- | ----------- | ------------------------------------------ |
 | id                | UUID        | PK (UUIDv7)                                |
 | org_id            | UUID        | NOT NULL, FK → entity.organizations(id)    |
-| marketing_lead_id | UUID        | FK → crm.marketing_leads(id)               |
+| marketing_lead_id | UUID        | FK → lms.marketing_leads(id)               |
 | meta_lead_id      | BIGINT      | NOT NULL, UNIQUE                           |
 | page_id           | BIGINT      |                                             |
 | form_id           | BIGINT      | NOT NULL                                   |
@@ -956,7 +1148,7 @@ Outbound Meta Conversion API event audit trail.
 | -------------------- | ----------- | --------------------------------------------- |
 | id                   | UUID        | PK (UUIDv7)                                   |
 | org_id               | UUID        | NOT NULL, FK → entity.organizations(id)       |
-| marketing_lead_id    | UUID        | NOT NULL, FK → crm.marketing_leads(id)        |
+| marketing_lead_id    | UUID        | NOT NULL, FK → lms.marketing_leads(id)        |
 | meta_lead_id         | UUID        | FK → ext.meta_leads(id)                       |
 | event_name           | TEXT        | NOT NULL                                      |
 | event_id             | TEXT        | NOT NULL                                      |
@@ -989,18 +1181,18 @@ Lookup of supported Meta CAPI event names.
 | updated_at  | TIMESTAMPTZ  | NOT NULL, DEFAULT NOW()    |
 
 **View:** `ext.vw_meta_capi_event_types` (active rows only)
-**RLS:** none (global lookup, like crm.lead_stage)
+**RLS:** none (global lookup, like lms.lead_stage)
 
 ---
 
 ### ext.lead_stage_capi_event_map
 
-Maps a CRM lead stage (`crm.lead_stage`) to the Meta CAPI event fired when a lead transitions into it. Global mapping — no `org_id` — mirroring `crm.lead_stage` itself being a shared lookup table. Resolved by `stage_id` (UUID), never by stage name text. A stage with no row here does not fire a CAPI event.
+Maps a CRM lead stage (`lms.lead_stage`) to the Meta CAPI event fired when a lead transitions into it. Global mapping — no `org_id` — mirroring `lms.lead_stage` itself being a shared lookup table. Resolved by `stage_id` (UUID), never by stage name text. A stage with no row here does not fire a CAPI event.
 
 | Column             | Type        | Constraints                                        |
 | ------------------ | ----------- | --------------------------------------------------- |
 | id                 | UUID        | PK (UUIDv7)                                          |
-| stage_id           | UUID        | NOT NULL, UNIQUE, FK → crm.lead_stage(id) ON DELETE CASCADE |
+| stage_id           | UUID        | NOT NULL, UNIQUE, FK → lms.lead_stage(id) ON DELETE CASCADE |
 | capi_event_type_id | SMALLINT    | NOT NULL, FK → ext.meta_capi_event_types(id) ON DELETE RESTRICT |
 | created_at         | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                              |
 | updated_at         | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                              |
@@ -1010,7 +1202,7 @@ Maps a CRM lead stage (`crm.lead_stage`) to the Meta CAPI event fired when a lea
 
 Seeded mapping (`db_scripts/01_init-lookup-data.sql`):
 
-| Stage (`crm.lead_stage.name`) | Meta CAPI Event |
+| Stage (`lms.lead_stage.name`) | Meta CAPI Event |
 | ------------------------------ | ---------------- |
 | contacting                     | Other             |
 | on_hold                        | Other             |
@@ -1037,14 +1229,14 @@ Schema migration tracking.
 
 | View                                         | Schema    | security_invoker | Purpose                                                    |
 | -------------------------------------------- | --------- | ---------------- | ---------------------------------------------------------- |
-| `crm.vw_dashboard_leads`                     | crm       | yes              | Primary lead listing with resolved FKs                     |
-| `crm.vw_lead_followup_timeline`              | crm       | yes              | Unified timeline: status + follow-ups + interactions + assignments |
-| `crm.vw_lead_assignment_timeline`            | crm       | yes              | Assignment history with held-for duration                  |
-| `crm.vw_sales_follow_up_pipeline`            | crm       | yes              | Follow-up queue (pending + missed only)                    |
-| `crm.vw_followup_pipeline_enriched`          | crm       | yes              | Enriched pipeline with overdue flag + last interaction     |
-| `crm.vw_org_performance_snapshot`            | crm       | yes              | Per-org KPIs for analytics                                 |
-| `crm.vw_tenant_full_dashboard`               | crm       | yes              | Cross-org tenant KPIs by stage                             |
-| `crm.vw_rep_performance`                     | crm       | yes              | Per-rep lead counts by stage (leaderboard)                 |
+| `lms.vw_dashboard_leads`                     | lms       | yes              | Primary lead listing with resolved FKs                     |
+| `lms.vw_lead_followup_timeline`              | lms       | yes              | Unified timeline: status + follow-ups + interactions + assignments |
+| `lms.vw_lead_assignment_timeline`            | lms       | yes              | Assignment history with held-for duration                  |
+| `lms.vw_sales_follow_up_pipeline`            | lms       | yes              | Follow-up queue (pending + missed only)                    |
+| `lms.vw_followup_pipeline_enriched`          | lms       | yes              | Enriched pipeline with overdue flag + last interaction     |
+| `lms.vw_org_performance_snapshot`            | lms       | yes              | Per-org KPIs for analytics                                 |
+| `lms.vw_tenant_full_dashboard`               | lms       | yes              | Cross-org tenant KPIs by stage                             |
+| `lms.vw_rep_performance`                     | lms       | yes              | Per-rep lead counts by stage (leaderboard)                 |
 | `iam.vw_user_org_chart`                      | iam       | yes              | Recursive org chart with depth + breadcrumb path           |
 | `iam.vw_user_team_members`                   | iam       | yes              | Recursive subtree membership for hierarchy authority       |
 | `iam.vw_user_org_access`                     | iam       | yes              | Active org-user mappings with role context                 |
@@ -1058,17 +1250,18 @@ Schema migration tracking.
 
 | Trigger                          | Table                     | Event                    | Behavior                                                          |
 | -------------------------------- | ------------------------- | ------------------------ | ----------------------------------------------------------------- |
-| `trg_lead_stage_outcome_check`   | crm.marketing_leads       | INSERT/UPDATE            | Enforces outcome ↔ stage consistency; validates requires_comment   |
-| `trg_follow_up_completion_check` | crm.lead_follow_ups       | INSERT/UPDATE            | Enforces completed_at ↔ status='completed' invariant              |
-| `trg_marketing_leads_fk_scope`   | crm.marketing_leads       | INSERT/UPDATE            | Validates campaign + assigned_user belong to same org              |
-| `trg_lead_interactions_fk_scope` | crm.lead_interactions     | INSERT/UPDATE            | Validates lead + user belong to same org                           |
-| `trg_lead_follow_ups_fk_scope`   | crm.lead_follow_ups       | INSERT/UPDATE            | Validates lead + assigned_user belong to same org                  |
-| `trg_lead_assignment_log`        | crm.marketing_leads       | AFTER UPDATE             | Logs assignment changes to crm.lead_assignment_log                 |
-| `trg_lead_stage_log`             | crm.marketing_leads       | AFTER INSERT/UPDATE      | Logs stage transitions to crm.lead_status_log                      |
-| `trg_marketing_leads_audit`      | crm.marketing_leads       | AFTER UPDATE/DELETE      | Field-level diff → audit.marketing_leads_history                   |
-| `trg_user_hierarchy_no_cycle`    | iam.users                 | INSERT/UPDATE            | Prevents circular manager chains                                   |
-| `trg_follow_ups_default_status`  | crm.lead_follow_ups       | BEFORE INSERT            | Sets status to 'pending' when not supplied                         |
-| `trg_follow_ups_sync_status`     | crm.lead_follow_ups       | BEFORE UPDATE            | Auto-transitions status when completed_at is set/cleared           |
+| `trg_lead_stage_outcome_check`   | lms.marketing_leads       | INSERT/UPDATE            | Enforces outcome ↔ stage consistency; validates requires_comment   |
+| `trg_follow_up_completion_check` | lms.lead_follow_ups       | INSERT/UPDATE            | Enforces completed_at ↔ status='completed' invariant              |
+| `trg_marketing_leads_fk_scope`   | lms.marketing_leads       | INSERT/UPDATE            | Validates campaign + assigned_user belong to same org              |
+| `trg_lead_interactions_fk_scope` | lms.lead_interactions     | INSERT/UPDATE            | Validates lead + user belong to same org                           |
+| `trg_lead_follow_ups_fk_scope`   | lms.lead_follow_ups       | INSERT/UPDATE            | Validates lead + assigned_user belong to same org                  |
+| `trg_lead_assignment_log`        | lms.marketing_leads       | AFTER UPDATE             | Logs assignment changes to lms.lead_assignment_log                 |
+| `trg_lead_stage_log`             | lms.marketing_leads       | AFTER INSERT/UPDATE      | Logs stage transitions to lms.lead_status_log                      |
+| `trg_marketing_leads_audit`      | lms.marketing_leads       | AFTER UPDATE/DELETE      | Field-level diff → audit.marketing_leads_history                   |
+| `trg_user_hierarchy_no_cycle`    | iam.users                 | INSERT/UPDATE            | Prevents circular manager chains (LMS/org tree — independent of hr.reporting_lines) |
+| `excl_reporting_lines_overlap`   | hr.reporting_lines        | INSERT/UPDATE (exclusion)| Prevents overlapping active reporting lines for the same user/org  |
+| `trg_follow_ups_default_status`  | lms.lead_follow_ups       | BEFORE INSERT            | Sets status to 'pending' when not supplied                         |
+| `trg_follow_ups_sync_status`     | lms.lead_follow_ups       | BEFORE UPDATE            | Auto-transitions status when completed_at is set/cleared           |
 | `trg_auto_grant_*`              | entity.organizations / iam.user_org_mapping | AFTER INSERT | Auto-grants tenant_admin access to all orgs in tenant |
 
 ---
@@ -1087,6 +1280,8 @@ Schema migration tracking.
 | `iam.fn_org_active_users(UUID)`          | iam    | Returns array of user UUIDs with active access to org   |
 | `iam.fn_user_org_rank(UUID,UUID)`        | iam    | Returns user's role rank in a specific org              |
 | `iam.purge_expired_token_blocklist()`    | iam    | Cleanup: removes expired token blocklist entries        |
+| `<product>.fn_member_rank(UUID,UUID)`    | lms/hr/task | Returns user's active product rank in an org, or -1 |
+| `<product>.fn_member_role(UUID,UUID)`    | lms/hr/task | Returns `(role, rank)` of the user's active product grant in an org, or `(NULL,-1)` — per-service role resolver (P1.3) |
 
 ---
 
@@ -1108,6 +1303,6 @@ Every operational table enforces two tiers of isolation:
 1. **`org_isolation_policy`** — `app_user` sees only rows matching `app.current_org_id`
 2. **`tenant_isolation_policy`** — `tenant_admin` sees rows across all orgs within `app.current_tenant_id`
 
-`crm_service` and `analytics_svc` bypass RLS entirely (`BYPASSRLS`).
+`root_service` and `analytics_svc` bypass RLS entirely (`BYPASSRLS`).
 
 Audit tables (`lead_status_log`, `lead_assignment_log`, `audit_log`, `marketing_leads_history`, `activities`) are **SELECT-only** for non-service roles — writes happen exclusively via SECURITY DEFINER trigger functions.

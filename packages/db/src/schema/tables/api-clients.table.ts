@@ -1,13 +1,14 @@
 import { uuid, text, integer, boolean, timestamp, varchar } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import { extSchema } from '../pg-schemas';
+import { iamSchema } from '../pg-schemas';
 import { tenantsTable } from './tenants.table';
 
 // Scoped credentials for the public/partner API. Tenant-bound; branch scoping
-// is via ext.api_client_orgs (see api-client-orgs.table.ts) — zero rows there
+// is via iam.api_client_orgs (see api-client-orgs.table.ts) — zero rows there
 // plus scopeAllOrgs = true means tenant-wide. Only the HMAC hash of the raw
-// key is stored.
-export const apiClientsTable = extSchema.table('api_clients', {
+// key is stored. Lives in iam, not ext (N-4) — it's a platform/gateway auth
+// primitive, not LMS/Meta-integration data.
+export const apiClientsTable = iamSchema.table('api_clients', {
   id:              uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   tenantId:        uuid('tenant_id').notNull().references(() => tenantsTable.id, { onDelete: 'cascade' }),
   name:            varchar('name', { length: 120 }).notNull(),

@@ -1,7 +1,7 @@
 import { uuid, text, timestamp } from 'drizzle-orm/pg-core';
-import { crmSchema } from '../pg-schemas';
+import { lmsSchema } from '../pg-schemas';
 
-export const vwLeadFollowupTimeline = crmSchema.view('vw_lead_followup_timeline', {
+export const vwLeadFollowupTimeline = lmsSchema.view('vw_lead_followup_timeline', {
   eventId:          uuid('event_id').notNull(),
   orgId:            uuid('org_id').notNull(),
   leadId:           uuid('lead_id').notNull(),

@@ -1,6 +1,6 @@
 import { uuid, text, boolean, timestamp } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import { crmSchema } from '../pg-schemas';
+import { lmsSchema } from '../pg-schemas';
 import { organizationsTable } from './organizations.table';
 import { marketingLeadsTable } from './marketing-leads.table';
 import { usersTable } from './users.table';
@@ -8,7 +8,7 @@ import { followUpStatusesTable } from './follow-up-statuses.table';
 import { leadStageTable } from './lead-stage.table';
 import { leadStageOutcomeTable } from './lead-stage-outcome.table';
 
-export const leadFollowUpsTable = crmSchema.table('lead_follow_ups', {
+export const leadFollowUpsTable = lmsSchema.table('lead_follow_ups', {
   id:             uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   orgId:          uuid('org_id').notNull().references(() => organizationsTable.id, { onDelete: 'restrict' }),
   leadId:         uuid('lead_id').notNull().references(() => marketingLeadsTable.id, { onDelete: 'cascade' }),

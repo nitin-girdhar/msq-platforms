@@ -38,7 +38,7 @@ async function insertOrgBindings(
 ): Promise<void> {
   if (orgIds.length === 0) return;
   await tx.execute(sql`
-    INSERT INTO ext.api_client_orgs (api_client_id, org_id)
+    INSERT INTO iam.api_client_orgs (api_client_id, org_id)
     SELECT ${apiClientId}::uuid, org_id FROM unnest(${toTextArrayLiteral(orgIds)}::uuid[]) AS org_id
   `);
 }
@@ -63,14 +63,14 @@ export async function insertApiClient(ctx: RoleTxContext, data: InsertApiClientD
     // The id is generated up front (rather than via INSERT ... RETURNING) so the
     // branch bindings can be inserted before any row is read back. For an
     // org_admin (app_user), the org_isolation_policy's USING clause requires a
-    // matching ext.api_client_orgs row to exist — RETURNING evaluates that
+    // matching iam.api_client_orgs row to exist — RETURNING evaluates that
     // policy immediately after the parent insert, before bindings exist, and
     // would otherwise fail with "new row violates row-level security policy".
     const idRows = (await tx.execute(sql`SELECT gen_uuidv7() AS id`)) as Array<{ id: string }>;
     const id = idRows[0]!.id;
 
     await tx.execute(sql`
-      INSERT INTO ext.api_clients
+      INSERT INTO iam.api_clients
         (id, tenant_id, name, key_prefix, key_hash, scopes, rate_limit_per_min, scope_all_orgs, expires_at, created_by)
       VALUES (
         ${id}::uuid,
@@ -89,8 +89,8 @@ export async function insertApiClient(ctx: RoleTxContext, data: InsertApiClientD
 
     const rows = (await tx.execute(sql`
       SELECT ${SELECT_COLUMNS}
-      FROM ext.api_clients c
-      LEFT JOIN ext.api_client_orgs o ON o.api_client_id = c.id
+      FROM iam.api_clients c
+      LEFT JOIN iam.api_client_orgs o ON o.api_client_id = c.id
       WHERE c.id = ${id}::uuid
       GROUP BY c.id
     `)) as Array<ApiClientRow>;
@@ -102,8 +102,8 @@ export async function listApiClients(ctx: RoleTxContext) {
   return withRoleTx(ctx, async (tx) => {
     return (await tx.execute(sql`
       SELECT ${SELECT_COLUMNS}
-      FROM ext.api_clients c
-      LEFT JOIN ext.api_client_orgs o ON o.api_client_id = c.id
+      FROM iam.api_clients c
+      LEFT JOIN iam.api_client_orgs o ON o.api_client_id = c.id
       WHERE c.tenant_id = ${ctx.tenant_id}::uuid
       GROUP BY c.id
       ORDER BY c.created_at DESC
@@ -115,8 +115,8 @@ export async function getApiClientById(ctx: RoleTxContext, id: string) {
   return withRoleTx(ctx, async (tx) => {
     const rows = (await tx.execute(sql`
       SELECT ${SELECT_COLUMNS}
-      FROM ext.api_clients c
-      LEFT JOIN ext.api_client_orgs o ON o.api_client_id = c.id
+      FROM iam.api_clients c
+      LEFT JOIN iam.api_client_orgs o ON o.api_client_id = c.id
       WHERE c.id = ${id}::uuid AND c.tenant_id = ${ctx.tenant_id}::uuid
       GROUP BY c.id
       LIMIT 1
@@ -128,7 +128,7 @@ export async function getApiClientById(ctx: RoleTxContext, id: string) {
 export async function revokeApiClient(ctx: RoleTxContext, id: string) {
   return withRoleTx(ctx, async (tx) => {
     const rows = (await tx.execute(sql`
-      UPDATE ext.api_clients
+      UPDATE iam.api_clients
       SET is_active = FALSE, revoked_at = NOW(), updated_at = NOW()
       WHERE id = ${id}::uuid AND tenant_id = ${ctx.tenant_id}::uuid
       RETURNING id
@@ -149,12 +149,12 @@ export interface UpdateApiClientData {
 export async function updateApiClient(ctx: RoleTxContext, id: string, data: UpdateApiClientData): Promise<ApiClientRow | null> {
   return withRoleTx(ctx, async (tx) => {
     const existing = (await tx.execute(sql`
-      SELECT id FROM ext.api_clients WHERE id = ${id}::uuid AND tenant_id = ${ctx.tenant_id}::uuid LIMIT 1
+      SELECT id FROM iam.api_clients WHERE id = ${id}::uuid AND tenant_id = ${ctx.tenant_id}::uuid LIMIT 1
     `)) as Array<{ id: string }>;
     if (!existing[0]) return null;
 
     await tx.execute(sql`
-      UPDATE ext.api_clients SET
+      UPDATE iam.api_clients SET
         name               = COALESCE(${data.name ?? null}, name),
         scopes              = COALESCE(${data.scopes ? toTextArrayLiteral(data.scopes) : null}::text[], scopes),
         rate_limit_per_min  = COALESCE(${data.rate_limit_per_min ?? null}, rate_limit_per_min),
@@ -165,14 +165,14 @@ export async function updateApiClient(ctx: RoleTxContext, id: string, data: Upda
     `);
 
     if (data.org_ids !== undefined) {
-      await tx.execute(sql`DELETE FROM ext.api_client_orgs WHERE api_client_id = ${id}::uuid`);
+      await tx.execute(sql`DELETE FROM iam.api_client_orgs WHERE api_client_id = ${id}::uuid`);
       await insertOrgBindings(tx, id, data.org_ids);
     }
 
     const rows = (await tx.execute(sql`
       SELECT ${SELECT_COLUMNS}
-      FROM ext.api_clients c
-      LEFT JOIN ext.api_client_orgs o ON o.api_client_id = c.id
+      FROM iam.api_clients c
+      LEFT JOIN iam.api_client_orgs o ON o.api_client_id = c.id
       WHERE c.id = ${id}::uuid AND c.tenant_id = ${ctx.tenant_id}::uuid
       GROUP BY c.id
       LIMIT 1
@@ -191,8 +191,8 @@ export async function rotateApiClient(
   return withRoleTx(ctx, async (tx) => {
     const existing = (await tx.execute(sql`
       SELECT ${SELECT_COLUMNS}
-      FROM ext.api_clients c
-      LEFT JOIN ext.api_client_orgs o ON o.api_client_id = c.id
+      FROM iam.api_clients c
+      LEFT JOIN iam.api_client_orgs o ON o.api_client_id = c.id
       WHERE c.id = ${id}::uuid AND c.tenant_id = ${ctx.tenant_id}::uuid AND c.is_active = TRUE
       GROUP BY c.id
       LIMIT 1
@@ -201,7 +201,7 @@ export async function rotateApiClient(
     if (!prev) return null;
 
     await tx.execute(sql`
-      UPDATE ext.api_clients
+      UPDATE iam.api_clients
       SET is_active = FALSE, revoked_at = NOW(), updated_at = NOW()
       WHERE id = ${id}::uuid AND tenant_id = ${ctx.tenant_id}::uuid
     `);
@@ -213,7 +213,7 @@ export async function rotateApiClient(
     const orgIds = (prev['org_ids'] as string[]) ?? [];
 
     await tx.execute(sql`
-      INSERT INTO ext.api_clients
+      INSERT INTO iam.api_clients
         (id, tenant_id, name, key_prefix, key_hash, scopes, rate_limit_per_min, scope_all_orgs, expires_at, created_by)
       VALUES (
         ${newId}::uuid,
@@ -232,8 +232,8 @@ export async function rotateApiClient(
 
     const rows = (await tx.execute(sql`
       SELECT ${SELECT_COLUMNS}
-      FROM ext.api_clients c
-      LEFT JOIN ext.api_client_orgs o ON o.api_client_id = c.id
+      FROM iam.api_clients c
+      LEFT JOIN iam.api_client_orgs o ON o.api_client_id = c.id
       WHERE c.id = ${newId}::uuid
       GROUP BY c.id
     `)) as Array<ApiClientRow>;

@@ -1,40 +1,20 @@
+# Self-contained image built from a `pnpm deploy` output.
+# See docs/Platform_Architecture_Decisions.md (D5) and scripts/docker-ship.sh /
+# scripts/docker-load.md for how to ship and run this image.
+# Build from the repo root: `docker build -f services/api-gateway/Dockerfile .`
 FROM node:20-alpine AS base
 RUN npm install -g pnpm@9.15.0
-WORKDIR /app
+WORKDIR /repo
 
-FROM base AS deps
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY packages/types/package.json packages/types/
-COPY packages/auth-constants/package.json packages/auth-constants/
-COPY packages/db/package.json packages/db/
-COPY packages/permissions/package.json packages/permissions/
-COPY services/api-gateway/package.json services/api-gateway/
-RUN echo "shamefully-hoist=true" > .npmrc
+FROM base AS builder
+COPY . .
 RUN pnpm install --frozen-lockfile
-
-FROM deps AS builder
-COPY tsconfig.base.json ./
-COPY packages/ packages/
-COPY services/api-gateway/ services/api-gateway/
-RUN pnpm --filter @crm/auth-constants build
-RUN pnpm --filter @crm/types build
-RUN pnpm --filter @crm/permissions build
-RUN pnpm --filter @crm/db build
-RUN pnpm --filter @crm/api-gateway build
+RUN pnpm --filter @crm/api-gateway... build
+RUN pnpm --filter @crm/api-gateway deploy --prod /app
 
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/packages/types/dist ./packages/types/dist
-COPY --from=builder /app/packages/auth-constants/dist ./packages/auth-constants/dist
-COPY --from=builder /app/packages/db/dist ./packages/db/dist
-COPY --from=builder /app/packages/permissions/dist ./packages/permissions/dist
-COPY --from=builder /app/services/api-gateway/dist ./services/api-gateway/dist
-COPY packages/types/package.json ./packages/types/
-COPY packages/auth-constants/package.json ./packages/auth-constants/
-COPY packages/db/package.json ./packages/db/
-COPY packages/permissions/package.json ./packages/permissions/
-COPY services/api-gateway/package.json ./services/api-gateway/
+COPY --from=builder /app /app
 EXPOSE 4000
-CMD ["node", "services/api-gateway/dist/server.js"]
+CMD ["node", "dist/server.js"]

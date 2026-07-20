@@ -6,6 +6,8 @@ import { tenantsTable } from './tenants.table';
 export const tenantModulesTable = entitySchema.table('tenant_modules', {
   id:        uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   tenantId:  uuid('tenant_id').notNull().references(() => tenantsTable.id, { onDelete: 'cascade' }),
+  // Allowed values (DB CHECK, see db_scripts/15): 'lms' | 'leave' | 'attendance' | 'tasks'.
+  // 'lms' is the lead product's entitlement key (renamed from legacy 'crm' in PR-C).
   module:    text('module').notNull(),
   isActive:  boolean('is_active').notNull().default(true),
   enabledAt: timestamp('enabled_at', { withTimezone: true }).notNull().defaultNow(),

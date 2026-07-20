@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../../middleware/auth.middleware.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { createApiClientSchema, updateApiClientSchema } from '@crm/validation';
+import { createApiClientSchema, updateApiClientSchema } from '@platform/validation';
 import { ApiClientsController } from './api-clients.controller.js';
 
 export async function apiClientsRouter(app: FastifyInstance) {

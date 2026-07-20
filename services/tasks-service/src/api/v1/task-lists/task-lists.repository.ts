@@ -15,7 +15,7 @@
 
 import { sql } from 'drizzle-orm';
 import { withRoleTx, withServiceTx, type RoleTxContext, type DrizzleTx } from '@crm/db';
-import type { CreateTaskListInput, UpdateTaskListInput, ListTaskListsInput } from '@crm/validation';
+import type { CreateTaskListInput, UpdateTaskListInput, ListTaskListsInput } from '@task/validation';
 
 export type TaskCtx = RoleTxContext & { rank: number };
 type Row = Record<string, unknown>;

@@ -1,6 +1,6 @@
 import type { RoleTxContext } from '@crm/db';
 import { generateApiKey, hashApiKey } from '@crm/db';
-import type { CreateApiClientInput, UpdateApiClientInput } from '@crm/validation';
+import type { CreateApiClientInput, UpdateApiClientInput } from '@platform/validation';
 import { logActivity } from '@crm/audit-log';
 import { config } from '../../../config/index.js';
 import { BadRequestError, NotFoundError } from '../../../lib/errors.js';

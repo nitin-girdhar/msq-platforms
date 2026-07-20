@@ -1,5 +1,7 @@
 import { UnauthorizedError, BadRequestError, ForbiddenError } from '../../../lib/errors.js';
-import type { JwtPayload, UserOrgOption } from '@crm/types';
+import type { JwtPayload, UserOrgOption, PlatformRole, ProductKey } from '@crm/types';
+import { getActiveTenantModulesByTenantId } from '@crm/db';
+import { modulesToProducts } from '@platform/authz';
 import { comparePassword, hashPassword } from '../../../lib/password.js';
 import { signJwt, verifyJwt, revokeJti, isJtiRevoked, revokeAllUserSessions, decodeJwtUnchecked } from '../../../lib/jwt.js';
 import { logActivity } from '@crm/audit-log';
@@ -12,6 +14,20 @@ import type { LoginInput } from './auth.schema.js';
 export interface LoginResult {
   token: string;
   user: ReturnType<typeof toSessionUser>;
+}
+
+// The tenant's licensed products, for the shrunk JWT's licensed_products claim
+// (P1.3). A UX convenience for the frontend product switcher; the gateway's
+// entitlement gate remains the authoritative DB-backed check.
+async function getLicensedProducts(tenantId: string): Promise<ProductKey[]> {
+  const modules = await getActiveTenantModulesByTenantId(tenantId);
+  return [...modulesToProducts(modules)];
+}
+
+// platform_role is backfilled by db_scripts/18; fall back to the least-privileged
+// 'member' if a row predates the backfill so a token is never minted without one.
+function platformRoleOf(dbUser: { platform_role: string | null }): PlatformRole {
+  return (dbUser.platform_role ?? 'member') as PlatformRole;
 }
 
 export async function login(input: LoginInput): Promise<LoginResult> {
@@ -58,10 +74,10 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   const token = signJwt({
     sub: db_user.id,
     email: db_user.email,
-    role: db_user.role_name as never,
-    rank: db_user.rank,
+    platform_role: platformRoleOf(db_user),
     org_id: db_user.org_id,
     tenant_id: db_user.tenant_id,
+    licensed_products: await getLicensedProducts(db_user.tenant_id),
     pwd_iat,
     force_password_change: db_user.force_password_change,
   });
@@ -175,10 +191,10 @@ export async function switchOrg(
   const new_token = signJwt({
     sub: db_user.id,
     email: db_user.email,
-    role: db_user.role_name as never,
-    rank: db_user.rank,
+    platform_role: platformRoleOf(db_user),
     org_id: db_user.org_id,
     tenant_id: db_user.tenant_id,
+    licensed_products: await getLicensedProducts(db_user.tenant_id),
     pwd_iat,
     force_password_change: db_user.force_password_change,
   });
@@ -220,10 +236,10 @@ export async function changePassword(
   const new_token = signJwt({
     sub: db_user.id,
     email: db_user.email,
-    role: db_user.role_name as never,
-    rank: db_user.rank,
+    platform_role: platformRoleOf(db_user),
     org_id: db_user.org_id,
     tenant_id: db_user.tenant_id,
+    licensed_products: await getLicensedProducts(db_user.tenant_id),
     pwd_iat,
     force_password_change: false,
   });

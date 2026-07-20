@@ -13,6 +13,10 @@ export interface LookupTableDef {
   title: string;
   description: string;
   fields: LookupFieldConfig[];
+  // When true, rows belong to a tenant (task.task_statuses/task_priorities and
+  // the hr/lms/task lookup catalogs, per db_scripts/22) — the page requires a
+  // tenant selection before rows can be listed/created/edited.
+  tenantScoped?: boolean;
 }
 
 const NAME_LABEL_FIELDS: LookupFieldConfig[] = [
@@ -55,6 +59,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'lead-stage',
     title: 'Lead Stages',
     description: 'Pipeline stages a lead can move through.',
+    tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
       DESCRIPTION_FIELD,
@@ -68,6 +73,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'lead-stage-outcome',
     title: 'Lead Stage Outcomes',
     description: 'Outcomes recordable against a specific lead stage.',
+    tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
       { key: 'stage_id', label: 'Stage', type: 'select', required: true, selectOptionsFrom: 'lead-stage' },
@@ -80,36 +86,42 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'interaction-types',
     title: 'Interaction Types',
     description: 'Types of interactions logged against a lead.',
+    tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
   'follow-up-statuses': {
     slug: 'follow-up-statuses',
     title: 'Follow-up Statuses',
     description: 'Statuses a scheduled follow-up can be in.',
+    tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
   'lead-sources': {
     slug: 'lead-sources',
     title: 'Lead Sources',
     description: 'Where a lead originated from.',
+    tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS],
   },
   'marketing-platforms': {
     slug: 'marketing-platforms',
     title: 'Marketing Platforms',
     description: 'Ad platforms used to run marketing campaigns.',
+    tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
   'campaign-statuses': {
     slug: 'campaign-statuses',
     title: 'Campaign Statuses',
     description: 'Lifecycle statuses for marketing campaigns.',
+    tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
   'task-statuses': {
     slug: 'task-statuses',
     title: 'Task Statuses',
-    description: 'Workflow statuses a task can be in (global, tasks module).',
+    description: 'Workflow statuses a task can be in, per tenant (tasks module).',
+    tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
       DESCRIPTION_FIELD,
@@ -120,10 +132,73 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
   'task-priorities': {
     slug: 'task-priorities',
     title: 'Task Priorities',
-    description: 'Priority levels a task can be assigned (global, tasks module).',
+    description: 'Priority levels a task can be assigned, per tenant (tasks module).',
+    tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
       DESCRIPTION_FIELD,
+      { key: 'sort_order', label: 'Sort Order', type: 'number' },
+    ],
+  },
+  'leave-types': {
+    slug: 'leave-types',
+    title: 'Leave Types',
+    description: 'Categories of leave employees can request, per tenant (HR module).',
+    tenantScoped: true,
+    fields: [
+      ...NAME_LABEL_FIELDS,
+      DESCRIPTION_FIELD,
+      { key: 'is_paid', label: 'Is Paid', type: 'boolean' },
+      { key: 'sort_order', label: 'Sort Order', type: 'number' },
+    ],
+  },
+  'employment-types': {
+    slug: 'employment-types',
+    title: 'Employment Types',
+    description: 'Employment classifications for employees, per tenant (HR module).',
+    tenantScoped: true,
+    fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
+  },
+  'attendance-statuses': {
+    slug: 'attendance-statuses',
+    title: 'Attendance Statuses',
+    description: 'Statuses an attendance day can resolve to, per tenant (HR module).',
+    tenantScoped: true,
+    fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
+  },
+  'lms-roles': {
+    slug: 'lms-roles',
+    title: 'LMS Roles',
+    description: 'Roles within the leads/CRM module, per tenant.',
+    tenantScoped: true,
+    fields: [
+      ...NAME_LABEL_FIELDS,
+      DESCRIPTION_FIELD,
+      { key: 'rank', label: 'Rank', type: 'number', required: true },
+      { key: 'sort_order', label: 'Sort Order', type: 'number' },
+    ],
+  },
+  'hr-roles': {
+    slug: 'hr-roles',
+    title: 'HR Roles',
+    description: 'Roles within the HR module, per tenant.',
+    tenantScoped: true,
+    fields: [
+      ...NAME_LABEL_FIELDS,
+      DESCRIPTION_FIELD,
+      { key: 'rank', label: 'Rank', type: 'number', required: true },
+      { key: 'sort_order', label: 'Sort Order', type: 'number' },
+    ],
+  },
+  'task-roles': {
+    slug: 'task-roles',
+    title: 'Task Roles',
+    description: 'Roles within the tasks module, per tenant.',
+    tenantScoped: true,
+    fields: [
+      ...NAME_LABEL_FIELDS,
+      DESCRIPTION_FIELD,
+      { key: 'rank', label: 'Rank', type: 'number', required: true },
       { key: 'sort_order', label: 'Sort Order', type: 'number' },
     ],
   },

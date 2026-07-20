@@ -67,11 +67,11 @@ CREATE TABLE IF NOT EXISTS geo.<concept> (
 ## 3. Domain table + RLS + triggers (full template)
 
 ```sql
-CREATE TABLE IF NOT EXISTS crm.<table> (
+CREATE TABLE IF NOT EXISTS lms.<table> (
   id            UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   org_id        UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
   -- lookup FKs (expose name+label via the view, not raw id alone)
-  status_id     UUID    REFERENCES crm.<status_lookup>(id) ON DELETE RESTRICT,
+  status_id     UUID    REFERENCES lms.<status_lookup>(id) ON DELETE RESTRICT,
   -- own columns
   title         TEXT    NOT NULL,
   notes         TEXT,
@@ -87,29 +87,29 @@ CREATE TABLE IF NOT EXISTS crm.<table> (
 );
 
 -- Indexes: FK columns, common filters, pagination order
-CREATE INDEX IF NOT EXISTS idx_<table>_org_id     ON crm.<table> (org_id);
-CREATE INDEX IF NOT EXISTS idx_<table>_status_id  ON crm.<table> (status_id);
-CREATE INDEX IF NOT EXISTS idx_<table>_created_at ON crm.<table> (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_<table>_title_trgm ON crm.<table> USING gin (title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_<table>_org_id     ON lms.<table> (org_id);
+CREATE INDEX IF NOT EXISTS idx_<table>_status_id  ON lms.<table> (status_id);
+CREATE INDEX IF NOT EXISTS idx_<table>_created_at ON lms.<table> (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_<table>_title_trgm ON lms.<table> USING gin (title gin_trgm_ops);
 
 -- Triggers
-DROP TRIGGER IF EXISTS trg_<table>_updated_at  ON crm.<table>;
-CREATE TRIGGER trg_<table>_updated_at  BEFORE UPDATE ON crm.<table>
+DROP TRIGGER IF EXISTS trg_<table>_updated_at  ON lms.<table>;
+CREATE TRIGGER trg_<table>_updated_at  BEFORE UPDATE ON lms.<table>
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
-DROP TRIGGER IF EXISTS trg_<table>_soft_delete ON crm.<table>;
-CREATE TRIGGER trg_<table>_soft_delete BEFORE DELETE ON crm.<table>
+DROP TRIGGER IF EXISTS trg_<table>_soft_delete ON lms.<table>;
+CREATE TRIGGER trg_<table>_soft_delete BEFORE DELETE ON lms.<table>
   FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
 
 -- Row-Level Security
-ALTER TABLE crm.<table> ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lms.<table> ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY org_isolation_policy ON crm.<table>
+CREATE POLICY org_isolation_policy ON lms.<table>
   AS PERMISSIVE FOR ALL TO app_user
   USING      (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
   WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
 
-CREATE POLICY tenant_isolation_policy ON crm.<table>
+CREATE POLICY tenant_isolation_policy ON lms.<table>
   AS PERMISSIVE FOR ALL TO tenant_admin
   USING      (org_id IN (SELECT id FROM entity.organizations
                          WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid))
@@ -133,7 +133,7 @@ full_name TEXT GENERATED ALWAYS AS (
 ## 5. View (`vw_` + security_invoker)
 
 ```sql
-CREATE OR REPLACE VIEW crm.vw_<purpose> WITH (security_invoker = true) AS
+CREATE OR REPLACE VIEW lms.vw_<purpose> WITH (security_invoker = true) AS
 SELECT
   t.id,
   t.org_id,
@@ -146,9 +146,9 @@ SELECT
   t.is_deleted,                    -- exposed so the repository can filter NOT is_deleted
   t.created_at,
   t.updated_at
-FROM crm.<table> t
+FROM lms.<table> t
 JOIN      entity.organizations o ON o.id = t.org_id
-LEFT JOIN crm.<status_lookup>  s ON s.id = t.status_id;
+LEFT JOIN lms.<status_lookup>  s ON s.id = t.status_id;
 ```
 
 - `vw_` prefix, purpose name. `security_invoker = true` is mandatory (RLS applies through the view).
@@ -164,9 +164,9 @@ Keep the typed schema in sync with the SQL. Tables map camelCase → snake_case 
 // packages/db/src/schema/tables/<table>.table.ts
 import { uuid, text, boolean, integer, timestamp, jsonb } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import { crmSchema } from '../pg-schemas';
+import { lmsSchema } from '../pg-schemas';
 
-export const <table>Table = crmSchema.table('<table>', {
+export const <table>Table = lmsSchema.table('<table>', {
   id:        uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   orgId:     uuid('org_id').notNull(),
   statusId:  uuid('status_id'),
@@ -187,7 +187,7 @@ Register it in `packages/db/src/schema/index.ts` so services can `import { <tabl
 
 ```
 INVENTORY
-  Schemas:            geo, entity, iam, crm, marketing, audit, ext, hr, task
+  Schemas:            geo, entity, iam, lms, marketing, audit, ext, hr, task
   Tables:             [...]
   Views (vw_*):       [...]
   Lookup tables:      [...]
@@ -197,12 +197,12 @@ INVENTORY
 GAP TABLE
 | Gap | Object | Issue | Fix | Risk |
 |-----|--------|-------|-----|------|
-| Missing view          | crm.foo        | no crm.vw_foo                    | add view          | Safe |
-| Missing RLS           | crm.foo        | no app_user/tenant_admin policy  | add policies      | Migration |
-| Missing security_invoker | crm.vw_bar  | view runs as owner (leak risk)   | add WITH(...)     | Safe |
-| Unnormalized column   | crm.foo.kind   | bare TEXT enum                   | lookup + FK       | Migration |
-| Wrong PK type         | crm.baz.id     | SMALLINT on API-facing table     | gen_uuidv7()      | Breaking |
-| Missing soft delete   | crm.foo        | no is_deleted + trigger          | add col + trigger | Migration |
+| Missing view          | lms.foo        | no lms.vw_foo                    | add view          | Safe |
+| Missing RLS           | lms.foo        | no app_user/tenant_admin policy  | add policies      | Migration |
+| Missing security_invoker | lms.vw_bar  | view runs as owner (leak risk)   | add WITH(...)     | Safe |
+| Unnormalized column   | lms.foo.kind   | bare TEXT enum                   | lookup + FK       | Migration |
+| Wrong PK type         | lms.baz.id     | SMALLINT on API-facing table     | gen_uuidv7()      | Breaking |
+| Missing soft delete   | lms.foo        | no is_deleted + trigger          | add col + trigger | Migration |
 
 Deliver fixes as a NEW numbered script (db_scripts/NN_*.sql), additive where possible.
 Wrap destructive changes in BEGIN; … COMMIT;. Never drop/rename without confirmation.

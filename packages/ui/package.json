@@ -1,22 +1,40 @@
 {
-  "name": "@crm/ui",
+  "name": "@platform/ui-kit",
   "version": "0.0.1",
   "private": true,
+  "files": [
+    "src"
+  ],
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server/index.ts",
+    "./middleware": "./src/middleware.ts",
+    "./shell": "./src/shell/index.ts",
+    "./ag-grid.css": "./src/styles/ag-grid.css"
+  },
   "scripts": {
     "build": "tsc --noEmit",
     "dev": "tsc --noEmit --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist"
   },
+  "dependencies": {
+    "@crm/auth-constants": "workspace:*",
+    "@crm/types": "workspace:*",
+    "jose": "^6.2.3",
+    "xlsx": "^0.18.5"
+  },
   "peerDependencies": {
+    "next": "^15.2.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
+    "next": "^15.2.4",
     "typescript": "^5.7.3",
     "rimraf": "^6.0.1"
   }

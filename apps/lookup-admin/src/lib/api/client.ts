@@ -46,20 +46,28 @@ export const auth = {
 // ── Lookups ───────────────────────────────────────────────────────────────────
 
 export const lookupAdmin = {
-  list: (table: string) =>
-    request<{ success: true; data: Record<string, unknown>[] }>(`/lookups/${table}`),
+  list: (table: string, tenantId?: string) =>
+    request<{ success: true; data: Record<string, unknown>[] }>(
+      `/lookups/${table}${tenantId ? `?tenant_id=${tenantId}` : ''}`,
+    ),
 
-  create: (table: string, body: unknown) =>
-    request<{ success: true; data: Record<string, unknown> }>(`/lookups/${table}`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
+  create: (table: string, body: unknown, tenantId?: string) =>
+    request<{ success: true; data: Record<string, unknown> }>(
+      `/lookups/${table}${tenantId ? `?tenant_id=${tenantId}` : ''}`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+    ),
 
-  update: (table: string, id: string, body: unknown) =>
-    request<{ success: true; data: Record<string, unknown> }>(`/lookups/${table}/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-    }),
+  update: (table: string, id: string, body: unknown, tenantId?: string) =>
+    request<{ success: true; data: Record<string, unknown> }>(
+      `/lookups/${table}/${id}${tenantId ? `?tenant_id=${tenantId}` : ''}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      },
+    ),
 
   // Cascading geo lookups backing the 'geo-select' field type
   // (country -> state -> city), used by tenants/organizations forms.

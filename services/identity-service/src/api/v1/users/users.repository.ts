@@ -1,6 +1,6 @@
 import { sql, eq, and, desc } from 'drizzle-orm';
 import { withRoleTx, withServiceTx } from '@crm/db';
-import type { RoleTxContext, DrizzleTx } from '@crm/db';
+import type { RoleTxContext } from '@crm/db';
 import {
   usersTable,
   userRolesTable,
@@ -9,9 +9,14 @@ import {
   vwUserOrgChart,
   vwUserOrgAccess,
 } from '@crm/db/schema';
-import { RANKS } from '@crm/permissions';
-import type { AddOrgMappingInput } from '@crm/validation';
+// Auto-assignment eligibility bounds on the iam.user_roles ladder (read_only 0 ..
+// lms_admin 80). Inlined rather than imported so this repository takes no authz
+// dependency; matches packages/db/src/assignment.ts.
+const RANK_READ_ONLY = 0;
+const RANK_ADMIN = 80;
+import type { AddOrgMappingInput } from '@platform/validation';
 import { BadRequestError } from '../../../lib/errors.js';
+import { reassignOrgLeadsViaLeadsService } from '../../../lib/leads-service-client.js';
 
 export async function listUsers(
   ctx: RoleTxContext,
@@ -39,14 +44,12 @@ export async function listUsers(
              ur.rank,
              m.full_name AS manager_name,
              o.name AS org_name,
-             COUNT(ml.id) FILTER (WHERE NOT ml.is_deleted) AS assigned_leads_count,
              COUNT(*) OVER () AS total_count
       FROM iam.user_org_mapping uom
       JOIN iam.users u       ON u.id   = uom.user_id
       JOIN iam.user_roles ur ON ur.id  = uom.role_id
       JOIN entity.organizations o ON o.id = u.org_id
       LEFT JOIN iam.users m  ON m.id   = u.manager_id
-      LEFT JOIN crm.marketing_leads ml ON ml.assigned_user_id = u.id
       WHERE ${scopeClause} AND uom.is_active AND NOT u.is_deleted AND ur.rank < ${actorRank}
       GROUP BY u.id, uom.role_id, ur.name, ur.label, ur.rank, m.full_name, o.name
       ORDER BY ur.rank DESC, u.full_name
@@ -106,7 +109,7 @@ export async function getAssignmentWeights(ctx: RoleTxContext) {
       JOIN iam.users u       ON u.id  = uom.user_id
       JOIN iam.user_roles ur ON ur.id = uom.role_id
       WHERE uom.org_id = ${ctx.org_id}::uuid AND uom.is_active AND NOT u.is_deleted AND u.is_active
-        AND ur.rank > ${RANKS.READ_ONLY} AND ur.rank < ${RANKS.ADMIN}
+        AND ur.rank > ${RANK_READ_ONLY} AND ur.rank < ${RANK_ADMIN}
       ORDER BY ur.rank DESC, u.full_name
     `)) as Array<Record<string, unknown>>;
   });
@@ -127,7 +130,7 @@ export async function updateAssignmentWeights(
       FROM iam.user_org_mapping uom
       JOIN iam.user_roles ur ON ur.id = uom.role_id
       WHERE uom.org_id = ${ctx.org_id}::uuid AND uom.is_active
-        AND ur.rank > ${RANKS.READ_ONLY} AND ur.rank < ${RANKS.ADMIN}
+        AND ur.rank > ${RANK_READ_ONLY} AND ur.rank < ${RANK_ADMIN}
         AND uom.user_id = ANY(${userIds}::uuid[])
     `)) as Array<{ user_id: string }>;
     const eligibleIds = new Set(eligible.map((r) => r.user_id));
@@ -332,56 +335,22 @@ export async function updateUser(
   });
 }
 
-// Shared by moveUserBranch (branch change) and reassignUserLeadsInOrg
-// (deactivation) — both hand a departing user's still-open leads, within a
-// single org, to another active user in that same org.
-async function bulkReassignLeads(
-  tx: DrizzleTx,
-  params: { fromUserId: string; toUserId: string; orgId: string; actorId: string },
-): Promise<number> {
-  if (params.toUserId === params.fromUserId) {
-    throw new BadRequestError('Cannot reassign leads to the user being changed');
-  }
-  const [candidate] = (await tx.execute(sql`
-    SELECT u.id
-    FROM iam.users u
-    JOIN iam.user_org_mapping uom ON uom.user_id = u.id AND uom.org_id = ${params.orgId}::uuid AND uom.is_active
-    WHERE u.id = ${params.toUserId}::uuid AND NOT u.is_deleted AND u.is_active
-  `)) as Array<{ id: string }>;
-  if (!candidate) throw new BadRequestError('Lead reassignment target must be an active user in that branch');
-
-  // crm.marketing_leads' trg_lead_assignment_log trigger reads the acting user
-  // from this GUC to fill lead_assignment_log.assigned_by_id — a service tx
-  // doesn't set it by default (unlike withRoleTx), so without this the per-lead
-  // log rows would attribute the reassignment to nobody. Same pattern
-  // leads.repository.ts's transferLead uses for its own trigger.
-  await tx.execute(sql`SELECT set_config('app.current_user_id', ${params.actorId}, true)`);
-
-  const rows = (await tx.execute(sql`
-    UPDATE crm.marketing_leads
-    SET assigned_user_id = ${params.toUserId}::uuid, updated_at = NOW()
-    WHERE assigned_user_id = ${params.fromUserId}::uuid AND org_id = ${params.orgId}::uuid
-      AND NOT is_deleted AND is_active
-    RETURNING id
-  `)) as Array<{ id: string }>;
-  return rows.length;
-}
-
 // Reassigns a user's still-open leads to another active user in the SAME org —
 // used when deactivating a user, since their login goes away but their open
-// leads in that branch still need an owner.
+// leads in that branch still need an owner. Leads are LMS-owned data (N-5) —
+// identity invokes leads-service rather than writing lms.marketing_leads itself.
 export async function reassignUserLeadsInOrg(
   ctx: RoleTxContext,
   targetUserId: string,
   orgId: string,
   reassignTo: string,
 ): Promise<number> {
-  return withServiceTx((tx) => bulkReassignLeads(tx, {
-    fromUserId: targetUserId,
-    toUserId:   reassignTo,
+  return reassignOrgLeadsViaLeadsService({
     orgId,
-    actorId:    ctx.user_id,
-  }));
+    fromUserId: targetUserId,
+    toUserId: reassignTo,
+    actorId: ctx.user_id,
+  });
 }
 
 export interface MoveUserBranchResult {
@@ -389,10 +358,14 @@ export interface MoveUserBranchResult {
   reassignedLeadsCount: number;
 }
 
-// Cross-org, so it runs as a service tx rather than a role tx — same reasoning
-// as leads.repository.ts's transferLead: the actor's role tx is scoped to a
-// single org via RLS, but this write spans two orgs (deactivate old membership,
-// activate new one) plus, optionally, crm.marketing_leads in the OLD org.
+// Cross-org, so the org-move writes run as a service tx rather than a role tx —
+// same reasoning as leads.repository.ts's transferLead: the actor's role tx is
+// scoped to a single org via RLS, but this write spans two orgs. Reassign-then-
+// move saga (N-5): leads-service reassigns and confirms the departing user's
+// open leads BEFORE the org move is committed, so a lead is never left assigned
+// to a user no longer in that org. Atomicity is necessarily lost across the two
+// services — if the org-move write below fails after a successful reassignment,
+// the leads stay reassigned; that's the accepted tradeoff of the saga.
 export async function moveUserBranch(
   ctx: RoleTxContext,
   targetUserId: string,
@@ -401,16 +374,23 @@ export async function moveUserBranch(
   roleId: string,
   reassignLeadsTo?: string,
 ): Promise<MoveUserBranchResult> {
-  return withServiceTx(async (tx) => {
-    const [targetOrg] = (await tx.execute(sql`
+  const targetOrg = await withServiceTx(async (tx) => {
+    const [row] = (await tx.execute(sql`
       SELECT o.id, o.name
       FROM entity.organizations o
       WHERE o.id = ${newOrgId}::uuid
         AND o.tenant_id = ${ctx.tenant_id}::uuid
         AND NOT o.is_deleted AND o.is_active
     `)) as Array<{ id: string; name: string }>;
-    if (!targetOrg) throw new BadRequestError('Target branch not found or not in this tenant');
+    return row ?? null;
+  });
+  if (!targetOrg) throw new BadRequestError('Target branch not found or not in this tenant');
 
+  const reassignedLeadsCount = reassignLeadsTo
+    ? await reassignOrgLeadsViaLeadsService({ orgId: oldOrgId, fromUserId: targetUserId, toUserId: reassignLeadsTo, actorId: ctx.user_id })
+    : 0;
+
+  await withServiceTx(async (tx) => {
     await tx.execute(sql`
       UPDATE iam.users SET org_id = ${newOrgId}::uuid, updated_at = NOW()
       WHERE id = ${targetUserId}::uuid
@@ -428,13 +408,9 @@ export async function moveUserBranch(
         target: [userOrgMappingTable.userId, userOrgMappingTable.orgId],
         set: { roleId, isActive: true, updatedAt: new Date() },
       });
-
-    const reassignedLeadsCount = reassignLeadsTo
-      ? await bulkReassignLeads(tx, { fromUserId: targetUserId, toUserId: reassignLeadsTo, orgId: oldOrgId, actorId: ctx.user_id })
-      : 0;
-
-    return { newOrgName: targetOrg.name, reassignedLeadsCount };
   });
+
+  return { newOrgName: targetOrg.name, reassignedLeadsCount };
 }
 
 export async function syncOrgMappingRole(ctx: RoleTxContext, userId: string, roleId: string) {

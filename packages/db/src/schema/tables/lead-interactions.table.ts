@@ -1,12 +1,12 @@
 import { uuid, text, boolean, timestamp, integer } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import { crmSchema } from '../pg-schemas';
+import { lmsSchema } from '../pg-schemas';
 import { organizationsTable } from './organizations.table';
 import { marketingLeadsTable } from './marketing-leads.table';
 import { usersTable } from './users.table';
 import { interactionTypesTable } from './interaction-types.table';
 
-export const leadInteractionsTable = crmSchema.table('lead_interactions', {
+export const leadInteractionsTable = lmsSchema.table('lead_interactions', {
   id:                uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   orgId:             uuid('org_id').notNull().references(() => organizationsTable.id, { onDelete: 'restrict' }),
   leadId:            uuid('lead_id').notNull().references(() => marketingLeadsTable.id, { onDelete: 'cascade' }),

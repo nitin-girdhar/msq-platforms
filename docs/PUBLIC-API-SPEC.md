@@ -62,7 +62,7 @@ External product ──HTTPS + API key──▶ api-gateway  /public/v1/...
 
 ## 3. Credential model — `ext.api_clients` + `ext.api_client_orgs`
 
-New tables (the legacy intake-only `crm.org_api_keys` table has since been
+New tables (the legacy intake-only `lms.org_api_keys` table has since been
 removed — it had no external traffic and its one use case, website lead
 intake, is superseded by `leads:write` on this table):
 
@@ -100,7 +100,7 @@ CREATE TABLE ext.api_client_orgs (
 **RLS**
 - `tenant_admin`: full access to every client where `tenant_id = app.current_tenant_id`, regardless of branch binding.
 - `app_user` (org_admin): full access only to clients explicitly bound to their own branch via `ext.api_client_orgs` — never a `scope_all_orgs` (tenant-wide) client, and never another branch's.
-- `crm_service`: full (BYPASSRLS) for the resolver and super_admin.
+- `root_service`: full (BYPASSRLS) for the resolver and super_admin.
 
 ### Key format & hashing
 - Raw key: `crmlk_<env>_<43-char base62>` (~256 bits of entropy).
@@ -207,7 +207,7 @@ Additional controls (with the earlier M1 hardening):
 - Every send audited with client id + recipient count (not full PII in logs).
 
 **Resolution rule:** for each recipient, look up an active, non-deleted match in
-`iam.users` (email/mobile) or `crm.marketing_leads` (email/phone) scoped to the
+`iam.users` (email/mobile) or `lms.marketing_leads` (email/phone) scoped to the
 key's tenant. Reject the whole request if any recipient is unresolved (fail-closed),
 returning which recipients were invalid.
 

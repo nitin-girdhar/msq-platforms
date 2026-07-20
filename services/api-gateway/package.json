@@ -2,6 +2,9 @@
   "name": "@crm/api-gateway",
   "version": "0.0.1",
   "private": true,
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch --env-file ../../.env src/server.ts",
@@ -11,9 +14,9 @@
     "dev:local": "tsx watch --env-file .env src/server.ts"
   },
   "dependencies": {
+    "@platform/authz": "workspace:*",
     "@crm/auth-constants": "workspace:*",
     "@crm/db": "workspace:*",
-    "@crm/permissions": "workspace:*",
     "@crm/types": "workspace:*",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.2",

@@ -1,10 +1,14 @@
 import { uuid, text, integer, boolean, unique } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import { crmSchema } from '../pg-schemas';
+import { lmsSchema } from '../pg-schemas';
 import { leadStageTable } from './lead-stage.table';
+import { tenantsTable } from './tenants.table';
 
-export const leadStageOutcomeTable = crmSchema.table('lead_stage_outcome', {
+// Tenant-scoped (RLS, db_scripts/26 — N-6 Half B). tenant_id denormalized from
+// the parent stage; unique per (stage_id, name) (stage_id already implies tenant).
+export const leadStageOutcomeTable = lmsSchema.table('lead_stage_outcome', {
   id:              uuid('id').primaryKey().default(sql`gen_uuidv7()`),
+  tenantId:        uuid('tenant_id').notNull().references(() => tenantsTable.id, { onDelete: 'cascade' }),
   stageId:         uuid('stage_id').notNull().references(() => leadStageTable.id, { onDelete: 'restrict' }),
   name:            text('name').notNull(),
   label:           text('label').notNull(),

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../../middleware/auth.middleware.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { createUserSchema, updateUserSchema, createResetPasswordSchema, updateAssignmentWeightsSchema, addOrgMappingSchema } from '@crm/validation';
+import { createUserSchema, updateUserSchema, createResetPasswordSchema, updateAssignmentWeightsSchema, addOrgMappingSchema } from '@platform/validation';
 import { listUsersQuerySchema, getAssignableQuerySchema } from './users.schema.js';
 import { UsersController } from './users.controller.js';
 import { config } from '../../../config/index.js';

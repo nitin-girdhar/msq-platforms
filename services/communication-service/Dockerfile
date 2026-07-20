@@ -1,28 +1,20 @@
+# Self-contained image built from a `pnpm deploy` output.
+# See docs/Platform_Architecture_Decisions.md (D5) and scripts/docker-ship.sh /
+# scripts/docker-load.md for how to ship and run this image.
+# Build from the repo root: `docker build -f services/communication-service/Dockerfile .`
 FROM node:20-alpine AS base
 RUN npm install -g pnpm@9.15.0
-WORKDIR /app
+WORKDIR /repo
 
-FROM base AS deps
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY packages/service-auth/package.json packages/service-auth/
-COPY services/communication-service/package.json services/communication-service/
-RUN echo "shamefully-hoist=true" > .npmrc
+FROM base AS builder
+COPY . .
 RUN pnpm install --frozen-lockfile
-
-FROM deps AS builder
-COPY tsconfig.base.json ./
-COPY packages/service-auth/ packages/service-auth/
-COPY services/communication-service/ services/communication-service/
-RUN pnpm --filter @crm/service-auth build
-RUN pnpm --filter @crm/communication-service build
+RUN pnpm --filter @crm/communication-service... build
+RUN pnpm --filter @crm/communication-service deploy --prod /app
 
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/packages/service-auth/dist ./packages/service-auth/dist
-COPY --from=builder /app/services/communication-service/dist ./services/communication-service/dist
-COPY packages/service-auth/package.json ./packages/service-auth/
-COPY services/communication-service/package.json ./services/communication-service/
+COPY --from=builder /app /app
 EXPOSE 4005
-CMD ["node", "services/communication-service/dist/server.js"]
+CMD ["node", "dist/server.js"]

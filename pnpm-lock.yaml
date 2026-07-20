@@ -24,7 +24,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  apps/auth-web:
+  msq-core/apps/auth-web:
     dependencies:
       '@platform/auth-constants':
         specifier: workspace:*
@@ -67,7 +67,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  apps/lookup-admin:
+  msq-core/apps/lookup-admin:
     dependencies:
       '@platform/auth-constants':
         specifier: workspace:*
@@ -125,6 +125,346 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  msq-core/packages/audit-log:
+    dependencies:
+      '@platform/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: ^0.44.0
+        version: 0.44.7(postgres@3.4.9)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.10
+        version: 22.20.1
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/packages/auth-constants:
+    devDependencies:
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/packages/db:
+    dependencies:
+      '@platform/authz':
+        specifier: workspace:*
+        version: link:../platform-authz
+      drizzle-orm:
+        specifier: ^0.44.0
+        version: 0.44.7(postgres@3.4.9)
+      postgres:
+        specifier: ^3.4.4
+        version: 3.4.9
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.10
+        version: 22.20.1
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/packages/platform-authz:
+    dependencies:
+      '@platform/auth-constants':
+        specifier: workspace:*
+        version: link:../auth-constants
+      '@platform/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/packages/platform-validation:
+    dependencies:
+      '@platform/auth-constants':
+        specifier: workspace:*
+        version: link:../auth-constants
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/packages/service-auth:
+    devDependencies:
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/packages/types:
+    dependencies:
+      '@platform/auth-constants':
+        specifier: workspace:*
+        version: link:../auth-constants
+    devDependencies:
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/packages/ui:
+    dependencies:
+      '@platform/auth-constants':
+        specifier: workspace:*
+        version: link:../auth-constants
+      '@platform/types':
+        specifier: workspace:*
+        version: link:../types
+      jose:
+        specifier: ^6.2.3
+        version: 6.2.3
+      react:
+        specifier: ^19.0.0
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.7(react@19.2.7)
+      xlsx:
+        specifier: ^0.18.5
+        version: 0.18.5
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.8
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.0.3
+        version: 19.2.3(@types/react@19.2.17)
+      next:
+        specifier: ^15.2.4
+        version: 15.5.20(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/services/admin-service:
+    dependencies:
+      '@platform/audit-log':
+        specifier: workspace:*
+        version: link:../../packages/audit-log
+      '@platform/auth-constants':
+        specifier: workspace:*
+        version: link:../../packages/auth-constants
+      '@platform/authz':
+        specifier: workspace:*
+        version: link:../../packages/platform-authz
+      '@platform/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@platform/service-auth':
+        specifier: workspace:*
+        version: link:../../packages/service-auth
+      '@platform/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      drizzle-orm:
+        specifier: ^0.44.0
+        version: 0.44.7(postgres@3.4.9)
+      fastify:
+        specifier: ^5.2.1
+        version: 5.10.0
+      pino:
+        specifier: ^9.6.0
+        version: 9.14.0
+      zod:
+        specifier: ^3.22.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.10
+        version: 22.20.1
+      pino-pretty:
+        specifier: ^13.0.0
+        version: 13.1.3
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/services/api-gateway:
+    dependencies:
+      '@fastify/cookie':
+        specifier: ^11.0.2
+        version: 11.1.2
+      '@fastify/cors':
+        specifier: ^10.0.2
+        version: 10.1.0
+      '@platform/auth-constants':
+        specifier: workspace:*
+        version: link:../../packages/auth-constants
+      '@platform/authz':
+        specifier: workspace:*
+        version: link:../../packages/platform-authz
+      '@platform/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@platform/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      fastify:
+        specifier: ^5.2.1
+        version: 5.10.0
+      jose:
+        specifier: ^6.2.3
+        version: 6.2.3
+      pino:
+        specifier: ^9.6.0
+        version: 9.14.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.10
+        version: 22.20.1
+      pino-pretty:
+        specifier: ^13.0.0
+        version: 13.1.3
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/services/communication-service:
+    dependencies:
+      '@platform/service-auth':
+        specifier: workspace:*
+        version: link:../../packages/service-auth
+      fastify:
+        specifier: ^5.2.1
+        version: 5.10.0
+      nodemailer:
+        specifier: ^6.10.0
+        version: 6.10.1
+      pino:
+        specifier: ^9.6.0
+        version: 9.14.0
+      zod:
+        specifier: ^3.22.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.10
+        version: 22.20.1
+      '@types/nodemailer':
+        specifier: ^6.4.17
+        version: 6.4.24
+      pino-pretty:
+        specifier: ^13.0.0
+        version: 13.1.3
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  msq-core/services/identity-service:
+    dependencies:
+      '@fastify/cookie':
+        specifier: ^11.0.2
+        version: 11.1.2
+      '@platform/audit-log':
+        specifier: workspace:*
+        version: link:../../packages/audit-log
+      '@platform/auth-constants':
+        specifier: workspace:*
+        version: link:../../packages/auth-constants
+      '@platform/authz':
+        specifier: workspace:*
+        version: link:../../packages/platform-authz
+      '@platform/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@platform/service-auth':
+        specifier: workspace:*
+        version: link:../../packages/service-auth
+      '@platform/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@platform/validation':
+        specifier: workspace:*
+        version: link:../../packages/platform-validation
+      bcryptjs:
+        specifier: ^3.0.3
+        version: 3.0.3
+      drizzle-orm:
+        specifier: ^0.44.0
+        version: 0.44.7(postgres@3.4.9)
+      fastify:
+        specifier: ^5.2.1
+        version: 5.10.0
+      jsonwebtoken:
+        specifier: ^9.0.3
+        version: 9.0.3
+      pino:
+        specifier: ^9.6.0
+        version: 9.14.0
+      zod:
+        specifier: ^3.22.0
+        version: 3.25.76
+    devDependencies:
+      '@types/bcryptjs':
+        specifier: ^2.4.6
+        version: 2.4.6
+      '@types/jsonwebtoken':
+        specifier: ^9.0.7
+        version: 9.0.10
+      '@types/node':
+        specifier: ^22.10.10
+        version: 22.20.1
+      pino-pretty:
+        specifier: ^13.0.0
+        version: 13.1.3
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   msq-hrms/apps/hr-web:
     dependencies:
       '@hr/authz':
@@ -135,16 +475,16 @@ importers:
         version: link:../../packages/hr-web
       '@platform/auth-constants':
         specifier: workspace:*
-        version: link:../../../packages/auth-constants
+        version: link:../../../msq-core/packages/auth-constants
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
       '@platform/types':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../msq-core/packages/types
       '@platform/ui-kit':
         specifier: workspace:*
-        version: link:../../../packages/ui
+        version: link:../../../msq-core/packages/ui
       jose:
         specifier: ^6.2.3
         version: 6.2.3
@@ -187,7 +527,7 @@ importers:
     dependencies:
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
     devDependencies:
       rimraf:
         specifier: ^6.0.1
@@ -216,16 +556,16 @@ importers:
         version: link:../hr-authz
       '@platform/auth-constants':
         specifier: workspace:*
-        version: link:../../../packages/auth-constants
+        version: link:../../../msq-core/packages/auth-constants
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
       '@platform/types':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../msq-core/packages/types
       '@platform/ui-kit':
         specifier: workspace:*
-        version: link:../../../packages/ui
+        version: link:../../../msq-core/packages/ui
       react:
         specifier: ^19.0.0
         version: 19.2.7
@@ -259,19 +599,19 @@ importers:
         version: link:../../packages/hr-validation
       '@platform/audit-log':
         specifier: workspace:*
-        version: link:../../../packages/audit-log
+        version: link:../../../msq-core/packages/audit-log
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
       '@platform/db':
         specifier: workspace:*
-        version: link:../../../packages/db
+        version: link:../../../msq-core/packages/db
       '@platform/service-auth':
         specifier: workspace:*
-        version: link:../../../packages/service-auth
+        version: link:../../../msq-core/packages/service-auth
       '@platform/types':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../msq-core/packages/types
       drizzle-orm:
         specifier: ^0.44.0
         version: 0.44.7(postgres@3.4.9)
@@ -317,16 +657,16 @@ importers:
         version: link:../../packages/lms-web
       '@platform/auth-constants':
         specifier: workspace:*
-        version: link:../../../packages/auth-constants
+        version: link:../../../msq-core/packages/auth-constants
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
       '@platform/types':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../msq-core/packages/types
       '@platform/ui-kit':
         specifier: workspace:*
-        version: link:../../../packages/ui
+        version: link:../../../msq-core/packages/ui
       ag-grid-community:
         specifier: ^35.3.0
         version: 35.3.1
@@ -381,7 +721,7 @@ importers:
     dependencies:
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
     devDependencies:
       rimraf:
         specifier: ^6.0.1
@@ -410,16 +750,16 @@ importers:
         version: link:../lms-authz
       '@platform/auth-constants':
         specifier: workspace:*
-        version: link:../../../packages/auth-constants
+        version: link:../../../msq-core/packages/auth-constants
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
       '@platform/types':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../msq-core/packages/types
       '@platform/ui-kit':
         specifier: workspace:*
-        version: link:../../../packages/ui
+        version: link:../../../msq-core/packages/ui
       '@task/web':
         specifier: workspace:*
         version: link:../../../msq-todo/packages/task-web
@@ -465,19 +805,19 @@ importers:
         version: link:../../packages/lms-validation
       '@platform/audit-log':
         specifier: workspace:*
-        version: link:../../../packages/audit-log
+        version: link:../../../msq-core/packages/audit-log
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
       '@platform/db':
         specifier: workspace:*
-        version: link:../../../packages/db
+        version: link:../../../msq-core/packages/db
       '@platform/service-auth':
         specifier: workspace:*
-        version: link:../../../packages/service-auth
+        version: link:../../../msq-core/packages/service-auth
       '@platform/types':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../msq-core/packages/types
       drizzle-orm:
         specifier: ^0.44.0
         version: 0.44.7(postgres@3.4.9)
@@ -511,13 +851,13 @@ importers:
     dependencies:
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
       '@platform/db':
         specifier: workspace:*
-        version: link:../../../packages/db
+        version: link:../../../msq-core/packages/db
       '@platform/service-auth':
         specifier: workspace:*
-        version: link:../../../packages/service-auth
+        version: link:../../../msq-core/packages/service-auth
       axios:
         specifier: ^1.7.2
         version: 1.18.1
@@ -557,10 +897,10 @@ importers:
         version: link:../../packages/lms-authz
       '@platform/db':
         specifier: workspace:*
-        version: link:../../../packages/db
+        version: link:../../../msq-core/packages/db
       '@platform/types':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../msq-core/packages/types
       fastify:
         specifier: ^5.2.1
         version: 5.10.0
@@ -588,16 +928,16 @@ importers:
     dependencies:
       '@platform/auth-constants':
         specifier: workspace:*
-        version: link:../../../packages/auth-constants
+        version: link:../../../msq-core/packages/auth-constants
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
       '@platform/types':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../msq-core/packages/types
       '@platform/ui-kit':
         specifier: workspace:*
-        version: link:../../../packages/ui
+        version: link:../../../msq-core/packages/ui
       '@task/authz':
         specifier: workspace:*
         version: link:../../packages/task-authz
@@ -646,7 +986,7 @@ importers:
     dependencies:
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
     devDependencies:
       rimraf:
         specifier: ^6.0.1
@@ -672,16 +1012,16 @@ importers:
     dependencies:
       '@platform/auth-constants':
         specifier: workspace:*
-        version: link:../../../packages/auth-constants
+        version: link:../../../msq-core/packages/auth-constants
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
       '@platform/types':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../msq-core/packages/types
       '@platform/ui-kit':
         specifier: workspace:*
-        version: link:../../../packages/ui
+        version: link:../../../msq-core/packages/ui
       '@task/authz':
         specifier: workspace:*
         version: link:../task-authz
@@ -712,19 +1052,19 @@ importers:
     dependencies:
       '@platform/audit-log':
         specifier: workspace:*
-        version: link:../../../packages/audit-log
+        version: link:../../../msq-core/packages/audit-log
       '@platform/authz':
         specifier: workspace:*
-        version: link:../../../packages/platform-authz
+        version: link:../../../msq-core/packages/platform-authz
       '@platform/db':
         specifier: workspace:*
-        version: link:../../../packages/db
+        version: link:../../../msq-core/packages/db
       '@platform/service-auth':
         specifier: workspace:*
-        version: link:../../../packages/service-auth
+        version: link:../../../msq-core/packages/service-auth
       '@platform/types':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../msq-core/packages/types
       '@task/authz':
         specifier: workspace:*
         version: link:../../packages/task-authz
@@ -744,346 +1084,6 @@ importers:
         specifier: ^3.22.0
         version: 3.25.76
     devDependencies:
-      '@types/node':
-        specifier: ^22.10.10
-        version: 22.20.1
-      pino-pretty:
-        specifier: ^13.0.0
-        version: 13.1.3
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.1
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  packages/audit-log:
-    dependencies:
-      '@platform/db':
-        specifier: workspace:*
-        version: link:../db
-      drizzle-orm:
-        specifier: ^0.44.0
-        version: 0.44.7(postgres@3.4.9)
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.10
-        version: 22.20.1
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  packages/auth-constants:
-    devDependencies:
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  packages/db:
-    dependencies:
-      '@platform/authz':
-        specifier: workspace:*
-        version: link:../platform-authz
-      drizzle-orm:
-        specifier: ^0.44.0
-        version: 0.44.7(postgres@3.4.9)
-      postgres:
-        specifier: ^3.4.4
-        version: 3.4.9
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.10
-        version: 22.20.1
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  packages/platform-authz:
-    dependencies:
-      '@platform/auth-constants':
-        specifier: workspace:*
-        version: link:../auth-constants
-      '@platform/types':
-        specifier: workspace:*
-        version: link:../types
-    devDependencies:
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  packages/platform-validation:
-    dependencies:
-      '@platform/auth-constants':
-        specifier: workspace:*
-        version: link:../auth-constants
-      zod:
-        specifier: ^3.23.8
-        version: 3.25.76
-    devDependencies:
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  packages/service-auth:
-    devDependencies:
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  packages/types:
-    dependencies:
-      '@platform/auth-constants':
-        specifier: workspace:*
-        version: link:../auth-constants
-    devDependencies:
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  packages/ui:
-    dependencies:
-      '@platform/auth-constants':
-        specifier: workspace:*
-        version: link:../auth-constants
-      '@platform/types':
-        specifier: workspace:*
-        version: link:../types
-      jose:
-        specifier: ^6.2.3
-        version: 6.2.3
-      react:
-        specifier: ^19.0.0
-        version: 19.2.7
-      react-dom:
-        specifier: ^19.0.0
-        version: 19.2.7(react@19.2.7)
-      xlsx:
-        specifier: ^0.18.5
-        version: 0.18.5
-    devDependencies:
-      '@types/react':
-        specifier: ^19.0.8
-        version: 19.2.17
-      '@types/react-dom':
-        specifier: ^19.0.3
-        version: 19.2.3(@types/react@19.2.17)
-      next:
-        specifier: ^15.2.4
-        version: 15.5.20(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  services/admin-service:
-    dependencies:
-      '@platform/audit-log':
-        specifier: workspace:*
-        version: link:../../packages/audit-log
-      '@platform/auth-constants':
-        specifier: workspace:*
-        version: link:../../packages/auth-constants
-      '@platform/authz':
-        specifier: workspace:*
-        version: link:../../packages/platform-authz
-      '@platform/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@platform/service-auth':
-        specifier: workspace:*
-        version: link:../../packages/service-auth
-      '@platform/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      drizzle-orm:
-        specifier: ^0.44.0
-        version: 0.44.7(postgres@3.4.9)
-      fastify:
-        specifier: ^5.2.1
-        version: 5.10.0
-      pino:
-        specifier: ^9.6.0
-        version: 9.14.0
-      zod:
-        specifier: ^3.22.0
-        version: 3.25.76
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.10
-        version: 22.20.1
-      pino-pretty:
-        specifier: ^13.0.0
-        version: 13.1.3
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.1
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  services/api-gateway:
-    dependencies:
-      '@fastify/cookie':
-        specifier: ^11.0.2
-        version: 11.1.2
-      '@fastify/cors':
-        specifier: ^10.0.2
-        version: 10.1.0
-      '@platform/auth-constants':
-        specifier: workspace:*
-        version: link:../../packages/auth-constants
-      '@platform/authz':
-        specifier: workspace:*
-        version: link:../../packages/platform-authz
-      '@platform/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@platform/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      fastify:
-        specifier: ^5.2.1
-        version: 5.10.0
-      jose:
-        specifier: ^6.2.3
-        version: 6.2.3
-      pino:
-        specifier: ^9.6.0
-        version: 9.14.0
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.10
-        version: 22.20.1
-      pino-pretty:
-        specifier: ^13.0.0
-        version: 13.1.3
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.1
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  services/communication-service:
-    dependencies:
-      '@platform/service-auth':
-        specifier: workspace:*
-        version: link:../../packages/service-auth
-      fastify:
-        specifier: ^5.2.1
-        version: 5.10.0
-      nodemailer:
-        specifier: ^6.10.0
-        version: 6.10.1
-      pino:
-        specifier: ^9.6.0
-        version: 9.14.0
-      zod:
-        specifier: ^3.22.0
-        version: 3.25.76
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.10
-        version: 22.20.1
-      '@types/nodemailer':
-        specifier: ^6.4.17
-        version: 6.4.24
-      pino-pretty:
-        specifier: ^13.0.0
-        version: 13.1.3
-      rimraf:
-        specifier: ^6.0.1
-        version: 6.1.3
-      tsx:
-        specifier: ^4.19.2
-        version: 4.23.1
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  services/identity-service:
-    dependencies:
-      '@fastify/cookie':
-        specifier: ^11.0.2
-        version: 11.1.2
-      '@platform/audit-log':
-        specifier: workspace:*
-        version: link:../../packages/audit-log
-      '@platform/auth-constants':
-        specifier: workspace:*
-        version: link:../../packages/auth-constants
-      '@platform/authz':
-        specifier: workspace:*
-        version: link:../../packages/platform-authz
-      '@platform/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@platform/service-auth':
-        specifier: workspace:*
-        version: link:../../packages/service-auth
-      '@platform/types':
-        specifier: workspace:*
-        version: link:../../packages/types
-      '@platform/validation':
-        specifier: workspace:*
-        version: link:../../packages/platform-validation
-      bcryptjs:
-        specifier: ^3.0.3
-        version: 3.0.3
-      drizzle-orm:
-        specifier: ^0.44.0
-        version: 0.44.7(postgres@3.4.9)
-      fastify:
-        specifier: ^5.2.1
-        version: 5.10.0
-      jsonwebtoken:
-        specifier: ^9.0.3
-        version: 9.0.3
-      pino:
-        specifier: ^9.6.0
-        version: 9.14.0
-      zod:
-        specifier: ^3.22.0
-        version: 3.25.76
-    devDependencies:
-      '@types/bcryptjs':
-        specifier: ^2.4.6
-        version: 2.4.6
-      '@types/jsonwebtoken':
-        specifier: ^9.0.7
-        version: 9.0.10
       '@types/node':
         specifier: ^22.10.10
         version: 22.20.1

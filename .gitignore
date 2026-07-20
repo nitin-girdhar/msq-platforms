@@ -1,3 +1,9 @@
+# ── Sibling product repos (independent git repos cloned as subfolders here,
+# NOT submodules — see README.md) ───────────────────────────────────────────────
+/msq-lms/
+/msq-hrms/
+/msq-todo/
+
 # ── Dependencies ───────────────────────────────────────────────────────────────
 node_modules/
 .pnpm-store/

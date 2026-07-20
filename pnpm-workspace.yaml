@@ -1,4 +1,27 @@
+# msq-core doubles as the platform-core repo AND the parent workspace root
+# (D5 Stage 1 — local pnpm workspace for live multi-repo dev). pnpm symlinks
+# @platform/* into each product exactly as it did inside the original
+# monorepo. See docs/Platform_Architecture_Decisions.md (D5) and this repo's
+# README.md for the clone layout (msq-lms/, msq-hrms/, msq-todo/ as
+# subfolders here, each its own independent git repo — not submodules).
+#
+# Each product repo ALSO keeps its own pnpm-workspace.yaml (globbing only its
+# own packages/*, services/*, apps/*) so it can build standalone once
+# repointed at published @platform/* deps (D5 Stage 2/3, git-tag/registry).
+# This file is what makes local dev with all repos cloned side by side work.
 packages:
   - 'packages/*'
   - 'services/*'
   - 'apps/*'
+  - 'msq-lms/packages/*'
+  - 'msq-lms/services/*'
+  - 'msq-lms/apps/*'
+  - 'msq-hrms/packages/*'
+  - 'msq-hrms/services/*'
+  - 'msq-hrms/apps/*'
+  - 'msq-todo/packages/*'
+  - 'msq-todo/services/*'
+  - 'msq-todo/apps/*'
+allowBuilds:
+  esbuild: true
+  sharp: true

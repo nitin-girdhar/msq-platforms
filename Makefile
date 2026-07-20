@@ -1,4 +1,4 @@
-.PHONY: dev dev-infra dev-services stop build install migrate migrate-leave migrate-attendance accrue-leave accrue-leave-cycle-end resolve-attendance seed-admin seed-data lint typecheck test clean clean-all help db-shell build-docker up down logs ship
+.PHONY: dev dev-infra dev-services stop build install migrate seed-admin lint typecheck test clean clean-all help db-shell build-docker up down logs ship
 
 # ── Variables ──────────────────────────────────────────────────────────────────
 COMPOSE := docker compose
@@ -35,32 +35,16 @@ define run_sql
 	docker exec $(DB_CONTAINER) psql -U $(POSTGRES_USER) -d $(DB_NAME) -f /tmp/$(notdir $(1))
 endef
 
-migrate: ## Run database schema (db_scripts/01_init-db.sql)
+# For the full fresh-install sequence (not just 01) use db_scripts/db_deploy.ps1.
+migrate: ## Run the shared-schema bootstrap script (db_scripts/01_init-db.sql)
 	$(call run_sql,db_scripts/01_init-db.sql)
 
 seed-admin: ## Seed tenants, orgs, and users (db_scripts/02-seed-tenants-orgs-users.sql)
 	$(call run_sql,db_scripts/02-seed-tenants-orgs-users.sql)
 
-seed-data: ## Seed leads, interactions, and follow-ups (run after seed-admin)
-	$(call run_sql,db_scripts/03-seed-leads-bulk.sql)
-	$(call run_sql,db_scripts/04-seed-interactions-followups.sql)
-	$(call run_sql,db_scripts/05-cleanup-seed-helpers.sql)
-
-migrate-leave: ## Apply leave-management schema (db_scripts/11 + 12)
-	$(call run_sql,db_scripts/11_init-leave-management.sql)
-	$(call run_sql,db_scripts/12_leave_ledger_idempotency.sql)
-
-migrate-attendance: ## Apply attendance schema (db_scripts/13)
-	$(call run_sql,db_scripts/13_init-attendance.sql)
-
-accrue-leave: ## Run the leave accrual job for the current period (idempotent)
-	$(PNPM) --filter @crm/hr-service accrue-leave
-
-accrue-leave-cycle-end: ## Run cycle-end carry-forward/lapse processing
-	$(PNPM) --filter @crm/hr-service accrue-leave -- --cycle-end
-
-resolve-attendance: ## Run the nightly attendance resolution job (idempotent, last 3 days)
-	$(PNPM) --filter @crm/hr-service resolve-attendance
+# Product-specific targets (seed-data, migrate-leave, migrate-attendance,
+# accrue-leave*, resolve-attendance) moved to their owning product repo
+# (msq-lms / msq-hrms) — this repo owns no product schema.
 
 db-shell: ## Open a psql shell in the Postgres container
 	docker exec -it $(DB_CONTAINER) psql -U $(POSTGRES_USER) -d $(DB_NAME)

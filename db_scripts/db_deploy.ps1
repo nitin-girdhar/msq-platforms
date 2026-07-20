@@ -1,14 +1,19 @@
 <#
 .SYNOPSIS
-    Deploy the platform database (fresh install) to a PostgreSQL Docker container.
+    Deploy the shared platform database (fresh install) to a PostgreSQL Docker container.
 
 .DESCRIPTION
-    Drops and recreates the target database, then runs the full fresh-install SQL
-    sequence in order (schema/role bootstrap -> HR/Task schemas -> per-product role
-    model -> tenant scoping/entitlements). Stops immediately on any SQL error and
+    Drops and recreates the target database, then runs the msq-core-owned
+    fresh-install SQL sequence in order. Stops immediately on any SQL error and
     prints the full error output.
 
-    Demo/seed data (tenants, orgs, users, sample leads) is included by default via
+    This is the ONLY repo's db_deploy.ps1 that can bootstrap a database from
+    nothing — product repos' scripts assume these shared schemas already exist
+    (D4: shared-first run order). Run this first, then each product repo's own
+    db_deploy.ps1 against the same database to layer on its product-specific
+    scripts.
+
+    Demo/seed data (tenants, orgs, users) is included by default via
     -IncludeDemoSeed:$true; pass -IncludeDemoSeed:$false for a clean production-shape
     bootstrap with no demo rows.
 
@@ -40,11 +45,12 @@ $ErrorActionPreference = "Stop"
 
 $ScriptsDir = $PSScriptRoot
 
-# Core fresh-install sequence. 15/16 (db_scripts/_migrations/) are deliberately
-# excluded here — they are guarded no-ops on a fresh install (01/10 already create
-# schema `lms` / role `root_service` / the 'lms' entitlement key directly); they
-# only matter when upgrading a pre-P1.0 deployment in place. See
-# db_scripts/_migrations/README.md.
+# Schema-interleaved (still contains product lms/hr/task DDL too — see
+# db_scripts/README or the repo's own README for the known-gap note). 15/16
+# (db_scripts/_migrations/) are deliberately excluded — guarded no-ops on a
+# fresh install (01/10 already create schema `lms` / role `root_service` / the
+# 'lms' entitlement key directly); they only matter when upgrading a pre-P1.0
+# deployment in place. See db_scripts/_migrations/README.md.
 $CoreScripts = @(
     "01_init-db.sql",
     "01_init-lookup-data.sql"
@@ -52,8 +58,6 @@ $CoreScripts = @(
 
 $DemoSeedScripts = @(
     "02-seed-tenants-orgs-users.sql",
-    "03-seed-leads-bulk.sql",
-    "04-seed-interactions-followups.sql",
     "05-cleanup-seed-helpers.sql",
     "06a-cleanup-demo-data-pre.sql",
     "06b-cleanup-demo-data.sql",
@@ -62,20 +66,14 @@ $DemoSeedScripts = @(
 
 $RemainingCoreScripts = @(
     "10_init-hr-task-schemas.sql",
-    "11_init-leave-management.sql",
-    "12_leave_ledger_idempotency.sql",
-    "13_init-attendance.sql",
-    "14_init-tasks.sql",
     "17_init-per-product-roles.sql",
     "18_backfill-per-product-roles.sql",
     "19_init-per-product-db-grants.sql",
     "20_member-role-resolver-fn.sql",
-    "21_init-reporting-lines.sql",
     "22_tenant-scope-lookups.sql",
     "23_tenant-default-catalogs.sql",
     "24_move-api-clients-to-iam.sql",
-    "25_lookup-admin-write-rls.sql",
-    "26_tenant-scope-lms-lookups.sql"
+    "25_lookup-admin-write-rls.sql"
 )
 
 $SqlScripts = if ($IncludeDemoSeed) {

@@ -22,7 +22,6 @@
     "@platform/ui-kit": "workspace:*",
     "@platform/authz": "workspace:*",
     "@lms/authz": "workspace:*",
-    "@task/web": "workspace:*",
     "ag-grid-community": "^35.3.0",
     "ag-grid-react": "^35.3.0",
     "swr": "^2.3.3"

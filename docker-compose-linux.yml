@@ -1,4 +1,4 @@
-name: platform-shared
+name: msq
 
 # ── Shared environment blocks (YAML anchors) ─────────────────────────────────
 # All variables are read from .env — change DB_NAME, passwords, ports, etc. there.

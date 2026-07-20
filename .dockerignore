@@ -8,3 +8,7 @@
 .env.*
 !.env.example
 turbo-dev.log
+
+# Every product repo's Docker images build from this root as context (so
+# pnpm can resolve @platform/* workspace:* deps from msq-core) — none of
+# msq-core/msq-lms/msq-hrms/msq-todo are excluded here.

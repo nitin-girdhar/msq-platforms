@@ -1,4 +1,4 @@
-name: platform-shared
+name: msq
 
 # ── Shared environment blocks (YAML anchors) ─────────────────────────────────
 # All variables are read from .env — change DB_NAME, passwords, ports, etc. there.
@@ -49,8 +49,8 @@ services:
 
   identity-service:
     build:
-      context: ./msq-core
-      dockerfile: services/identity-service/Dockerfile
+      context: .
+      dockerfile: msq-core/services/identity-service/Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -66,8 +66,8 @@ services:
 
   communication-service:
     build:
-      context: ./msq-core
-      dockerfile: services/communication-service/Dockerfile
+      context: .
+      dockerfile: msq-core/services/communication-service/Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -77,8 +77,8 @@ services:
 
   admin-service:
     build:
-      context: ./msq-core
-      dockerfile: services/admin-service/Dockerfile
+      context: .
+      dockerfile: msq-core/services/admin-service/Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -92,8 +92,8 @@ services:
 
   api-gateway:
     build:
-      context: ./msq-core
-      dockerfile: services/api-gateway/Dockerfile
+      context: .
+      dockerfile: msq-core/services/api-gateway/Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -124,8 +124,8 @@ services:
 
   auth-web:
     build:
-      context: ./msq-core
-      dockerfile: apps/auth-web/Dockerfile
+      context: .
+      dockerfile: msq-core/apps/auth-web/Dockerfile
       args: *web-public-args
     restart: unless-stopped
     env_file: .env
@@ -139,8 +139,8 @@ services:
 
   lookup-admin:
     build:
-      context: ./msq-core
-      dockerfile: apps/lookup-admin/Dockerfile
+      context: .
+      dockerfile: msq-core/apps/lookup-admin/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
         API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}

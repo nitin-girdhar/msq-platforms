@@ -16,8 +16,16 @@
 // [N-6]) is invisible to it and is guarded separately — do not assume green
 // depcruise means zero cross-boundary coupling.
 
+// depcruise is invoked as `depcruise msq-core/packages msq-core/services
+// msq-core/apps` (see package.json), so reported paths are msq-core/-prefixed.
+//
+// LMS/HR/TASK code (leads-service, hr-service, tasks-service, lms-web,
+// hr-web, todo-web, packages/lms-*, packages/hr-*, packages/task-*) now
+// lives in the separate msq-lms/msq-hrms/msq-todo repos, not under
+// msq-core/, so those rules can never match here — cross-boundary checks for
+// those repos need their own dependency-cruiser config in their own repo.
 const SHARED =
-  '^(packages/(platform-authz|ui|db|types|service-auth|auth-constants|audit-log|validation)|services/(identity-service|api-gateway|admin-service|communication-service)|apps/(auth-web|lookup-admin))/';
+  '^msq-core/(packages/(platform-authz|ui|db|types|service-auth|auth-constants|audit-log|validation)|services/(identity-service|api-gateway|admin-service|communication-service)|apps/(auth-web|lookup-admin))/';
 
 const LMS =
   '^(services/(leads-service|meta-conversion-api|notifications-service)|apps/lms-web|packages/lms-(authz|web))/';

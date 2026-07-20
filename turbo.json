@@ -25,7 +25,7 @@
       "dependsOn": ["^build"]
     },
     "//#depcruise": {
-      "inputs": ["packages/**/src/**", "services/**/src/**", "apps/**/src/**", ".dependency-cruiser.cjs"],
+      "inputs": ["msq-core/packages/**/src/**", "msq-core/services/**/src/**", "msq-core/apps/**/src/**", ".dependency-cruiser.cjs"],
       "cache": true
     },
     "typecheck": {

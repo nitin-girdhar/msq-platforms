@@ -21,7 +21,7 @@ dev-infra: ## Start Postgres in Docker and wait until healthy
 	$(COMPOSE) up -d --wait postgres
 
 dev-services: install ## Start all backend services and the API gateway (excludes web apps)
-	$(PNPM) turbo dev --filter='!./apps/*' --concurrency 12
+	$(PNPM) turbo dev --filter='!./*/apps/*' --concurrency 12
 
 # ── Database ───────────────────────────────────────────────────────────────────
 # DB commands run psql inside the Postgres container (no local psql required).
@@ -35,12 +35,12 @@ define run_sql
 	docker exec $(DB_CONTAINER) psql -U $(POSTGRES_USER) -d $(DB_NAME) -f /tmp/$(notdir $(1))
 endef
 
-# For the full fresh-install sequence (not just 01) use db_scripts/db_deploy.ps1.
-migrate: ## Run the shared-schema bootstrap script (db_scripts/01_init-db.sql)
-	$(call run_sql,db_scripts/01_init-db.sql)
+# For the full fresh-install sequence (not just 01) use msq-core/db_scripts/db_deploy.ps1.
+migrate: ## Run the shared-schema bootstrap script (msq-core/db_scripts/01_init-db.sql)
+	$(call run_sql,msq-core/db_scripts/01_init-db.sql)
 
-seed-admin: ## Seed tenants, orgs, and users (db_scripts/02-seed-tenants-orgs-users.sql)
-	$(call run_sql,db_scripts/02-seed-tenants-orgs-users.sql)
+seed-admin: ## Seed tenants, orgs, and users (msq-core/db_scripts/02-seed-tenants-orgs-users.sql)
+	$(call run_sql,msq-core/db_scripts/02-seed-tenants-orgs-users.sql)
 
 # Product-specific targets (seed-data, migrate-leave, migrate-attendance,
 # accrue-leave*, resolve-attendance) moved to their owning product repo

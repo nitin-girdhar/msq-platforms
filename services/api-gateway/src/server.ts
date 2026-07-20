@@ -606,6 +606,11 @@ app.post('/hr/leave/requests', { ...withAuth }, async (req, reply) => {
 app.get('/hr/leave/requests', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/leave/requests', req, reply, req.userCtx);
 });
+// Read-only working-days preview (commits nothing) — used by ApplyLeaveModal to
+// compute days_count/sufficient before enabling submit.
+app.get('/hr/leave/requests/preview', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/leave/requests/preview', req, reply, req.userCtx);
+});
 app.get('/hr/leave/requests/team', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/leave/requests/team', req, reply, req.userCtx);
 });
@@ -747,6 +752,12 @@ app.patch('/hr/shift-assignments/:id', { ...withAuth }, async (req, reply) => {
 // HR — active module entitlements for the caller's tenant (drives the web module nav switcher)
 app.get('/hr/modules', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/modules', req, reply, req.userCtx);
+});
+// HR — the caller's resolved HR product role/rank (hr.member_roles), distinct
+// from the platform/session rank — drives HR-admin-only UI gating (Leave/
+// Attendance "Admin" tabs) against the same authority the backend enforces.
+app.get('/hr/me', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/me', req, reply, req.userCtx);
 });
 
 // ── Tasks / To-do (tasks-service, module-gated on 'tasks') ───────────────────

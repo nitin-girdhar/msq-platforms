@@ -61,16 +61,24 @@ for (const svc of services) {
   generated++;
 }
 
-// Web app
-const webExample = path.join(ROOT, 'apps', 'web', '.env.example');
-if (fs.existsSync(webExample)) {
-  const needed = parseEnv(webExample);
+// Web apps (Next.js, P4.3 split: auth-web/lms-web/hr-web/todo-web/lookup-admin).
+// Next.js only auto-loads .env* from its OWN app directory, never the
+// monorepo root, so each app needs its own generated .env.local.
+const apps = fs.readdirSync(path.join(ROOT, 'apps'), { withFileTypes: true })
+  .filter(d => d.isDirectory())
+  .map(d => d.name);
+
+for (const app of apps) {
+  const examplePath = path.join(ROOT, 'apps', app, '.env.example');
+  if (!fs.existsSync(examplePath)) continue;
+
+  const needed = parseEnv(examplePath);
   const lines = ['# Auto-generated from root .env — do not commit'];
   for (const [key, fallback] of Object.entries(needed)) {
     lines.push(`${key}=${rootVars[key] ?? fallback}`);
   }
-  fs.writeFileSync(path.join(ROOT, 'apps', 'web', '.env.local'), lines.join('\n') + '\n', 'utf-8');
-  console.log('  apps/web/.env.local');
+  fs.writeFileSync(path.join(ROOT, 'apps', app, '.env.local'), lines.join('\n') + '\n', 'utf-8');
+  console.log(`  apps/${app}/.env.local`);
   generated++;
 }
 

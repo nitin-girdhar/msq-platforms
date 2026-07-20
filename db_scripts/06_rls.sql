@@ -1,4 +1,11 @@
 -- ===================================================================
+-- 06_rls.sql
+-- Consolidated DDL: lookup-admin write RLS policies (super_admin/
+-- tenant-scoped catalog editing surface).
+-- Idempotent: safe to re-run.
+-- ===================================================================
+
+-- ===================================================================
 -- 25_lookup-admin-write-rls.sql
 --
 -- N-6 (Phase5_Extraction_Plan §5) — Half A. Lets the OWNING product
@@ -97,3 +104,33 @@ INSERT INTO public.schema_versions (version, description) VALUES
   ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
+
+
+-- ── RLS + product-role write GRANTs for the 7 tenant-scoped LMS lookups above
+--    (historically 26_tenant-scope-lms-lookups.sql; GRANT ... TO lms_svc
+--    moved to 04_roles_and_grants.sql, after lms_svc's CREATE ROLE) ──
+DO $rls$
+DECLARE
+  t TEXT;
+  tables TEXT[] := ARRAY[
+    'lms.lead_stage','lms.lead_stage_outcome','lms.interaction_types',
+    'lms.follow_up_statuses','lms.lead_sources',
+    'marketing.marketing_platforms','marketing.campaign_statuses'
+  ];
+BEGIN
+  FOREACH t IN ARRAY tables LOOP
+    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS org_isolation_policy ON %s', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %s', t);
+    EXECUTE format('DROP POLICY IF EXISTS admin_tenant_config_policy ON %s', t);
+    EXECUTE format($p$CREATE POLICY org_isolation_policy ON %s AS PERMISSIVE FOR SELECT TO app_user
+      USING (tenant_id = (SELECT tenant_id FROM entity.organizations
+                          WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid))$p$, t);
+    EXECUTE format($p$CREATE POLICY tenant_isolation_policy ON %s AS PERMISSIVE FOR SELECT TO tenant_admin
+      USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)$p$, t);
+    -- N-6 admin write (super_admin acting within a selected tenant via withTenantConfigTx)
+    EXECUTE format($p$CREATE POLICY admin_tenant_config_policy ON %s AS PERMISSIVE FOR ALL TO app_user
+      USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+      WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)$p$, t);
+  END LOOP;
+END $rls$;

@@ -1,28 +1,29 @@
 <#
 .SYNOPSIS
-    Deploy the shared platform database (fresh install) to a PostgreSQL Docker container.
+    Deploy the entire MSquare platform database (fresh install) to a PostgreSQL
+    Docker container.
 
 .DESCRIPTION
-    Drops and recreates the target database, then runs the msq-core-owned
+    Drops and recreates the target database, then runs the single, platform-wide
     fresh-install SQL sequence in order. Stops immediately on any SQL error and
     prints the full error output.
 
-    This is the ONLY repo's db_deploy.ps1 that can bootstrap a database from
-    nothing — product repos' scripts assume these shared schemas already exist
-    (D4: shared-first run order). Run this first, then each product repo's own
-    db_deploy.ps1 against the same database to layer on its product-specific
-    scripts.
+    This is now the ONE AND ONLY deploy script for the platform. The four product
+    repos (msq-core / msq-hrms / msq-lms / msq-todo) no longer carry their own
+    db_scripts folders — all schema for every product (shared core, lms/marketing,
+    hr, task) is consolidated into this directory's ordered 01-06 DDL set and
+    deploys to one shared database.
 
-    Demo/seed data (tenants, orgs, users) is included by default via
+    Demo/seed data (tenants, orgs, users, sample leads) is included by default via
     -IncludeDemoSeed:$true; pass -IncludeDemoSeed:$false for a clean production-shape
     bootstrap with no demo rows.
 
     This script always DROPs and recreates the database — it is a fresh-install tool,
     not an upgrade tool. To bring an already-deployed database (created before the
     P1.0 crm-naming cleanup, i.e. still has schema `crm` / role `crm_service`) up to
-    the current shape without losing data, run the two migrations in
-    db_scripts/_migrations/ (15 then 16) directly against that live database instead
-    of this script — see db_scripts/_migrations/README.md.
+    the current shape without losing data, run the two migrations in _migrations/
+    (15 then 16) directly against that live database instead of this script —
+    see _migrations/README.md.
 
 .EXAMPLE
     .\db_deploy.ps1
@@ -45,35 +46,37 @@ $ErrorActionPreference = "Stop"
 
 $ScriptsDir = $PSScriptRoot
 
-# Schema-interleaved (still contains product lms/hr/task DDL too — see
-# db_scripts/README or the repo's own README for the known-gap note). 15/16
-# (db_scripts/_migrations/) are deliberately excluded — guarded no-ops on a
-# fresh install (01/10 already create schema `lms` / role `root_service` / the
-# 'lms' entitlement key directly); they only matter when upgrading a pre-P1.0
-# deployment in place. See db_scripts/_migrations/README.md.
+# Consolidated platform-wide DDL (01-06) + seed/data scripts (07+).
+# _migrations/ (15/16) is deliberately excluded — guarded no-ops on a fresh
+# install (01/03 already create schema `lms` / role `root_service` / the 'lms'
+# entitlement key directly); they only matter when upgrading a pre-P1.0
+# deployment in place. See _migrations/README.md.
+# The old 24_move-api-clients-to-iam.sql was dropped outright: it only relocated
+# ext.api_clients -> iam.api_clients for pre-existing deployments; 02_schema.sql
+# now creates iam.api_clients directly, so it was already a guaranteed no-op
+# on every fresh install.
 $CoreScripts = @(
-    "01_init-db.sql",
-    "01_init-lookup-data.sql"
+    "01_extensions_and_roles.sql",
+    "02_schema.sql",
+    "03_product_schema.sql",
+    "04_roles_and_grants.sql",
+    "05_catalogs.sql",
+    "06_rls.sql",
+    "07_seed_lookup_data.sql"
 )
 
 $DemoSeedScripts = @(
-    "02-seed-tenants-orgs-users.sql",
-    "05-cleanup-seed-helpers.sql",
-    "06a-cleanup-demo-data-pre.sql",
-    "06b-cleanup-demo-data.sql",
-    "06c-cleanup-demo-data-post.sql"
+    "08_seed_tenants_orgs_users.sql",
+    "09_seed_leads_bulk.sql",
+    "10_seed_interactions_followups.sql",
+    "11_cleanup_seed_helpers.sql",
+    "12a_cleanup_demo_data_pre.sql",
+    "12b_cleanup_demo_data.sql",
+    "12c_cleanup_demo_data_post.sql"
 )
 
 $RemainingCoreScripts = @(
-    "10_init-hr-task-schemas.sql",
-    "17_init-per-product-roles.sql",
-    "18_backfill-per-product-roles.sql",
-    "19_init-per-product-db-grants.sql",
-    "20_member-role-resolver-fn.sql",
-    "22_tenant-scope-lookups.sql",
-    "23_tenant-default-catalogs.sql",
-    "24_move-api-clients-to-iam.sql",
-    "25_lookup-admin-write-rls.sql"
+    "13_backfill_per_product_roles.sql"
 )
 
 $SqlScripts = if ($IncludeDemoSeed) {

@@ -40,7 +40,17 @@ services:
       - "${DB_PORT}:5432"
     volumes:
       - ${DB_DATA_PATH}:/var/lib/postgresql
-      - ./msq-core/db_scripts/01_init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+      # Schema bootstrap. The DDL that used to live in the single
+      # msq-core/db_scripts/01_init-db.sql is now the ordered 01-06 set in the
+      # platform-root db_scripts/. Mounted file-by-file (rather than mounting
+      # the whole directory) so ONLY the schema runs at first-boot -- the
+      # seed/cleanup scripts 07+ stay opt-in, exactly as before.
+      - ./db_scripts/01_extensions_and_roles.sql:/docker-entrypoint-initdb.d/01-extensions-and-roles.sql
+      - ./db_scripts/02_schema.sql:/docker-entrypoint-initdb.d/02-schema.sql
+      - ./db_scripts/03_product_schema.sql:/docker-entrypoint-initdb.d/03-product-schema.sql
+      - ./db_scripts/04_roles_and_grants.sql:/docker-entrypoint-initdb.d/04-roles-and-grants.sql
+      - ./db_scripts/05_catalogs.sql:/docker-entrypoint-initdb.d/05-catalogs.sql
+      - ./db_scripts/06_rls.sql:/docker-entrypoint-initdb.d/06-rls.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${DB_NAME}"]
       interval: 5s

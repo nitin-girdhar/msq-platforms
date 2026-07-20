@@ -1,104 +1,12 @@
---rollback
---drop database crm (force)
---create database crm_v2
 -- ===================================================================
--- CRM Monorepo — Merged Production Schema
--- Combines: monorepo UUID-based design + EXISTING_WORKING_CODE features
--- UUID PKs for all operational/lookup tables
--- SMALLINT/INTEGER PKs for geographic tables (geo.countries/states/cities)
--- Idempotent: safe to re-run (IF NOT EXISTS, ON CONFLICT DO NOTHING)
+-- 02_schema.sql
+-- Consolidated DDL (2/6): geo + operational lookup tables, core entity/iam
+-- tables (tenants, organizations, users), lms/marketing tables, iam
+-- api_clients, audit tables, and the ext.* (Meta integration) tables.
+-- Every column a table ever ends up with (per db_scripts history) is present
+-- here directly -- no later ALTER TABLE ADD COLUMN.
+-- Idempotent: safe to re-run.
 -- ===================================================================
-
-
--- ── Schema version tracking ────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.schema_versions (
-  version     TEXT        PRIMARY KEY,
-  description TEXT,
-  applied_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
-);
-
--- ── Extensions ─────────────────────────────────────────────────────
-CREATE EXTENSION IF NOT EXISTS pgcrypto;   -- gen_random_bytes() used by public.gen_uuidv7()
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE EXTENSION IF NOT EXISTS btree_gin;
-
-DO $$
-BEGIN
-  EXECUTE 'CREATE EXTENSION IF NOT EXISTS "vector"';
-EXCEPTION WHEN OTHERS THEN
-  RAISE WARNING 'pgvector not available (%). AI embedding features disabled.', SQLERRM;
-END;
-$$;
-
--- ── Schemas ────────────────────────────────────────────────────────
-CREATE SCHEMA IF NOT EXISTS geo;
-CREATE SCHEMA IF NOT EXISTS entity;
-CREATE SCHEMA IF NOT EXISTS iam;
-CREATE SCHEMA IF NOT EXISTS lms;
-CREATE SCHEMA IF NOT EXISTS marketing;
-CREATE SCHEMA IF NOT EXISTS audit;
-CREATE SCHEMA IF NOT EXISTS ext;
-
--- ── UUIDv7 generator (RFC 9562 §5.7) ──────────────────────────────
--- Time-ordered UUIDs: 48-bit ms timestamp prefix eliminates the
--- random-insert B-tree fragmentation caused by public.gen_uuidv7() (v4).
--- Works on PostgreSQL 14+ with no extensions required.
-CREATE OR REPLACE FUNCTION public.gen_uuidv7() RETURNS UUID
-LANGUAGE plpgsql AS $$
-DECLARE
-  v_millis BIGINT;
-  v_bytes  BYTEA;
-  v_hex    TEXT;
-BEGIN
-  v_millis := (EXTRACT(EPOCH FROM CLOCK_TIMESTAMP()) * 1000)::BIGINT;
-  v_bytes  := gen_random_bytes(10);
-  v_hex :=
-    -- 48-bit unix_ts_ms: high 32 bits (8 hex) + low 16 bits (4 hex)
-    lpad(to_hex(v_millis >> 16), 8, '0') ||
-    lpad(to_hex(v_millis & 65535), 4, '0') ||
-    -- version nibble (7) + 12-bit rand_a
-    '7' ||
-    lpad(to_hex(((get_byte(v_bytes, 0) & 15) << 8) | get_byte(v_bytes, 1)), 3, '0') ||
-    -- variant bits (10xxxxxx) + rand_b
-    lpad(to_hex((get_byte(v_bytes, 2) & 63) | 128), 2, '0') ||
-    lpad(to_hex(get_byte(v_bytes, 3)), 2, '0') ||
-    encode(substring(v_bytes from 5 for 6), 'hex');
-  RETURN (
-    substring(v_hex, 1, 8)  || '-' ||
-    substring(v_hex, 9, 4)  || '-' ||
-    substring(v_hex, 13, 4) || '-' ||
-    substring(v_hex, 17, 4) || '-' ||
-    substring(v_hex, 21, 12)
-  )::UUID;
-END; $$;
-
--- ── Roles (idempotent) ─────────────────────────────────────────────
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
-    CREATE ROLE app_user NOLOGIN NOINHERIT;
-  ELSE
-    ALTER ROLE app_user NOLOGIN NOINHERIT;
-  END IF;
-END $$;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tenant_admin') THEN
-    CREATE ROLE tenant_admin NOLOGIN NOINHERIT;
-  ELSE
-    ALTER ROLE tenant_admin NOLOGIN NOINHERIT;
-  END IF;
-END $$;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'root_service') THEN
-    CREATE ROLE root_service WITH LOGIN PASSWORD 'CrmSvc_Dev2025' BYPASSRLS;
-  ELSE
-    ALTER ROLE root_service WITH LOGIN PASSWORD 'CrmSvc_Dev2025' BYPASSRLS;
-  END IF;
-END $$;
 
 -- ===================================================================
 -- GEOGRAPHIC LOOKUP TABLES
@@ -145,63 +53,6 @@ CREATE TABLE IF NOT EXISTS iam.user_roles (
   is_active   BOOLEAN  NOT NULL DEFAULT TRUE
 );
 
-CREATE TABLE IF NOT EXISTS lms.lead_stage (
-  id                UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  name              TEXT    NOT NULL UNIQUE,
-  label             TEXT    NOT NULL,
-  description       TEXT,
-  sort_order        INT     NOT NULL DEFAULT 0,
-  followup_required BOOLEAN NOT NULL DEFAULT FALSE,
-  is_rejected       BOOLEAN NOT NULL DEFAULT FALSE,
-  is_terminated     BOOLEAN NOT NULL DEFAULT FALSE,
-  is_active         BOOLEAN NOT NULL DEFAULT TRUE
-);
-
-CREATE TABLE IF NOT EXISTS lms.lead_stage_outcome (
-  id               UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  stage_id         UUID    NOT NULL REFERENCES lms.lead_stage(id) ON DELETE RESTRICT,
-  name             TEXT    NOT NULL,
-  label            TEXT    NOT NULL,
-  description      TEXT,
-  requires_comment BOOLEAN NOT NULL DEFAULT FALSE,
-  sort_order       INT     NOT NULL DEFAULT 0,
-  is_active        BOOLEAN NOT NULL DEFAULT TRUE,
-  CONSTRAINT uq_lead_stage_outcome_stage_name UNIQUE (stage_id, name)
-);
-
-
-CREATE TABLE IF NOT EXISTS lms.interaction_types (
-  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  name        TEXT    NOT NULL UNIQUE,
-  label       TEXT    NOT NULL,
-  description TEXT,
-  is_active   BOOLEAN NOT NULL DEFAULT TRUE
-);
-
-CREATE TABLE IF NOT EXISTS lms.follow_up_statuses (
-  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  name        TEXT    NOT NULL UNIQUE,
-  label       TEXT    NOT NULL,
-  description TEXT,
-  is_active   BOOLEAN NOT NULL DEFAULT TRUE
-);
-
-CREATE TABLE IF NOT EXISTS marketing.marketing_platforms (
-  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  name        TEXT    NOT NULL UNIQUE,
-  label       TEXT    NOT NULL,
-  description TEXT,
-  is_active   BOOLEAN NOT NULL DEFAULT TRUE
-);
-
-CREATE TABLE IF NOT EXISTS marketing.campaign_statuses (
-  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  name        TEXT    NOT NULL UNIQUE,
-  label       TEXT    NOT NULL,
-  description TEXT,
-  is_active   BOOLEAN NOT NULL DEFAULT TRUE
-);
-
 CREATE TABLE IF NOT EXISTS entity.org_types (
   id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   name        TEXT    NOT NULL UNIQUE,
@@ -224,14 +75,6 @@ CREATE TABLE IF NOT EXISTS entity.tenant_plan_types (
   label       TEXT    NOT NULL,
   description TEXT,
   is_active   BOOLEAN NOT NULL DEFAULT TRUE
-);
-
--- Monorepo addition: source channel for organic / non-campaign leads
-CREATE TABLE IF NOT EXISTS lms.lead_sources (
-  id        UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  name      TEXT    NOT NULL UNIQUE,
-  label     TEXT    NOT NULL,
-  is_active BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 -- ===================================================================
@@ -349,6 +192,98 @@ CREATE POLICY tenant_admin_self_policy ON entity.tenants
   USING (id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
   WITH CHECK (id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
+-- ===================================================================
+-- TENANT-SCOPED LMS / MARKETING LOOKUP TABLES
+-- Created here (rather than up in the OPERATIONAL LOOKUP TABLES block)
+-- because each carries a tenant_id FK to entity.tenants, which must exist
+-- first. Every table that FKs into these (marketing.ad_campaigns,
+-- lms.marketing_leads, lms.lead_follow_ups, lms.lead_interactions, ...) is
+-- created further down, so this placement introduces no forward reference.
+-- ===================================================================
+
+-- lms.lead_stage / lead_stage_outcome / interaction_types / follow_up_statuses
+-- / lead_sources / marketing.marketing_platforms / campaign_statuses are
+-- tenant-scoped (historically added via 26_tenant-scope-lms-lookups.sql
+-- ALTER; folded directly into the CREATE TABLE here). tenant_id is left
+-- NULLABLE (not NOT NULL, unlike the original post-migration end state):
+-- 07_seed_lookup_data.sql (untouched per scope — seed data, not schema)
+-- still seeds these 7 tables as global rows with no tenant_id, and there is
+-- no per-tenant catalog-provisioning path wired up for them (unlike the 8
+-- tables covered by 05_catalogs.sql / entity.seed_tenant_defaults()) — a
+-- pre-existing gap, not something introduced by this consolidation. See
+-- KNOWN FOLLOW-UP note in the original 26_tenant-scope-lms-lookups.sql.
+CREATE TABLE IF NOT EXISTS lms.lead_stage (
+  id                UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id         UUID    REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  name              TEXT    NOT NULL UNIQUE,
+  label             TEXT    NOT NULL,
+  description       TEXT,
+  sort_order        INT     NOT NULL DEFAULT 0,
+  followup_required BOOLEAN NOT NULL DEFAULT FALSE,
+  is_rejected       BOOLEAN NOT NULL DEFAULT FALSE,
+  is_terminated     BOOLEAN NOT NULL DEFAULT FALSE,
+  is_active         BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS lms.lead_stage_outcome (
+  id               UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id        UUID    REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  stage_id         UUID    NOT NULL REFERENCES lms.lead_stage(id) ON DELETE RESTRICT,
+  name             TEXT    NOT NULL,
+  label            TEXT    NOT NULL,
+  description      TEXT,
+  requires_comment BOOLEAN NOT NULL DEFAULT FALSE,
+  sort_order       INT     NOT NULL DEFAULT 0,
+  is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+  CONSTRAINT uq_lead_stage_outcome_stage_name UNIQUE (stage_id, name)
+);
+
+
+CREATE TABLE IF NOT EXISTS lms.interaction_types (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id   UUID    REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  name        TEXT    NOT NULL UNIQUE,
+  label       TEXT    NOT NULL,
+  description TEXT,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS lms.follow_up_statuses (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id   UUID    REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  name        TEXT    NOT NULL UNIQUE,
+  label       TEXT    NOT NULL,
+  description TEXT,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS marketing.marketing_platforms (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id   UUID    REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  name        TEXT    NOT NULL UNIQUE,
+  label       TEXT    NOT NULL,
+  description TEXT,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS marketing.campaign_statuses (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id   UUID    REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  name        TEXT    NOT NULL UNIQUE,
+  label       TEXT    NOT NULL,
+  description TEXT,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+-- Monorepo addition: source channel for organic / non-campaign leads
+CREATE TABLE IF NOT EXISTS lms.lead_sources (
+  id        UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id UUID    REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  name      TEXT    NOT NULL UNIQUE,
+  label     TEXT    NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE
+);
+
 -- ── ORGANIZATIONS ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS entity.organizations (
   id            UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
@@ -367,6 +302,11 @@ CREATE TABLE IF NOT EXISTS entity.organizations (
   state_id      SMALLINT REFERENCES geo.states(id)    ON DELETE RESTRICT,
   country_id    SMALLINT REFERENCES geo.countries(id) ON DELETE RESTRICT,
   timezone      TEXT    NOT NULL DEFAULT 'Asia/Kolkata',
+  -- Geofence-centre coordinates used by the HR attendance module
+  -- (historically added via 13_init-attendance.sql ALTER TABLE ... ADD COLUMN
+  -- IF NOT EXISTS; folded directly into the CREATE TABLE here).
+  geo_lat       NUMERIC(9,6),
+  geo_lng       NUMERIC(9,6),
   is_active     BOOLEAN NOT NULL DEFAULT TRUE,
   is_deleted    BOOLEAN NOT NULL DEFAULT FALSE,
   deleted_at    TIMESTAMPTZ,
@@ -415,6 +355,13 @@ CREATE TABLE IF NOT EXISTS iam.users (
   last_login_at         TIMESTAMPTZ,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  -- The single, coarse cross-product role that survives in the shrunk JWT.
+  -- Nullable (backfilled by the roles/grants backfill step, made NOT NULL in
+  -- the Phase E contract). Drives PG-role selection and platform-wide
+  -- capabilities only; product authority comes from <product>.member_roles.
+  platform_role         TEXT
+                        CONSTRAINT chk_users_platform_role
+                        CHECK (platform_role IN ('super_admin','tenant_admin','org_admin','member')),
   CONSTRAINT chk_user_not_own_manager    CHECK (id <> manager_id),
   CONSTRAINT chk_users_active_deleted    CHECK (NOT (is_active AND is_deleted))
 );
@@ -616,11 +563,6 @@ CREATE TRIGGER trg_00_marketing_leads_set_org_id
 DROP TRIGGER IF EXISTS trg_01_marketing_leads_set_created_by ON lms.marketing_leads;
 CREATE TRIGGER trg_01_marketing_leads_set_created_by
   BEFORE INSERT ON lms.marketing_leads FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
-
--- migration: replace duplicate_lead_id with is_active + superseded_by
-ALTER TABLE lms.marketing_leads DROP COLUMN IF EXISTS duplicate_lead_id;
-ALTER TABLE lms.marketing_leads ADD COLUMN IF NOT EXISTS is_active     BOOLEAN NOT NULL DEFAULT TRUE;
-ALTER TABLE lms.marketing_leads ADD COLUMN IF NOT EXISTS superseded_by UUID    REFERENCES lms.marketing_leads(id) ON DELETE SET NULL;
 
 CREATE INDEX IF NOT EXISTS idx_marketing_leads_is_active    ON lms.marketing_leads (org_id, is_active) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_marketing_leads_superseded_by ON lms.marketing_leads (superseded_by)    WHERE superseded_by IS NOT NULL;
@@ -958,9 +900,9 @@ CREATE TABLE IF NOT EXISTS audit.audit_log (
   record_id      UUID,
   changed_by     UUID,
   changed_fields JSONB,
-  -- monorepo naming (aliases of above; populated together for compatibility)
-  row_id         UUID,
-  actor_id       UUID        REFERENCES iam.users(id),
+  -- row_id/actor_id (monorepo-naming aliases of record_id/changed_by) were
+  -- dropped by the historical "remove duplicate alias columns" cleanup
+  -- (issue #32) — never created here.
   old_data       JSONB,
   new_data       JSONB,
   -- common
@@ -2737,14 +2679,8 @@ CREATE POLICY assignable_read_policy ON iam.user_org_mapping AS PERMISSIVE FOR S
     ) >= 40
   );
 
--- ── AUDIT_LOG: remove duplicate alias columns (issue #32) ─────────
--- row_id and actor_id are exact aliases of record_id and changed_by.
--- Drop them and update the trigger to only use the canonical names.
-ALTER TABLE audit.audit_log
-  DROP COLUMN IF EXISTS row_id,
-  DROP COLUMN IF EXISTS actor_id;
-
--- Update the audit trigger function to stop writing the dropped columns.
+-- ── AUDIT_LOG trigger function (canonical record_id/changed_by columns only;
+--    row_id/actor_id alias columns never created — see audit.audit_log above) ──
 CREATE OR REPLACE FUNCTION audit.audit_row_changes() RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE

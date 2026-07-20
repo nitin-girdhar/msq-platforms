@@ -1,4 +1,13 @@
 -- ===================================================================
+-- 05_catalogs.sql
+-- Consolidated DDL: versioned per-tenant default-catalog registry
+-- (entity.catalog_versions / entity.catalog_defaults / entity.
+-- tenant_catalog_versions) and the seed_tenant_defaults()/reset_tenant_catalog()
+-- provisioning functions for the tenant-scoped lookup tables created earlier.
+-- Idempotent: safe to re-run.
+-- ===================================================================
+
+-- ===================================================================
 -- 23_tenant-default-catalogs.sql
 --
 -- Platform_Refactor_Prompts.md "Tenant default seeding" /

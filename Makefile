@@ -35,16 +35,23 @@ define run_sql
 	docker exec $(DB_CONTAINER) psql -U $(POSTGRES_USER) -d $(DB_NAME) -f /tmp/$(notdir $(1))
 endef
 
-# For the full fresh-install sequence (not just 01) use msq-core/db_scripts/db_deploy.ps1.
-migrate: ## Run the shared-schema bootstrap script (msq-core/db_scripts/01_init-db.sql)
-	$(call run_sql,msq-core/db_scripts/01_init-db.sql)
+# For the full fresh-install sequence (schema + seeds + cleanup) use
+# db_scripts/db_deploy.ps1 — the single platform-wide bootstrap.
+migrate: ## Run the full schema bootstrap (db_scripts/01-06)
+	$(call run_sql,db_scripts/01_extensions_and_roles.sql)
+	$(call run_sql,db_scripts/02_schema.sql)
+	$(call run_sql,db_scripts/03_product_schema.sql)
+	$(call run_sql,db_scripts/04_roles_and_grants.sql)
+	$(call run_sql,db_scripts/05_catalogs.sql)
+	$(call run_sql,db_scripts/06_rls.sql)
 
-seed-admin: ## Seed tenants, orgs, and users (msq-core/db_scripts/02-seed-tenants-orgs-users.sql)
-	$(call run_sql,msq-core/db_scripts/02-seed-tenants-orgs-users.sql)
+seed-admin: ## Seed tenants, orgs, and users (db_scripts/08_seed_tenants_orgs_users.sql)
+	$(call run_sql,db_scripts/07_seed_lookup_data.sql)
+	$(call run_sql,db_scripts/08_seed_tenants_orgs_users.sql)
 
-# Product-specific targets (seed-data, migrate-leave, migrate-attendance,
-# accrue-leave*, resolve-attendance) moved to their owning product repo
-# (msq-lms / msq-hrms) — this repo owns no product schema.
+# All schema now lives in the single platform-root db_scripts/ — the four
+# product repos (msq-core / msq-hrms / msq-lms / msq-todo) no longer carry
+# their own db_scripts folders; everything deploys centrally to one database.
 
 db-shell: ## Open a psql shell in the Postgres container
 	docker exec -it $(DB_CONTAINER) psql -U $(POSTGRES_USER) -d $(DB_NAME)

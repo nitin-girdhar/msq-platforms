@@ -1,5 +1,18 @@
 'use client';
 
+// SECURITY — `xlsx` (SheetJS) carries two open advisories with no npm fix
+// available: prototype pollution (GHSA-4r6h-8v6p-xvw6) and ReDoS
+// (GHSA-5pgg-2g8v-p4x9). Both require PARSING an attacker-supplied workbook.
+//
+// This module is write-only: it builds sheets from in-app data
+// (aoa_to_sheet / book_new / write) and never reads one. Neither advisory is
+// reachable as long as that holds.
+//
+// DO NOT introduce XLSX.read(), XLSX.readFile(), or sheet_to_json() here or
+// anywhere else without first migrating off this package — those are the entry
+// points the advisories describe. If spreadsheet IMPORT is ever needed, move to
+// the SheetJS CDN build (which is patched) or `exceljs`, which hr-service
+// already depends on.
 import * as XLSX from 'xlsx';
 
 export type ExportFormat = 'xlsx' | 'csv';

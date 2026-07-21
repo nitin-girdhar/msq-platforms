@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
+import { safeEqual } from '@platform/service-auth';
 import { configureProductSource } from '@platform/authz';
 import { getActiveTenantModulesByTenantId } from '@platform/db';
 import { config } from './config.js';
@@ -19,6 +20,10 @@ const app = Fastify({
   // Attendance punch photos travel as base64 in the JSON body (≤2 MB binary ≈
   // ≤2.8 MB base64); raise the default 1 MB limit so those requests proxy through.
   bodyLimit: 5 * 1024 * 1024,
+  // Without this, request.ip behind the Caddy/ALB reverse proxy is the PROXY's
+  // address for every request — collapsing the per-IP rate limiters into a
+  // single shared bucket. See TRUST_PROXY_HOPS in config.ts.
+  ...(config.trustProxyHops > 0 ? { trustProxy: config.trustProxyHops } : {}),
   logger: {
     level: config.nodeEnv === 'production' ? 'info' : 'debug',
     ...(config.nodeEnv !== 'production' ? { transport: { target: 'pino-pretty', options: { colorize: true } } } : {}),
@@ -113,7 +118,9 @@ app.post('/auth/switch-org', { preHandler: [loginRateLimit] }, async (req, reply
 // in the X-Api-Key header so only registered ad platform integrations can post.
 app.post('/intake/webhook', { preHandler: [webhookRateLimit] }, async (req, reply) => {
   const apiKey = (req.headers['x-api-key'] as string | undefined) ?? '';
-  if (!apiKey || apiKey !== config.webhookApiKey) {
+  // Constant-time: a `!==` here leaks, via response timing, how many leading
+  // bytes of the webhook key a caller guessed correctly.
+  if (!apiKey || !safeEqual(apiKey, config.webhookApiKey)) {
     return reply.status(401).send({ error: 'Invalid or missing API key' });
   }
   return proxyTo(config.leadsServiceUrl, '/api/v1/intake/webhook', req, reply);

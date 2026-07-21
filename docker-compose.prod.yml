@@ -1,0 +1,55 @@
+# Production overlay. Apply ON TOP of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Everything here narrows the local-dev defaults for a production host. The base
+# file stays dev-friendly (DB reachable from the host for psql/GUI clients);
+# this overlay removes that convenience where it becomes exposure.
+
+services:
+  postgres:
+    # Base file publishes "${DB_PORT}:5432" so local tooling can reach the DB.
+    # In production that puts Postgres on a host-reachable port; this drops the
+    # publish so the DB is reachable ONLY over the internal compose network,
+    # which is all the services need.
+    #
+    # The `!override` tag is REQUIRED here. Compose merges sequence fields like
+    # `ports` by CONCATENATING them, so a plain `ports: []` is a no-op and the
+    # base file's 5432 publish survives (verified with `docker compose config`).
+    # `!override` replaces the list outright. Needs Compose v2.24+.
+    #
+    # For admin access in prod, exec into the container instead:
+    #   docker compose exec postgres psql -U "$POSTGRES_USER" -d "$DB_NAME"
+    ports: !override []
+
+  api-gateway:
+    environment:
+      # The gateway is the only externally published service, so in production
+      # it sits behind a reverse proxy / load balancer. Without this, Fastify
+      # reads request.ip as the PROXY's address for every request and the per-IP
+      # rate limiters collapse into one shared bucket.
+      #
+      # 1 is correct for `browser -> Caddy -> Next.js app -> gateway`, even
+      # though that looks like two proxies: Caddy APPENDS the client IP to
+      # X-Forwarded-For, but Next.js only fills XFF in when absent and forwards
+      # it unchanged through its /api/:path* rewrite. So the gateway sees ONE
+      # XFF entry. Raise to 2 only if you add a CDN that also appends.
+      # Setting it HIGHER than the real trusted-hop count lets a client prepend
+      # its own X-Forwarded-For and evade rate limiting -- keep it exact.
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      NODE_ENV: production
+
+  identity-service:
+    environment:
+      # Enables the placeholder/length gate on JWT_SECRET and
+      # PUBLIC_API_KEY_PEPPER (packages/auth-constants/src/secrets.ts). The
+      # service will refuse to start if either is still an .env.example value.
+      NODE_ENV: production
+
+  admin-service:
+    environment:
+      NODE_ENV: production
+
+  communication-service:
+    environment:
+      NODE_ENV: production

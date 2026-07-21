@@ -353,6 +353,15 @@ CREATE TABLE IF NOT EXISTS iam.users (
   force_password_change BOOLEAN NOT NULL DEFAULT TRUE,
   password_changed_at   TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   last_login_at         TIMESTAMPTZ,
+  -- Account-level brute-force throttle. The gateway's IP rate limiter cannot
+  -- stop an attacker who rotates source IPs against one known email; these
+  -- move the counter onto the account itself. Reset on successful login or
+  -- password change. See _migrations/17_account_lockout.sql.
+  failed_login_attempts INT     NOT NULL DEFAULT 0,
+  locked_until          TIMESTAMPTZ,
+  -- Lets a stale attempt count expire instead of accumulating forever.
+  -- See _migrations/18_account_lockout_decay.sql.
+  last_failed_login_at  TIMESTAMPTZ,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   -- The single, coarse cross-product role that survives in the shrunk JWT.

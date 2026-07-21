@@ -1,3 +1,5 @@
+import { requireStrongSecret as sharedRequireStrongSecret } from '@platform/auth-constants';
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -6,21 +8,14 @@ function requireEnv(name: string): string {
 
 const nodeEnv = process.env['NODE_ENV'] ?? 'development';
 
-// Known insecure placeholder values shipped in .env.example. Refuse to boot with
-// them (or with a too-short secret) in production so a misconfigured deploy fails
-// loudly instead of running with a guessable JWT/internal secret.
-const WEAK_SECRETS = new Set([
-  'change-me-to-a-long-random-string-at-least-64-chars',
-  'change-me-to-another-long-random-string',
-  'change-me-webhook-key',
-]);
-
+// Placeholder/length gate now lives in @platform/auth-constants so the gateway
+// and identity-service enforce the same rules against the same blocklist.
 function requireStrongSecret(name: string, minLength = 32): string {
-  const value = requireEnv(name);
-  if (nodeEnv === 'production' && (WEAK_SECRETS.has(value) || value.length < minLength)) {
-    throw new Error(`${name} must be changed from its default and be at least ${minLength} characters in production`);
-  }
-  return value;
+  return sharedRequireStrongSecret(name, requireEnv(name), {
+    nodeEnv,
+    minLength,
+    logPrefix: '[api-gateway] ',
+  });
 }
 
 export const config = {
@@ -41,6 +36,23 @@ export const config = {
   hrServiceUrl: process.env['HR_SERVICE_URL'] ?? 'http://localhost:4007',
   tasksServiceUrl: process.env['TASKS_SERVICE_URL'] ?? 'http://localhost:4008',
   webUrl: process.env['WEB_URL'] ?? 'http://localhost:3000',
+  // Trusted proxy hops, used by Fastify to pick the real client IP out of
+  // X-Forwarded-For — which the per-IP rate limiters key on.
+  //
+  // Count TRUSTED HOPS, not physical proxies. In this topology a browser
+  // request reaches the gateway as:
+  //     browser -> Caddy -> Next.js app (rewrite) -> gateway
+  // which looks like two proxies, but the correct value is 1. Caddy APPENDS
+  // the client IP to X-Forwarded-For, while Next.js only fills it in when
+  // absent (`req.headers['x-forwarded-for'] ??= socket.remoteAddress` —
+  // next/dist/server/base-server.js) and forwards it unchanged through the
+  // `/api/:path*` rewrite. So the gateway sees a SINGLE XFF entry (the browser)
+  // with the Next container as the socket peer => one trusted hop.
+  //
+  // Too low: every client collapses into one bucket (limiter stops working and
+  // real users get 429s). Too high: a client can prepend its own
+  // X-Forwarded-For and evade the limiter. 0 = gateway exposed directly.
+  trustProxyHops: parseInt(process.env['TRUST_PROXY_HOPS'] ?? '0', 10),
   // Server-side pepper for verifying public API keys. Must match identity-service.
   // Required in production; without it the /public/v1 API returns 503.
   publicApiKeyPepper: process.env['PUBLIC_API_KEY_PEPPER'],
@@ -50,6 +62,14 @@ export const config = {
   jwtKid: process.env['JWT_KID'],
 } as const;
 
-if (config.nodeEnv === 'production' && !config.publicApiKeyPepper) {
-  throw new Error('PUBLIC_API_KEY_PEPPER is required in production');
+if (config.nodeEnv === 'production') {
+  if (!config.publicApiKeyPepper) {
+    throw new Error('[api-gateway] PUBLIC_API_KEY_PEPPER is required in production');
+  }
+  // Must match identity-service's value AND its strength gate, or a rotation
+  // that satisfies one service but not the other fails asymmetrically.
+  sharedRequireStrongSecret('PUBLIC_API_KEY_PEPPER', config.publicApiKeyPepper, {
+    nodeEnv: config.nodeEnv,
+    logPrefix: '[api-gateway] ',
+  });
 }

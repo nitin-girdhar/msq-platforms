@@ -4,8 +4,23 @@ const phoneSchema = z.string().min(8).regex(/^\+?[0-9\s\-()]+$/);
 
 // ── Email ───────────────────────────────────────────────────────────────────
 
+// The subject is interpolated into an SMTP *header*. A bare CR or LF ends the
+// header and lets the remainder be parsed as additional headers or as the body
+// -- classic SMTP header injection, e.g. smuggling an extra `Bcc:` to exfiltrate
+// mail. Reject any control character rather than stripping, so the caller sees a
+// 400 instead of silently getting a mangled subject.
+//
+// This is the primary fix; the nodemailer upgrade is defence in depth.
+// Kept as .regex() (not .refine()) so the result stays a ZodString and callers
+// can still chain .min()/.optional() -- .refine() returns ZodEffects and breaks
+// type inference downstream.
+const HEADER_SAFE = /^[^\u0000-\u001F\u007F]*$/;
+
+const headerSafeString = (max: number) =>
+  z.string().max(max).regex(HEADER_SAFE, 'must not contain line breaks or control characters');
+
 export const sendEmailSchema = z.object({
-  subject: z.string().min(1, 'Subject is required').max(500),
+  subject: headerSafeString(500).min(1, 'Subject is required'),
   body: z.string().min(1, 'Body is required').max(50_000),
   html: z.string().max(100_000).optional(),
   email_addresses: z.array(z.string().email()).min(1).max(50),
@@ -42,7 +57,7 @@ export type SendWhatsAppTemplateInput = z.infer<typeof sendWhatsAppTemplateSchem
 
 export const sendCommunicationSchema = z.object({
   // Email fields (optional)
-  subject: z.string().min(1).max(500).optional(),
+  subject: headerSafeString(500).min(1).optional(),
   body: z.string().min(1).max(50_000).optional(),
   html: z.string().max(100_000).optional(),
   email_addresses: z.array(z.string().email()).max(50).optional(),

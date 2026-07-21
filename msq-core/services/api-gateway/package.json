@@ -22,7 +22,8 @@
     "@fastify/cors": "^10.0.2",
     "fastify": "^5.2.1",
     "jose": "^6.2.3",
-    "pino": "^9.6.0"
+    "pino": "^9.6.0",
+    "@platform/service-auth": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.10",

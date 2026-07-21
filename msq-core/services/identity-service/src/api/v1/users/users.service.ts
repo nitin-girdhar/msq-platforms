@@ -9,6 +9,7 @@ import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, AddOrgMappin
 import { NotFoundError, ConflictError, ForbiddenError, BadRequestError } from '../../../lib/errors.js';
 import { logActivity } from '@platform/audit-log';
 import { revokeAllUserSessions } from '../../../lib/jwt.js';
+import { clearLockout } from '../auth/auth.repository.js';
 import { config } from '../../../config/index.js';
 import * as repo from './users.repository.js';
 import type { UpdateUserFields } from './users.repository.js';
@@ -270,6 +271,10 @@ export async function resetPassword(
 
   const result = await repo.adminResetPassword(ctx, targetUserId, passwordHash);
   if (!result) throw new NotFoundError('User not found');
+
+  // An admin reset is also the unlock path for a user locked out by failed
+  // logins — otherwise the new temporary password would still be refused.
+  await clearLockout(targetUserId);
 
   // Force the target's existing sessions to end immediately so a reset (e.g.
   // after a compromise) actually locks the user out everywhere, not just at

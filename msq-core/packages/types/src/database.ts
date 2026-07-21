@@ -18,6 +18,13 @@ export interface DatabaseUser {
   manager_id: string | null;
   manager_name: string | null;
   last_login_at: Date | null;
+  /** Account-level brute-force lockout: when set and in the future, login is
+   *  refused before the password compare. Cleared on successful login or
+   *  password change. */
+  locked_until: Date | null;
+  /** Timestamp of the most recent failed login, used to expire a stale
+   *  failed-attempt streak (LOGIN_ATTEMPT_WINDOW_MINUTES). */
+  last_failed_login_at: Date | null;
   is_active: boolean;
   force_password_change: boolean;
   password_changed_at: Date | null;

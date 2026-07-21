@@ -10,6 +10,7 @@ import * as repo from './auth.repository.js';
 import { toSessionUser } from './auth.types.js';
 import type { DatabaseUser } from './auth.types.js';
 import type { LoginInput } from './auth.schema.js';
+import { config } from '../../../config/index.js';
 
 export interface LoginResult {
   token: string;
@@ -50,7 +51,22 @@ export async function login(input: LoginInput): Promise<LoginResult> {
       org_id: db_user.org_id,
       new_value: { email: input.email, reason: 'account_inactive' },
     });
-    throw new UnauthorizedError('Account is deactivated. Please contact your administrator.');
+    throw new UnauthorizedError('Invalid email or password');
+  }
+
+  const lockoutEnabled = config.loginMaxFailedAttempts > 0;
+
+  // Checked BEFORE the bcrypt compare: a locked account must cost an attacker
+  // nothing to verify and give them no signal, and skipping the ~100ms hash
+  // keeps a lockout from being turned into a CPU-exhaustion lever.
+  if (lockoutEnabled && db_user.locked_until && new Date(db_user.locked_until).getTime() > Date.now()) {
+    void logActivity({
+      action_type: 'login_failure',
+      performed_by: db_user.id,
+      org_id: db_user.org_id,
+      new_value: { email: input.email, reason: 'account_locked' },
+    });
+    throw new UnauthorizedError('Invalid email or password');
   }
 
   const password_valid = db_user.password_hash
@@ -58,14 +74,33 @@ export async function login(input: LoginInput): Promise<LoginResult> {
     : false;
 
   if (!password_valid) {
+    let locked = false;
+    if (lockoutEnabled) {
+      const state = await repo.recordFailedLogin(
+        db_user.id,
+        config.loginMaxFailedAttempts,
+        config.loginLockoutMinutes,
+        config.loginAttemptWindowMinutes,
+      );
+      locked = state.failed_login_attempts >= config.loginMaxFailedAttempts;
+    }
     void logActivity({
-      action_type: 'login_failure',
+      action_type: locked ? 'account_locked' : 'login_failure',
       performed_by: db_user.id,
       org_id: db_user.org_id,
-      new_value: { email: input.email, reason: 'invalid_password' },
+      new_value: {
+        email: input.email,
+        reason: locked ? 'lockout_threshold_reached' : 'invalid_password',
+      },
     });
     throw new UnauthorizedError('Invalid email or password');
   }
+
+  // Clear the lockout state FIRST. The password has been verified at this
+  // point, so the failure streak is over regardless of what happens next --
+  // previously this ran after getLicensedProducts, so a hiccup in that
+  // unrelated query left the user's failed-attempt count standing.
+  await repo.updateLastLogin(db_user.id);
 
   const pwd_iat = db_user.password_changed_at
     ? Math.floor(new Date(db_user.password_changed_at as unknown as string).getTime() / 1000)
@@ -82,7 +117,6 @@ export async function login(input: LoginInput): Promise<LoginResult> {
     force_password_change: db_user.force_password_change,
   });
 
-  await repo.updateLastLogin(db_user.id);
   await logActivity({ action_type: 'login_success', performed_by: db_user.id, org_id: db_user.org_id });
 
   return {
@@ -229,6 +263,10 @@ export async function changePassword(
 
   const new_hash = await hashPassword(new_password);
   const updated = await repo.changePassword(user_id, new_hash);
+
+  // A user who just proved knowledge of their current password and rotated it
+  // should not stay locked out by failures that preceded the change.
+  await repo.clearLockout(user_id);
 
   const pca = updated?.password_changed_at;
   const pwd_iat = pca ? Math.floor(pca.getTime() / 1000) : Math.floor(Date.now() / 1000);

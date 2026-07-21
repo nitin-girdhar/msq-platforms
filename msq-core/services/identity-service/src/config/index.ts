@@ -1,15 +1,44 @@
+import { requireStrongSecret } from '@platform/auth-constants';
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`[identity-service] Missing required env var: ${name}`);
   return value;
 }
 
+const nodeEnv = process.env['NODE_ENV'] ?? 'development';
+
+// Refuse to boot in production on a placeholder or too-short secret. This
+// service SIGNS the tokens the whole platform trusts, so a weak JWT_SECRET
+// here is forgeable sessions everywhere -- it warrants the same gate the
+// gateway already applies at the edge.
+function strongSecret(name: string, minLength = 32): string {
+  return requireStrongSecret(name, requireEnv(name), {
+    nodeEnv,
+    minLength,
+    logPrefix: '[identity-service] ',
+  });
+}
+
 export const config = {
   port: parseInt(process.env['IDENTITY_SERVICE_PORT'] ?? '4001', 10),
-  nodeEnv: process.env['NODE_ENV'] ?? 'development',
-  jwtSecret: requireEnv('JWT_SECRET'),
+  nodeEnv,
+  jwtSecret: strongSecret('JWT_SECRET'),
   bcryptRounds: parseInt(process.env['BCRYPT_ROUNDS'] ?? '12', 10),
   passwordMinLength: parseInt(process.env['PASSWORD_MIN_LENGTH'] ?? '12', 10),
+  // Account-level brute-force lockout. Complements (does not replace) the
+  // gateway's per-IP login limiter: that one is evaded by IP rotation, this
+  // one is not. Set LOGIN_MAX_FAILED_ATTEMPTS=0 to disable entirely.
+  loginMaxFailedAttempts: parseInt(process.env['LOGIN_MAX_FAILED_ATTEMPTS'] ?? '10', 10),
+  loginLockoutMinutes: parseInt(process.env['LOGIN_LOCKOUT_MINUTES'] ?? '15', 10),
+  // How long a failed attempt stays "recent". Once the previous failure is
+  // older than this, the counter restarts at 1 instead of accumulating. Keeping
+  // it equal to the lockout duration also means an expired lock hands back a
+  // full budget, rather than re-locking on the user's very next typo.
+  loginAttemptWindowMinutes: parseInt(
+    process.env['LOGIN_ATTEMPT_WINDOW_MINUTES'] ?? process.env['LOGIN_LOCKOUT_MINUTES'] ?? '15',
+    10,
+  ),
   databaseUrl: requireEnv('DATABASE_URL'),
   databaseUrlService: requireEnv('DATABASE_URL_SERVICE'),
   logLevel: process.env['LOG_LEVEL'] ?? 'info',
@@ -32,6 +61,14 @@ export const config = {
   leadsServiceUrl: process.env['LEADS_SERVICE_URL'] ?? 'http://localhost:4002',
 } as const;
 
-if (config.nodeEnv === 'production' && !config.publicApiKeyPepper) {
-  throw new Error('[identity-service] PUBLIC_API_KEY_PEPPER is required in production');
+if (config.nodeEnv === 'production') {
+  if (!config.publicApiKeyPepper) {
+    throw new Error('[identity-service] PUBLIC_API_KEY_PEPPER is required in production');
+  }
+  // The pepper is what stops a stolen api_clients table from being replayed, so
+  // it gets the same placeholder/length gate as the signing secrets.
+  requireStrongSecret('PUBLIC_API_KEY_PEPPER', config.publicApiKeyPepper, {
+    nodeEnv: config.nodeEnv,
+    logPrefix: '[identity-service] ',
+  });
 }

@@ -7,9 +7,10 @@ x-db-env: &db-env
   DATABASE_URL_TENANT: postgres://${DB_TENANT_SVC_USER}:${DB_TENANT_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
   DATABASE_URL_SERVICE: postgres://${DB_SERVICE_USER}:${DB_SERVICE_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
 
-# NOTE: this file was already missing admin-service/lookup-admin relative to
-# docker-compose.yml before this trim (a pre-existing gap, not introduced
-# here) — flagged as a follow-up, not fixed in this pass.
+# Image names must match what `docker compose build` tags from
+# docker-compose.yml: those services use `build:` with no `image:` key, so
+# compose names them <project>-<service> and the project (top of this file) is
+# `msq`. msq-deploy/build-deploy.ps1 exports exactly this set.
 #
 # Cross-repo networking (NOT solved here — see docker-compose.yml's note):
 # api-gateway's product-service URLs are env-driven so this stays valid once
@@ -46,7 +47,7 @@ services:
       retries: 10
 
   identity-service:
-    image: crm-identity-service
+    image: msq-identity-service
     restart: unless-stopped
     env_file: .env
     environment:
@@ -60,7 +61,7 @@ services:
         condition: service_healthy
 
   communication-service:
-    image: crm-communication-service
+    image: msq-communication-service
     restart: unless-stopped
     env_file: .env
     environment:
@@ -68,8 +69,21 @@ services:
     expose:
       - "${COMMUNICATION_SERVICE_PORT}"
 
+  admin-service:
+    image: msq-admin-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: ${ADMIN_SERVICE_PORT}
+      <<: *db-env
+    expose:
+      - "${ADMIN_SERVICE_PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api-gateway:
-    image: crm-api-gateway
+    image: msq-api-gateway
     restart: unless-stopped
     env_file: .env
     environment:
@@ -77,6 +91,7 @@ services:
       <<: *db-env
       IDENTITY_SERVICE_URL: http://identity-service:${IDENTITY_SERVICE_PORT}
       COMMUNICATION_SERVICE_URL: http://communication-service:${COMMUNICATION_SERVICE_PORT}
+      ADMIN_SERVICE_URL: http://admin-service:${ADMIN_SERVICE_PORT}
       # Product service URLs — resolved against the shared Docker network once
       # the parent workspace wires it. Point these at msq-lms/msq-hrms/
       # msq-todo's containers in your .env.
@@ -94,11 +109,18 @@ services:
         condition: service_started
       communication-service:
         condition: service_started
+      admin-service:
+        condition: service_started
 
   # P4.3: one image per product, shared SSO cookie. See docker-compose.yml for
   # the topology notes. These consume prebuilt images shipped to the server.
+  #
+  # NEXT_PUBLIC_* values are baked in at build time on the Windows build host,
+  # so setting them here does nothing for browser-facing URLs — if the server's
+  # public hostname differs from the build-time default, rebuild the web images
+  # with the right build args rather than editing this file.
   auth-web:
-    image: crm-auth-web
+    image: msq-auth-web
     restart: unless-stopped
     env_file: .env
     environment:
@@ -106,5 +128,18 @@ services:
       API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
     ports:
       - "3000:3000"
+    depends_on:
+      - api-gateway
+
+  lookup-admin:
+    image: msq-lookup-admin
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "3001"
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
+      API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+    ports:
+      - "3005:3001"
     depends_on:
       - api-gateway

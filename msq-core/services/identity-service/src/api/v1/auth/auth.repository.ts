@@ -14,7 +14,7 @@ export async function getUserByEmail(
           ${org_id}::uuid                           AS org_id,
           u.first_name, u.middle_name, u.last_name, u.full_name,
           u.email, u.mobile, u.password_hash, u.is_active, u.force_password_change,
-          u.password_changed_at, u.last_login_at, u.manager_id, u.created_at, u.updated_at,
+          u.password_changed_at, u.last_login_at, u.locked_until, u.manager_id, u.created_at, u.updated_at,
           u.is_deleted,
           u.platform_role,
           COALESCE(uom_r.name,  ur.name)  AS role_name,
@@ -45,7 +45,7 @@ export async function getUserByEmail(
       SELECT
         u.id, u.org_id, u.first_name, u.middle_name, u.last_name, u.full_name,
         u.email, u.mobile, u.password_hash, u.is_active, u.force_password_change,
-        u.password_changed_at, u.last_login_at, u.manager_id, u.created_at, u.updated_at,
+        u.password_changed_at, u.last_login_at, u.locked_until, u.manager_id, u.created_at, u.updated_at,
         u.is_deleted,
         u.platform_role,
         ur.name   AS role_name,
@@ -82,7 +82,7 @@ export async function getUserById(id: string, org_id?: string): Promise<Database
           ${org_id}::uuid                           AS org_id,
           u.first_name, u.middle_name, u.last_name, u.full_name,
           u.email, u.mobile, u.password_hash, u.is_active, u.force_password_change,
-          u.password_changed_at, u.last_login_at, u.manager_id, u.created_at, u.updated_at,
+          u.password_changed_at, u.last_login_at, u.locked_until, u.manager_id, u.created_at, u.updated_at,
           u.is_deleted,
           u.platform_role,
           COALESCE(uom_r.name,  ur.name)  AS role_name,
@@ -113,7 +113,7 @@ export async function getUserById(id: string, org_id?: string): Promise<Database
       SELECT
         u.id, u.org_id, u.first_name, u.middle_name, u.last_name, u.full_name,
         u.email, u.mobile, u.password_hash, u.is_active, u.force_password_change,
-        u.password_changed_at, u.last_login_at, u.manager_id, u.created_at, u.updated_at,
+        u.password_changed_at, u.last_login_at, u.locked_until, u.manager_id, u.created_at, u.updated_at,
         u.is_deleted,
         u.platform_role,
         ur.name   AS role_name,
@@ -139,7 +139,74 @@ export async function getUserById(id: string, org_id?: string): Promise<Database
 export async function updateLastLogin(user_id: string): Promise<void> {
   await withServiceTx(async (tx) => {
     await tx.execute(sql`
-      UPDATE iam.users SET last_login_at = CLOCK_TIMESTAMP() WHERE id = ${user_id}::uuid
+      UPDATE iam.users
+      SET last_login_at         = CLOCK_TIMESTAMP(),
+          failed_login_attempts = 0,
+          locked_until          = NULL,
+          last_failed_login_at  = NULL
+      WHERE id = ${user_id}::uuid
+    `);
+  });
+}
+
+/**
+ * Increments the consecutive-failure counter and, on crossing the threshold,
+ * stamps locked_until. Done in a single statement so concurrent login attempts
+ * cannot interleave a read-modify-write and undercount (the row lock taken by
+ * UPDATE serialises them).
+ *
+ * Returns the post-increment state so the caller can log the lockout event.
+ */
+export async function recordFailedLogin(
+  user_id: string,
+  maxAttempts: number,
+  lockoutMinutes: number,
+  attemptWindowMinutes: number,
+): Promise<{ failed_login_attempts: number; locked_until: Date | null }> {
+  return withServiceTx(async (tx) => {
+    // The post-increment count, with decay: if the previous failure is older
+    // than the attempt window, the streak is stale and restarts at 1 rather
+    // than continuing to accumulate. Built once and interpolated twice below --
+    // Postgres evaluates every SET expression against the OLD row, so both
+    // copies see identical inputs and yield the same value.
+    const nextAttempts = sql`CASE
+      WHEN last_failed_login_at IS NULL
+        OR last_failed_login_at < CLOCK_TIMESTAMP() - make_interval(mins => ${attemptWindowMinutes}::int)
+      THEN 1
+      ELSE failed_login_attempts + 1
+    END`;
+
+    // Kept as ONE statement: the row lock UPDATE takes serialises concurrent
+    // login attempts, so parallel failures cannot interleave a read-modify-write
+    // and undercount. A read-then-write (CTE or separate SELECT) would race.
+    const rows = (await tx.execute(sql`
+      UPDATE iam.users
+      SET failed_login_attempts = ${nextAttempts},
+          last_failed_login_at  = CLOCK_TIMESTAMP(),
+          locked_until = CASE
+            WHEN ${nextAttempts} >= ${maxAttempts}::int
+            THEN CLOCK_TIMESTAMP() + make_interval(mins => ${lockoutMinutes}::int)
+            ELSE NULL
+          END
+      WHERE id = ${user_id}::uuid
+      RETURNING failed_login_attempts, locked_until
+    `)) as Array<Record<string, unknown>>;
+
+    const row = rows[0] as { failed_login_attempts: number; locked_until: Date | null } | undefined;
+    return row ?? { failed_login_attempts: 0, locked_until: null };
+  });
+}
+
+/**
+ * Clears lockout state. Called after a password change so a user who resets
+ * their password is not left locked out by the attempts that preceded it.
+ */
+export async function clearLockout(user_id: string): Promise<void> {
+  await withServiceTx(async (tx) => {
+    await tx.execute(sql`
+      UPDATE iam.users
+      SET failed_login_attempts = 0, locked_until = NULL, last_failed_login_at = NULL
+      WHERE id = ${user_id}::uuid
     `);
   });
 }

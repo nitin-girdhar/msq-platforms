@@ -16,13 +16,13 @@
   "dependencies": {
     "@platform/service-auth": "workspace:*",
     "fastify": "^5.2.1",
-    "nodemailer": "^6.10.0",
+    "nodemailer": "^9.0.3",
     "pino": "^9.6.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.10",
-    "@types/nodemailer": "^6.4.17",
+    "@types/nodemailer": "^8.0.1",
     "pino-pretty": "^13.0.0",
     "rimraf": "^6.0.1",
     "tsx": "^4.19.2",

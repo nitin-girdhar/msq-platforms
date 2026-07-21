@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
+
 // Shared inter-service authentication logic for backend services.
 //
 // Every downstream service (identity, leads, communication, meta) trusts the
@@ -28,6 +30,29 @@ function header(headers: IncomingHeaders, name: string): string | undefined {
 }
 
 /**
+ * Constant-time comparison for secrets presented by a caller (the internal
+ * service secret, the webhook API key).
+ *
+ * `===` short-circuits at the first differing byte, so how long the comparison
+ * takes leaks how many leading bytes the attacker guessed correctly -- enough,
+ * over many samples, to recover the secret byte by byte.
+ *
+ * timingSafeEqual throws on length mismatch, and comparing lengths up front
+ * would itself be an early-exit leak. Hashing both sides to a fixed 32 bytes
+ * first makes the inputs constant-length, so neither the comparison nor any
+ * length difference is observable in the timing.
+ *
+ * NOTE: this lives here, not in @platform/auth-constants, because that package
+ * is imported by the product apps' Next.js Edge middleware, where `node:crypto`
+ * is unavailable. service-auth is server-only, so Node built-ins are safe here.
+ */
+export function safeEqual(a: string, b: string): boolean {
+  const ha = createHash('sha256').update(a, 'utf8').digest();
+  const hb = createHash('sha256').update(b, 'utf8').digest();
+  return timingSafeEqual(ha, hb);
+}
+
+/**
  * Returns true only when the caller presented the exact shared internal secret.
  * A missing/empty configured secret always fails closed.
  */
@@ -37,7 +62,8 @@ export function checkInternalSecret(
 ): boolean {
   if (!expectedSecret) return false;
   const provided = header(headers, 'x-internal-secret');
-  return provided === expectedSecret;
+  if (!provided) return false;
+  return safeEqual(provided, expectedSecret);
 }
 
 export type AuthResult =

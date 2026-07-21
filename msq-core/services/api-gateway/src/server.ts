@@ -713,6 +713,9 @@ app.get('/hr/attendance/me', { ...withAuth }, async (req, reply) => {
 app.get('/hr/attendance/team', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/team', req, reply, req.userCtx);
 });
+app.get('/hr/attendance/today-summary', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/today-summary', req, reply, req.userCtx);
+});
 app.get('/hr/attendance/photos/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/attendance/photos/${id}`, req, reply, req.userCtx);

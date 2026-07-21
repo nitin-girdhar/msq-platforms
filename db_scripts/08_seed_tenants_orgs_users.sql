@@ -299,6 +299,52 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ============================================================
+-- Module entitlements for the tenants seeded above.
+--
+-- 03_product_schema.sql has the same INSERT, but it runs as DDL before any
+-- tenant exists on a fresh install, so it is always a no-op there and every
+-- freshly deployed tenant came out with zero entitlements. That empties
+-- licensed_products in the login JWT, which the product apps read to decide
+-- what a user may open -- so a fresh deploy produced accounts that could
+-- authenticate but not enter any product.
+--
+-- All four modules, matching the CHECK on entity.tenant_modules: these are
+-- demo tenants for local development and every product app needs to be
+-- reachable. Restrict this list to model a narrower plan.
+-- ============================================================
+INSERT INTO entity.tenant_modules (tenant_id, module)
+SELECT t.id, m.module
+FROM entity.tenants t
+CROSS JOIN (VALUES ('lms'), ('leave'), ('attendance'), ('tasks')) AS m(module)
+ON CONFLICT (tenant_id, module) DO NOTHING;
+
+-- ============================================================
+-- Per-tenant catalogs (lms.roles, hr/task lookups, ...).
+--
+-- entity.seed_tenant_defaults() is documented as "the provisioning entry
+-- point", but nothing in the SQL path ever calls it: there is no trigger on
+-- entity.tenants, and the app only invokes it when a tenant is created through
+-- the API. A tenant seeded here therefore came up with EMPTY per-tenant
+-- catalogs -- most visibly lms.roles, which 13_backfill_per_product_roles.sql
+-- joins against to populate <product>.member_roles. With no roles the join
+-- matched nothing, member_roles stayed empty, and the gateway refused every
+-- product request with "You do not have access to the LMS product".
+--
+-- Must run AFTER the tenant_modules insert above: the function only seeds
+-- catalogs whose gating modules overlap the tenant's ACTIVE modules.
+-- Idempotent -- catalogs already recorded in tenant_catalog_versions are
+-- skipped, so re-running never overwrites tenant customisations.
+-- ============================================================
+DO $seed_catalogs$
+DECLARE
+  t RECORD;
+BEGIN
+  FOR t IN SELECT id FROM entity.tenants LOOP
+    PERFORM entity.seed_tenant_defaults(t.id);
+  END LOOP;
+END $seed_catalogs$;
+
 COMMIT;
 
 -- ============================================================

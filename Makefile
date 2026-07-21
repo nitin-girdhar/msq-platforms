@@ -15,19 +15,19 @@ install: ## Install all workspace dependencies
 	$(PNPM) install
 
 dev: install dev-infra ## Start the full stack locally (Postgres + all services + web)
-	$(PNPM) turbo dev --concurrency 20
+	$(PNPM) turbo dev
 
 dev-infra: ## Start Postgres in Docker and wait until healthy
 	$(COMPOSE) up -d --wait postgres
 
 dev-services: install ## Start all backend services and the API gateway (excludes web apps)
-	$(PNPM) turbo dev --filter='!./*/apps/*' --concurrency 12
+	$(PNPM) turbo dev --filter='!./*/apps/*'
 
 # ── Database ───────────────────────────────────────────────────────────────────
 # DB commands run psql inside the Postgres container (no local psql required).
 # Works with both docker-compose and standalone docker-run containers.
 DB_CONTAINER  ?= $(DB_CONTAINER_NAME)
-DB_CONTAINER_NAME ?= crm-db-server
+DB_CONTAINER_NAME ?= msq-db-server
 POSTGRES_USER ?= postgres
 
 define run_sql

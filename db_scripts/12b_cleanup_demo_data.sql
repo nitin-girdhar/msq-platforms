@@ -65,7 +65,14 @@ INSERT INTO _target_meta_leads (id)
 -- ============================================================
 DELETE FROM ext.meta_capi_outbound_logs WHERE org_id IN (SELECT id FROM _target_orgs);
 DELETE FROM ext.meta_leads              WHERE id     IN (SELECT id FROM _target_meta_leads);
-DELETE FROM ext.meta_org_config         WHERE org_id IN (SELECT id FROM _target_orgs);
+-- v1.4.0 moved Meta app config from the per-org ext.meta_org_config to the
+-- tenant-level ext.meta_tenant_config, and added ext.meta_page_form_org_map for
+-- Page/Form -> org attribution. Both are scoped here; the old per-org table no
+-- longer exists (02_schema.sql only drops it), so deleting from it aborted this
+-- script. meta_page_form_org_map's org/tenant FKs are RESTRICT, so it has to go
+-- before the org and tenant deletes further down.
+DELETE FROM ext.meta_page_form_org_map  WHERE org_id    IN (SELECT id FROM _target_orgs);
+DELETE FROM ext.meta_tenant_config      WHERE tenant_id IN (SELECT id FROM _target_tenants);
 
 -- ============================================================
 -- 2. Audit trails that RESTRICT/NO ACTION delete of leads/orgs/users.

@@ -134,3 +134,52 @@ BEGIN
       WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)$p$, t);
   END LOOP;
 END $rls$;
+-- Widen every RLS policy to also name the roles that are MEMBERS of the roles
+-- it already targets.
+--
+-- 04_roles_and_grants.sql assumes a "TO app_user" policy matches any member of
+-- app_user regardless of INHERIT. That is not how Postgres works: policy
+-- applicability uses the INHERIT-respecting check (pg_has_role(..,'USAGE')),
+-- not 'MEMBER'. Every service login is NOINHERIT, so no app_user policy applied
+-- to any of them and every policy-protected table read back ZERO rows -- with no
+-- error, which is why it surfaced as empty module/tool lists rather than a failure.
+--
+-- Naming the member roles explicitly restores policy enforcement while KEEPING
+-- them NOINHERIT, so the per-product GRANT isolation is untouched: a role still
+-- holds only the table privileges granted to it directly.
+--
+-- Idempotent: the target role set is recomputed from current membership on every
+-- run, so re-running after adding a role or policy converges.
+
+DO $$
+DECLARE
+  p         RECORD;
+  new_roles TEXT;
+BEGIN
+  FOR p IN
+    SELECT pol.polname,
+           n.nspname,
+           c.relname,
+           ARRAY(SELECT rolname FROM pg_roles WHERE oid = ANY (pol.polroles)) AS roles
+    FROM pg_policy pol
+    JOIN pg_class     c ON c.oid = pol.polrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    -- polroles = {0} means TO PUBLIC, which already covers everyone.
+    WHERE pol.polroles <> '{0}'::oid[]
+  LOOP
+    SELECT string_agg(DISTINCT quote_ident(role_name), ', ')
+      INTO new_roles
+      FROM (
+        SELECT unnest(p.roles) AS role_name
+        UNION
+        SELECT r.rolname
+        FROM pg_auth_members m
+        JOIN pg_roles r ON r.oid = m.member
+        JOIN pg_roles g ON g.oid = m.roleid
+        WHERE g.rolname = ANY (p.roles)
+      ) s;
+
+    EXECUTE format('ALTER POLICY %I ON %I.%I TO %s',
+                   p.polname, p.nspname, p.relname, new_roles);
+  END LOOP;
+END $$;

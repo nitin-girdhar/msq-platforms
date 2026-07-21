@@ -441,10 +441,17 @@ COMMIT;
 --
 -- Design (why this is safe even though hr_svc/task_svc/lms_svc remain
 -- members of app_user):
---   - Row-Level-Security "TO app_user" / "TO tenant_admin" policies match
---     on ROLE MEMBERSHIP alone (pg_has_role(..., 'MEMBER')), independent
---     of the INHERIT attribute. So lms_svc/hr_svc/task_svc still satisfy
---     every existing RLS policy without ever running `SET ROLE app_user`.
+--   - Row-Level-Security policies must NAME these roles explicitly. An
+--     earlier version of this comment claimed a "TO app_user" policy matches
+--     any member of app_user regardless of INHERIT; that is wrong. Postgres
+--     decides policy applicability with the INHERIT-respecting check
+--     (pg_has_role(role, 'app_user', 'USAGE')), not 'MEMBER'. Because every
+--     login below is NOINHERIT, that check is FALSE, so no app_user policy
+--     applied to any of them and every protected table returned ZERO rows --
+--     silently, with no permission error, which made it surface as empty
+--     module/tool lists rather than a failure. The tail of 06_rls.sql now
+--     rewrites each policy to name the member roles alongside the role they
+--     already target, which restores enforcement without granting privileges.
 --   - Table-level privileges (SELECT/INSERT/UPDATE/DELETE) are NOT
 --     automatically inherited through membership because these roles are
 --     created NOINHERIT (same convention as lead_svc/hr_svc/task_svc

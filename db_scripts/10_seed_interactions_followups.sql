@@ -119,11 +119,22 @@ BEGIN
                     THEN 60 + floor(random() * 480)::INT
                     ELSE NULL END;
 
-      -- occurred_at: after created_at, spaced out by k, capped at "now"
-      v_occurred_at := LEAST(
-        v_lead.created_at + (v_k::TEXT || ' days')::INTERVAL + (floor(random()*12)::TEXT || ' hours')::INTERVAL,
-        CURRENT_TIMESTAMP
-      );
+      -- occurred_at: spread the lead's interactions across its own lifetime.
+      --
+      -- This used to be created_at + k days, clamped with
+      -- LEAST(..., CURRENT_TIMESTAMP). CURRENT_TIMESTAMP is fixed for the whole
+      -- transaction, so every value that overflowed the clamp collapsed onto one
+      -- identical instant: a lead created in the last few days got all of its
+      -- interactions stamped the same microsecond and the activity timeline
+      -- rendered them as a stack of what looked like duplicate rows.
+      --
+      -- Placing interaction k in slot k of the [created_at, now] window keeps
+      -- them strictly ordered, strictly inside the window, and distinct however
+      -- recently the lead was created. The +/-0.3 jitter stops the spacing from
+      -- being visibly mechanical while keeping slots from overlapping.
+      v_occurred_at := v_lead.created_at
+        + (CURRENT_TIMESTAMP - v_lead.created_at)
+          * ((v_k - 0.5 + (random() - 0.5) * 0.6) / v_num_ix);
 
       INSERT INTO lms.lead_interactions
         (org_id, lead_id, user_id, interaction_type_id, notes, duration_seconds, occurred_at)

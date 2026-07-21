@@ -217,7 +217,8 @@ export interface CreateUserData {
   middle_name?: string;
   last_name?: string;
   email: string;
-  mobile?: string;
+  // Normalized to E.164 by mobileInputSchema; null clears it.
+  mobile?: string | null;
   role_name: string;
   manager_id?: string;
   force_password_change?: boolean;
@@ -289,7 +290,8 @@ export interface UpdateUserFields {
   last_name?: string;
   middle_name?: string;
   email?: string;
-  mobile?: string;
+  // Normalized to E.164 by mobileInputSchema; null clears it.
+  mobile?: string | null;
   is_active?: boolean;
   force_password_change?: boolean;
   manager_id?: string | null;

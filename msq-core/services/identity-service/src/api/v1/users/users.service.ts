@@ -18,6 +18,26 @@ function generateTemporaryPassword(): string {
   return randomBytes(16).toString('base64url');
 }
 
+/**
+ * Turns a unique-violation from iam.users into a 409 naming the field that
+ * actually collided, and returns anything else untouched for the caller to
+ * rethrow.
+ *
+ * Both email and mobile are unique now (mobile via uix_users_mobile, since it
+ * is a login credential), so a single "email already exists" message would send
+ * an admin hunting for the wrong duplicate.
+ */
+function asDuplicateUserConflict(err: unknown): unknown {
+  const msg = (err as Error)?.message ?? '';
+  if (msg.includes('uix_users_mobile')) {
+    return new ConflictError('A user with this mobile number already exists.');
+  }
+  if (msg.includes('unique') || msg.includes('uq_users') || msg.includes('users_email_key')) {
+    return new ConflictError('A user with this email already exists.');
+  }
+  return err;
+}
+
 // Resolve the rank of a role name, rejecting unknown roles. Used to enforce the
 // rank ceiling so an actor cannot grant a role above their own.
 function rankForRole(roleName: string): number {
@@ -124,11 +144,7 @@ export async function createUser(ctx: RoleTxContext, actorRank: number, data: Cr
 
     return { id: result.id, email: data.email, temporary_password: temporaryPassword };
   } catch (err) {
-    const msg = (err as Error).message ?? '';
-    if (msg.includes('unique') || msg.includes('uq_users')) {
-      throw new ConflictError('A user with this email already exists.');
-    }
-    throw err;
+    throw asDuplicateUserConflict(err);
   }
 }
 
@@ -175,7 +191,15 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
   // treat "nothing to SET" as "user not found"; only call the generic UPDATE when
   // there's something for it to do.
   if (Object.keys(fields).length > 0) {
-    const result = await repo.updateUser(targetCtx, targetUserId, fields);
+    // email and mobile are both unique, so an edit can collide with another
+    // user exactly as a create can -- without this the constraint surfaced as
+    // a raw 500.
+    let result;
+    try {
+      result = await repo.updateUser(targetCtx, targetUserId, fields);
+    } catch (err) {
+      throw asDuplicateUserConflict(err);
+    }
     if (!result) throw new NotFoundError('User not found');
   }
 

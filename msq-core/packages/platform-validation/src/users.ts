@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { strongPassword, createStrongPasswordSchema, DEFAULT_PASSWORD_MIN_LENGTH } from './auth.js';
+import { mobileInputSchema } from './phone.js';
 
 export const createUserSchema = z.object({
   first_name: z.string().min(1).max(50),
   middle_name: z.string().max(50).optional(),
   last_name: z.string().max(50).optional(),
   email: z.string().email(),
-  mobile: z.string().max(20).optional(),
+  mobile: mobileInputSchema.optional(),
   role_name: z.string(),
   manager_id: z.string().uuid().optional(),
   force_password_change: z.boolean().optional(),
@@ -17,7 +18,7 @@ export const updateUserSchema = z.object({
   middle_name: z.string().max(50).optional(),
   last_name: z.string().max(50).optional(),
   email: z.string().email().optional(),
-  mobile: z.string().max(20).optional(),
+  mobile: mobileInputSchema.optional(),
   role_name: z.string().optional(),
   manager_id: z.string().uuid().nullable().optional(),
   is_active: z.boolean().optional(),

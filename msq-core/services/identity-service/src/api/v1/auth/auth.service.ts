@@ -2,6 +2,7 @@ import { UnauthorizedError, BadRequestError, ForbiddenError } from '../../../lib
 import type { JwtPayload, UserOrgOption, PlatformRole, ProductKey } from '@platform/types';
 import { getActiveTenantModulesByTenantId } from '@platform/db';
 import { modulesToProducts } from '@platform/authz';
+import { normalizeMobile, isMobileLike } from '@platform/validation';
 import { comparePassword, hashPassword } from '../../../lib/password.js';
 import { signJwt, verifyJwt, revokeJti, isJtiRevoked, revokeAllUserSessions, decodeJwtUnchecked } from '../../../lib/jwt.js';
 import { logActivity } from '@platform/audit-log';
@@ -31,17 +32,44 @@ function platformRoleOf(dbUser: { platform_role: string | null }): PlatformRole 
   return (dbUser.platform_role ?? 'member') as PlatformRole;
 }
 
+/**
+ * Resolves a login identifier that may be an email or a mobile number.
+ *
+ * An identifier that is neither returns null, which the caller reports as the
+ * same generic failure as a wrong password -- a distinct "that is not a valid
+ * number" response would confirm which identifiers are even well-formed.
+ */
+async function resolveLoginUser(
+  identifier: string,
+  org_id?: string,
+): Promise<{ user: DatabaseUser | null; identifier_type: 'email' | 'mobile' }> {
+  if (isMobileLike(identifier)) {
+    const mobile = normalizeMobile(identifier);
+    return {
+      user: mobile ? await repo.getUserByMobile(mobile, org_id) : null,
+      identifier_type: 'mobile',
+    };
+  }
+  return { user: await repo.getUserByEmail(identifier, org_id), identifier_type: 'email' };
+}
+
 export async function login(input: LoginInput): Promise<LoginResult> {
-  const db_user = await repo.getUserByEmail(input.email, input.org_id);
+  const { identifier, org_id } = input;
+  const { user: db_user, identifier_type } = await resolveLoginUser(identifier, org_id);
+
+  // Logged instead of `email`, since the identifier may now be a mobile number.
+  // audit.fn_detect_password_spray reads this key (COALESCEd with the legacy
+  // `email` for pre-upgrade rows) -- keep the two in sync.
+  const audit_target = { identifier, identifier_type };
 
   if (!db_user) {
     void logActivity({
       action_type: 'login_failure',
       performed_by: null,
-      ...(input.org_id ? { org_id: input.org_id } : {}),
-      new_value: { email: input.email, reason: 'user_not_found' },
+      ...(org_id ? { org_id } : {}),
+      new_value: { ...audit_target, reason: 'user_not_found' },
     });
-    throw new UnauthorizedError('Invalid email or password');
+    throw new UnauthorizedError('Invalid credentials');
   }
 
   if (!db_user.is_active) {
@@ -49,9 +77,9 @@ export async function login(input: LoginInput): Promise<LoginResult> {
       action_type: 'login_failure',
       performed_by: db_user.id,
       org_id: db_user.org_id,
-      new_value: { email: input.email, reason: 'account_inactive' },
+      new_value: { ...audit_target, reason: 'account_inactive' },
     });
-    throw new UnauthorizedError('Invalid email or password');
+    throw new UnauthorizedError('Invalid credentials');
   }
 
   const lockoutEnabled = config.loginMaxFailedAttempts > 0;
@@ -64,9 +92,9 @@ export async function login(input: LoginInput): Promise<LoginResult> {
       action_type: 'login_failure',
       performed_by: db_user.id,
       org_id: db_user.org_id,
-      new_value: { email: input.email, reason: 'account_locked' },
+      new_value: { ...audit_target, reason: 'account_locked' },
     });
-    throw new UnauthorizedError('Invalid email or password');
+    throw new UnauthorizedError('Invalid credentials');
   }
 
   const password_valid = db_user.password_hash
@@ -89,11 +117,11 @@ export async function login(input: LoginInput): Promise<LoginResult> {
       performed_by: db_user.id,
       org_id: db_user.org_id,
       new_value: {
-        email: input.email,
+        ...audit_target,
         reason: locked ? 'lockout_threshold_reached' : 'invalid_password',
       },
     });
-    throw new UnauthorizedError('Invalid email or password');
+    throw new UnauthorizedError('Invalid credentials');
   }
 
   // Clear the lockout state FIRST. The password has been verified at this

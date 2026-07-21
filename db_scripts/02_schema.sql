@@ -872,14 +872,28 @@ CREATE TABLE IF NOT EXISTS audit.activities (
 -- rows identity-service already writes above. No new write path and no
 -- hot-path cost -- it is a read-side query over data that already exists.
 --
--- Targets are keyed on `meta->>'email'`, NOT `performed_by`: the latter is
--- NULL when the email does not resolve to a real user, which is exactly
--- what a spray against guessed addresses looks like.
+-- Targets are keyed on the submitted login identifier, NOT `performed_by`:
+-- the latter is NULL when the identifier does not resolve to a real user,
+-- which is exactly what a spray against guessed addresses looks like.
+--
+-- COALESCE over 'identifier' then 'email': login accepts an email OR a mobile
+-- number, so identity-service now writes the generic `identifier` key. Rows
+-- written before login-by-mobile carry `email` instead, and they must keep
+-- counting -- dropping them would blind the detector across the upgrade and
+-- silently reset every in-flight spray window.
 
 -- Partial index: login failures are a small slice of the table.
 CREATE INDEX IF NOT EXISTS idx_activities_login_failure
   ON audit.activities (created_at DESC, org_id)
   WHERE action_type IN ('login_failure', 'account_locked');
+
+-- Dropped rather than replaced: the last return column was renamed
+-- sample_emails -> sample_targets when login gained mobile numbers, and
+-- CREATE OR REPLACE cannot rename a RETURNS TABLE column. The view is
+-- SELECT * over the function, so it carries the old column name too and has
+-- to go first. Both are rebuilt immediately below; no data lives here.
+DROP VIEW     IF EXISTS audit.vw_password_spray_alerts;
+DROP FUNCTION IF EXISTS audit.fn_detect_password_spray(INT, INT);
 
 CREATE OR REPLACE FUNCTION audit.fn_detect_password_spray(
   p_window_minutes        INT DEFAULT 15,
@@ -892,25 +906,29 @@ RETURNS TABLE (
   failures_per_account   NUMERIC,
   first_seen             TIMESTAMPTZ,
   last_seen              TIMESTAMPTZ,
-  sample_emails          TEXT[]
+  sample_targets         TEXT[]
 )
 LANGUAGE sql STABLE AS $spray$
   SELECT
     a.org_id,
-    COUNT(DISTINCT a.meta->>'email')                              AS distinct_accounts,
-    COUNT(*)                                                      AS total_failures,
+    COUNT(DISTINCT COALESCE(a.meta->>'identifier', a.meta->>'email'))  AS distinct_accounts,
+    COUNT(*)                                                           AS total_failures,
     ROUND(COUNT(*)::numeric
-          / NULLIF(COUNT(DISTINCT a.meta->>'email'), 0), 2)       AS failures_per_account,
-    MIN(a.created_at)                                             AS first_seen,
-    MAX(a.created_at)                                             AS last_seen,
-    (ARRAY_AGG(DISTINCT a.meta->>'email'))[1:5]                   AS sample_emails
+          / NULLIF(COUNT(DISTINCT COALESCE(a.meta->>'identifier',
+                                           a.meta->>'email')), 0), 2)  AS failures_per_account,
+    MIN(a.created_at)                                                  AS first_seen,
+    MAX(a.created_at)                                                  AS last_seen,
+    (ARRAY_AGG(DISTINCT COALESCE(a.meta->>'identifier',
+                                 a.meta->>'email')))[1:5]              AS sample_targets
   FROM audit.activities a
   WHERE a.action_type = 'login_failure'
     AND a.created_at >= CLOCK_TIMESTAMP() - make_interval(mins => p_window_minutes)
-    AND a.meta->>'email' IS NOT NULL
+    AND COALESCE(a.meta->>'identifier', a.meta->>'email') IS NOT NULL
   GROUP BY a.org_id
-  HAVING COUNT(DISTINCT a.meta->>'email') >= p_min_distinct_accounts
-  ORDER BY COUNT(DISTINCT a.meta->>'email') DESC;
+  HAVING COUNT(DISTINCT COALESCE(a.meta->>'identifier',
+                                 a.meta->>'email')) >= p_min_distinct_accounts
+  ORDER BY COUNT(DISTINCT COALESCE(a.meta->>'identifier',
+                                   a.meta->>'email')) DESC;
 $spray$;
 
 COMMENT ON FUNCTION audit.fn_detect_password_spray(INT, INT) IS
@@ -2098,6 +2116,18 @@ CREATE INDEX IF NOT EXISTS idx_users_email_trgm
   ON iam.users USING GIN (email gin_trgm_ops) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_users_manager_id
   ON iam.users (org_id, manager_id) WHERE manager_id IS NOT NULL AND NOT is_deleted;
+
+-- Mobile is a login credential (see login-by-mobile in identity-service), so it
+-- must resolve to exactly one live account. Partial, because mobile stays
+-- optional: users without one simply keep logging in by email, and soft-deleted
+-- rows must not hold a number hostage against re-use.
+--
+-- Uniqueness is only meaningful if every writer stores the SAME spelling of a
+-- number, so all writes go through normalizeMobile() in @platform/validation
+-- (packages/platform-validation/src/phone.ts) and land as E.164 '+919876543210'.
+-- Keep the two in sync.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_users_mobile
+  ON iam.users (mobile) WHERE mobile IS NOT NULL AND NOT is_deleted;
 
 -- Vector similarity stub — uncomment after pgvector confirmed and embedding column added
 -- CREATE INDEX IF NOT EXISTS idx_marketing_leads_embedding_ivfflat

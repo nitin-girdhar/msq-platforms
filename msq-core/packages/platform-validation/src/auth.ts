@@ -1,10 +1,30 @@
 import { z } from 'zod';
 
-export const loginSchema = z.object({
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(1, 'Password is required'),
-  org_id: z.string().uuid().optional(),
-});
+// Login accepts an email OR a mobile number in one field. `email` is retained
+// as a deprecated alias so this service can ship ahead of the client repos,
+// which live outside this monorepo and are released separately -- drop it once
+// they all send `identifier`.
+//
+// Deliberately NOT validated as an email or a phone number here: the shape of
+// the identifier decides which lookup runs, and a malformed one must fail as
+// generic invalid credentials from the service, not as a 400 that tells an
+// attacker their guess was not even a registered address format.
+export const loginSchema = z
+  .object({
+    identifier: z.string().trim().min(1).max(255).optional(),
+    /** @deprecated send `identifier` instead */
+    email: z.string().trim().min(1).max(255).optional(),
+    password: z.string().min(1, 'Password is required'),
+    org_id: z.string().uuid().optional(),
+  })
+  .refine((v) => Boolean(v.identifier ?? v.email), {
+    message: 'Email or mobile number is required',
+    path: ['identifier'],
+  })
+  .transform((v) => {
+    const { email: _deprecated, ...rest } = v;
+    return { ...rest, identifier: (v.identifier ?? v.email) as string };
+  });
 
 export const DEFAULT_PASSWORD_MIN_LENGTH = 12;
 

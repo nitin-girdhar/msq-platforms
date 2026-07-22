@@ -43,15 +43,9 @@ CREATE TABLE IF NOT EXISTS geo.cities (
 -- OPERATIONAL LOOKUP TABLES  (UUID PKs)
 -- ===================================================================
 
-CREATE TABLE IF NOT EXISTS iam.user_roles (
-  id          UUID     PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  name        TEXT     NOT NULL UNIQUE,
-  label       TEXT     NOT NULL,
-  description TEXT,
-  rank        INT      NOT NULL DEFAULT 0
-                       CONSTRAINT chk_user_roles_rank CHECK (rank >= 0 AND rank <= 100),
-  is_active   BOOLEAN  NOT NULL DEFAULT TRUE
-);
+-- NOTE (Tier C): iam.user_roles is defined further down, right after
+-- iam.departments — it now carries tenant_id + department_id FKs, which require
+-- entity.tenants / entity.organizations / iam.departments to exist first.
 
 CREATE TABLE IF NOT EXISTS entity.org_types (
   id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
@@ -325,6 +319,163 @@ CREATE TRIGGER trg_organizations_updated_at
 DROP TRIGGER IF EXISTS trg_organizations_soft_delete ON entity.organizations;
 CREATE TRIGGER trg_organizations_soft_delete
   BEFORE DELETE ON entity.organizations FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+-- ── DEPARTMENTS (IAM, tenant-scoped — Tier C) ─────────────────────
+-- Departments live in IAM (moved out of hr.departments) so a role in ANY product
+-- can belong to a department. tenant_id scopes them per tenant; org_id NULL = a
+-- tenant-wide department shared by all the tenant's branches, org_id set = a
+-- branch-specific department.
+CREATE TABLE IF NOT EXISTS iam.departments (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id   UUID    NOT NULL REFERENCES entity.tenants(id)       ON DELETE CASCADE,
+  org_id      UUID             REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  name        TEXT    NOT NULL,
+  label       TEXT    NOT NULL,
+  description TEXT,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_iam_departments_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+-- One department name per (tenant, org-or-tenantwide); the zero-UUID collapses a
+-- NULL org_id so tenant-wide names collide correctly.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_iam_departments_scope_name
+  ON iam.departments (tenant_id, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid), name)
+  WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_iam_departments_tenant ON iam.departments (tenant_id) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_iam_departments_org    ON iam.departments (org_id)    WHERE org_id IS NOT NULL AND NOT is_deleted;
+
+DROP TRIGGER IF EXISTS trg_iam_departments_updated_at     ON iam.departments;
+CREATE TRIGGER trg_iam_departments_updated_at
+  BEFORE UPDATE ON iam.departments FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_iam_departments_soft_delete    ON iam.departments;
+CREATE TRIGGER trg_iam_departments_soft_delete
+  BEFORE DELETE ON iam.departments FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+DROP TRIGGER IF EXISTS trg_iam_departments_set_created_by ON iam.departments;
+CREATE TRIGGER trg_iam_departments_set_created_by
+  BEFORE INSERT ON iam.departments FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+-- ── ROLE CATALOG (tenant-scoped — Tier C) ─────────────────────────
+-- Relocated from the lookup section: it now references iam.departments and
+-- entity.tenants. tenant_id NULL = a GLOBAL ANCHOR role shared by every tenant
+-- (read_only 0 / org_admin 980 / tenant_admin 990 / super_admin 1000 — the fixed
+-- ranks in @platform/rbac); tenant_id set = a tenant-specific role tied to a
+-- department, with a dynamic rank in the 1..979 band.
+CREATE TABLE IF NOT EXISTS iam.user_roles (
+  id            UUID     PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id     UUID              REFERENCES entity.tenants(id)  ON DELETE CASCADE,
+  department_id UUID              REFERENCES iam.departments(id) ON DELETE RESTRICT,
+  name          TEXT     NOT NULL,
+  label         TEXT     NOT NULL,
+  description   TEXT,
+  rank          INT      NOT NULL DEFAULT 0
+                         CONSTRAINT chk_user_roles_rank CHECK (rank >= 0 AND rank <= 1000),
+  is_active     BOOLEAN  NOT NULL DEFAULT TRUE
+);
+-- NAME uniqueness: anchors unique globally by name; tenant roles unique per tenant.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_user_roles_global_name
+  ON iam.user_roles (name) WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_user_roles_tenant_name
+  ON iam.user_roles (tenant_id, name) WHERE tenant_id IS NOT NULL;
+-- RANK uniqueness (unambiguous hierarchy): anchors distinct among the global set;
+-- tenant roles distinct within a (tenant, department) scope.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_user_roles_global_rank
+  ON iam.user_roles (rank) WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_user_roles_tenant_dept_rank
+  ON iam.user_roles (tenant_id, department_id, rank) WHERE tenant_id IS NOT NULL;
+
+-- ── CAPABILITY CATALOG (Tier C3) ──────────────────────────────────
+-- The set of things a role may be allowed to do. Rows are the SAME stable string
+-- keys declared in @platform/rbac's CAPABILITY map — code references the key, the
+-- DB decides who holds it. `area` groups keys for the admin UI and matches
+-- @platform/rbac's AREA (lms | hr | tasks | admin).
+--
+-- The CATALOG is global (platform-shipped): a tenant cannot invent a capability,
+-- because nothing in code would honour it. What a tenant CAN change is the grant
+-- — see iam.role_capabilities below.
+CREATE TABLE IF NOT EXISTS iam.capabilities (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  key         TEXT    NOT NULL UNIQUE,
+  area        TEXT    NOT NULL,
+  label       TEXT    NOT NULL,
+  description TEXT,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
+);
+CREATE INDEX IF NOT EXISTS idx_iam_capabilities_area ON iam.capabilities (area) WHERE is_active;
+
+DROP TRIGGER IF EXISTS trg_iam_capabilities_updated_at ON iam.capabilities;
+CREATE TRIGGER trg_iam_capabilities_updated_at
+  BEFORE UPDATE ON iam.capabilities FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ── ROLE → CAPABILITY GRANTS (tenant-scoped — Tier C3) ────────────
+-- tenant_id NULL = the PLATFORM DEFAULT grant, shipped in the seed and shared by
+-- every tenant. tenant_id set = that tenant's OVERRIDE of the same (role,
+-- capability) pair, which wins. is_granted FALSE is therefore meaningful: it is
+-- how a tenant revokes a default without deleting the platform row.
+--
+-- Resolution order (see iam.fn_role_capability_matrix): tenant override →
+-- platform default → deny. Default-deny is the point: an unlisted pair is not
+-- accessible, so adding a capability key to code without seeding grants fails
+-- closed rather than open.
+CREATE TABLE IF NOT EXISTS iam.role_capabilities (
+  id            UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id     UUID             REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  role_id       UUID    NOT NULL REFERENCES iam.user_roles(id) ON DELETE CASCADE,
+  capability_id UUID    NOT NULL REFERENCES iam.capabilities(id) ON DELETE CASCADE,
+  is_granted    BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by    UUID,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
+);
+-- One grant row per (role, capability) at each level. Partial indexes because a
+-- plain UNIQUE would let NULL tenant_id duplicate freely.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_role_capabilities_default
+  ON iam.role_capabilities (role_id, capability_id) WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_role_capabilities_tenant
+  ON iam.role_capabilities (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_role_capabilities_tenant
+  ON iam.role_capabilities (tenant_id) WHERE tenant_id IS NOT NULL;
+
+DROP TRIGGER IF EXISTS trg_iam_role_capabilities_updated_at ON iam.role_capabilities;
+CREATE TRIGGER trg_iam_role_capabilities_updated_at
+  BEFORE UPDATE ON iam.role_capabilities FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_iam_role_capabilities_set_created_by ON iam.role_capabilities;
+CREATE TRIGGER trg_iam_role_capabilities_set_created_by
+  BEFORE INSERT ON iam.role_capabilities FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+-- ── CACHE INVALIDATION (Tier C3) ──────────────────────────────────
+-- Services load the matrix once at startup and hold it in memory; this is what
+-- tells them to drop it. STATEMENT-level on purpose: a bulk re-grant fires one
+-- notification, not one per row. The payload names the changed table only —
+-- listeners invalidate everything and reload lazily, which is cheap (a few
+-- hundred rows) and immune to getting the affected-tenant set wrong.
+CREATE OR REPLACE FUNCTION iam.fn_notify_capability_change()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM pg_notify('rbac_capabilities_changed',
+    json_build_object('table', TG_TABLE_NAME, 'op', TG_OP, 'ts', EXTRACT(EPOCH FROM CLOCK_TIMESTAMP()))::text);
+  RETURN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_notify_capability_change ON iam.role_capabilities;
+CREATE TRIGGER trg_notify_capability_change
+  AFTER INSERT OR UPDATE OR DELETE ON iam.role_capabilities
+  FOR EACH STATEMENT EXECUTE FUNCTION iam.fn_notify_capability_change();
+DROP TRIGGER IF EXISTS trg_notify_capability_change ON iam.capabilities;
+CREATE TRIGGER trg_notify_capability_change
+  AFTER INSERT OR UPDATE OR DELETE ON iam.capabilities
+  FOR EACH STATEMENT EXECUTE FUNCTION iam.fn_notify_capability_change();
+-- A role rename / re-rank changes what the matrix resolves to, so it invalidates too.
+DROP TRIGGER IF EXISTS trg_notify_capability_change ON iam.user_roles;
+CREATE TRIGGER trg_notify_capability_change
+  AFTER INSERT OR UPDATE OR DELETE ON iam.user_roles
+  FOR EACH STATEMENT EXECUTE FUNCTION iam.fn_notify_capability_change();
 
 -- ── USERS ─────────────────────────────────────────────────────────
 -- full_name is GENERATED ALWAYS AS STORED — never insert it directly.
@@ -2650,6 +2801,71 @@ GRANT INSERT, UPDATE ON TABLE entity.organizations TO tenant_admin;
 GRANT EXECUTE ON FUNCTION iam.fn_user_active_orgs(UUID)  TO app_user, tenant_admin;
 GRANT EXECUTE ON FUNCTION iam.fn_org_active_users(UUID)  TO app_user, tenant_admin;
 GRANT EXECUTE ON FUNCTION iam.fn_user_org_rank(UUID,UUID) TO app_user, tenant_admin;
+
+-- Tier C: the single authoritative role resolver. Returns the acting user's role
+-- NAME, RANK and DEPARTMENT for an org, straight from the unified iam ladder —
+-- this is what every product service now calls instead of its own
+-- <product>.member_roles lookup, so page guards and services can no longer
+-- disagree. SECURITY DEFINER so it bypasses RLS on iam.user_roles /
+-- iam.departments (same rationale as fn_user_org_rank above).
+-- rank -1 / NULL role means "no active role in this org".
+CREATE OR REPLACE FUNCTION iam.fn_user_org_role(p_user_id UUID, p_org_id UUID)
+RETURNS TABLE (role TEXT, rank INT, department TEXT)
+LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  SELECT ur.name::TEXT, ur.rank, d.name::TEXT
+  FROM iam.user_org_mapping uom
+  JOIN iam.user_roles ur      ON ur.id = uom.role_id
+  LEFT JOIN iam.departments d ON d.id = ur.department_id AND NOT d.is_deleted
+  WHERE uom.user_id = p_user_id AND uom.org_id = p_org_id AND uom.is_active
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT NULL::TEXT, -1, NULL::TEXT;
+  END IF;
+END; $$;
+-- Product-service logins are created later (lead_svc below, hr/task in 03,
+-- lms_svc in 04), so their EXECUTE grant lives at the end of 04 alongside the
+-- <product>.fn_member_role grants.
+GRANT EXECUTE ON FUNCTION iam.fn_user_org_role(UUID,UUID) TO app_user, tenant_admin;
+
+-- Tier C3 — the effective capability matrix for one tenant, already resolved.
+-- Returns EVERY (role, capability) pair the tenant can see with a definite
+-- boolean, so a caller never has to re-implement the precedence rule:
+--   tenant override (tenant_id = p_tenant_id)  >  platform default (tenant_id IS NULL)  >  deny
+-- DISTINCT ON does the precedence: the ORDER BY floats the tenant-specific grant
+-- row above the platform one for each (role, capability).
+--
+-- Roles visible to a tenant are its own plus the global anchors. A tenant may
+-- override an ANCHOR role's grant — the override row carries the tenant's id and
+-- the anchor's role_id, which is why the join is on role_id and not role name.
+--
+-- SECURITY DEFINER for the same reason as fn_user_org_role: services read this
+-- on a bare connection with no session GUCs set, and must not be subject to the
+-- RLS on iam.user_roles / iam.role_capabilities while doing so. The tenant is an
+-- explicit argument, and callers pass the tenant off the verified auth context.
+CREATE OR REPLACE FUNCTION iam.fn_role_capability_matrix(p_tenant_id UUID)
+RETURNS TABLE (role_name TEXT, capability_key TEXT, granted BOOLEAN)
+LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT DISTINCT ON (r.name, c.key)
+         r.name::TEXT,
+         c.key::TEXT,
+         COALESCE(rc.is_granted, FALSE)
+  FROM iam.user_roles r
+  CROSS JOIN iam.capabilities c
+  LEFT JOIN iam.role_capabilities rc
+         ON rc.role_id = r.id
+        AND rc.capability_id = c.id
+        AND (rc.tenant_id IS NULL OR rc.tenant_id = p_tenant_id)
+  WHERE r.is_active
+    AND c.is_active
+    AND (r.tenant_id IS NULL OR r.tenant_id = p_tenant_id)
+  ORDER BY r.name, c.key, (rc.tenant_id IS NOT NULL) DESC;
+$$;
+-- Product-service logins are created later, so their EXECUTE grant lives at the
+-- end of 04 alongside iam.fn_user_org_role's.
+GRANT EXECUTE ON FUNCTION iam.fn_role_capability_matrix(UUID) TO app_user, tenant_admin;
 
 -- ===================================================================
 -- SECURITY HARDENING BLOCK

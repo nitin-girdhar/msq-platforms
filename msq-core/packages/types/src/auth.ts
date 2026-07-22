@@ -31,6 +31,17 @@ export interface SessionUser {
   mobile: string | null;
   is_active: boolean;
   force_password_change: boolean;
+  /**
+   * Tier C3 — the capability keys this user's role effectively holds in this
+   * tenant, resolved from iam.role_capabilities (tenant override > platform
+   * default > deny). Keys are @platform/rbac's CAPABILITY values.
+   *
+   * This is what UI gates read: a tab, tool or button is shown when the key is
+   * present, so enabling or disabling it is a DB change, not a deploy. The
+   * service-side check is still authoritative — this list is the same data
+   * delivered early so the UI stops rendering things the server would refuse.
+   */
+  capabilities: string[];
 }
 
 // One branch a user can act in, derived from an active iam.user_org_mapping row.

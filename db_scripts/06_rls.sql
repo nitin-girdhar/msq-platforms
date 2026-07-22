@@ -134,6 +134,82 @@ BEGIN
       WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)$p$, t);
   END LOOP;
 END $rls$;
+
+-- ── iam.departments (Tier C) — tenant-scoped, org-derived read ────────
+-- Normal users (app_user pool) set current_org_id, not current_tenant_id, so
+-- read visibility is derived from the current org's tenant — same shape as the
+-- lookup tables above. The widening block below adds the NOINHERIT service
+-- logins (hr_svc/lms_svc/task_svc) to these policies automatically.
+ALTER TABLE iam.departments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy       ON iam.departments;
+DROP POLICY IF EXISTS tenant_isolation_policy    ON iam.departments;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON iam.departments;
+CREATE POLICY org_isolation_policy ON iam.departments AS PERMISSIVE FOR SELECT TO app_user
+  USING (tenant_id = (SELECT tenant_id FROM entity.organizations
+                      WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+CREATE POLICY tenant_isolation_policy ON iam.departments AS PERMISSIVE FOR SELECT TO tenant_admin
+  USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+-- Writes stay within the actor's tenant (derived from current org). WHO may write
+-- is enforced in the app layer (HR/tenant admin); RLS only fences the tenant.
+CREATE POLICY admin_tenant_config_policy ON iam.departments AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = (SELECT tenant_id FROM entity.organizations
+                           WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid))
+  WITH CHECK (tenant_id = (SELECT tenant_id FROM entity.organizations
+                           WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+GRANT SELECT              ON iam.departments TO app_user, tenant_admin;
+GRANT INSERT, UPDATE      ON iam.departments TO app_user, hr_svc;
+
+-- ── iam.user_roles (Tier C) — global anchors + own-tenant roles ───────
+-- Anchor roles (tenant_id IS NULL) are shared by every tenant and MUST always be
+-- visible; tenant-specific roles are scoped like departments. SELECT-only here —
+-- role rows are written by the seed / migrations (superuser, bypasses RLS); any
+-- future in-app role management gets its own write policy in C3.
+ALTER TABLE iam.user_roles ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON iam.user_roles;
+DROP POLICY IF EXISTS tenant_isolation_policy ON iam.user_roles;
+CREATE POLICY org_isolation_policy ON iam.user_roles AS PERMISSIVE FOR SELECT TO app_user
+  USING (tenant_id IS NULL
+         OR tenant_id = (SELECT tenant_id FROM entity.organizations
+                         WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+CREATE POLICY tenant_isolation_policy ON iam.user_roles AS PERMISSIVE FOR SELECT TO tenant_admin
+  USING (tenant_id IS NULL
+         OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+-- ── iam.capabilities (Tier C3) — global catalog, readable by all ──────
+-- The catalog is platform-shipped and carries no tenant data, so every
+-- authenticated pool may read it; nobody may write it from the app (writes are
+-- seed/migration only, as superuser, which bypasses RLS).
+ALTER TABLE iam.capabilities ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS catalog_read_policy ON iam.capabilities;
+CREATE POLICY catalog_read_policy ON iam.capabilities AS PERMISSIVE FOR SELECT TO app_user, tenant_admin
+  USING (TRUE);
+GRANT SELECT ON iam.capabilities TO app_user, tenant_admin;
+
+-- ── iam.role_capabilities (Tier C3) — defaults + own-tenant overrides ─
+-- Reads must see BOTH the platform defaults (tenant_id IS NULL) and the tenant's
+-- own overrides, or fn_role_capability_matrix's precedence would silently
+-- collapse to deny. Writes are override-only: the WITH CHECK pins tenant_id to
+-- the actor's tenant, so an admin can never edit a platform default or another
+-- tenant's grant — the worst they can do is shape their own tenant.
+ALTER TABLE iam.role_capabilities ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy       ON iam.role_capabilities;
+DROP POLICY IF EXISTS tenant_isolation_policy    ON iam.role_capabilities;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON iam.role_capabilities;
+CREATE POLICY org_isolation_policy ON iam.role_capabilities AS PERMISSIVE FOR SELECT TO app_user
+  USING (tenant_id IS NULL
+         OR tenant_id = (SELECT tenant_id FROM entity.organizations
+                         WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+CREATE POLICY tenant_isolation_policy ON iam.role_capabilities AS PERMISSIVE FOR SELECT TO tenant_admin
+  USING (tenant_id IS NULL
+         OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+CREATE POLICY admin_tenant_config_policy ON iam.role_capabilities AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = (SELECT tenant_id FROM entity.organizations
+                           WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid))
+  WITH CHECK (tenant_id = (SELECT tenant_id FROM entity.organizations
+                           WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+GRANT SELECT                        ON iam.role_capabilities TO app_user, tenant_admin;
+GRANT INSERT, UPDATE, DELETE        ON iam.role_capabilities TO app_user;
+
 -- Widen every RLS policy to also name the roles that are MEMBERS of the roles
 -- it already targets.
 --

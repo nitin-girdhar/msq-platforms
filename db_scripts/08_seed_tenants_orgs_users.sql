@@ -345,6 +345,24 @@ BEGIN
   END LOOP;
 END $seed_catalogs$;
 
+-- ============================================================
+-- Tier C: standard tenant-wide departments for every tenant (org_id NULL).
+-- Roles (iam.user_roles) can belong to a department; these are the defaults a
+-- tenant starts with and can extend. Idempotent on (tenant, tenant-wide, name).
+-- ============================================================
+INSERT INTO iam.departments (tenant_id, org_id, name, label, description)
+SELECT t.id, NULL, d.name, d.label, d.description
+FROM entity.tenants t
+CROSS JOIN (VALUES
+  ('sales',      'Sales',           'Lead management, follow-ups, and conversions'),
+  ('hr',         'Human Resources', 'Employee profiles, leave, and attendance'),
+  ('operations', 'Operations',      'Day-to-day operational teams'),
+  ('admin',      'Administration',  'Org and tenant administration')
+) AS d(name, label, description)
+ON CONFLICT (tenant_id, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid), name)
+  WHERE NOT is_deleted
+  DO NOTHING;
+
 COMMIT;
 
 -- ============================================================

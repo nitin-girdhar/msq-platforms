@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { RANKS } from '@platform/authz';
+import { can, CAPABILITY } from '@platform/rbac';
 import { getServerSession } from '@/src/lib/server-session';
 import LogoutButton from '@/components/auth/LogoutButton';
 
@@ -10,11 +10,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!result) redirect('/login');
 
   const { session } = result;
-  // Authenticated but under-ranked: render a clean denial in place instead of
+  // Authenticated but not granted: render a clean denial in place instead of
   // redirecting to /login. The old redirect looped forever — the login page saw
-  // a valid session and bounced straight back here (see login/page.tsx). A
-  // signed-in super-admin is required; offer logout to switch accounts.
-  if (session.rank < RANKS.SUPER_ADMIN) {
+  // a valid session and bounced straight back here (see login/page.tsx).
+  //
+  // Tier C3: the gate is the admin.lookups.manage capability. Shipped to
+  // super_admin only, but a deployment can now widen it as data.
+  if (!can(session, CAPABILITY.ADMIN_LOOKUPS_MANAGE)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] px-6">
         <div className="w-full max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8 text-center shadow-sm">

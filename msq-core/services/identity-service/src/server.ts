@@ -4,7 +4,7 @@ import { ZodError } from 'zod';
 import { config } from './config/index.js';
 import { v1Router } from './api/v1/index.js';
 import { AppError } from './lib/errors.js';
-import { closeAllPools } from '@platform/db';
+import { closeAllPools, startCapabilityCache } from '@platform/db';
 
 const app = Fastify({
   logger: {
@@ -42,6 +42,10 @@ app.get('/health', async () => ({ status: 'ok', service: 'identity-service' }));
 
 const start = async () => {
   try {
+    // Tier C3: subscribe to capability-matrix changes so a role's tools/tabs can
+    // be re-granted in the DB and take effect within seconds. Best-effort — a TTL
+    // in the cache bounds staleness if the subscription can't be established.
+    await startCapabilityCache();
     await app.listen({ port: config.port, host: '0.0.0.0' });
   } catch (err) {
     app.log.error(err);

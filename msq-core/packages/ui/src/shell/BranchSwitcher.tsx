@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { SessionUser, UserOrgOption } from '@platform/types';
+import { RANKS } from '@platform/authz';
 import { auth } from '../api/resources';
 
 interface Props {
@@ -23,7 +24,8 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
-  const isOrgScoped = user.rank < 90;
+  // Org-scoped actors pick a branch; tenant-wide roles already span all of them.
+  const isOrgScoped = user.rank < RANKS.TENANT_ADMIN;
 
   useEffect(() => {
     if (!isOrgScoped) return;

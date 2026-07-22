@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { SessionUser } from '@platform/types';
+import { RANKS } from '@platform/authz';
 import { auth } from '../api/resources';
 import { buildLoginUrl } from '../auth/sso';
 
@@ -41,8 +42,8 @@ export default function UserMenu({ user }: Props) {
   const initial = label.charAt(0).toUpperCase();
 
   const rank = user.rank;
-  const showTenant = rank <= 90 && !!user.tenant_name;
-  const showOrg = rank < 90 && !!user.org_name;
+  const showTenant = rank <= RANKS.TENANT_ADMIN && !!user.tenant_name;
+  const showOrg = rank < RANKS.TENANT_ADMIN && !!user.org_name;
 
   return (
     <div ref={ref} className="relative shrink-0">

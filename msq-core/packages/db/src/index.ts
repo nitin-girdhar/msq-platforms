@@ -10,3 +10,4 @@ export * from './recipients.js';
 export * from './tenant-modules.js';
 export * from './seed-tenant-defaults.js';
 export * from './member-role.js';
+export * from './capability-cache.js';

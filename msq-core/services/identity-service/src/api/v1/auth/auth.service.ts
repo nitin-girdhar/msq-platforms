@@ -8,7 +8,7 @@ import { signJwt, verifyJwt, revokeJti, isJtiRevoked, revokeAllUserSessions, dec
 import { logActivity } from '@platform/audit-log';
 import { AUTH_COOKIE_NAME } from '../../../lib/cookies.js';
 import * as repo from './auth.repository.js';
-import { toSessionUser } from './auth.types.js';
+import { toSessionUser, sessionUserWithCapabilities } from './auth.types.js';
 import type { DatabaseUser } from './auth.types.js';
 import type { LoginInput } from './auth.schema.js';
 import { config } from '../../../config/index.js';
@@ -149,7 +149,7 @@ export async function login(input: LoginInput): Promise<LoginResult> {
 
   return {
     token,
-    user: toSessionUser({ ...db_user, last_login_at: new Date() } as DatabaseUser),
+    user: await sessionUserWithCapabilities({ ...db_user, last_login_at: new Date() } as DatabaseUser),
   };
 }
 
@@ -209,7 +209,7 @@ export async function getSession(
   token: string | undefined,
 ): Promise<ReturnType<typeof toSessionUser>> {
   const { db_user } = await resolveSession(token);
-  return toSessionUser(db_user);
+  return sessionUserWithCapabilities(db_user);
 }
 
 export async function getMyOrgs(token: string | undefined): Promise<UserOrgOption[]> {
@@ -272,7 +272,7 @@ export async function switchOrg(
 
   await logActivity({ action_type: 'org_switch', performed_by: db_user.id, org_id: db_user.org_id });
 
-  return { token: new_token, user: toSessionUser(db_user) };
+  return { token: new_token, user: await sessionUserWithCapabilities(db_user) };
 }
 
 export async function changePassword(

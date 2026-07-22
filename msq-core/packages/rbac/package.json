@@ -1,5 +1,5 @@
 {
-  "name": "@platform/db",
+  "name": "@platform/rbac",
   "version": "0.0.1",
   "private": true,
   "files": [
@@ -12,11 +12,6 @@
       "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
       "default": "./dist/index.js"
-    },
-    "./schema": {
-      "types": "./dist/schema/index.d.ts",
-      "require": "./dist/schema/index.js",
-      "default": "./dist/schema/index.js"
     }
   },
   "scripts": {
@@ -25,14 +20,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist"
   },
-  "dependencies": {
-    "@platform/authz": "workspace:*",
-    "@platform/rbac": "workspace:*",
-    "drizzle-orm": "^0.45.2",
-    "postgres": "^3.4.4"
-  },
   "devDependencies": {
-    "@types/node": "^22.10.10",
     "typescript": "^5.7.3",
     "rimraf": "^6.0.1"
   }

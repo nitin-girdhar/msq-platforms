@@ -12,6 +12,11 @@ export const ROLES = [
 
 export type UserRole = (typeof ROLES)[number];
 
+// Tier C: the unified ladder. The four ANCHOR roles carry fixed ranks
+// (0 / 980 / 990 / 1000, see @platform/rbac ANCHOR_RANK and db_scripts/07);
+// everything between 1..979 is the open band for tenant-defined, department-
+// scoped roles. These values MUST match iam.user_roles.rank — rank is resolved
+// live from the DB, so a mismatch here silently mis-gates the UI.
 export const ROLE_RANK: Record<UserRole, number> = {
   read_only: 0,
   sales_representative: 20,
@@ -19,9 +24,9 @@ export const ROLE_RANK: Record<UserRole, number> = {
   org_manager: 60,
   org_sr_manager: 70,
   hr_admin: 75,
-  org_admin: 80,
-  tenant_admin: 90,
-  super_admin: 100,
+  org_admin: 980,
+  tenant_admin: 990,
+  super_admin: 1000,
 };
 
 export const ROLE_LABELS: Record<UserRole, string> = {
@@ -56,11 +61,14 @@ export type PlatformRole = (typeof PLATFORM_ROLES)[number];
 // Coarse platform rank ladder — used ONLY for platform-level gates in shared
 // services (tenant/org/user administration). Product gates use per-product
 // scales in each */authz package, never this.
+// Tier C: kept in lockstep with ROLE_RANK above / @platform/rbac ANCHOR_RANK.
+// Session rank now comes from the unified iam ladder, so a stale value here
+// would make every `rank < RANKS.SUPER_ADMIN` style gate pass for everyone.
 export const PLATFORM_RANK: Record<PlatformRole, number> = {
   member: 0,
-  org_admin: 80,
-  tenant_admin: 90,
-  super_admin: 100,
+  org_admin: 980,
+  tenant_admin: 990,
+  super_admin: 1000,
 };
 
 // Maps platform_role to the PostgreSQL role that enforces the correct RLS scope.

@@ -1,9 +1,20 @@
 import type { DatabaseUser, SessionUser } from '@platform/types';
 import type { UserRole } from '@platform/auth-constants';
+import { capabilitiesFor } from '@platform/db';
 
 export type { DatabaseUser, SessionUser };
 
-export function toSessionUser(row: DatabaseUser): SessionUser {
+/**
+ * Tier C3 — the session carries the user's DB-resolved capability keys, so every
+ * product UI gates tabs and tools on data instead of a hard-coded rank. Async
+ * because it reads the capability matrix; that read is served from the in-process
+ * cache (@platform/db startCapabilityCache), so it is not a per-call round trip.
+ */
+export async function sessionUserWithCapabilities(row: DatabaseUser): Promise<SessionUser> {
+  return toSessionUser(row, await capabilitiesFor(row.tenant_id, row.role_name));
+}
+
+export function toSessionUser(row: DatabaseUser, capabilities: string[] = []): SessionUser {
   return {
     id: row.id,
     email: row.email,
@@ -24,5 +35,6 @@ export function toSessionUser(row: DatabaseUser): SessionUser {
     mobile: row.mobile,
     is_active: row.is_active,
     force_password_change: row.force_password_change,
+    capabilities,
   };
 }

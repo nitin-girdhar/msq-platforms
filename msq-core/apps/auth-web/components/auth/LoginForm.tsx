@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { RANKS } from '@platform/authz';
 import { auth } from '@/src/lib/api/client';
 
 interface Props {
@@ -38,12 +39,12 @@ export default function LoginForm({ callbackUrl }: Props) {
 
       // Users mapped to multiple branches pick one before landing on the
       // product. Skipped when a password change is forced first, and for
-      // tenant-level roles (rank >= 90) whose session spans all branches.
+      // tenant-level roles whose session already spans every branch.
       // select-branch lives on THIS (auth) origin; the product callback is
       // forwarded through it and applied after the branch is chosen.
       let destination = callbackUrl;
       const user = data.user;
-      if (!user.force_password_change && user.rank < 90) {
+      if (!user.force_password_change && user.rank < RANKS.TENANT_ADMIN) {
         try {
           const orgsRes = await auth.myOrgs();
           if (orgsRes.data.orgs.length > 1) {

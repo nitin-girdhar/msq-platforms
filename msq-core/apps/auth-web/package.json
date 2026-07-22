@@ -21,7 +21,8 @@
     "@platform/ui-kit": "workspace:*",
     "next": "^15.2.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@platform/authz": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

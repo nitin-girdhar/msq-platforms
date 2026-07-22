@@ -610,7 +610,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ext       GRANT SELECT, INSERT, UPDATE ON TAB
 
 -- ── hr_svc: hr ──────────────────────────────────────────────────────
 GRANT SELECT         ON TABLE hr.employment_types, hr.leave_types, hr.leave_request_statuses, hr.attendance_statuses TO hr_svc;
-GRANT SELECT, INSERT, UPDATE ON TABLE hr.departments, hr.designations, hr.employee_profiles TO hr_svc;
+-- hr.departments moved to iam.departments (Tier C); hr_svc write grant on it is
+-- in db_scripts/06_rls.sql alongside the iam.departments RLS.
+GRANT SELECT, INSERT, UPDATE ON TABLE hr.designations, hr.employee_profiles TO hr_svc;
 GRANT SELECT, INSERT, UPDATE ON TABLE hr.holiday_calendars, hr.holidays TO hr_svc;
 GRANT SELECT                 ON TABLE hr.leave_policies, hr.hr_settings TO hr_svc;
 GRANT SELECT, INSERT, UPDATE ON TABLE hr.leave_requests, hr.leave_request_approvals TO hr_svc;
@@ -738,6 +740,14 @@ $$;
 GRANT EXECUTE ON FUNCTION lms.fn_member_role(UUID, UUID)  TO app_user, tenant_admin, lms_svc, lead_svc;
 GRANT EXECUTE ON FUNCTION hr.fn_member_role(UUID, UUID)   TO app_user, tenant_admin, hr_svc;
 GRANT EXECUTE ON FUNCTION task.fn_member_role(UUID, UUID) TO app_user, tenant_admin, task_svc;
+
+-- Tier C: every product service now resolves role/rank/department from the one
+-- iam ladder via iam.fn_user_org_role (see 02_schema.sql), so each product login
+-- needs EXECUTE on it. Declared here because these logins are created after 02.
+GRANT EXECUTE ON FUNCTION iam.fn_user_org_role(UUID, UUID) TO lms_svc, hr_svc, task_svc, lead_svc;
+
+-- Tier C3: same for the capability matrix, which every service loads at startup.
+GRANT EXECUTE ON FUNCTION iam.fn_role_capability_matrix(UUID) TO lms_svc, hr_svc, task_svc, lead_svc;
 
 -- ===================================================================
 -- readonly_user membership for every app-pool login (P0 #1 defense-in-depth)

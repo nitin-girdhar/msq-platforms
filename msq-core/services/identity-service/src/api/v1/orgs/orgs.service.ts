@@ -1,4 +1,5 @@
 import type { RoleTxContext } from '@platform/db';
+import { RANKS } from '@platform/authz';
 import { ForbiddenError, NotFoundError } from '../../../lib/errors.js';
 import * as repo from './orgs.repository.js';
 import type { LocationFilter } from './orgs.repository.js';
@@ -10,7 +11,7 @@ export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter) {
 
 // Org geofence-centre update — org_admin+ (rank >= 80) only.
 export async function updateOrgGeo(ctx: RoleTxContext & { rank: number }, orgId: string, data: UpdateOrgGeoInput) {
-  if (ctx.rank < 80) {
+  if (ctx.rank < RANKS.ORG_ADMIN) {
     throw new ForbiddenError('Only org admins (or above) can update the organization location');
   }
   const updated = await repo.updateOrgGeo(ctx, orgId, data);

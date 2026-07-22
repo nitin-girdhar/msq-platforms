@@ -24,7 +24,8 @@
     "@platform/auth-constants": "workspace:*",
     "@platform/types": "workspace:*",
     "jose": "^6.2.3",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "@platform/authz": "workspace:*"
   },
   "peerDependencies": {
     "next": "^15.2.4",

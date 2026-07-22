@@ -260,61 +260,10 @@ ON CONFLICT (name) DO NOTHING;
 -- org_isolation_policy + tenant_isolation_policy RLS.
 -- ===================================================================
 
--- ── hr.departments ─────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS hr.departments (
-  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  org_id      UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
-  name        TEXT    NOT NULL,
-  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
-  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at  TIMESTAMPTZ,
-  deleted_by  UUID,
-  created_by  UUID,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
-  CONSTRAINT chk_departments_active_deleted CHECK (NOT (is_active AND is_deleted))
-);
-
-DROP TRIGGER IF EXISTS trg_departments_updated_at        ON hr.departments;
-CREATE TRIGGER trg_departments_updated_at
-  BEFORE UPDATE ON hr.departments FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
-DROP TRIGGER IF EXISTS trg_departments_soft_delete       ON hr.departments;
-CREATE TRIGGER trg_departments_soft_delete
-  BEFORE DELETE ON hr.departments FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
-
-DROP TRIGGER IF EXISTS trg_00_departments_set_org_id     ON hr.departments;
-CREATE TRIGGER trg_00_departments_set_org_id
-  BEFORE INSERT ON hr.departments FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
-
-DROP TRIGGER IF EXISTS trg_01_departments_set_created_by ON hr.departments;
-CREATE TRIGGER trg_01_departments_set_created_by
-  BEFORE INSERT ON hr.departments FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
-
-DROP TRIGGER IF EXISTS trg_departments_audit             ON hr.departments;
-CREATE TRIGGER trg_departments_audit
-  AFTER UPDATE OR DELETE ON hr.departments FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
-
-CREATE INDEX IF NOT EXISTS idx_departments_org
-  ON hr.departments (org_id) WHERE NOT is_deleted;
-CREATE UNIQUE INDEX IF NOT EXISTS uix_departments_org_name
-  ON hr.departments (org_id, name) WHERE NOT is_deleted;
-
-ALTER TABLE hr.departments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE hr.departments FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS org_isolation_policy    ON hr.departments;
-DROP POLICY IF EXISTS tenant_isolation_policy ON hr.departments;
-CREATE POLICY org_isolation_policy ON hr.departments AS PERMISSIVE FOR ALL TO app_user
-  USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted)
-  WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
-CREATE POLICY tenant_isolation_policy ON hr.departments AS PERMISSIVE FOR ALL TO tenant_admin
-  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
-  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
-
-GRANT SELECT, INSERT, UPDATE ON hr.departments TO app_user;
-GRANT SELECT, INSERT, UPDATE ON hr.departments TO tenant_admin;
-REVOKE DELETE                ON hr.departments FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.departments TO root_service;
+-- ── hr.departments → MOVED to iam.departments (Tier C) ─────────────
+-- Departments now live in IAM (see db_scripts/02_schema.sql: iam.departments),
+-- tenant-scoped, so roles in every product can belong to a department.
+-- hr.employee_profiles.department_id below references iam.departments.
 
 -- ── hr.designations ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS hr.designations (
@@ -391,7 +340,7 @@ CREATE TABLE IF NOT EXISTS hr.employee_profiles (
   date_of_joining     DATE    NOT NULL,
   date_of_exit        DATE,
   employment_type_id  UUID    REFERENCES hr.employment_types(id) ON DELETE RESTRICT,
-  department_id       UUID    REFERENCES hr.departments(id)      ON DELETE RESTRICT,
+  department_id       UUID    REFERENCES iam.departments(id)     ON DELETE RESTRICT,
   designation_id      UUID    REFERENCES hr.designations(id)     ON DELETE RESTRICT,
   probation_end_date  DATE,
   -- days of week off, 0=Sunday .. 6=Saturday; overridable by shift assignment
@@ -515,9 +464,11 @@ GRANT ALL PRIVILEGES         ON hr.employee_profiles TO root_service;
 -- 01_init-lookup-data.sql; repeated here idempotently so this migration is
 -- self-contained. See Platform_Expansion_Plan.md §2.5 / §6.3.
 -- ===================================================================
+-- hr_admin is a global (tenant_id NULL) default role; Tier C made the name
+-- unique index partial, so the conflict target names the anchor predicate.
 INSERT INTO iam.user_roles (name, label, description, rank) VALUES
   ('hr_admin', 'HR Admin', 'Manages HR — employee profiles, leave policies, attendance; no CRM/lead access', 75)
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (name) WHERE tenant_id IS NULL DO UPDATE SET
   label       = EXCLUDED.label,
   description = EXCLUDED.description,
   rank        = EXCLUDED.rank;

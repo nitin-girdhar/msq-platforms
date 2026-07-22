@@ -73,6 +73,13 @@ ON CONFLICT (state_id, name) DO NOTHING;
 -- IAM -- USER ROLES
 -- ===================================================================
 
+-- Tier C: these are GLOBAL anchor/default roles (tenant_id NULL), shared by every
+-- tenant. The four true anchors (read_only / org_admin / tenant_admin / super_admin)
+-- carry the fixed ranks defined in @platform/rbac — 0 / 980 / 990 / 1000 — leaving
+-- the 1..979 band for tenant-specific, department-driven roles. The remaining rows
+-- are global defaults a tenant can later fork into its own department roles.
+-- The name unique index is now partial (WHERE tenant_id IS NULL), so the conflict
+-- target names that predicate.
 INSERT INTO iam.user_roles (name, label, description, rank) VALUES
   ('read_only',               'Read Only',              'Read-only viewer — dashboards and reports only',                                    0),
   ('sales_representative',    'Sales Representative',   'Front-line sales — manages own assigned leads and follow-ups',                     20),
@@ -80,13 +87,109 @@ INSERT INTO iam.user_roles (name, label, description, rank) VALUES
   ('org_manager',             'Manager',                'Manages a team of Senior Sales Executives and reps within an org',                 60),
   ('org_sr_manager',          'Senior Manager',         'Manages a team of managers and reps within an org',                               70),
   ('hr_admin',                'HR Admin',               'Manages HR — employee profiles, leave policies, attendance; no CRM/lead access',   75),
-  ('org_admin',               'Admin',                  'Org-level admin — full control within one org',                                   80),
-  ('tenant_admin',            'Tenant Admin',           'Tenant-level admin — manages all orgs under the tenant',                          90),
-  ('super_admin',             'Super Admin',            'Platform-level superuser — SaaS admin only',                                     100)
-ON CONFLICT (name) DO UPDATE SET
+  ('org_admin',               'Admin',                  'Org-level admin — full control within one org',                                  980),
+  ('tenant_admin',            'Tenant Admin',           'Tenant-level admin — manages all orgs under the tenant',                         990),
+  ('super_admin',             'Super Admin',            'Platform-level superuser — SaaS admin only',                                    1000)
+ON CONFLICT (name) WHERE tenant_id IS NULL DO UPDATE SET
   label       = EXCLUDED.label,
   description = EXCLUDED.description,
   rank        = EXCLUDED.rank;
+
+
+-- ===================================================================
+-- TIER C3 -- CAPABILITY CATALOG AND PLATFORM DEFAULT GRANTS
+-- ===================================================================
+-- The catalog must stay in lockstep with @platform/rbac's CAPABILITY map: code
+-- references the key, this table decides who holds it. A key present in code but
+-- missing here resolves to DENY (fail closed), which is the intended failure mode.
+
+INSERT INTO iam.capabilities (key, area, label, description) VALUES
+  ('lms.leads.view',       'lms',   'View leads',                'See the leads list and lead detail'),
+  ('lms.leads.edit',       'lms',   'Edit leads',                'Create leads, update stage/status, log interactions and follow-ups'),
+  ('lms.leads.delete',     'lms',   'Delete leads',              'Remove leads from the pipeline'),
+  ('lms.leads.transfer',   'lms',   'Transfer leads',            'Reassign a lead to another user'),
+  ('lms.analytics.view',   'lms',   'View lead analytics',       'Open the CRM dashboards and reports'),
+  ('lms.users.manage',     'lms',   'Manage CRM users',          'Add/remove users and change their CRM role'),
+  ('lms.admin',            'lms',   'Administer CRM',            'CRM configuration — stages, sources, lookup values'),
+
+  ('hr.attendance.view',   'hr',    'View own attendance',       'Check in/out and see own attendance history'),
+  ('hr.attendance.team',   'hr',    'View team attendance',      'Open the Team tab and see reports'' attendance'),
+  ('hr.attendance.admin',  'hr',    'Administer attendance',     'Attendance rules, shifts, shift assignments, regularization override'),
+  ('hr.leave.view',        'hr',    'View own leave',            'Apply for leave and see own balance and history'),
+  ('hr.leave.approve',     'hr',    'Approve leave',             'Act on leave requests from reports'),
+  ('hr.leave.admin',       'hr',    'Administer leave',          'Leave policies, holidays, ledger adjustments, approval override'),
+  ('hr.employees.manage',  'hr',    'Manage employees',          'Create/update employee profiles, departments and designations'),
+  ('hr.admin',             'hr',    'Administer HR',             'Full HR module administration'),
+
+  ('tasks.view',           'tasks', 'View tasks',                'See tasks assigned to or created by self'),
+  ('tasks.edit',           'tasks', 'Edit tasks',                'Create tasks and lists, update own tasks'),
+  ('tasks.team.view',      'tasks', 'View team tasks',           'Open the Team scope and see reports'' tasks'),
+  ('tasks.assign',         'tasks', 'Assign tasks',              'Assign or reassign a task to another user'),
+  ('tasks.admin',          'tasks', 'Administer tasks',          'Edit or delete any in-org task or list regardless of owner'),
+
+  ('admin.orgs.manage',    'admin', 'Manage organizations',      'Create and configure branches within the tenant'),
+  ('admin.users.manage',   'admin', 'Manage users',              'Create users, assign roles, reset credentials'),
+  ('admin.roles.manage',   'admin', 'Manage roles',              'Define tenant roles, ranks, departments and capability grants'),
+  ('admin.lookups.manage', 'admin', 'Manage lookup data',        'Edit platform-wide lookup catalogs (lookup-admin)')
+ON CONFLICT (key) DO UPDATE SET
+  area        = EXCLUDED.area,
+  label       = EXCLUDED.label,
+  description = EXCLUDED.description,
+  is_active   = TRUE;
+
+-- Platform default grants (tenant_id NULL), expressed as the rank floor each
+-- capability currently requires. These floors are lifted verbatim from the
+-- hard-coded gates they replace — @lms/authz LMS_RANKS, @hr/authz HR_RANKS,
+-- @task/authz TASK_RANKS and the page guards — so turning the gates into lookups
+-- changes NO behaviour on day one. From here on a tenant reshapes access by
+-- inserting an override row, not by editing code.
+--
+-- Two consequences worth naming:
+--   * hr_admin (75) clears every LMS floor below 75, so it holds lms.leads.edit.
+--     This is NOT pre-existing — it is a side effect of Tier C2 collapsing the
+--     three per-product ladders into one. Before that, LMS gates read the rank
+--     from lms.member_roles, where hr_admin had no row (rank -1, denied). Once
+--     one ladder serves every product, an HR rank becomes comparable to a sales
+--     floor. Latent today (no hr_admin users are seeded); revoke with
+--     is_granted = FALSE rows on the lms.* keys before creating one.
+--   * read_only (0) holds only the four *.view keys — the floor is 1 or higher
+--     everywhere a write is involved.
+WITH threshold(key, min_rank) AS (VALUES
+  ('lms.leads.view',         0),   -- read_only and up
+  ('lms.leads.edit',        20),   -- LMS_RANKS.SE
+  ('lms.leads.transfer',    40),   -- LMS_RANKS.SSE
+  ('lms.analytics.view',    40),
+  ('lms.leads.delete',      60),   -- LMS_RANKS.MANAGER
+  ('lms.users.manage',     980),   -- ANCHOR_RANK.ORG_ADMIN
+  ('lms.admin',            980),
+
+  ('hr.attendance.view',     0),
+  ('hr.leave.view',          0),
+  ('hr.attendance.team',    60),   -- HR_RANKS.MANAGER
+  ('hr.leave.approve',      60),
+  ('hr.attendance.admin',   75),   -- HR_RANKS.ADMIN
+  ('hr.leave.admin',        75),
+  ('hr.employees.manage',   75),
+  ('hr.admin',              75),
+
+  ('tasks.view',             0),
+  ('tasks.edit',            20),   -- TASK_RANKS.MEMBER
+  ('tasks.team.view',       40),   -- TASK_RANKS.LEAD
+  ('tasks.assign',          40),   -- excludes read_only and sales_representative
+  ('tasks.admin',          980),   -- TASK_RANKS.ADMIN
+
+  ('admin.orgs.manage',    980),
+  ('admin.users.manage',   980),
+  ('admin.roles.manage',   990),   -- ANCHOR_RANK.TENANT_ADMIN
+  ('admin.lookups.manage',1000)    -- ANCHOR_RANK.SUPER_ADMIN
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT NULL, r.id, c.id, TRUE
+FROM threshold t
+JOIN iam.capabilities c ON c.key = t.key
+JOIN iam.user_roles   r ON r.tenant_id IS NULL AND r.is_active AND r.rank >= t.min_rank
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO UPDATE SET is_granted = EXCLUDED.is_granted;
 
 
 -- ===================================================================

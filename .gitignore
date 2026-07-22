@@ -3,6 +3,7 @@
 /msq-lms/
 /msq-hrms/
 /msq-todo/
+/msq-e2e-validation/
 
 # ── Dependencies ───────────────────────────────────────────────────────────────
 node_modules/

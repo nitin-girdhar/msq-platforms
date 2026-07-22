@@ -22,10 +22,11 @@
   },
   "dependencies": {
     "@platform/auth-constants": "workspace:*",
+    "@platform/authz": "workspace:*",
+    "@platform/rbac": "workspace:*",
     "@platform/types": "workspace:*",
     "jose": "^6.2.3",
-    "xlsx": "^0.18.5",
-    "@platform/authz": "workspace:*"
+    "xlsx": "^0.18.5"
   },
   "peerDependencies": {
     "next": "^15.2.4",

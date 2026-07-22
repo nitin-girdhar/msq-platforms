@@ -2,21 +2,22 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { UserRole } from '@platform/auth-constants';
-import { filterNavByRole, type NavItem } from './nav';
+import type { SessionUser } from '@platform/types';
+import { filterNav, type NavItem } from './nav';
 
 interface Props {
-  role: UserRole;
-  // This product app's nav entries (already product-specific). Filtered by role
-  // here so callers just hand over their full list.
+  // Carries the DB-resolved capability list that decides which entries appear.
+  actor: SessionUser;
+  // This product app's nav entries (already product-specific). Filtered here so
+  // callers just hand over their full list.
   items: readonly NavItem[];
 }
 
 // Desktop left rail, shared across every product app. Product-agnostic: the
 // entries come entirely from `items`.
-export default function AppSidebar({ role, items }: Props) {
+export default function AppSidebar({ actor, items }: Props) {
   const pathname = usePathname();
-  const visible = filterNavByRole(items, role);
+  const visible = filterNav(items, actor);
 
   return (
     <aside className="hidden w-56 shrink-0 flex-col border-r border-[#E2E8F0] bg-white lg:flex">

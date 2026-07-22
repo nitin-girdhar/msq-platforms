@@ -7,10 +7,10 @@
 -- Run BEFORE: seed-03-leads-bulk.sql
 --
 -- Adds:
---   - 1 new tenant: ITC Hotels (hospitality domain)
---   - 8 new orgs (org_seq 3-10): 3 more FitClass + 5 ITC Hotels
+--   - 1 new tenant: MSquare Professionals (professional services)
+--   - 8 new orgs (org_seq 3-10): 3 more FitClass + 5 MSquare
 --     (combined with the 2 existing FitClass orgs from init-seed.sql,
---      this gives 5 FitClass orgs + 5 ITC Hotels orgs = 10 total)
+--      this gives 5 FitClass orgs + 5 MSquare orgs = 10 total)
 --   - 8 iam.users per NEW org: org_admin, org_sr_manager, org_manager,
 --     senior_sales_executive, sales_representative x3, read_only
 --   - 2 marketing.ad_campaigns per NEW org
@@ -51,10 +51,10 @@ VALUES
     ),
     (
         'a3000000-0000-0000-0000-000000000001',
-        'ITC Hotels',
+        'MSquare Professionals',
         (SELECT id FROM entity.tenant_domains    WHERE name = 'hospitality'),
         (SELECT id FROM entity.tenant_plan_types WHERE name = 'enterprise'),
-        '{"brand_color":"#7A1F2B","loyalty_program":"ITC Green Points","features":{"ai_lead_scoring":true,"bulk_sms":true,"channel_manager_sync":true}}',
+        '{"brand_color":"#1F4E79","features":{"ai_lead_scoring":true,"bulk_sms":true}}',
         TRUE
     )
 ON CONFLICT (id) DO NOTHING;
@@ -76,7 +76,7 @@ CREATE TEMP TABLE _org_config (
   address1     TEXT NOT NULL,
   landmark     TEXT NOT NULL,
   pincode      TEXT NOT NULL,
-  tenant_label TEXT NOT NULL  -- 'fitclass' or 'itc' — used by later scripts for domain-specific data
+  tenant_label TEXT NOT NULL  -- 'fitclass' or 'msq' — used by later scripts for domain-specific data
 ) ON COMMIT DROP;
 
 -- NOTE on slot numbering within _seed_uuid(org_seq, slot):
@@ -94,12 +94,12 @@ VALUES
   (3, _seed_uuid(3,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurgaon', 'gym_location', 'Gurgaon', 'Haryana',       'fitclass.ggn.in', 'Tower 3, Cyber Hub',          'Near DLF Cyber City',    '122002', 'fitclass'),
   (4, _seed_uuid(4,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Noida',   'gym_location', 'Noida',   'Uttar Pradesh', 'fitclass.noi.in', 'Sector 18 Atta Market',       'Near DLF Mall of India', '201301', 'fitclass'),
   (5, _seed_uuid(5,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Rohini',  'gym_location', 'Rohini',  'Delhi',         'fitclass.roh.in', 'Sector 7 Community Centre',   'Near Rohini West Metro', '110085', 'fitclass'),
-  -- ── New ITC Hotels orgs ──
-  (6, _seed_uuid(6,0), 'a3000000-0000-0000-0000-000000000001', 'ITC Hotels - Maurya Delhi',        'branch', 'New Delhi', 'Delhi', 'itcmaurya.in',     'Sardar Patel Marg, Diplomatic Enclave', 'Near Chanakyapuri',        '110021', 'itc'),
-  (7, _seed_uuid(7,0), 'a3000000-0000-0000-0000-000000000001', 'ITC Hotels - Gardenia Gurgaon',    'branch', 'Gurgaon',   'Haryana', 'itcgardenia.in', 'NH8, Near IFFCO Chowk',                'Near IFFCO Chowk Metro',   '122001', 'itc'),
-  (8, _seed_uuid(8,0), 'a3000000-0000-0000-0000-000000000001', 'ITC Hotels - Grand Chola Chennai', 'branch', 'New Delhi', 'Delhi', 'itcgrandchola.in', 'Mount Road Extension',                 'Near Guindy Race Course',  '600032', 'itc'),
-  (9, _seed_uuid(9,0), 'a3000000-0000-0000-0000-000000000001', 'ITC Hotels - Sonar Kolkata',       'branch', 'New Delhi', 'Delhi', 'itcsonar.in',      'EM Bypass, Near Science City',         'Near Science City',        '700046', 'itc'),
-  (10,_seed_uuid(10,0),'a3000000-0000-0000-0000-000000000001', 'ITC Hotels - Windsor Bengaluru',   'branch', 'New Delhi', 'Delhi', 'itcwindsor.in',    'Golf Course Road',                     'Near Golf Course',         '560052', 'itc');
+  -- ── MSquare Professionals orgs ──
+  (6, _seed_uuid(6,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Gurgaon HQ', 'branch', 'Gurgaon',   'Haryana',       'msq.ggn.in', 'Tower B, Golf Course Road',   'Near Sector 54 Metro',   '122002', 'msq'),
+  (7, _seed_uuid(7,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Delhi',      'branch', 'New Delhi', 'Delhi',         'msq.del.in', 'Barakhamba Road',             'Near Mandi House',       '110001', 'msq'),
+  (8, _seed_uuid(8,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Noida',      'branch', 'Noida',     'Uttar Pradesh', 'msq.noi.in', 'Sector 62, Block C',          'Near Electronic City',   '201309', 'msq'),
+  (9, _seed_uuid(9,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Faridabad',  'branch', 'Faridabad', 'Haryana',       'msq.fbd.in', 'Sector 16A, Mathura Road',    'Near Neelam Chowk',      '121002', 'msq'),
+  (10,_seed_uuid(10,0),'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Lucknow',    'branch', 'Lucknow',   'Uttar Pradesh', 'msq.lko.in', 'Gomti Nagar, Vibhuti Khand', 'Near Riverside Mall',    '226010', 'msq');
 
 -- ============================================================
 -- ORGANIZATIONS (all 10 orgs; ON CONFLICT DO NOTHING is idempotent)
@@ -113,8 +113,8 @@ SELECT
     oc.org_uuid,
     oc.tenant_uuid,
     oc.org_name,
-    CASE WHEN oc.tenant_label = 'fitclass' THEN 'FitClass' ELSE 'ITC' END,
-    CASE WHEN oc.tenant_label = 'fitclass' THEN 'FitClass' ELSE 'ITC' END,
+    CASE WHEN oc.tenant_label = 'fitclass' THEN 'FitClass' ELSE 'MSquare Professionals' END,
+    CASE WHEN oc.tenant_label = 'fitclass' THEN 'FitClass' ELSE 'MSquare' END,
     (SELECT id FROM entity.org_types WHERE name = oc.org_type),
     oc.address1, oc.landmark, oc.pincode,
     (SELECT id FROM geo.cities  WHERE name = oc.city_name),
@@ -123,7 +123,7 @@ SELECT
     'Asia/Kolkata',
     CASE WHEN oc.tenant_label = 'fitclass'
          THEN jsonb_build_object('capacity', 150 + (oc.org_seq * 20), 'equipment_tier', 'standard')
-         ELSE jsonb_build_object('room_count', 180 + (oc.org_seq * 15), 'star_rating', 5, 'has_banquet_hall', true)
+         ELSE jsonb_build_object('seat_count', 60 + (oc.org_seq * 10), 'practice_areas', jsonb_build_array('advisory','compliance'))
     END,
     TRUE
 FROM _org_config oc
@@ -362,6 +362,216 @@ CROSS JOIN (VALUES
 ON CONFLICT (tenant_id, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid), name)
   WHERE NOT is_deleted
   DO NOTHING;
+
+-- ===================================================================
+-- TENANT-SCOPED, DEPARTMENT-SCOPED ROLES
+-- ===================================================================
+-- Every role below is tenant_id NOT NULL and department_id NOT NULL — the shape
+-- Tier C1 exists for. Ranks are unique per (tenant, department), so each
+-- department carries its own ladder and the same rank may recur across
+-- departments without collision.
+--
+-- The four global anchors (read_only 0, org_admin 980, tenant_admin 990,
+-- super_admin 1000) stay tenant_id NULL and are shared by both tenants.
+
+INSERT INTO iam.user_roles (tenant_id, department_id, name, label, description, rank)
+SELECT t.id, d.id, r.name, r.label, r.description, r.rank
+FROM entity.tenants t
+JOIN iam.departments d ON d.tenant_id = t.id AND NOT d.is_deleted
+JOIN (VALUES
+  -- ── sales ──
+  ('sales', 'sales_executive',        'Sales Executive',        'Front-line sales — works own assigned leads',                     20),
+  ('sales', 'sales_senior_executive', 'Senior Sales Executive', 'Leads a pod of executives; works the unassigned queue',           40),
+  ('sales', 'sales_manager',          'Sales Manager',          'Owns a branch pipeline; approves and reassigns',                  60),
+  ('sales', 'sales_head',             'Head of Sales',          'Branch-wide sales authority across all pods',                     70),
+  -- ── hr ──
+  ('hr', 'hr_executive', 'HR Executive', 'Employee records and day-to-day HR queries',                    25),
+  ('hr', 'hr_manager',   'HR Manager',   'Approves leave and attendance corrections for the branch',      60),
+  ('hr', 'hr_head',      'Head of HR',   'Full HR configuration — policies, holidays, shifts, balances', 75),
+  -- ── operations ──
+  ('operations', 'ops_executive', 'Operations Executive', 'Day-to-day service delivery tasks',                 25),
+  ('operations', 'ops_manager',   'Operations Manager',   'Coordinates delivery across a branch team',         60),
+  ('operations', 'ops_head',      'Head of Operations',   'Branch-wide operational authority',                 70),
+  -- ── admin ──
+  ('admin', 'admin_executive', 'Admin Executive', 'Branch administration and record keeping',      25),
+  ('admin', 'admin_manager',   'Admin Manager',   'Branch administration with user management',    60)
+) AS r(dept, name, label, description, rank) ON r.dept = d.name
+ON CONFLICT (tenant_id, name) WHERE tenant_id IS NOT NULL
+DO UPDATE SET label = EXCLUDED.label, description = EXCLUDED.description, rank = EXCLUDED.rank;
+
+
+-- ===================================================================
+-- CAPABILITY GRANTS FOR THE TENANT ROLES
+-- ===================================================================
+-- Each tenant role inherits the grant set of the global role it mirrors, then
+-- has whole tools subtracted where the department has no business there. Doing
+-- it by TEMPLATE rather than by hand keeps the ladders consistent between the
+-- two tenants and makes the intent legible: "sales_manager is org_manager,
+-- scoped to Sales".
+--
+-- Note the LMS subtraction for hr/operations/admin: this is the hr_admin problem
+-- generalised. On one rank ladder a department role would otherwise clear a
+-- sales floor purely by seniority.
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT tr.tenant_id, tr.id, rc.capability_id, rc.is_granted
+FROM (VALUES
+  ('sales_executive',        'sales_representative'),
+  ('sales_senior_executive', 'senior_sales_executive'),
+  ('sales_manager',          'org_manager'),
+  ('sales_head',             'org_sr_manager'),
+  ('hr_executive',           'sales_representative'),
+  ('hr_manager',             'org_manager'),
+  ('hr_head',                'hr_admin'),
+  ('ops_executive',          'sales_representative'),
+  ('ops_manager',            'org_manager'),
+  ('ops_head',               'org_sr_manager'),
+  ('admin_executive',        'sales_representative'),
+  ('admin_manager',          'org_manager')
+) AS tmpl(role_name, template_name)
+JOIN iam.user_roles tr ON tr.name = tmpl.role_name AND tr.tenant_id IS NOT NULL
+JOIN iam.user_roles gr ON gr.name = tmpl.template_name AND gr.tenant_id IS NULL
+JOIN iam.role_capabilities rc ON rc.role_id = gr.id AND rc.tenant_id IS NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = EXCLUDED.is_granted;
+
+-- Non-sales departments hold no CRM at all: denying the `lms` TOOL prunes every
+-- page, operation and scope beneath it in a single row.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT tr.tenant_id, tr.id, c.id, FALSE
+FROM iam.user_roles tr
+JOIN iam.departments d ON d.id = tr.department_id
+JOIN iam.capabilities c ON c.key = 'lms'
+WHERE tr.tenant_id IS NOT NULL AND d.name IN ('hr', 'operations', 'admin')
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = FALSE;
+
+-- HR managers and heads additionally need the HR admin surface their template
+-- (org_manager) does not carry.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT tr.tenant_id, tr.id, c.id, TRUE
+FROM iam.user_roles tr
+JOIN iam.capabilities c ON c.key = ANY (ARRAY[
+  'hr.attendance.view.org','hr.leave.view.org',
+  'hr.attendance.admin.rules.view','hr.attendance.admin.shifts.view',
+  'hr.attendance.admin.assignments.view','hr.attendance.admin.reports.view',
+  'hr.leave.admin.policies.view','hr.leave.admin.holidays.view',
+  'hr.employees.manage'
+])
+WHERE tr.tenant_id IS NOT NULL AND tr.name IN ('hr_manager', 'hr_head')
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = TRUE;
+
+-- Admin managers get branch user administration; ops/admin keep Tasks as their
+-- primary tool.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT tr.tenant_id, tr.id, c.id, TRUE
+FROM iam.user_roles tr
+JOIN iam.capabilities c ON c.key = ANY (ARRAY['admin','admin.orgs.view','admin.users.manage'])
+WHERE tr.tenant_id IS NOT NULL AND tr.name = 'admin_manager'
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = TRUE;
+
+
+-- ===================================================================
+-- ONE USER PER TENANT ROLE, PLUS THE PLATFORM ANCHORS
+-- ===================================================================
+-- Every user below shares the dev password Admin@12345. Emails are
+-- <role>@<tenant-domain> so an end-to-end run can derive them from the role name.
+
+DO $seedusers$
+DECLARE
+  v_hash    TEXT := '$2b$12$7Bj5154.YS5FKsl1AaDM9O8zEzQW/db5kNkP1APKT6dcIwvReJmHe';
+  v_tenant  RECORD;
+  v_role    RECORD;
+  v_org     UUID;
+  v_domain  TEXT;
+  v_admin   UUID;
+  v_uid     UUID;
+  v_first   TEXT[] := ARRAY['Aarav','Ishita','Rohan','Meera','Kunal','Sneha','Vikram','Priya',
+                            'Nikhil','Ananya','Rahul','Divya'];
+  v_last    TEXT[] := ARRAY['Sharma','Verma','Reddy','Menon','Kapoor','Sinha'];
+  i INT;
+BEGIN
+  FOR v_tenant IN
+    SELECT t.id, t.name,
+           CASE WHEN t.name = 'FitClass' THEN 'fitclass.cp.in' ELSE 'msq.ggn.in' END AS domain
+    FROM entity.tenants t   LOOP
+    SELECT o.id INTO v_org FROM entity.organizations o
+      WHERE o.tenant_id = v_tenant.id ORDER BY o.created_at, o.id LIMIT 1;
+    SELECT u.id INTO v_admin FROM iam.users u
+      WHERE u.org_id = v_org AND u.email LIKE 'admin@%' LIMIT 1;
+    v_domain := v_tenant.domain;
+
+    PERFORM set_config('app.current_org_id',  v_org::TEXT,   TRUE);
+    PERFORM set_config('app.current_user_id', v_admin::TEXT, TRUE);
+
+    i := 0;
+    FOR v_role IN
+      SELECT r.id, r.name, r.rank FROM iam.user_roles r
+      WHERE r.tenant_id = v_tenant.id ORDER BY r.rank, r.name
+    LOOP
+      i := i + 1;
+      v_uid := public.gen_uuidv7();
+      INSERT INTO iam.users (id, org_id, first_name, last_name, mobile, email,
+                             role_id, manager_id, password_hash, is_active, force_password_change)
+      VALUES (v_uid, v_org,
+              v_first[1 + (i % array_length(v_first,1))],
+              v_last[1 + (i % array_length(v_last,1))],
+              '+9199' || LPAD((abs(hashtext(v_role.name || v_tenant.name)) % 100000000)::TEXT, 8, '0'),
+              v_role.name || '@' || v_domain,
+              v_role.id, v_admin, v_hash, TRUE, FALSE)
+      ON CONFLICT (email) DO UPDATE SET role_id = EXCLUDED.role_id, password_hash = EXCLUDED.password_hash;
+
+      INSERT INTO iam.user_org_mapping (user_id, org_id, role_id, granted_by, is_active)
+      SELECT u.id, v_org, v_role.id, v_admin, TRUE FROM iam.users u WHERE u.email = v_role.name || '@' || v_domain
+      ON CONFLICT (user_id, org_id) DO UPDATE
+        SET role_id = EXCLUDED.role_id, is_active = TRUE, updated_at = CLOCK_TIMESTAMP();
+    END LOOP;
+
+    -- tenant_admin: a global anchor role, one holder per tenant
+    v_uid := public.gen_uuidv7();
+    INSERT INTO iam.users (id, org_id, first_name, last_name, mobile, email,
+                           role_id, manager_id, password_hash, is_active, force_password_change)
+    VALUES (v_uid, v_org, 'Tenant', 'Admin',
+            '+9199' || LPAD((abs(hashtext('ta' || v_tenant.name)) % 100000000)::TEXT, 8, '0'),
+            'tenant.admin@' || v_domain,
+            (SELECT id FROM iam.user_roles WHERE name = 'tenant_admin' AND tenant_id IS NULL),
+            NULL, v_hash, TRUE, FALSE)
+    ON CONFLICT (email) DO UPDATE SET role_id = EXCLUDED.role_id, password_hash = EXCLUDED.password_hash;
+
+    INSERT INTO iam.user_org_mapping (user_id, org_id, role_id, granted_by, is_active)
+    SELECT u.id, v_org, u.role_id, v_admin, TRUE FROM iam.users u WHERE u.email = 'tenant.admin@' || v_domain
+    ON CONFLICT (user_id, org_id) DO UPDATE SET role_id = EXCLUDED.role_id, is_active = TRUE;
+  END LOOP;
+
+  -- super_admin: platform-wide, homed in FitClass's first branch
+  SELECT o.id INTO v_org FROM entity.organizations o
+    JOIN entity.tenants t ON t.id = o.tenant_id AND t.name = 'FitClass'
+    ORDER BY o.created_at, o.id LIMIT 1;
+  SELECT u.id INTO v_admin FROM iam.users u WHERE u.org_id = v_org AND u.email LIKE 'admin@%' LIMIT 1;
+  PERFORM set_config('app.current_org_id', v_org::TEXT, TRUE);
+  PERFORM set_config('app.current_user_id', v_admin::TEXT, TRUE);
+
+  INSERT INTO iam.users (id, org_id, first_name, last_name, mobile, email,
+                         role_id, manager_id, password_hash, is_active, force_password_change)
+  VALUES (public.gen_uuidv7(), v_org, 'Super', 'Admin', '+919900000001', 'super.admin@msquare.io',
+          (SELECT id FROM iam.user_roles WHERE name = 'super_admin' AND tenant_id IS NULL),
+          NULL, v_hash, TRUE, FALSE)
+  ON CONFLICT (email) DO UPDATE SET role_id = EXCLUDED.role_id, password_hash = EXCLUDED.password_hash;
+
+  INSERT INTO iam.user_org_mapping (user_id, org_id, role_id, granted_by, is_active)
+  SELECT u.id, v_org, u.role_id, v_admin, TRUE FROM iam.users u WHERE u.email = 'super.admin@msquare.io'
+  ON CONFLICT (user_id, org_id) DO UPDATE SET role_id = EXCLUDED.role_id, is_active = TRUE;
+END $seedusers$;
+
+-- Both tenants licensed for every module, so entitlement never masks a
+-- capability result during end-to-end validation.
+INSERT INTO entity.tenant_modules (tenant_id, module)
+SELECT t.id, m.module
+FROM entity.tenants t
+CROSS JOIN (VALUES ('lms'), ('tasks'), ('attendance'), ('leave')) AS m(module)
+ON CONFLICT (tenant_id, module) DO UPDATE SET is_active = TRUE;
 
 COMMIT;
 

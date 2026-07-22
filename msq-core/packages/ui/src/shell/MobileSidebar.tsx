@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { UserRole } from '@platform/auth-constants';
-import { filterNavByRole, type NavItem } from './nav';
+import type { SessionUser } from '@platform/types';
+import { filterNav, type NavItem } from './nav';
 
 const TOGGLE_EVENT = 'fc:sidebar-toggle';
 const SET_EVENT = 'fc:sidebar-set';
@@ -23,16 +23,17 @@ function setSidebar(open: boolean): void {
 }
 
 interface Props {
-  role: UserRole;
+  // Carries the DB-resolved capability list that decides which entries appear.
+  actor: SessionUser;
   items: readonly NavItem[];
 }
 
 // Mobile slide-over nav, shared across product apps. Same product-agnostic
 // contract as AppSidebar.
-export default function MobileSidebar({ role, items }: Props) {
+export default function MobileSidebar({ actor, items }: Props) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
-  const visible = filterNavByRole(items, role);
+  const visible = filterNav(items, actor);
 
   useEffect(() => {
     const onToggle = () => setOpen((v) => !v);

@@ -261,6 +261,9 @@ importers:
       '@platform/authz':
         specifier: workspace:*
         version: link:../platform-authz
+      '@platform/rbac':
+        specifier: workspace:*
+        version: link:../rbac
       '@platform/types':
         specifier: workspace:*
         version: link:../types
@@ -509,6 +512,9 @@ importers:
       '@platform/authz':
         specifier: workspace:*
         version: link:../../../msq-core/packages/platform-authz
+      '@platform/rbac':
+        specifier: workspace:*
+        version: link:../../../msq-core/packages/rbac
       '@platform/types':
         specifier: workspace:*
         version: link:../../../msq-core/packages/types
@@ -642,6 +648,9 @@ importers:
       '@platform/db':
         specifier: workspace:*
         version: link:../../../msq-core/packages/db
+      '@platform/rbac':
+        specifier: workspace:*
+        version: link:../../../msq-core/packages/rbac
       '@platform/service-auth':
         specifier: workspace:*
         version: link:../../../msq-core/packages/service-auth
@@ -697,6 +706,9 @@ importers:
       '@platform/authz':
         specifier: workspace:*
         version: link:../../../msq-core/packages/platform-authz
+      '@platform/rbac':
+        specifier: workspace:*
+        version: link:../../../msq-core/packages/rbac
       '@platform/types':
         specifier: workspace:*
         version: link:../../../msq-core/packages/types
@@ -974,6 +986,9 @@ importers:
       '@platform/authz':
         specifier: workspace:*
         version: link:../../../msq-core/packages/platform-authz
+      '@platform/rbac':
+        specifier: workspace:*
+        version: link:../../../msq-core/packages/rbac
       '@platform/types':
         specifier: workspace:*
         version: link:../../../msq-core/packages/types

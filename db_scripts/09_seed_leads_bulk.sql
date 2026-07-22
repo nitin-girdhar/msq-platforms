@@ -19,7 +19,7 @@
 --   - assigned_user_id is randomly one of the 3 reps in that org, or
 --     NULL for ~half of 'new' leads (unassigned inbox).
 --   - metadata differs by tenant: fitness goals for FitClass orgs,
---     stay preferences for ITC Hotels orgs.
+--     engagement preferences for MSquare Professionals orgs.
 --   - outcome_id is only ever set to an outcome row matching the
 --     lead's own stage_id, satisfying lms.check_lead_stage_outcome().
 --   - outcome_comment is populated whenever the chosen outcome has
@@ -47,7 +47,7 @@ $$;
 CREATE TEMP TABLE _lead_org_ref (
   org_seq      INT PRIMARY KEY,
   org_uuid     UUID NOT NULL,
-  tenant_label TEXT NOT NULL  -- 'fitclass' or 'itc'
+  tenant_label TEXT NOT NULL  -- 'fitclass' or 'msq'
 ) ON COMMIT DROP;
 
 INSERT INTO _lead_org_ref (org_seq, org_uuid, tenant_label) VALUES
@@ -56,11 +56,11 @@ INSERT INTO _lead_org_ref (org_seq, org_uuid, tenant_label) VALUES
   (3,  _seed_uuid(3,0),  'fitclass'),
   (4,  _seed_uuid(4,0),  'fitclass'),
   (5,  _seed_uuid(5,0),  'fitclass'),
-  (6,  _seed_uuid(6,0),  'itc'),
-  (7,  _seed_uuid(7,0),  'itc'),
-  (8,  _seed_uuid(8,0),  'itc'),
-  (9,  _seed_uuid(9,0),  'itc'),
-  (10, _seed_uuid(10,0), 'itc');
+  (6,  _seed_uuid(6,0),  'msq'),
+  (7,  _seed_uuid(7,0),  'msq'),
+  (8,  _seed_uuid(8,0),  'msq'),
+  (9,  _seed_uuid(9,0),  'msq'),
+  (10, _seed_uuid(10,0), 'msq');
 
 -- ============================================================
 -- Reference data pools

@@ -400,14 +400,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_user_roles_tenant_dept_rank
 CREATE TABLE IF NOT EXISTS iam.capabilities (
   id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   key         TEXT    NOT NULL UNIQUE,
-  area        TEXT    NOT NULL,
+  -- Where this node sits in the access tree:
+  --   tool -> page -> tab -> operation -> scope
+  kind        TEXT    NOT NULL CHECK (kind IN ('tool','page','tab','operation','scope')),
+  parent_key  TEXT             REFERENCES iam.capabilities(key) ON DELETE CASCADE,
   label       TEXT    NOT NULL,
   description TEXT,
+  -- Display order among siblings. For kind='scope' this is ALSO the breadth
+  -- ordering: effective scope is the granted sibling with the highest value.
+  sort_order  INT     NOT NULL DEFAULT 0,
   is_active   BOOLEAN NOT NULL DEFAULT TRUE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  -- Only a tool may be a root; everything else must hang off a parent.
+  CONSTRAINT chk_iam_capabilities_root CHECK ((kind = 'tool') = (parent_key IS NULL))
 );
-CREATE INDEX IF NOT EXISTS idx_iam_capabilities_area ON iam.capabilities (area) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_iam_capabilities_parent ON iam.capabilities (parent_key) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_iam_capabilities_kind   ON iam.capabilities (kind)       WHERE is_active;
 
 DROP TRIGGER IF EXISTS trg_iam_capabilities_updated_at ON iam.capabilities;
 CREATE TRIGGER trg_iam_capabilities_updated_at
@@ -2831,37 +2840,63 @@ END; $$;
 GRANT EXECUTE ON FUNCTION iam.fn_user_org_role(UUID,UUID) TO app_user, tenant_admin;
 
 -- Tier C3 — the effective capability matrix for one tenant, already resolved.
--- Returns EVERY (role, capability) pair the tenant can see with a definite
--- boolean, so a caller never has to re-implement the precedence rule:
---   tenant override (tenant_id = p_tenant_id)  >  platform default (tenant_id IS NULL)  >  deny
--- DISTINCT ON does the precedence: the ORDER BY floats the tenant-specific grant
--- row above the platform one for each (role, capability).
+-- Walks the capability TREE and returns every node with a definite boolean, so a
+-- caller never re-implements either rule:
 --
--- Roles visible to a tenant are its own plus the global anchors. A tenant may
--- override an ANCHOR role's grant — the override row carries the tenant's id and
--- the anchor's role_id, which is why the join is on role_id and not role name.
+--   precedence   tenant override > platform default > deny
+--   inheritance  an ancestor that resolves FALSE prunes its whole subtree;
+--                tool/page/tab additionally INHERIT the nearest ancestor grant,
+--                while operation/scope always require their own explicit grant.
 --
--- SECURITY DEFINER for the same reason as fn_user_org_role: services read this
--- on a bare connection with no session GUCs set, and must not be subject to the
--- RLS on iam.user_roles / iam.role_capabilities while doing so. The tenant is an
--- explicit argument, and callers pass the tenant off the verified auth context.
-CREATE OR REPLACE FUNCTION iam.fn_role_capability_matrix(p_tenant_id UUID)
-RETURNS TABLE (role_name TEXT, capability_key TEXT, granted BOOLEAN)
+-- The asymmetry is deliberate. Nav can cascade because the operations beneath it
+-- fail closed independently, so a newly added page can never grant new powers.
+--
+-- Effective SCOPE is not computed here: callers take the granted scope child with
+-- the highest sort_order, which keeps this function a pure per-node answer.
+--
+-- SECURITY DEFINER for the same reason as fn_user_org_role: services read this on
+-- a bare connection with no session GUCs and must not be subject to RLS while
+-- doing so. The tenant is an explicit argument, taken from the verified auth context.
+-- Signature changed in the tree rewrite (a `kind` column was added), and
+-- CREATE OR REPLACE cannot change a function's return type — hence the DROP.
+DROP FUNCTION IF EXISTS iam.fn_role_capability_matrix(UUID);
+CREATE FUNCTION iam.fn_role_capability_matrix(p_tenant_id UUID)
+RETURNS TABLE (role_name TEXT, capability_key TEXT, kind TEXT, parent_key TEXT, sort_order INT, granted BOOLEAN)
 LANGUAGE sql STABLE SECURITY DEFINER AS $$
-  SELECT DISTINCT ON (r.name, c.key)
-         r.name::TEXT,
-         c.key::TEXT,
-         COALESCE(rc.is_granted, FALSE)
-  FROM iam.user_roles r
-  CROSS JOIN iam.capabilities c
-  LEFT JOIN iam.role_capabilities rc
-         ON rc.role_id = r.id
-        AND rc.capability_id = c.id
-        AND (rc.tenant_id IS NULL OR rc.tenant_id = p_tenant_id)
-  WHERE r.is_active
-    AND c.is_active
-    AND (r.tenant_id IS NULL OR r.tenant_id = p_tenant_id)
-  ORDER BY r.name, c.key, (rc.tenant_id IS NOT NULL) DESC;
+  WITH RECURSIVE grant_resolved AS (
+    SELECT DISTINCT ON (rc.role_id, rc.capability_id)
+           rc.role_id, rc.capability_id, rc.is_granted
+    FROM iam.role_capabilities rc
+    WHERE rc.tenant_id IS NULL OR rc.tenant_id = p_tenant_id
+    ORDER BY rc.role_id, rc.capability_id, (rc.tenant_id IS NOT NULL) DESC
+  ),
+  walk AS (
+    -- Roots are the tools. A tool is on only if explicitly granted.
+    SELECT r.id AS role_id, r.name::TEXT AS role_name, c.key, c.kind, c.parent_key, c.sort_order,
+           COALESCE(g.is_granted, FALSE) AS granted,
+           COALESCE(g.is_granted, FALSE) AS nav_inherited
+    FROM iam.user_roles r
+    CROSS JOIN iam.capabilities c
+    LEFT JOIN grant_resolved g ON g.role_id = r.id AND g.capability_id = c.id
+    WHERE c.parent_key IS NULL AND c.is_active AND r.is_active
+      AND (r.tenant_id IS NULL OR r.tenant_id = p_tenant_id)
+
+    UNION ALL
+
+    SELECT w.role_id, w.role_name, c.key, c.kind, c.parent_key, c.sort_order,
+           CASE
+             WHEN NOT w.granted THEN FALSE
+             WHEN c.kind IN ('page','tab') THEN COALESCE(g.is_granted, w.nav_inherited)
+             ELSE COALESCE(g.is_granted, FALSE)
+           END,
+           CASE WHEN c.kind IN ('page','tab')
+                THEN COALESCE(g.is_granted, w.nav_inherited)
+                ELSE w.nav_inherited END
+    FROM walk w
+    JOIN iam.capabilities c ON c.parent_key = w.key AND c.is_active
+    LEFT JOIN grant_resolved g ON g.role_id = w.role_id AND g.capability_id = c.id
+  )
+  SELECT role_name, key::TEXT, kind::TEXT, parent_key::TEXT, sort_order, granted FROM walk;
 $$;
 -- Product-service logins are created later, so their EXECUTE grant lives at the
 -- end of 04 alongside iam.fn_user_org_role's.

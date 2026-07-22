@@ -3,7 +3,7 @@
 --
 -- Deletes ALL data created by 02-seed-tenants-orgs-users.sql,
 -- 03-seed-leads-bulk.sql, and 04-seed-interactions-followups.sql
--- (the FitClass + ITC Hotels demo tenants), plus any real app-generated
+-- (the FitClass + MSquare Professionals demo tenants), plus any real app-generated
 -- rows layered on top of them (Meta CAPI logs, audit history, sessions,
 -- activity log, etc).
 --
@@ -40,7 +40,7 @@ SET ROLE root_service;
 CREATE TEMP TABLE _target_tenants (id UUID) ON COMMIT DROP;
 INSERT INTO _target_tenants (id) VALUES
   ('a1000000-0000-0000-0000-000000000001'), -- FitClass
-  ('a3000000-0000-0000-0000-000000000001'); -- ITC Hotels
+  ('a3000000-0000-0000-0000-000000000001'); -- MSquare Professionals
 
 CREATE TEMP TABLE _target_orgs (id UUID) ON COMMIT DROP;
 INSERT INTO _target_orgs (id)

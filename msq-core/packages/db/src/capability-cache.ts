@@ -3,12 +3,17 @@ import type { CapabilityKey } from '@platform/rbac';
 import { appDrizzle, type DrizzleTx } from './drizzle.js';
 import { pgListen } from './notify.js';
 
-// ── Tier C3: the DB-driven capability matrix, cached in process ─────────────
+// ── Tier C3: the DB-driven capability TREE, cached in process ───────────────
 //
 // Access rules live in iam.capabilities + iam.role_capabilities and are resolved
-// per tenant by iam.fn_role_capability_matrix. A service loads a tenant's matrix
-// on first use and holds it; changing who may do what is then a DB write plus an
-// invalidation, not a deploy.
+// per tenant by iam.fn_role_capability_matrix, which walks the tree and hands back
+// a definite boolean per node — ancestor denials already applied. A service loads
+// a tenant's matrix on first use and holds it; changing who may do what is then a
+// DB write plus an invalidation, not a deploy.
+//
+// The cache stores only the keys that resolved TRUE. Scope resolution (the
+// broadest granted rung of an operation's ladder) happens in @platform/rbac's
+// resolveScope() against that same set, so there is one representation, not two.
 //
 // Freshness has three independent mechanisms, deliberately layered so no single
 // one has to be perfect:
@@ -54,7 +59,8 @@ async function runResolver<T>(fn: (tx: DrizzleTx) => Promise<T>): Promise<T> {
 async function loadMatrix(tenantId: string): Promise<TenantMatrix> {
   const rows = (await runResolver((tx) =>
     tx.execute(
-      sql`SELECT role_name, capability_key, granted FROM iam.fn_role_capability_matrix(${tenantId}::uuid)`,
+      sql`SELECT role_name, capability_key, granted
+          FROM iam.fn_role_capability_matrix(${tenantId}::uuid)`,
     ),
   )) as unknown as Array<{ role_name: string; capability_key: string; granted: boolean }>;
 

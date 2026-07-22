@@ -97,97 +97,652 @@ ON CONFLICT (name) WHERE tenant_id IS NULL DO UPDATE SET
 
 
 -- ===================================================================
--- TIER C3 -- CAPABILITY CATALOG AND PLATFORM DEFAULT GRANTS
+-- TIER C3 -- CAPABILITY TREE: CATALOG
 -- ===================================================================
--- The catalog must stay in lockstep with @platform/rbac's CAPABILITY map: code
--- references the key, this table decides who holds it. A key present in code but
--- missing here resolves to DENY (fail closed), which is the intended failure mode.
+-- One row per node. Parent chain is the whole access model:
+--   tool -> page -> tab -> operation -> scope
+-- Deny a node and its entire subtree is unreachable, whatever its own grant says.
+--
+-- Inheritance differs by kind, deliberately:
+--   tool/page/tab  a grant covers the subtree; an explicit deny prunes it
+--   operation      always needs its own grant
+--   scope          always needs its own grant; effective scope is the granted
+--                  sibling with the highest sort_order
+--
+-- label       what an admin sees in the grid. 2-4 words.
+-- description one sentence, ~12 words. A second clause only for a dependency,
+--             an exclusion, or a consequence. Never restates the label, never
+--             names a route or a table.
 
-INSERT INTO iam.capabilities (key, area, label, description) VALUES
-  ('lms.leads.view',       'lms',   'View leads',                'See the leads list and lead detail'),
-  ('lms.leads.edit',       'lms',   'Edit leads',                'Create leads, update stage/status, log interactions and follow-ups'),
-  ('lms.leads.delete',     'lms',   'Delete leads',              'Remove leads from the pipeline'),
-  ('lms.leads.transfer',   'lms',   'Transfer leads',            'Reassign a lead to another user'),
-  ('lms.analytics.view',   'lms',   'View lead analytics',       'Open the CRM dashboards and reports'),
-  ('lms.users.manage',     'lms',   'Manage CRM users',          'Add/remove users and change their CRM role'),
-  ('lms.admin',            'lms',   'Administer CRM',            'CRM configuration — stages, sources, lookup values'),
+INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_order) VALUES
 
-  ('hr.attendance.view',   'hr',    'View own attendance',       'Check in/out and see own attendance history'),
-  ('hr.attendance.team',   'hr',    'View team attendance',      'Open the Team tab and see reports'' attendance'),
-  ('hr.attendance.admin',  'hr',    'Administer attendance',     'Attendance rules, shifts, shift assignments, regularization override'),
-  ('hr.leave.view',        'hr',    'View own leave',            'Apply for leave and see own balance and history'),
-  ('hr.leave.approve',     'hr',    'Approve leave',             'Act on leave requests from reports'),
-  ('hr.leave.admin',       'hr',    'Administer leave',          'Leave policies, holidays, ledger adjustments, approval override'),
-  ('hr.employees.manage',  'hr',    'Manage employees',          'Create/update employee profiles, departments and designations'),
-  ('hr.admin',             'hr',    'Administer HR',             'Full HR module administration'),
+-- ── PLATFORM ────────────────────────────────────────────────────────
+('platform',       'tool',      NULL,       'Platform',
+ 'Cross-product controls that are not tied to one tool.', 0),
+('platform.write', 'operation', 'platform', 'Write anything',
+ 'Without this the account is read-only everywhere, enforced at the database.', 1),
 
-  ('tasks.view',           'tasks', 'View tasks',                'See tasks assigned to or created by self'),
-  ('tasks.edit',           'tasks', 'Edit tasks',                'Create tasks and lists, update own tasks'),
-  ('tasks.team.view',      'tasks', 'View team tasks',           'Open the Team scope and see reports'' tasks'),
-  ('tasks.assign',         'tasks', 'Assign tasks',              'Assign or reassign a task to another user'),
-  ('tasks.admin',          'tasks', 'Administer tasks',          'Edit or delete any in-org task or list regardless of owner'),
+-- ── CRM ─────────────────────────────────────────────────────────────
+('lms', 'tool', NULL, 'CRM',
+ 'The CRM product. Denying it blocks every screen and call below.', 1),
 
-  ('admin.orgs.manage',    'admin', 'Manage organizations',      'Create and configure branches within the tenant'),
-  ('admin.users.manage',   'admin', 'Manage users',              'Create users, assign roles, reset credentials'),
-  ('admin.roles.manage',   'admin', 'Manage roles',              'Define tenant roles, ranks, departments and capability grants'),
-  ('admin.lookups.manage', 'admin', 'Manage lookup data',        'Edit platform-wide lookup catalogs (lookup-admin)')
+('lms.dashboard', 'page', 'lms', 'Dashboard',
+ 'The CRM landing screen with pipeline and activity summaries.', 1),
+('lms.dashboard.view', 'operation', 'lms.dashboard', 'View dashboard',
+ 'Read the summary cards and campaign rollups.', 1),
+
+('lms.leads', 'page', 'lms', 'Leads',
+ 'The Leads list and detail screens.', 2),
+('lms.leads.view', 'operation', 'lms.leads', 'View leads',
+ 'Read the list and lead details. Needs a scope below, or the list is empty.', 1),
+('lms.leads.view.own',  'scope', 'lms.leads.view', 'Own only',
+ 'Leads assigned to them.', 1),
+('lms.leads.view.team', 'scope', 'lms.leads.view', 'Their team',
+ 'Their own, plus everyone reporting to them.', 2),
+('lms.leads.view.org',  'scope', 'lms.leads.view', 'Whole branch',
+ 'Every lead in the branch, including unassigned.', 3),
+('lms.leads.unassigned.view', 'operation', 'lms.leads', 'See unassigned leads',
+ 'Adds the unassigned queue to the list and dashboard.', 2),
+('lms.leads.create', 'operation', 'lms.leads', 'Create leads',
+ 'Add a new lead by hand.', 3),
+('lms.leads.edit', 'operation', 'lms.leads', 'Edit leads',
+ 'Change stage, status, owner and details. Not create, delete or transfer.', 4),
+('lms.leads.edit.own',  'scope', 'lms.leads.edit', 'Own only',
+ 'Only leads assigned to them.', 1),
+('lms.leads.edit.team', 'scope', 'lms.leads.edit', 'Their team',
+ 'Also leads held by people reporting to them.', 2),
+('lms.leads.edit.any',  'scope', 'lms.leads.edit', 'Anyone''s',
+ 'Any lead in the branch, whoever holds it.', 3),
+('lms.leads.delete', 'operation', 'lms.leads', 'Delete leads',
+ 'Permanently remove a lead. Reason required, and audited.', 5),
+('lms.leads.transfer', 'operation', 'lms.leads', 'Transfer leads',
+ 'Move a lead to another branch. It leaves this branch''s list.', 6),
+('lms.leads.assign', 'operation', 'lms.leads', 'Assign leads',
+ 'Hand a lead to someone else. The scope below sets who is in the picker.', 7),
+('lms.leads.assign.reports', 'scope', 'lms.leads.assign', 'People below them',
+ 'Only people ranked below them.', 1),
+('lms.leads.assign.peers',   'scope', 'lms.leads.assign', 'Peers and below',
+ 'Adds same-rank colleagues and themselves.', 2),
+('lms.leads.assign.any',     'scope', 'lms.leads.assign', 'Anyone in the branch',
+ 'No rank limit, including seniors.', 3),
+('lms.leads.interaction.log', 'operation', 'lms.leads', 'Log interactions',
+ 'Record a call, visit or note against a lead.', 8),
+('lms.leads.timeline.view', 'operation', 'lms.leads', 'View lead timeline',
+ 'Read a lead''s full activity and ownership history.', 9),
+
+('lms.followups', 'page', 'lms', 'Follow-ups',
+ 'The follow-up queue across leads.', 3),
+('lms.followups.view',   'operation', 'lms.followups', 'View follow-ups',
+ 'Read scheduled follow-ups.', 1),
+('lms.followups.create', 'operation', 'lms.followups', 'Create follow-ups',
+ 'Schedule a follow-up on a lead.', 2),
+('lms.followups.edit',   'operation', 'lms.followups', 'Edit follow-ups',
+ 'Reschedule or close a follow-up.', 3),
+('lms.followups.delete', 'operation', 'lms.followups', 'Delete follow-ups',
+ 'Remove a scheduled follow-up.', 4),
+
+('lms.history', 'page', 'lms', 'Leads history',
+ 'The audit view of lead activity over time.', 4),
+('lms.history.view', 'operation', 'lms.history', 'View history',
+ 'Read past lead activity. Needs a scope below, or nothing is returned.', 1),
+('lms.history.view.own',    'scope', 'lms.history.view', 'Own only',
+ 'Activity on their own leads.', 1),
+('lms.history.view.team',   'scope', 'lms.history.view', 'Their team',
+ 'Also activity by people reporting to them.', 2),
+('lms.history.view.org',    'scope', 'lms.history.view', 'Whole branch',
+ 'All activity in the branch.', 3),
+('lms.history.view.tenant', 'scope', 'lms.history.view', 'Every branch',
+ 'All activity across every branch in the tenant.', 4),
+('lms.history.view.all',    'scope', 'lms.history.view', 'Every tenant',
+ 'All activity platform-wide. Crosses the tenant boundary.', 5),
+
+('lms.assignments', 'page', 'lms', 'Assignments',
+ 'The lead assignment queue and its history.', 5),
+('lms.assignments.view',   'operation', 'lms.assignments', 'View assignments',
+ 'Read assignment records and who holds what.', 1),
+('lms.assignments.edit',   'operation', 'lms.assignments', 'Edit assignments',
+ 'Change an existing assignment record.', 2),
+('lms.assignments.delete', 'operation', 'lms.assignments', 'Delete assignments',
+ 'Remove an assignment record.', 3),
+
+('lms.analytics', 'page', 'lms', 'Analytics',
+ 'Pipeline, performance and campaign reporting.', 6),
+('lms.analytics.view',     'operation', 'lms.analytics', 'View analytics',
+ 'Read pipeline, performance and campaign reports for the branch.', 1),
+('lms.analytics.org.view', 'operation', 'lms.analytics', 'View branch comparison',
+ 'Compare performance across branches in the tenant.', 2),
+
+('lms.campaigns', 'page', 'lms', 'Campaigns',
+ 'Lead source campaigns and their configuration.', 7),
+('lms.campaigns.view',   'operation', 'lms.campaigns', 'View campaigns',
+ 'Read campaigns and their results.', 1),
+('lms.campaigns.manage', 'operation', 'lms.campaigns', 'Manage campaigns',
+ 'Create, edit and retire campaigns.', 2),
+
+('lms.users', 'page', 'lms', 'Users',
+ 'The CRM people directory and org chart.', 8),
+('lms.users.view', 'operation', 'lms.users', 'View users',
+ 'Read the directory and reporting lines. Needs a scope below.', 1),
+('lms.users.view.team', 'scope', 'lms.users.view', 'Their team',
+ 'Only people reporting to them.', 1),
+('lms.users.view.org',  'scope', 'lms.users.view', 'Whole branch',
+ 'Everyone in the branch.', 2),
+('lms.users.manage', 'operation', 'lms.users', 'Manage users',
+ 'Add people, change roles, deactivate accounts.', 2),
+
+('lms.apiclients', 'page', 'lms', 'API clients',
+ 'Machine credentials for the public lead intake API.', 9),
+('lms.apiclients.view',   'operation', 'lms.apiclients', 'View API clients',
+ 'Read the client list. Secrets are never shown.', 1),
+('lms.apiclients.manage', 'operation', 'lms.apiclients', 'Manage API clients',
+ 'Create clients and rotate their secrets.', 2),
+
+-- ── ATTENDANCE ──────────────────────────────────────────────────────
+('hr.attendance', 'tool', NULL, 'Attendance',
+ 'The attendance product. Sold separately from Leave.', 2),
+('hr.attendance.view', 'operation', 'hr.attendance', 'View attendance',
+ 'Read attendance records. Needs a scope below, or nothing is shown.', 1),
+('hr.attendance.view.own',  'scope', 'hr.attendance.view', 'Own only',
+ 'Their own attendance.', 1),
+('hr.attendance.view.team', 'scope', 'hr.attendance.view', 'Their team',
+ 'Also their reports. Shows the Team tab.', 2),
+('hr.attendance.view.org',  'scope', 'hr.attendance.view', 'Whole branch',
+ 'Everyone in the branch.', 3),
+('hr.attendance.punch', 'operation', 'hr.attendance', 'Check in and out',
+ 'Record their own arrival and departure.', 2),
+('hr.attendance.photo.view', 'operation', 'hr.attendance', 'View check-in photos',
+ 'Open the photo captured at check-in.', 3),
+('hr.attendance.regularization.request', 'operation', 'hr.attendance', 'Request a correction',
+ 'Ask for a missed or wrong punch to be fixed.', 4),
+('hr.attendance.regularization.approve', 'operation', 'hr.attendance', 'Approve corrections',
+ 'Accept a correction request.', 5),
+('hr.attendance.regularization.reject',  'operation', 'hr.attendance', 'Reject corrections',
+ 'Decline a correction request.', 6),
+
+('hr.attendance.admin', 'page', 'hr.attendance', 'Attendance admin',
+ 'Configuration for the whole branch''s attendance.', 7),
+('hr.attendance.admin.rules', 'tab', 'hr.attendance.admin', 'Rules',
+ 'Working hours, grace period, geofence radius, timezone.', 1),
+('hr.attendance.admin.rules.view',   'operation', 'hr.attendance.admin.rules', 'View rules',
+ 'Read the branch''s attendance configuration.', 1),
+('hr.attendance.admin.rules.update', 'operation', 'hr.attendance.admin.rules', 'Change rules',
+ 'Edit the configuration. Applies to everyone in the branch.', 2),
+('hr.attendance.admin.shifts', 'tab', 'hr.attendance.admin', 'Shifts',
+ 'Named shift patterns and their timings.', 2),
+('hr.attendance.admin.shifts.view',   'operation', 'hr.attendance.admin.shifts', 'View shifts',
+ 'Read the shift patterns.', 1),
+('hr.attendance.admin.shifts.manage', 'operation', 'hr.attendance.admin.shifts', 'Manage shifts',
+ 'Create and edit shift patterns.', 2),
+('hr.attendance.admin.assignments', 'tab', 'hr.attendance.admin', 'Shift assignments',
+ 'Which person works which shift.', 3),
+('hr.attendance.admin.assignments.view',   'operation', 'hr.attendance.admin.assignments', 'View assignments',
+ 'Read who is on which shift.', 1),
+('hr.attendance.admin.assignments.manage', 'operation', 'hr.attendance.admin.assignments', 'Manage assignments',
+ 'Put people on shifts and move them.', 2),
+('hr.attendance.admin.reports', 'tab', 'hr.attendance.admin', 'Reports',
+ 'Attendance summaries across the branch.', 4),
+('hr.attendance.admin.reports.view', 'operation', 'hr.attendance.admin.reports', 'View reports',
+ 'Read branch-wide attendance summaries.', 1),
+
+-- ── LEAVE ───────────────────────────────────────────────────────────
+('hr.leave', 'tool', NULL, 'Leave',
+ 'The leave product. Sold separately from Attendance.', 3),
+('hr.leave.view', 'operation', 'hr.leave', 'View leave',
+ 'Read balances, ledger and requests. Needs a scope below.', 1),
+('hr.leave.view.own',    'scope', 'hr.leave.view', 'Own only',
+ 'Their own balance and requests.', 1),
+('hr.leave.view.team',   'scope', 'hr.leave.view', 'Their team',
+ 'Also their reports. Shows the Approvals tab.', 2),
+('hr.leave.view.org',    'scope', 'hr.leave.view', 'Whole branch',
+ 'Everyone in the branch.', 3),
+('hr.leave.view.tenant', 'scope', 'hr.leave.view', 'Every branch',
+ 'Everyone across every branch in the tenant.', 4),
+('hr.leave.request.create', 'operation', 'hr.leave', 'Apply for leave',
+ 'Submit a leave request for themselves.', 2),
+('hr.leave.request.cancel', 'operation', 'hr.leave', 'Cancel own leave',
+ 'Withdraw a request they submitted.', 3),
+('hr.leave.approve', 'operation', 'hr.leave', 'Approve leave',
+ 'Accept a request. Who they can act for follows the scope above.', 4),
+('hr.leave.reject',  'operation', 'hr.leave', 'Reject leave',
+ 'Decline a request.', 5),
+
+('hr.leave.admin', 'page', 'hr.leave', 'Leave admin',
+ 'Leave configuration for the whole branch.', 6),
+('hr.leave.admin.policies', 'tab', 'hr.leave.admin', 'Policies',
+ 'Leave types, entitlements and accrual rules.', 1),
+('hr.leave.admin.policies.view',   'operation', 'hr.leave.admin.policies', 'View policies',
+ 'Read the leave policies.', 1),
+('hr.leave.admin.policies.manage', 'operation', 'hr.leave.admin.policies', 'Manage policies',
+ 'Create and edit policies. Changes affect future accrual.', 2),
+('hr.leave.admin.holidays', 'tab', 'hr.leave.admin', 'Holidays',
+ 'Holiday calendars and their dates.', 2),
+('hr.leave.admin.holidays.view',   'operation', 'hr.leave.admin.holidays', 'View holidays',
+ 'Read the holiday calendars.', 1),
+('hr.leave.admin.holidays.manage', 'operation', 'hr.leave.admin.holidays', 'Manage holidays',
+ 'Create calendars and set their dates.', 2),
+('hr.leave.admin.cycle', 'tab', 'hr.leave.admin', 'Leave year',
+ 'When the leave year starts and how balances carry over.', 3),
+('hr.leave.admin.cycle.manage', 'operation', 'hr.leave.admin.cycle', 'Manage leave year',
+ 'Set the cycle and carry-forward rules.', 1),
+('hr.leave.admin.adjustment', 'tab', 'hr.leave.admin', 'Adjustments',
+ 'Manual corrections to someone''s balance.', 4),
+('hr.leave.admin.adjustment.create', 'operation', 'hr.leave.admin.adjustment', 'Adjust balances',
+ 'Add or remove days from a balance. Audited.', 1),
+
+-- ── EMPLOYEES ───────────────────────────────────────────────────────
+('hr.employees', 'tool', NULL, 'Employees',
+ 'Employee records, shared by both HR products.', 4),
+('hr.employees.view', 'operation', 'hr.employees', 'View employees',
+ 'Read employee profiles, departments and designations.', 1),
+('hr.employees.manage', 'operation', 'hr.employees', 'Manage employees',
+ 'Create and edit employee profiles.', 2),
+('hr.employees.taxonomy.manage', 'operation', 'hr.employees', 'Manage departments',
+ 'Create and edit departments and designations.', 3),
+
+-- ── TASKS ───────────────────────────────────────────────────────────
+('tasks', 'tool', NULL, 'Tasks',
+ 'The task product. Denying it blocks every task screen and call.', 5),
+('tasks.view', 'operation', 'tasks', 'View tasks',
+ 'Read tasks. Needs a scope below, or the board is empty.', 1),
+('tasks.view.own',  'scope', 'tasks.view', 'Own only',
+ 'Tasks they created or were assigned.', 1),
+('tasks.view.team', 'scope', 'tasks.view', 'Their team',
+ 'Also their reports'' tasks. Shows the Team tab.', 2),
+('tasks.view.org',  'scope', 'tasks.view', 'Whole branch',
+ 'Every task in the branch.', 3),
+('tasks.create', 'operation', 'tasks', 'Create tasks',
+ 'Add a task for themselves or, with Assign, for others.', 2),
+('tasks.edit', 'operation', 'tasks', 'Edit tasks',
+ 'Change a task''s title, status, due date and notes.', 3),
+('tasks.edit.own',  'scope', 'tasks.edit', 'Own only',
+ 'Tasks they created or were assigned.', 1),
+('tasks.edit.team', 'scope', 'tasks.edit', 'Their team',
+ 'Also their reports'' tasks.', 2),
+('tasks.edit.any',  'scope', 'tasks.edit', 'Anyone''s',
+ 'Any task in the branch, whoever owns it.', 3),
+('tasks.delete', 'operation', 'tasks', 'Delete tasks',
+ 'Remove a task. Follows the Edit scope for whose tasks.', 4),
+('tasks.assign', 'operation', 'tasks', 'Assign tasks',
+ 'Give a task to someone else.', 5),
+('tasks.comment', 'operation', 'tasks', 'Comment on tasks',
+ 'Read and post comments on a task.', 6),
+('tasks.history.view', 'operation', 'tasks', 'View task history',
+ 'Read a task''s status change history.', 7),
+
+('tasks.lists', 'page', 'tasks', 'Task lists',
+ 'Named lists that group tasks.', 8),
+('tasks.lists.view',   'operation', 'tasks.lists', 'View lists',
+ 'Read task lists and their contents.', 1),
+('tasks.lists.manage', 'operation', 'tasks.lists', 'Manage lists',
+ 'Create and rename lists.', 2),
+('tasks.lists.delete', 'operation', 'tasks.lists', 'Delete lists',
+ 'Remove a list. Its tasks are not deleted.', 3),
+
+-- ── ADMINISTRATION ──────────────────────────────────────────────────
+('admin', 'tool', NULL, 'Administration',
+ 'Tenant and platform configuration.', 6),
+
+('admin.orgs', 'page', 'admin', 'Branches',
+ 'The tenant''s branches and their settings.', 1),
+('admin.orgs.view',   'operation', 'admin.orgs', 'View branches',
+ 'Read the branch list and settings.', 1),
+('admin.orgs.manage', 'operation', 'admin.orgs', 'Manage branches',
+ 'Create branches and change their configuration.', 2),
+
+('admin.users', 'page', 'admin', 'User administration',
+ 'Accounts across the tenant, independent of any product.', 2),
+('admin.users.manage', 'operation', 'admin.users', 'Manage accounts',
+ 'Create, edit and deactivate accounts.', 1),
+('admin.users.mappings.manage', 'operation', 'admin.users', 'Manage branch access',
+ 'Give or remove a person''s access to a branch.', 2),
+('admin.users.password.reset', 'operation', 'admin.users', 'Reset passwords',
+ 'Force a password reset on another account.', 3),
+
+('admin.lookups', 'page', 'admin', 'Lookup data',
+ 'Platform-wide reference tables. Changes affect every tenant.', 3),
+('admin.lookups.view',   'operation', 'admin.lookups', 'View lookup data',
+ 'Read the reference tables.', 1),
+('admin.lookups.manage', 'operation', 'admin.lookups', 'Manage lookup data',
+ 'Edit reference tables. Affects every tenant on the platform.', 2),
+
+('admin.roles.manage', 'operation', 'admin', 'Manage roles',
+ 'Define roles, ranks, departments and these capability grants.', 4),
+('admin.config.lms.manage', 'operation', 'admin', 'Manage CRM configuration',
+ 'Edit lead stages, sources and interaction types.', 5),
+('admin.meta.manage', 'operation', 'admin', 'Manage lead integrations',
+ 'Connect and configure external lead sources.', 6),
+('admin.comms.send', 'operation', 'admin', 'Send messages',
+ 'Send email and WhatsApp through the platform.', 7)
+
 ON CONFLICT (key) DO UPDATE SET
-  area        = EXCLUDED.area,
+  kind        = EXCLUDED.kind,
+  parent_key  = EXCLUDED.parent_key,
   label       = EXCLUDED.label,
   description = EXCLUDED.description,
+  sort_order  = EXCLUDED.sort_order,
   is_active   = TRUE;
 
--- Platform default grants (tenant_id NULL), expressed as the rank floor each
--- capability currently requires. These floors are lifted verbatim from the
--- hard-coded gates they replace — @lms/authz LMS_RANKS, @hr/authz HR_RANKS,
--- @task/authz TASK_RANKS and the page guards — so turning the gates into lookups
--- changes NO behaviour on day one. From here on a tenant reshapes access by
--- inserting an override row, not by editing code.
+
+-- ===================================================================
+-- TIER C3 -- PLATFORM DEFAULT GRANTS
+-- ===================================================================
+-- tenant_id NULL = the shipped default, shared by every tenant. A tenant
+-- reshapes access by inserting its own row for the same (role, capability),
+-- which wins; is_granted = FALSE is how it revokes a default.
 --
--- Two consequences worth naming:
---   * hr_admin (75) clears every LMS floor below 75, so it holds lms.leads.edit.
---     This is NOT pre-existing — it is a side effect of Tier C2 collapsing the
---     three per-product ladders into one. Before that, LMS gates read the rank
---     from lms.member_roles, where hr_admin had no row (rank -1, denied). Once
---     one ladder serves every product, an HR rank becomes comparable to a sales
---     floor. Latent today (no hr_admin users are seeded); revoke with
---     is_granted = FALSE rows on the lms.* keys before creating one.
---   * read_only (0) holds only the four *.view keys — the floor is 1 or higher
---     everywhere a write is involved.
-WITH threshold(key, min_rank) AS (VALUES
-  ('lms.leads.view',         0),   -- read_only and up
-  ('lms.leads.edit',        20),   -- LMS_RANKS.SE
-  ('lms.leads.transfer',    40),   -- LMS_RANKS.SSE
-  ('lms.analytics.view',    40),
-  ('lms.leads.delete',      60),   -- LMS_RANKS.MANAGER
-  ('lms.users.manage',     980),   -- ANCHOR_RANK.ORG_ADMIN
-  ('lms.admin',            980),
+-- These lists are EXPLICIT on purpose. Every other seed in this file derives
+-- from a rank threshold, which is safe within one product but not across the
+-- unified ladder: a rank chosen for HR seniority silently clears a sales floor,
+-- which is precisely how hr_admin acquired lead-edit rights. Omission from a
+-- list has no threshold to clear.
+--
+-- Remember tool/page/tab grants CASCADE. Granting 'lms' covers every page under
+-- it, so a page a role must not see needs an explicit deny in the second block.
 
-  ('hr.attendance.view',     0),
-  ('hr.leave.view',          0),
-  ('hr.attendance.team',    60),   -- HR_RANKS.MANAGER
-  ('hr.leave.approve',      60),
-  ('hr.attendance.admin',   75),   -- HR_RANKS.ADMIN
-  ('hr.leave.admin',        75),
-  ('hr.employees.manage',   75),
-  ('hr.admin',              75),
-
-  ('tasks.view',             0),
-  ('tasks.edit',            20),   -- TASK_RANKS.MEMBER
-  ('tasks.team.view',       40),   -- TASK_RANKS.LEAD
-  ('tasks.assign',          40),   -- excludes read_only and sales_representative
-  ('tasks.admin',          980),   -- TASK_RANKS.ADMIN
-
-  ('admin.orgs.manage',    980),
-  ('admin.users.manage',   980),
-  ('admin.roles.manage',   990),   -- ANCHOR_RANK.TENANT_ADMIN
-  ('admin.lookups.manage',1000)    -- ANCHOR_RANK.SUPER_ADMIN
-)
 INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
 SELECT NULL, r.id, c.id, TRUE
-FROM threshold t
-JOIN iam.capabilities c ON c.key = t.key
-JOIN iam.user_roles   r ON r.tenant_id IS NULL AND r.is_active AND r.rank >= t.min_rank
+FROM (VALUES
+
+-- ── read_only (0) ───────────────────────────────────────────────────
+-- An audit account: sees the branch, changes nothing. No platform.write, so the
+-- database itself refuses writes even if an app check is ever missed.
+('read_only', ARRAY[
+  'platform',
+  'lms','lms.dashboard.view','lms.leads.view','lms.leads.view.org',
+  'lms.leads.timeline.view','lms.followups.view',
+  'lms.history.view','lms.history.view.org',
+  'lms.assignments.view',
+  'hr.attendance','hr.attendance.view','hr.attendance.view.own',
+  'hr.leave','hr.leave.view','hr.leave.view.own',
+  'tasks','tasks.view','tasks.view.own','tasks.lists.view'
+]),
+
+-- ── sales_representative (20) ───────────────────────────────────────
+('sales_representative', ARRAY[
+  'platform','platform.write',
+  'lms','lms.dashboard.view',
+  'lms.leads.view','lms.leads.view.own',
+  'lms.leads.create','lms.leads.edit','lms.leads.edit.own',
+  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.followups.view','lms.followups.create','lms.followups.edit',
+  'lms.history.view','lms.history.view.own',
+  'lms.assignments.view',
+  'hr.attendance','hr.attendance.view','hr.attendance.view.own',
+  'hr.attendance.punch','hr.attendance.photo.view',
+  'hr.attendance.regularization.request',
+  'hr.leave','hr.leave.view','hr.leave.view.own',
+  'hr.leave.request.create','hr.leave.request.cancel',
+  'hr.employees','hr.employees.view',
+  'tasks','tasks.view','tasks.view.own','tasks.create',
+  'tasks.edit','tasks.edit.own','tasks.comment','tasks.history.view',
+  'tasks.lists.view'
+]),
+
+-- ── senior_sales_executive (40) ─────────────────────────────────────
+-- First tier that sees a team, works the unassigned queue, and may hand work down.
+('senior_sales_executive', ARRAY[
+  'platform','platform.write',
+  'lms','lms.dashboard.view',
+  'lms.leads.view','lms.leads.view.own','lms.leads.view.team',
+  'lms.leads.unassigned.view',
+  'lms.leads.create','lms.leads.edit','lms.leads.edit.own','lms.leads.edit.team',
+  'lms.leads.transfer',
+  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers',
+  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
+  'lms.history.view','lms.history.view.own','lms.history.view.team',
+  'lms.assignments.view','lms.assignments.edit',
+  'lms.users.view','lms.users.view.team',
+  'hr.attendance','hr.attendance.view','hr.attendance.view.own',
+  'hr.attendance.punch','hr.attendance.photo.view',
+  'hr.attendance.regularization.request',
+  'hr.leave','hr.leave.view','hr.leave.view.own',
+  'hr.leave.request.create','hr.leave.request.cancel',
+  'hr.employees','hr.employees.view',
+  'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.create',
+  'tasks.edit','tasks.edit.own','tasks.edit.team','tasks.assign',
+  'tasks.comment','tasks.history.view',
+  'tasks.lists.view','tasks.lists.manage'
+]),
+
+-- ── org_manager (60) ────────────────────────────────────────────────
+-- Branch-wide visibility and the first tier that approves leave and deletes leads.
+('org_manager', ARRAY[
+  'platform','platform.write',
+  'lms','lms.dashboard.view',
+  'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
+  'lms.leads.unassigned.view',
+  'lms.leads.create','lms.leads.edit','lms.leads.edit.own','lms.leads.edit.team',
+  'lms.leads.delete','lms.leads.transfer',
+  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers',
+  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
+  'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
+  'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
+  'lms.users.view','lms.users.view.team','lms.users.view.org',
+  'lms.campaigns.view',
+  'hr.attendance','hr.attendance.view','hr.attendance.view.own','hr.attendance.view.team',
+  'hr.attendance.punch','hr.attendance.photo.view',
+  'hr.attendance.regularization.request',
+  'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
+  'hr.leave','hr.leave.view','hr.leave.view.own','hr.leave.view.team',
+  'hr.leave.request.create','hr.leave.request.cancel',
+  'hr.leave.approve','hr.leave.reject',
+  'hr.employees','hr.employees.view',
+  'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.create',
+  'tasks.edit','tasks.edit.own','tasks.edit.team','tasks.delete','tasks.assign',
+  'tasks.comment','tasks.history.view',
+  'tasks.lists.view','tasks.lists.manage'
+]),
+
+-- ── org_sr_manager (70) ─────────────────────────────────────────────
+-- As org_manager, plus branch-wide edit and peer-level assignment reach.
+('org_sr_manager', ARRAY[
+  'platform','platform.write',
+  'lms','lms.dashboard.view',
+  'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
+  'lms.leads.unassigned.view',
+  'lms.leads.create','lms.leads.edit',
+  'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
+  'lms.leads.delete','lms.leads.transfer',
+  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers',
+  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
+  'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
+  'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
+  'lms.users.view','lms.users.view.team','lms.users.view.org',
+  'lms.campaigns.view',
+  'hr.attendance','hr.attendance.view','hr.attendance.view.own','hr.attendance.view.team',
+  'hr.attendance.punch','hr.attendance.photo.view',
+  'hr.attendance.regularization.request',
+  'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
+  'hr.leave','hr.leave.view','hr.leave.view.own','hr.leave.view.team',
+  'hr.leave.request.create','hr.leave.request.cancel',
+  'hr.leave.approve','hr.leave.reject',
+  'hr.employees','hr.employees.view',
+  'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.create',
+  'tasks.edit','tasks.edit.own','tasks.edit.team','tasks.delete','tasks.assign',
+  'tasks.comment','tasks.history.view',
+  'tasks.lists.view','tasks.lists.manage'
+]),
+
+-- ── hr_admin (75) ───────────────────────────────────────────────────
+-- Full HR authority and NO CRM tool at all. Before Tier C this was implicit —
+-- hr_admin had no row in lms.member_roles. Unifying the ladder made rank 75
+-- clear every LMS floor, so the exclusion is now stated rather than assumed.
+('hr_admin', ARRAY[
+  'platform','platform.write',
+  'hr.attendance','hr.attendance.view',
+  'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
+  'hr.attendance.punch','hr.attendance.photo.view',
+  'hr.attendance.regularization.request',
+  'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
+  'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
+  'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
+  'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
+  'hr.attendance.admin.reports.view',
+  'hr.leave','hr.leave.view',
+  'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org',
+  'hr.leave.request.create','hr.leave.request.cancel',
+  'hr.leave.approve','hr.leave.reject',
+  'hr.leave.admin.policies.view','hr.leave.admin.policies.manage',
+  'hr.leave.admin.holidays.view','hr.leave.admin.holidays.manage',
+  'hr.leave.admin.cycle.manage','hr.leave.admin.adjustment.create',
+  'hr.employees','hr.employees.view','hr.employees.manage','hr.employees.taxonomy.manage',
+  'tasks','tasks.view','tasks.view.own','tasks.create',
+  'tasks.edit','tasks.edit.own','tasks.comment','tasks.history.view',
+  'tasks.lists.view'
+]),
+
+-- ── org_admin (980) ─────────────────────────────────────────────────
+-- Everything within one branch. Not lookup data, which is platform-wide.
+('org_admin', ARRAY[
+  'platform','platform.write',
+  'lms','lms.dashboard.view',
+  'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
+  'lms.leads.unassigned.view',
+  'lms.leads.create','lms.leads.edit',
+  'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
+  'lms.leads.delete','lms.leads.transfer',
+  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.any',
+  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
+  'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
+  'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
+  'lms.analytics.view',
+  'lms.campaigns.view','lms.campaigns.manage',
+  'lms.users.view','lms.users.view.team','lms.users.view.org','lms.users.manage',
+  'lms.apiclients.view','lms.apiclients.manage',
+  'hr.attendance','hr.attendance.view',
+  'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
+  'hr.attendance.punch','hr.attendance.photo.view',
+  'hr.attendance.regularization.request',
+  'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
+  'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
+  'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
+  'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
+  'hr.attendance.admin.reports.view',
+  'hr.leave','hr.leave.view',
+  'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org',
+  'hr.leave.request.create','hr.leave.request.cancel',
+  'hr.leave.approve','hr.leave.reject',
+  'hr.leave.admin.policies.view','hr.leave.admin.policies.manage',
+  'hr.leave.admin.holidays.view','hr.leave.admin.holidays.manage',
+  'hr.leave.admin.cycle.manage','hr.leave.admin.adjustment.create',
+  'hr.employees','hr.employees.view','hr.employees.manage','hr.employees.taxonomy.manage',
+  'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.view.org',
+  'tasks.create','tasks.edit','tasks.edit.own','tasks.edit.team','tasks.edit.any',
+  'tasks.delete','tasks.assign','tasks.comment','tasks.history.view',
+  'tasks.lists.view','tasks.lists.manage','tasks.lists.delete',
+  'admin','admin.orgs.view','admin.users.manage','admin.config.lms.manage',
+  'admin.comms.send'
+]),
+
+-- ── tenant_admin (990) ──────────────────────────────────────────────
+-- Everything org_admin has, across every branch, plus role administration.
+('tenant_admin', ARRAY[
+  'platform','platform.write',
+  'lms','lms.dashboard.view',
+  'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
+  'lms.leads.unassigned.view',
+  'lms.leads.create','lms.leads.edit',
+  'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
+  'lms.leads.delete','lms.leads.transfer',
+  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.any',
+  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
+  'lms.history.view','lms.history.view.own','lms.history.view.team',
+  'lms.history.view.org','lms.history.view.tenant',
+  'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
+  'lms.analytics.view','lms.analytics.org.view',
+  'lms.campaigns.view','lms.campaigns.manage',
+  'lms.users.view','lms.users.view.team','lms.users.view.org','lms.users.manage',
+  'lms.apiclients.view','lms.apiclients.manage',
+  'hr.attendance','hr.attendance.view',
+  'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
+  'hr.attendance.punch','hr.attendance.photo.view',
+  'hr.attendance.regularization.request',
+  'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
+  'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
+  'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
+  'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
+  'hr.attendance.admin.reports.view',
+  'hr.leave','hr.leave.view',
+  'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org','hr.leave.view.tenant',
+  'hr.leave.request.create','hr.leave.request.cancel',
+  'hr.leave.approve','hr.leave.reject',
+  'hr.leave.admin.policies.view','hr.leave.admin.policies.manage',
+  'hr.leave.admin.holidays.view','hr.leave.admin.holidays.manage',
+  'hr.leave.admin.cycle.manage','hr.leave.admin.adjustment.create',
+  'hr.employees','hr.employees.view','hr.employees.manage','hr.employees.taxonomy.manage',
+  'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.view.org',
+  'tasks.create','tasks.edit','tasks.edit.own','tasks.edit.team','tasks.edit.any',
+  'tasks.delete','tasks.assign','tasks.comment','tasks.history.view',
+  'tasks.lists.view','tasks.lists.manage','tasks.lists.delete',
+  'admin','admin.orgs.view','admin.orgs.manage',
+  'admin.users.manage','admin.users.mappings.manage','admin.users.password.reset',
+  'admin.roles.manage','admin.config.lms.manage','admin.meta.manage','admin.comms.send'
+]),
+
+-- ── super_admin (1000) ──────────────────────────────────────────────
+-- Everything, including platform-wide lookup data and cross-tenant history.
+('super_admin', ARRAY['*'])
+
+) AS a(role_name, cap_keys)
+JOIN iam.user_roles   r ON r.name = a.role_name AND r.tenant_id IS NULL
+JOIN iam.capabilities c ON (c.key = ANY(a.cap_keys) OR a.cap_keys = ARRAY['*'])
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO UPDATE SET is_granted = EXCLUDED.is_granted;
+
+
+-- ── Seed self-check: grants that resolve to nothing ─────────────────
+-- A row granting a node whose ANCESTOR is not granted is silently ineffective —
+-- the tree prunes it, and the capability simply never appears. That is easy to
+-- write and impossible to see in the grant lists above, so it is asserted here.
+--
+-- This is not hypothetical: the first version of this seed granted
+-- 'platform.write' to eight roles but never granted the 'platform' tool, which
+-- left every role running with transaction_read_only = on and every write
+-- failing at the database.
+DO $seedcheck$
+DECLARE
+  bad_count INT;
+  sample    TEXT;
+BEGIN
+  SELECT count(*), string_agg(DISTINCT m.role_name || ' -> ' || m.capability_key, ', ')
+    INTO bad_count, sample
+  FROM iam.role_capabilities rc
+  JOIN iam.user_roles   r ON r.id = rc.role_id
+  JOIN iam.capabilities c ON c.id = rc.capability_id
+  JOIN iam.fn_role_capability_matrix(NULL) m
+    ON m.role_name = r.name AND m.capability_key = c.key
+  WHERE rc.tenant_id IS NULL AND rc.is_granted AND NOT m.granted;
+
+  IF bad_count > 0 THEN
+    RAISE EXCEPTION 'Capability seed: % grant(s) are pruned by an ungranted ancestor: %',
+      bad_count, left(sample, 400);
+  END IF;
+END $seedcheck$;
+
+
+-- ── Explicit denies ─────────────────────────────────────────────────
+-- Nav grants cascade, so a page a role must not reach needs a deny. Without
+-- these, granting the 'lms' tool would light up Analytics and API clients for
+-- everyone, and the operations under them would still be denied — leaving a
+-- visible screen that returns nothing, which is the exact bug class Tier C
+-- exists to remove.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT NULL, r.id, c.id, FALSE
+FROM (VALUES
+  ('read_only',              ARRAY['lms.analytics','lms.campaigns','lms.users','lms.apiclients','hr.attendance.admin','hr.leave.admin','tasks.lists']),
+  ('sales_representative',   ARRAY['lms.analytics','lms.campaigns','lms.users','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
+  ('senior_sales_executive', ARRAY['lms.analytics','lms.campaigns','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
+  ('org_manager',            ARRAY['lms.analytics','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
+  ('org_sr_manager',         ARRAY['lms.analytics','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
+  ('org_admin',              ARRAY['admin.lookups'])
+) AS d(role_name, cap_keys)
+JOIN iam.user_roles   r ON r.name = d.role_name AND r.tenant_id IS NULL
+JOIN iam.capabilities c ON c.key = ANY(d.cap_keys)
 ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
 DO UPDATE SET is_granted = EXCLUDED.is_granted;
 

@@ -107,3 +107,22 @@ BEGIN
     ALTER ROLE root_service WITH LOGIN PASSWORD 'CrmSvc_Dev2025' BYPASSRLS;
   END IF;
 END $$;
+
+-- readonly_user — defense-in-depth role for read_only actors (product rank 0).
+-- withRoleTx selects this role (instead of app_user) and marks the transaction
+-- read-only for such actors, so the DB physically rejects every write even if an
+-- app-layer authorization check is missed. It is created WITH INHERIT and made a
+-- member of app_user so that pg_has_role(readonly_user,'app_user','USAGE') is
+-- TRUE — every `TO app_user` RLS SELECT policy then applies unchanged, giving
+-- read_only sessions identical read visibility while the read-only transaction
+-- blocks all writes. No direct write GRANTs are given to it.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'readonly_user') THEN
+    CREATE ROLE readonly_user NOLOGIN INHERIT;
+  ELSE
+    ALTER ROLE readonly_user NOLOGIN INHERIT;
+  END IF;
+  -- Inherit app_user's grants + RLS-policy applicability (read visibility).
+  GRANT app_user TO readonly_user;
+END $$;

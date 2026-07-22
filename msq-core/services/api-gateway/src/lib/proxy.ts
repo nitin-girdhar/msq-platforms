@@ -58,10 +58,7 @@ export async function proxyTo(
   const rawQuery = (request.raw.url ?? '').split('?')[1];
   if (rawQuery) url.search = rawQuery;
 
-  const forwardHeaders = withUserHeaders(
-    { 'Content-Type': request.headers['content-type'] ?? 'application/json' },
-    userCtx,
-  );
+  const forwardHeaders = withUserHeaders({}, userCtx);
 
   if (options?.forwardCookies && request.headers['cookie']) {
     forwardHeaders['Cookie'] = request.headers['cookie'] as string;
@@ -77,6 +74,16 @@ export async function proxyTo(
   let body: string | undefined;
   if (hasBody && request.body !== undefined) {
     body = JSON.stringify(request.body);
+  }
+
+  // Only advertise a JSON body when we are actually forwarding one. Previously
+  // this always set `Content-Type: application/json`, so a body-less proxied
+  // POST (e.g. /auth/logout) reached the upstream Fastify JSON parser with an
+  // empty body and 500'd before the handler ran. Set the header only when a
+  // body is present.
+  if (body !== undefined) {
+    forwardHeaders['Content-Type'] =
+      (request.headers['content-type'] as string | undefined) ?? 'application/json';
   }
 
   try {

@@ -16,7 +16,15 @@ export class AuthController {
 
   logout = async (request: FastifyRequest, reply: FastifyReply) => {
     const token = request.cookies[AUTH_COOKIE_NAME];
-    await service.logout(token);
+    // Token revocation is best-effort: a failure to blocklist the jti must never
+    // prevent the client cookie from being cleared, otherwise logout returns 500
+    // and leaves a stale session cookie behind. The gateway also revokes the jti
+    // at the edge, so the session still ends even if this write fails.
+    try {
+      await service.logout(token);
+    } catch (err) {
+      request.log.error({ err }, 'logout: token revocation failed; clearing cookie anyway');
+    }
     return reply
       .setCookie(AUTH_COOKIE_NAME, '', clearedSessionCookieOptions())
       .status(200)

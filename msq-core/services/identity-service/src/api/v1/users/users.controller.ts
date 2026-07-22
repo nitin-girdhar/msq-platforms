@@ -33,7 +33,7 @@ export class UsersController {
   getAssignable = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
     const q = request.query as GetAssignableQuery;
-    const users = await service.getAssignableUsers({ org_id, user_id, role, tenant_id }, rank, q.org_id);
+    const users = await service.getAssignableUsers({ org_id, user_id, role, tenant_id }, rank, q.org_id, q.scope);
     return reply.send({ success: true, data: users });
   };
 

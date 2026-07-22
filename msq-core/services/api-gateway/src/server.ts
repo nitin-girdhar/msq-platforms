@@ -83,16 +83,24 @@ app.post('/auth/login', { preHandler: [loginRateLimit] }, async (req, reply) => 
 });
 
 app.post('/auth/logout', async (req, reply) => {
-  // Revoke the JTI in the DB before proxying so protected routes reject immediately
+  // Revoke the JTI in the DB before proxying so protected routes reject
+  // immediately. Best-effort: a revocation failure must never fail the logout —
+  // identity-service still clears the session cookie downstream, and it also
+  // revokes the jti itself. Without this guard a throw here 500s the whole
+  // logout and leaves a stale cookie behind.
   const token = req.cookies[AUTH_COOKIE_NAME];
   if (token) {
-    const result = await verifyJwtEdge(token);
-    if (result.ok && result.payload.jti && result.payload.exp) {
-      await revokeJti(result.payload.jti, result.payload.exp, {
-        user_id: result.payload.sub,
-        org_id: result.payload.org_id,
-        tenant_id: result.payload.tenant_id,
-      });
+    try {
+      const result = await verifyJwtEdge(token);
+      if (result.ok && result.payload.jti && result.payload.exp) {
+        await revokeJti(result.payload.jti, result.payload.exp, {
+          user_id: result.payload.sub,
+          org_id: result.payload.org_id,
+          tenant_id: result.payload.tenant_id,
+        });
+      }
+    } catch (err) {
+      req.log.error({ err }, 'logout: edge jti revocation failed; proxying to clear cookie anyway');
     }
   }
   return proxyTo(config.identityServiceUrl, '/api/v1/auth/logout', req, reply, undefined, { forwardCookies: true });

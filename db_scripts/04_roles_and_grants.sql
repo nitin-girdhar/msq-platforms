@@ -740,10 +740,37 @@ GRANT EXECUTE ON FUNCTION hr.fn_member_role(UUID, UUID)   TO app_user, tenant_ad
 GRANT EXECUTE ON FUNCTION task.fn_member_role(UUID, UUID) TO app_user, tenant_admin, task_svc;
 
 -- ===================================================================
+-- readonly_user membership for every app-pool login (P0 #1 defense-in-depth)
+--
+-- withRoleTx does `SET LOCAL ROLE readonly_user` for read_only actors. A login
+-- may only SET ROLE to a role it is a member of, so grant readonly_user to every
+-- login that can currently become app_user. Done dynamically so future *_svc
+-- logins are covered without editing this list. readonly_user is itself a member
+-- of app_user (see 01) and is excluded.
+-- ===================================================================
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT m.rolname
+    FROM pg_auth_members am
+    JOIN pg_roles m ON m.oid = am.member
+    JOIN pg_roles g ON g.oid = am.roleid
+    WHERE g.rolname = 'app_user' AND m.rolname <> 'readonly_user'
+  LOOP
+    EXECUTE format('GRANT readonly_user TO %I', r.rolname);
+  END LOOP;
+END $$;
+
+-- ===================================================================
 -- SCHEMA VERSION TRACKING
 -- ===================================================================
 INSERT INTO public.schema_versions (version, description) VALUES
   ('1.14.0', 'P1.3: <product>.fn_member_role(user,org) -> (role,rank) resolver for per-service product-role resolution')
+ON CONFLICT (version) DO NOTHING;
+
+INSERT INTO public.schema_versions (version, description) VALUES
+  ('1.15.0', 'P0 #1: readonly_user role (INHERITs app_user) + read-only transaction for read_only actors')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

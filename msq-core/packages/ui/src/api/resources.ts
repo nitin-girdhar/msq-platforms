@@ -75,8 +75,13 @@ export const users = {
       body: JSON.stringify({ new_password }),
     }),
 
-  assignable: (orgId?: string) =>
-    request<{ success: true; data: unknown[] }>(`/users/assignable${orgId ? `?org_id=${orgId}` : ''}`),
+  assignable: (opts?: { orgId?: string; scope?: 'delegation' | 'collaboration' }) => {
+    const params = new URLSearchParams();
+    if (opts?.orgId) params.set('org_id', opts.orgId);
+    if (opts?.scope) params.set('scope', opts.scope);
+    const qs = params.toString();
+    return request<{ success: true; data: unknown[] }>(`/users/assignable${qs ? `?${qs}` : ''}`);
+  },
 
   orgChart: () => request<{ success: true; data: unknown[] }>('/users/org-chart'),
 

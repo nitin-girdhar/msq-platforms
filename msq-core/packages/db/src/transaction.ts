@@ -8,6 +8,13 @@ export interface RoleTxContext {
   org_id: string;
   tenant_id: string;
   user_id: string;
+  // Defense-in-depth (P0 #1): when true the transaction runs under the
+  // `readonly_user` PG role and is set transaction_read_only, so the DB itself
+  // rejects any INSERT/UPDATE/DELETE even if an app-layer authorization check is
+  // ever missed. readonly_user INHERITs app_user, so every `TO app_user` RLS
+  // SELECT policy still applies unchanged — read visibility is identical, only
+  // writes are blocked. Set by callers for read-only actors (product rank 0).
+  readOnly?: boolean;
 }
 
 export async function withRoleTx<T>(ctx: RoleTxContext, fn: (tx: DrizzleTx) => Promise<T>): Promise<T> {
@@ -41,7 +48,17 @@ export async function withRoleTx<T>(ctx: RoleTxContext, fn: (tx: DrizzleTx) => P
     // ignore INHERIT), so skipping this SET ROLE only drops the *extra*
     // cross-schema privileges app_user would otherwise hand them — RLS
     // enforcement is unaffected.
-    if (process.env['DB_PRODUCT_SCOPED_LOGIN'] !== 'true') {
+    if (ctx.readOnly) {
+      // readonly_user INHERITs app_user (see db_scripts/01), so all `TO app_user`
+      // RLS policies still apply and reads are unaffected; the read-only tx makes
+      // any write physically fail. Product-scoped logins (NOINHERIT) are named in
+      // the RLS policies directly and stay on app_user membership — for them we
+      // only flip the transaction to read-only.
+      if (process.env['DB_PRODUCT_SCOPED_LOGIN'] !== 'true') {
+        await tx.execute(sql.raw(`SET LOCAL ROLE readonly_user`));
+      }
+      await tx.execute(sql.raw(`SET LOCAL transaction_read_only = on`));
+    } else if (process.env['DB_PRODUCT_SCOPED_LOGIN'] !== 'true') {
       await tx.execute(sql.raw(`SET LOCAL ROLE app_user`));
     }
     await tx.execute(sql`SELECT set_config('app.current_org_id', ${ctx.org_id}, true)`);

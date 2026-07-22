@@ -158,8 +158,20 @@ export async function updateAssignmentWeights(
   });
 }
 
-export async function getAssignableUsers(ctx: RoleTxContext, actorRank: number, orgId?: string) {
+export async function getAssignableUsers(
+  ctx: RoleTxContext,
+  actorRank: number,
+  orgId?: string,
+  scope: 'delegation' | 'collaboration' = 'delegation',
+) {
   const targetOrgId = orgId ?? ctx.org_id;
+  // delegation: strictly below the actor (CRM lead hand-down).
+  // collaboration: at or below the actor, so same-rank peers and the actor
+  // themselves are assignable (Tasks). See getAssignableQuerySchema.
+  const rankFilter =
+    scope === 'collaboration'
+      ? sql`ur.rank <= ${actorRank}`
+      : sql`ur.rank < ${actorRank}`;
   return withRoleTx(ctx, async (tx) => {
     return (await tx.execute(sql`
       SELECT u.id, u.org_id, u.full_name, u.first_name, u.middle_name, u.last_name,
@@ -169,7 +181,7 @@ export async function getAssignableUsers(ctx: RoleTxContext, actorRank: number, 
       JOIN iam.users u       ON u.id  = uom.user_id
       JOIN iam.user_roles ur ON ur.id = uom.role_id
       WHERE uom.org_id = ${targetOrgId}::uuid AND uom.is_active AND NOT u.is_deleted AND u.is_active
-        AND ur.rank < ${actorRank}
+        AND ${rankFilter}
       ORDER BY ur.rank DESC, u.full_name
     `)) as Array<Record<string, unknown>>;
   });

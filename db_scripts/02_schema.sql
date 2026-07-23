@@ -2802,7 +2802,9 @@ CREATE POLICY self_read_policy ON iam.user_org_mapping AS PERMISSIVE FOR SELECT 
     user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
   );
 
--- Org admins (rank >= 80) can manage mappings within their current org.
+-- Org admins (rank >= 980 = @platform/rbac ANCHOR_RANK.ORG_ADMIN) can manage
+-- mappings within their current org. The literal is the fixed org_admin anchor
+-- on the unified 0-1000 ladder (db_scripts/07 seed) — NOT the old coarse 80.
 -- iam.fn_user_org_rank is SECURITY DEFINER so it bypasses RLS on this table.
 CREATE POLICY org_admin_manage_policy ON iam.user_org_mapping AS PERMISSIVE FOR ALL TO app_user
   USING (
@@ -2810,14 +2812,14 @@ CREATE POLICY org_admin_manage_policy ON iam.user_org_mapping AS PERMISSIVE FOR 
     AND iam.fn_user_org_rank(
       NULLIF(current_setting('app.current_user_id', true), '')::uuid,
       NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 80
+    ) >= 980
   )
   WITH CHECK (
     org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
     AND iam.fn_user_org_rank(
       NULLIF(current_setting('app.current_user_id', true), '')::uuid,
       NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 80
+    ) >= 980
   );
 
 -- tenant_admin can manage all mappings across their tenant's orgs.
@@ -3033,7 +3035,7 @@ CREATE POLICY org_admin_read_policy ON iam.user_org_mapping AS PERMISSIVE FOR SE
     AND iam.fn_user_org_rank(
       NULLIF(current_setting('app.current_user_id', true), '')::uuid,
       NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 80
+    ) >= 980
   );
 
 CREATE POLICY org_admin_insert_policy ON iam.user_org_mapping AS PERMISSIVE FOR INSERT TO app_user
@@ -3042,7 +3044,7 @@ CREATE POLICY org_admin_insert_policy ON iam.user_org_mapping AS PERMISSIVE FOR 
     AND iam.fn_user_org_rank(
       NULLIF(current_setting('app.current_user_id', true), '')::uuid,
       NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 80
+    ) >= 980
   );
 
 CREATE POLICY org_admin_update_policy ON iam.user_org_mapping AS PERMISSIVE FOR UPDATE TO app_user
@@ -3051,18 +3053,18 @@ CREATE POLICY org_admin_update_policy ON iam.user_org_mapping AS PERMISSIVE FOR 
     AND iam.fn_user_org_rank(
       NULLIF(current_setting('app.current_user_id', true), '')::uuid,
       NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 80
+    ) >= 980
   )
   WITH CHECK (
     org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
     AND iam.fn_user_org_rank(
       NULLIF(current_setting('app.current_user_id', true), '')::uuid,
       NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 80
+    ) >= 980
   );
 
 -- ── USER_ORG_MAPPING: assignable-users read policy (issue #33) ────
--- org_admin_read_policy (rank >= 80) is the only SELECT grant beyond a
+-- org_admin_read_policy (rank >= 980 = ANCHOR_RANK.ORG_ADMIN) is the only SELECT grant beyond a
 -- user's own row, but GET /users/assignable (services/users-service)
 -- is meant for anyone at or above RANKS.SSE (40) — see
 -- packages/permissions/src/business-rules.ts minRankToAssignLeads.

@@ -1081,7 +1081,7 @@ GRANT ALL PRIVILEGES         ON hr.leave_request_approvals TO root_service;
 -- ===================================================================
 -- 6. hr.can_approve_leave — approval authority (modeled on iam.can_assign_to)
 --    TRUE when the approver is in the requester's management chain, OR has
---    rank >= 80 in the org, OR is hr_admin in the org, OR is tenant_admin/
+--    rank >= 980 (ANCHOR_RANK.ORG_ADMIN) in the org, OR is hr_admin in the org, OR is tenant_admin/
 --    super_admin of the owning tenant. SECURITY DEFINER: reads iam.* + entity.*
 --    regardless of the calling role. Never lets a user approve their own leave.
 -- ===================================================================
@@ -1106,7 +1106,7 @@ BEGIN
     AND org_id     = p_org_id;
   IF COALESCE(v_in_scope, FALSE) THEN RETURN TRUE; END IF;
 
-  -- 2) Approver's role/rank in this org (org_admin+ => rank 80; hr_admin => 75).
+  -- 2) Approver's role/rank in this org (org_admin+ => rank 980; hr_admin => 75).
   SELECT ur.name, ur.rank INTO v_role, v_rank
   FROM iam.user_org_mapping uom
   JOIN iam.user_roles ur ON ur.id = uom.role_id
@@ -1114,7 +1114,7 @@ BEGIN
     AND uom.org_id  = p_org_id
     AND uom.is_active;
 
-  IF COALESCE(v_rank, -1) >= 80 THEN RETURN TRUE; END IF;
+  IF COALESCE(v_rank, -1) >= 980 THEN RETURN TRUE; END IF;
   IF v_role = 'hr_admin'        THEN RETURN TRUE; END IF;
 
   -- 3) tenant_admin / super_admin of the tenant that owns the request's org.
@@ -1706,7 +1706,7 @@ GRANT ALL PRIVILEGES         ON hr.attendance_regularizations TO root_service;
 -- ===================================================================
 -- 7. hr.can_approve — thin authority alias over hr.can_approve_leave (§Service).
 --    Rename-agnostic: the underlying function checks the management chain +
---    rank>=80 + hr_admin + tenant_admin/super_admin. Reused for attendance
+--    rank>=980 + hr_admin + tenant_admin/super_admin. Reused for attendance
 --    regularization approvals so authority stays defined in exactly one place.
 -- ===================================================================
 CREATE OR REPLACE FUNCTION hr.can_approve(

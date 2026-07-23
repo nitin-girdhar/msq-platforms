@@ -19,6 +19,7 @@
     "@platform/audit-log": "workspace:*",
     "@platform/auth-constants": "workspace:*",
     "@platform/db": "workspace:*",
+    "@platform/rbac": "workspace:*",
     "@platform/service-auth": "workspace:*",
     "@platform/types": "workspace:*",
     "@platform/validation": "workspace:*",

@@ -29,6 +29,25 @@ export function serviceDb(): ReturnType<typeof postgres> {
   return _service;
 }
 
+/**
+ * Fail fast at boot if a required DB connection string is absent, instead of
+ * throwing lazily on the first request that happens to need that pool. Issue #1
+ * was a missing DATABASE_URL_TENANT that stayed invisible until a tenant_admin
+ * (the highest-value customer role) hit the service in production and got a 500.
+ * Call this from each service's startup, before it begins accepting traffic.
+ */
+export function assertDbEnv(
+  required: readonly string[] = ['DATABASE_URL', 'DATABASE_URL_SERVICE', 'DATABASE_URL_TENANT'],
+): void {
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required database env var(s): ${missing.join(', ')}. ` +
+      `Set them in the service .env (see .env.example) or run \`make setup-env\`.`,
+    );
+  }
+}
+
 export async function closeAllPools(): Promise<void> {
   await Promise.all([
     _app?.end(),

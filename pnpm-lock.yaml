@@ -448,6 +448,9 @@ importers:
       '@platform/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@platform/rbac':
+        specifier: workspace:*
+        version: link:../../packages/rbac
       '@platform/service-auth':
         specifier: workspace:*
         version: link:../../packages/service-auth

@@ -42,7 +42,8 @@ export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter) {
 }
 
 // Minimal org update: set the attendance geofence centre. Scoped to the caller's
-// tenant (the org must belong to it). Authorization (rank >= 80) is enforced in
+// tenant (the org must belong to it). Authorization (rank >= RANKS.ORG_ADMIN,
+// 980) is enforced in
 // the service layer; the write runs via the service pool.
 export async function updateOrgGeo(
   ctx: Pick<RoleTxContext, 'org_id' | 'tenant_id'>,

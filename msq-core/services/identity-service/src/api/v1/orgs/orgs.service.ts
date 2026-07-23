@@ -9,7 +9,7 @@ export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter) {
   return repo.getOrgs(ctx, filter);
 }
 
-// Org geofence-centre update — org_admin+ (rank >= 80) only.
+// Org geofence-centre update — org_admin+ (rank >= RANKS.ORG_ADMIN, 980) only.
 export async function updateOrgGeo(ctx: RoleTxContext & { rank: number }, orgId: string, data: UpdateOrgGeoInput) {
   if (ctx.rank < RANKS.ORG_ADMIN) {
     throw new ForbiddenError('Only org admins (or above) can update the organization location');

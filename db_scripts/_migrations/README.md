@@ -1,3 +1,47 @@
+# Migrations
+
+Not all of these are "pre-existing deployments only" — read the section that
+applies to the script you care about.
+
+| Script | Pre-P1.0 upgrade only | In the fresh-install sequence |
+| --- | --- | --- |
+| `15_tenant-modules-lms-rename.sql` | yes | no |
+| `16_rename_crm_schema_and_service_role.sql` | yes | no |
+| `17_tenant_scope_lms_catalogs.sql` | no | **yes** |
+| `18_platform_role_autoderive.sql` | no | no — see below |
+| `19_tenant_scope_ladder_roles.sql` | no | **yes** |
+
+## Tenant-scoping (17 and 19) — part of every install
+
+`db_deploy.ps1` runs these after the demo seed, because they need
+`entity.tenants` to exist: `07_seed_lookup_data.sql` seeds the LMS lead catalogs
+and the ladder roles as GLOBAL rows (`tenant_id IS NULL`), and these two fan each
+one out into an identical per-tenant copy, repoint every reference, and drop the
+global original.
+
+- `17_tenant_scope_lms_catalogs.sql` — `lms.lead_stage`, `lead_stage_outcome`,
+  `interaction_types`, `follow_up_statuses`, `lead_sources`. Without it the
+  tenant-scoped RLS in `06_rls.sql` hides every row (`NULL = <tenant>` is never
+  true), so Status / Outcome / Source / Follow-up render blank for everyone
+  except `super_admin`.
+- `19_tenant_scope_ladder_roles.sql` — `hr_admin`, `org_sr_manager`,
+  `org_manager`, `senior_sales_executive`, `sales_representative` (with their
+  capability grants). Only the four anchors `super_admin`, `tenant_admin`,
+  `org_admin`, `read_only` stay global.
+
+Both are idempotent and self-guarding: with no tenants (a core-only install)
+they find nothing global to clone and do nothing.
+
+## `18_platform_role_autoderive.sql` — existing databases only
+
+The trigger it installs (`trg_02_users_platform_role`, which derives
+`iam.users.platform_role` from `role_id`) is already in `02_schema.sql`, so a
+fresh install is correct by construction and never needs this script. Run it on
+a database created before that trigger existed, where users seeded after the
+one-shot backfill in `13_backfill_per_product_roles.sql` were left with
+`platform_role IS NULL` — which authenticates them as `member` and 403s every
+platform-tier gate.
+
 # One-time migrations (pre-P1.0 deployments only)
 
 These two scripts rewrite the database's *shape* from what it looked like before the

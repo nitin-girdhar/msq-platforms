@@ -75,8 +75,18 @@ $DemoSeedScripts = @(
     "12c_cleanup_demo_data_post.sql"
 )
 
+# Run AFTER the demo seed, because both need entity.tenants to be populated:
+# they turn rows that 07 seeds as GLOBAL (tenant_id IS NULL) into one identical
+# copy per tenant. Both are idempotent and self-guarding — with no tenants (a
+# core-only install) they find nothing global to clone and do nothing, so they
+# are safe in the sequence either way.
+#
+# They belong here rather than being folded into 07 because 07 runs before
+# tenants exist, so it has nothing to fan the catalogs out across.
 $RemainingCoreScripts = @(
-    "13_backfill_per_product_roles.sql"
+    "13_backfill_per_product_roles.sql",
+    "_migrations/17_tenant_scope_lms_catalogs.sql",
+    "_migrations/19_tenant_scope_ladder_roles.sql"
 )
 
 $SqlScripts = if ($IncludeDemoSeed) {

@@ -35,6 +35,15 @@ ALTER TABLE lms.interaction_types  DROP CONSTRAINT IF EXISTS interaction_types_n
 ALTER TABLE lms.follow_up_statuses DROP CONSTRAINT IF EXISTS follow_up_statuses_name_key;
 ALTER TABLE lms.lead_sources       DROP CONSTRAINT IF EXISTS lead_sources_name_key;
 
+-- DROP-then-ADD, not a bare ADD: `ADD CONSTRAINT` has no IF NOT EXISTS form, so
+-- a bare ADD makes this whole script fail on the second run — which it must not,
+-- both because the header promises idempotency and because db_deploy.ps1 now
+-- runs it as part of the standard sequence.
+ALTER TABLE lms.lead_stage         DROP CONSTRAINT IF EXISTS uq_lead_stage_tenant_name;
+ALTER TABLE lms.interaction_types  DROP CONSTRAINT IF EXISTS uq_interaction_types_tenant_name;
+ALTER TABLE lms.follow_up_statuses DROP CONSTRAINT IF EXISTS uq_follow_up_statuses_tenant_name;
+ALTER TABLE lms.lead_sources       DROP CONSTRAINT IF EXISTS uq_lead_sources_tenant_name;
+
 ALTER TABLE lms.lead_stage
   ADD CONSTRAINT uq_lead_stage_tenant_name UNIQUE (tenant_id, name);
 ALTER TABLE lms.interaction_types
@@ -151,7 +160,12 @@ SET stage_id = COALESCE(
         WHERE m.catalog = 'lead_sources' AND m.old_id = ml.source_id AND m.tenant_id = o.tenant_id),
       ml.source_id)
 FROM entity.organizations o
-WHERE o.id = ml.org_id;
+WHERE o.id = ml.org_id
+  -- Nothing cloned means nothing to repoint. Without this a re-run rewrites
+  -- every lead with its own values, and the BEFORE UPDATE trigger bumps
+  -- updated_at on all of them — churn that also invalidates any optimistic
+  -- concurrency token a client is holding.
+  AND EXISTS (SELECT 1 FROM _cat_map);
 
 UPDATE lms.lead_interactions li
 SET interaction_type_id = m.new_id

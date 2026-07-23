@@ -543,6 +543,48 @@ DROP TRIGGER IF EXISTS trg_users_soft_delete      ON iam.users;
 CREATE TRIGGER trg_users_soft_delete
   BEFORE DELETE ON iam.users FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
 
+-- platform_role is a denormalisation of role_id, not an independently-set
+-- column. Every writer that forgot to set it (seed script 08, identity-service's
+-- user create/update) left it NULL, and the auth path reads NULL as 'member' —
+-- so a super_admin silently authenticated with member rank and every
+-- platform-tier gate (lookup-admin's whole surface) returned 403. Deriving it
+-- here makes that impossible: the column is now maintained by the database, and
+-- callers may only override it with an explicit non-NULL value.
+CREATE OR REPLACE FUNCTION iam.set_user_platform_role()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE v_derived TEXT;
+BEGIN
+  IF NEW.role_id IS NULL THEN
+    NEW.platform_role := COALESCE(NEW.platform_role, 'member');
+    RETURN NEW;
+  END IF;
+
+  SELECT CASE ur.name
+           WHEN 'super_admin'  THEN 'super_admin'
+           WHEN 'tenant_admin' THEN 'tenant_admin'
+           WHEN 'org_admin'    THEN 'org_admin'
+           ELSE 'member'
+         END
+    INTO v_derived
+  FROM iam.user_roles ur WHERE ur.id = NEW.role_id;
+
+  -- On INSERT an explicit value wins (lets an operator pin a platform tier that
+  -- the role name does not imply); on a role_id change the derived value wins,
+  -- otherwise a demotion would leave the old tier behind.
+  IF TG_OP = 'UPDATE' AND NEW.role_id IS DISTINCT FROM OLD.role_id THEN
+    NEW.platform_role := COALESCE(v_derived, 'member');
+  ELSE
+    NEW.platform_role := COALESCE(NEW.platform_role, v_derived, 'member');
+  END IF;
+
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_02_users_platform_role ON iam.users;
+CREATE TRIGGER trg_02_users_platform_role
+  BEFORE INSERT OR UPDATE OF role_id, platform_role ON iam.users
+  FOR EACH ROW EXECUTE FUNCTION iam.set_user_platform_role();
+
 DROP TRIGGER IF EXISTS trg_00_users_set_org_id    ON iam.users;
 CREATE TRIGGER trg_00_users_set_org_id
   BEFORE INSERT ON iam.users FOR EACH ROW EXECUTE FUNCTION public.set_org_id();

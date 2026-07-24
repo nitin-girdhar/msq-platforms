@@ -1,7 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { RANKS } from '@platform/authz';
 import { CAPABILITY, type CapabilityKey } from '@platform/rbac';
-import { hasCapability } from '@platform/db';
+import { hasCapabilityFresh } from '@platform/db';
 import type { CreateApiClientInput, UpdateApiClientInput } from '@platform/validation';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './api-clients.service.js';
@@ -20,12 +20,18 @@ function requireApiClientAdmin(rank: number): void {
 // actually blocks the API — not just the nav (see openissues.md Issue #2). Denying
 // the `lms.apiclients` page node cascades to deny both view/manage in the matrix,
 // so checking the operation-level key is sufficient and precise.
+//
+// These endpoints mint/rotate/delete integration credentials, so we resolve the
+// capability FRESH (hasCapabilityFresh) rather than through the ≤5-minute TTL
+// capability cache: a tenant that revokes `lms.apiclients` must lose API-token
+// management immediately, not after the cache backstop expires (Issue #2). The
+// per-call DB round trip is acceptable on this low-traffic, high-sensitivity path.
 async function requireApiClientCapability(
   auth: { tenant_id: string; role: string; rank: number },
   capability: CapabilityKey,
 ): Promise<void> {
   requireApiClientAdmin(auth.rank);
-  const granted = await hasCapability(auth.tenant_id, auth.role, capability);
+  const granted = await hasCapabilityFresh(auth.tenant_id, auth.role, capability);
   if (!granted) {
     throw new ForbiddenError('API client management is not enabled for your role');
   }

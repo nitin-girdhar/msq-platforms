@@ -114,6 +114,34 @@ export async function hasCapability(
   return matrix.byRole.get(roleName)?.has(key) ?? false;
 }
 
+/**
+ * Cache-BYPASSING capability check — resolves straight from
+ * iam.fn_role_capability_matrix, exactly like /auth/me does, ignoring the
+ * in-process TTL cache entirely.
+ *
+ * Use this ONLY for high-sensitivity, low-traffic endpoints where a revoke must
+ * be honored immediately and the ≤5-minute cache staleness window is
+ * unacceptable — e.g. issuing/rotating API credentials (see openissues.md
+ * Issue #2). It does one DB round trip per call, so it is deliberately NOT the
+ * default gate used on every request. Fails CLOSED like `hasCapability`.
+ */
+export async function hasCapabilityFresh(
+  tenantId: string,
+  roleName: string | null,
+  key: CapabilityKey,
+): Promise<boolean> {
+  if (!roleName) return false;
+  const rows = (await runResolver((tx) =>
+    tx.execute(
+      sql`SELECT granted
+          FROM iam.fn_role_capability_matrix(${tenantId}::uuid)
+          WHERE role_name = ${roleName} AND capability_key = ${key}
+          LIMIT 1`,
+    ),
+  )) as unknown as Array<{ granted: boolean }>;
+  return rows[0]?.granted ?? false;
+}
+
 /** Every capability `roleName` holds — for handing the set to a client so the UI
  *  can hide what the server would refuse, instead of rendering it and 403-ing. */
 export async function capabilitiesFor(
@@ -140,18 +168,24 @@ export function invalidateCapabilityCache(tenantId?: string): void {
  * failing startup — the TTL still bounds staleness, so the service degrades from
  * "seconds" to "minutes" instead of refusing to boot over a cache optimisation.
  */
-export async function startCapabilityCache(): Promise<void> {
-  if (listening) return;
+export async function startCapabilityCache(): Promise<boolean> {
+  if (listening) return true;
   listening = true;
   try {
     await pgListen(CHANNEL, () => {
       invalidateCapabilityCache();
     });
+    return true;
   } catch (err) {
     listening = false;
     console.warn(
       `[rbac] capability cache LISTEN unavailable; falling back to ${CACHE_TTL_MS / 1000}s TTL`,
       err,
     );
+    // Returning false lets the caller assert/surface the degraded state at boot
+    // (see openissues.md Issue #2). Fresh-resolving gates (hasCapabilityFresh) are
+    // unaffected either way; only the cached hasCapability path relies on this
+    // subscription for sub-second invalidation.
+    return false;
   }
 }

@@ -45,7 +45,16 @@ const start = async () => {
     // Tier C3: subscribe to capability-matrix changes so a role's tools/tabs can
     // be re-granted in the DB and take effect within seconds. Best-effort — a TTL
     // in the cache bounds staleness if the subscription can't be established.
-    await startCapabilityCache();
+    // Surface the degraded state loudly at boot: a silently-dropped LISTEN is what
+    // let a revoked capability keep serving for up to the TTL window (Issue #2).
+    // Credential endpoints fresh-resolve regardless, so this affects only the
+    // cached gate's invalidation latency.
+    const capabilityListenEstablished = await startCapabilityCache();
+    if (!capabilityListenEstablished) {
+      app.log.warn(
+        'capability-cache LISTEN not established at boot; cached capability gates fall back to TTL-bounded staleness (credential endpoints still fresh-resolve)',
+      );
+    }
     await app.listen({ port: config.port, host: '0.0.0.0' });
   } catch (err) {
     app.log.error(err);

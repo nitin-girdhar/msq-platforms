@@ -2587,9 +2587,72 @@ CREATE TRIGGER trg_auto_grant_all_orgs_on_tenant_admin
   AFTER INSERT ON iam.user_org_mapping
   FOR EACH ROW EXECUTE FUNCTION iam.auto_grant_all_orgs_on_tenant_admin();
 
+-- ── Cross-org action authority (Issue #3) ─────────────────────────────
+-- Whether p_user_id may legitimately be recorded as the acting/assigned user
+-- for a write in p_org_id. Returns TRUE when the user holds an active mapping to
+-- the org (the normal path — the active org a shared user has switched into) OR
+-- is a platform/tenant admin who acts across orgs WITHOUT a per-org mapping:
+--   • super_admin  — platform scope, any org
+--   • tenant_admin — any org within their own tenant
+-- This is what lets the FK-org-scope triggers accept a super_admin/tenant_admin
+-- write on a cross-org (e.g. unassigned) lead instead of raising — everyone else
+-- still requires the mapping, so the check stays fail-closed. SECURITY DEFINER so
+-- it can read iam/entity regardless of the caller's RLS context.
+CREATE OR REPLACE FUNCTION iam.fn_actor_can_act_in_org(p_user_id UUID, p_org_id UUID)
+RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
+DECLARE
+  v_role TEXT;
+BEGIN
+  IF p_user_id IS NULL OR p_org_id IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  -- (1) Normal path: an active mapping to the org.
+  PERFORM 1
+  FROM iam.user_org_mapping uom
+  JOIN iam.users u ON u.id = uom.user_id
+  WHERE uom.user_id = p_user_id
+    AND uom.org_id  = p_org_id
+    AND uom.is_active
+    AND u.is_active AND NOT u.is_deleted;
+  IF FOUND THEN
+    RETURN TRUE;
+  END IF;
+
+  -- (2) Platform/tenant admins act across orgs without a per-org mapping.
+  --     Their GLOBAL role lives on iam.users.role_id (super_admin/tenant_admin
+  --     are seeded that way; see 08_seed_tenants_orgs_users.sql).
+  SELECT ur.name INTO v_role
+  FROM iam.users u
+  JOIN iam.user_roles ur ON ur.id = u.role_id
+  WHERE u.id = p_user_id AND u.is_active AND NOT u.is_deleted;
+
+  IF v_role = 'super_admin' THEN
+    RETURN TRUE;                       -- platform scope: any org
+  END IF;
+
+  IF v_role = 'tenant_admin' THEN      -- tenant scope: any org in their tenant
+    RETURN (
+      SELECT o_target.tenant_id
+      FROM entity.organizations o_target
+      WHERE o_target.id = p_org_id AND NOT o_target.is_deleted
+    ) = (
+      SELECT o_home.tenant_id
+      FROM iam.users u2
+      JOIN entity.organizations o_home ON o_home.id = u2.org_id
+      WHERE u2.id = p_user_id
+    );
+  END IF;
+
+  RETURN FALSE;
+END; $$;
+
+GRANT EXECUTE ON FUNCTION iam.fn_actor_can_act_in_org(UUID, UUID) TO app_user, tenant_admin;
+
 -- ── UPDATED FK SCOPE CHECKS ───────────────────────────────────────
--- Now validate via iam.user_org_mapping so multi-org iam.users (whose home
--- org_id differs from the working org) are not incorrectly rejected.
+-- Now validate via iam.fn_actor_can_act_in_org so multi-org iam.users (whose home
+-- org_id differs from the working org) are not incorrectly rejected, and platform/
+-- tenant admins acting cross-org (Issue #3) are accepted rather than 500-ing.
 
 CREATE OR REPLACE FUNCTION lms.check_lead_fk_org_scope()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
@@ -2603,14 +2666,7 @@ BEGIN
     END IF;
   END IF;
   IF NEW.assigned_user_id IS NOT NULL THEN
-    PERFORM 1
-    FROM iam.user_org_mapping uom
-    JOIN iam.users u ON u.id = uom.user_id
-    WHERE uom.user_id = NEW.assigned_user_id
-      AND uom.org_id  = NEW.org_id
-      AND uom.is_active
-      AND u.is_active AND NOT u.is_deleted;
-    IF NOT FOUND THEN
+    IF NOT iam.fn_actor_can_act_in_org(NEW.assigned_user_id, NEW.org_id) THEN
       RAISE EXCEPTION 'assigned_user_id % has no active mapping to org % or has been deleted.',
         NEW.assigned_user_id, NEW.org_id;
     END IF;
@@ -2627,14 +2683,7 @@ BEGIN
     RAISE EXCEPTION 'lead_id % does not belong to org % or has been deleted.',
       NEW.lead_id, NEW.org_id;
   END IF;
-  PERFORM 1
-  FROM iam.user_org_mapping uom
-  JOIN iam.users u ON u.id = uom.user_id
-  WHERE uom.user_id = NEW.user_id
-    AND uom.org_id  = NEW.org_id
-    AND uom.is_active
-    AND u.is_active AND NOT u.is_deleted;
-  IF NOT FOUND THEN
+  IF NOT iam.fn_actor_can_act_in_org(NEW.user_id, NEW.org_id) THEN
     RAISE EXCEPTION 'user_id % has no active mapping to org % or has been deleted.',
       NEW.user_id, NEW.org_id;
   END IF;
@@ -2650,14 +2699,7 @@ BEGIN
     RAISE EXCEPTION 'lead_id % does not belong to org % or has been deleted.',
       NEW.lead_id, NEW.org_id;
   END IF;
-  PERFORM 1
-  FROM iam.user_org_mapping uom
-  JOIN iam.users u ON u.id = uom.user_id
-  WHERE uom.user_id = NEW.assigned_user_id
-    AND uom.org_id  = NEW.org_id
-    AND uom.is_active
-    AND u.is_active AND NOT u.is_deleted;
-  IF NOT FOUND THEN
+  IF NOT iam.fn_actor_can_act_in_org(NEW.assigned_user_id, NEW.org_id) THEN
     RAISE EXCEPTION 'assigned_user_id % has no active mapping to org % or has been deleted.',
       NEW.assigned_user_id, NEW.org_id;
   END IF;

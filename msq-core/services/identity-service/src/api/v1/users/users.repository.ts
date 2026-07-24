@@ -258,11 +258,30 @@ export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
     if (!roleRow) throw new BadRequestError(`Role not found: ${data.role_name}`);
     const roleId = roleRow.id;
 
-    const rows = (await tx.execute(sql`
+    // Mint the new user id up-front rather than reading it back with RETURNING.
+    // Postgres evaluates a RETURNING clause through the table's SELECT (USING)
+    // policy; on the RLS app pool the `users_org_select` policy only admits ids
+    // present in iam.fn_org_active_users(app.current_org_id), which derives from
+    // iam.user_org_mapping. The mapping row is inserted *after* this statement, so a
+    // RETURNING read of the just-inserted row fails the SELECT policy and Postgres
+    // raises "new row violates row-level security policy" (42501) → rollback → 500
+    // for org_admin and every rank-40–980 app-pool role. Generating the id first
+    // removes the read-back entirely, so the INSERT no longer depends on post-insert
+    // SELECT visibility. We use the DB's own gen_uuidv7() (matching the column
+    // default) so ids keep their time-ordered UUIDv7 form; this SELECT touches no
+    // table, so no RLS policy applies. Non-RLS pools (super_admin/tenant_admin) are
+    // unaffected — they never tripped the policy and simply use the supplied id.
+    const idRows = (await tx.execute(
+      sql`SELECT gen_uuidv7() AS id`,
+    )) as Array<{ id: string }>;
+    const newUserId = idRows[0]!.id;
+
+    await tx.execute(sql`
       INSERT INTO iam.users
-        (org_id, first_name, middle_name, last_name, email, mobile, role_id,
+        (id, org_id, first_name, middle_name, last_name, email, mobile, role_id,
          manager_id, password_hash, password_changed_at, is_active, force_password_change)
       VALUES (
+        ${newUserId}::uuid,
         ${ctx.org_id}::uuid,
         ${data.first_name},
         ${data.middle_name ?? null},
@@ -276,9 +295,8 @@ export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
         TRUE,
         ${data.force_password_change ?? true}
       )
-      RETURNING id
-    `)) as Array<{ id: string }>;
-    const created = rows[0]!;
+    `);
+    const created = { id: newUserId };
 
     await tx
       .insert(userOrgMappingTable)

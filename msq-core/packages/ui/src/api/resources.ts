@@ -86,4 +86,22 @@ export const users = {
   orgChart: () => request<{ success: true; data: unknown[] }>('/users/org-chart'),
 
   team: () => request<{ success: true; data: unknown[] }>('/users/team'),
+
+  // Profile photo. `photo` is a base64 string (data: URI prefix optional).
+  // uploadMyPhoto is self-service; uploadPhoto targets another user (admin).
+  uploadMyPhoto: (body: { photo: string; consent: boolean; content_type?: string }) =>
+    request<{ success: true; data: { user_id: string; photo_key: string; photo_uploaded_at: string } }>(
+      '/users/me/photo',
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  uploadPhoto: (id: string, body: { photo: string; consent: boolean; content_type?: string }) =>
+    request<{ success: true; data: { user_id: string; photo_key: string; photo_uploaded_at: string } }>(
+      `/users/${id}/photo`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  // Stable, cacheable URL for a user's photo — safe as an <img src>. The GET is
+  // authenticated by the session cookie and returns 404 when there is no photo.
+  photoUrl: (id: string) => `/api/users/${id}/photo`,
 };

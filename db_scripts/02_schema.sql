@@ -531,6 +531,16 @@ CREATE TABLE IF NOT EXISTS iam.users (
   platform_role         TEXT
                         CONSTRAINT chk_users_platform_role
                         CHECK (platform_role IN ('super_admin','tenant_admin','org_admin','member')),
+  -- ── Profile photo / avatar (platform-wide; also the biometric reference for
+  --    HR face-attendance once enrolled). Bytes live in blob storage; only the
+  --    opaque key + metadata are kept here. photo_key IS NULL ⇒ no photo.
+  --    photo_consent_at records the user's DPDP attestation captured at upload.
+  --    See _migrations/20_user_photos_and_attendance_retention.sql.
+  photo_key             TEXT,
+  photo_content_type    TEXT,
+  photo_uploaded_at     TIMESTAMPTZ,
+  photo_uploaded_by     UUID,
+  photo_consent_at      TIMESTAMPTZ,
   CONSTRAINT chk_user_not_own_manager    CHECK (id <> manager_id),
   CONSTRAINT chk_users_active_deleted    CHECK (NOT (is_active AND is_deleted))
 );

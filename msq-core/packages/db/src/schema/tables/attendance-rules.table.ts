@@ -16,6 +16,11 @@ export const attendanceRulesTable = hrSchema.table('attendance_rules', {
   requireFaceMatch:      boolean('require_face_match').notNull().default(false),
   faceMatchThreshold:    numeric('face_match_threshold', { precision: 5, scale: 2 }).notNull().default('85'),
   faceMatchAction:       text('face_match_action').notNull().default('flag'),
+  // Min days before a member may self-change their reference photo (admins bypass).
+  photoChangeCooldownDays: integer('photo_change_cooldown_days').notNull().default(30),
+  // Days daily check-in/out selfies are retained before the cleanup job deletes
+  // them; does NOT apply to the enrolled reference photo (avatar).
+  imageRetentionDays:    integer('image_retention_days').notNull().default(90),
   isActive:              boolean('is_active').notNull().default(true),
   isDeleted:             boolean('is_deleted').notNull().default(false),
   deletedAt:             timestamp('deleted_at', { withTimezone: true }),

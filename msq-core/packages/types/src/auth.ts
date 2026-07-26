@@ -32,6 +32,12 @@ export interface SessionUser {
   is_active: boolean;
   force_password_change: boolean;
   /**
+   * True when the user has a stored profile photo (iam.users.photo_key set). The
+   * shell reads this to render the avatar image vs. initials without an extra
+   * round-trip, and HR check-in reads it to know whether enrollment is needed.
+   */
+  has_photo: boolean;
+  /**
    * Tier C3 — the capability keys this user's role effectively holds in this
    * tenant, resolved from iam.role_capabilities (tenant override > platform
    * default > deny). Keys are @platform/rbac's CAPABILITY values.

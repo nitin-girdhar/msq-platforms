@@ -22,6 +22,14 @@ export const usersTable = iamSchema.table('users', {
   // tenant_admin | org_admin | member. Drives PG-role selection + platform-wide
   // capability only; product authority lives in <product>.member_roles.
   platformRole:        text('platform_role'),
+  // Profile photo / avatar (platform-wide; also the biometric reference for HR
+  // face-attendance once enrolled). Bytes live in blob storage — only the opaque
+  // key + metadata are stored here. photoKey null ⇒ no photo.
+  photoKey:            text('photo_key'),
+  photoContentType:    text('photo_content_type'),
+  photoUploadedAt:     timestamp('photo_uploaded_at', { withTimezone: true }),
+  photoUploadedBy:     uuid('photo_uploaded_by'),
+  photoConsentAt:      timestamp('photo_consent_at', { withTimezone: true }),
   managerId:           uuid('manager_id').references((): any => usersTable.id, { onDelete: 'set null' }),
   isActive:            boolean('is_active').notNull().default(true),
   isDeleted:           boolean('is_deleted').notNull().default(false),

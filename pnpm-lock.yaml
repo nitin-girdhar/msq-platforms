@@ -162,6 +162,18 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  msq-core/packages/blob-storage:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.10
+        version: 22.20.1
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   msq-core/packages/db:
     dependencies:
       '@platform/authz':
@@ -445,6 +457,9 @@ importers:
       '@platform/authz':
         specifier: workspace:*
         version: link:../../packages/platform-authz
+      '@platform/blob-storage':
+        specifier: workspace:*
+        version: link:../../packages/blob-storage
       '@platform/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -648,6 +663,9 @@ importers:
       '@platform/authz':
         specifier: workspace:*
         version: link:../../../msq-core/packages/platform-authz
+      '@platform/blob-storage':
+        specifier: workspace:*
+        version: link:../../../msq-core/packages/blob-storage
       '@platform/db':
         specifier: workspace:*
         version: link:../../../msq-core/packages/db

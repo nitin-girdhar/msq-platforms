@@ -28,7 +28,17 @@ services:
     ports:
       - "${DB_PORT}:5432"
     volumes:
-      - ${DB_DATA_PATH}:/var/lib/postgresql
+      # Long syntax on purpose: build-deploy.ps1 merges with
+      # `docker compose config --no-interpolate`, so the short form's source
+      # stays the literal `${DB_DATA_PATH}` -- which compose then classifies as
+      # a *named volume* (it doesn't start with ./ or /), producing a merged
+      # file that fails with "refers to undefined volume". Declaring the type
+      # explicitly keeps it a bind mount through the merge.
+      - type: bind
+        source: ${DB_DATA_PATH}
+        target: /var/lib/postgresql
+        bind:
+          create_host_path: true
       # Schema bootstrap. The DDL that used to live in the single
       # msq-core/db_scripts/01_init-db.sql is now the ordered 01-06 set in the
       # platform-root db_scripts/. Mounted file-by-file (rather than mounting
@@ -53,9 +63,23 @@ services:
     environment:
       PORT: ${IDENTITY_SERVICE_PORT}
       <<: *db-env
+      # Profile-photo (avatar) storage. MUST resolve to the SAME shared blob
+      # volume hr-service mounts (msq-hrms/docker-compose-linux.yml) so the
+      # avatar identity writes is the exact file hr-service enrolls with CompreFace.
+      BLOB_STORAGE_DRIVER: ${BLOB_STORAGE_DRIVER:-local}
+      BLOB_STORAGE_DIR: ${BLOB_STORAGE_DIR:-/data/blobs}
+      PHOTO_MAX_BYTES: ${PHOTO_MAX_BYTES:-2097152}
     # Internal-only: reachable over the compose network, not published to host.
     expose:
       - "${IDENTITY_SERVICE_PORT}"
+    volumes:
+      # Long syntax (see hr-service note): same host dir + container path so the
+      # two services share one blob store.
+      - type: bind
+        source: ${BLOB_HOST_PATH:-./data/blobs}
+        target: ${BLOB_STORAGE_DIR:-/data/blobs}
+        bind:
+          create_host_path: true
     depends_on:
       postgres:
         condition: service_healthy

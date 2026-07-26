@@ -35,6 +35,7 @@ export function toSessionUser(row: DatabaseUser, capabilities: string[] = []): S
     mobile: row.mobile,
     is_active: row.is_active,
     force_password_change: row.force_password_change,
+    has_photo: row.has_photo ?? false,
     capabilities,
   };
 }

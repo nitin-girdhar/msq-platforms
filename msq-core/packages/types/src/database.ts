@@ -27,6 +27,8 @@ export interface DatabaseUser {
   last_failed_login_at: Date | null;
   is_active: boolean;
   force_password_change: boolean;
+  /** True when iam.users.photo_key is set (a profile photo is stored). */
+  has_photo: boolean;
   password_changed_at: Date | null;
   org_name: string;
   tenant_name: string;

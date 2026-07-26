@@ -10,6 +10,7 @@ applies to the script you care about.
 | `17_tenant_scope_lms_catalogs.sql` | no | **yes** |
 | `18_platform_role_autoderive.sql` | no | no — see below |
 | `19_tenant_scope_ladder_roles.sql` | no | **yes** |
+| `20_user_photos_and_attendance_retention.sql` | no | no — see below |
 
 ## Tenant-scoping (17 and 19) — part of every install
 
@@ -41,6 +42,18 @@ a database created before that trigger existed, where users seeded after the
 one-shot backfill in `13_backfill_per_product_roles.sql` were left with
 `platform_role IS NULL` — which authenticates them as `member` and 403s every
 platform-tier gate.
+
+## `20_user_photos_and_attendance_retention.sql` — existing databases only
+
+Adds the profile-photo columns (`iam.users.photo_*`) and the attendance
+photo-change-cooldown / selfie-retention columns (`hr.attendance_rules`), then
+mirrors any already-enrolled `hr.employee_profiles.reference_photo_url` onto
+`iam.users.photo_key` so an existing face-enrollment doubles as the avatar.
+
+A fresh install never needs it: `02_schema.sql` and `03_product_schema.sql`
+create all of these columns directly. The script is `ADD COLUMN IF NOT EXISTS`
+plus a guarded backfill, so it's a harmless no-op on a fresh DB and safe to
+re-run. Run it on any database created before this increment.
 
 # One-time migrations (pre-P1.0 deployments only)
 

@@ -97,8 +97,11 @@ Meta (Facebook) ─→ API Gateway /meta/webhook                ─→ meta-conv
 | GET/POST | `/lookups/organizations` (super_admin only, tenant-scoped) | admin-service |
 | PATCH | `/lookups/organizations/:id` (super_admin only, tenant-scoped) | admin-service |
 | POST | `/hr/attendance/check-in`, `/hr/attendance/check-out` | hr |
-| GET/PUT | `/hr/attendance/rules`, `/hr/attendance/rules/admin` (incl. `require_face_match` / `face_match_threshold` / `face_match_action`) | hr |
-| POST | `/hr/attendance/face/enroll` (hr_admin/org_admin; `consent` must be true) | hr |
+| GET/PUT | `/hr/attendance/rules`, `/hr/attendance/rules/admin` (incl. `require_face_match` / `face_match_threshold` / `face_match_action` / `photo_change_cooldown_days` / `image_retention_days`) | hr |
+| POST | `/users/me/photo` (self), `/users/:id/photo` (admin) — avatar upload; `consent` must be true | identity |
+| GET | `/users/:id/photo` — avatar bytes, ETag + `Cache-Control: private` | identity |
+| POST | `/hr/attendance/face/enroll` (self or hr_admin/org_admin; `consent` must be true; sources the avatar) | hr |
+| GET | `/hr/attendance/face/me` — self enrollment context (check-in gate + upload modal) | hr |
 | DELETE | `/hr/attendance/face/enroll/:userId` (hr_admin/org_admin) | hr |
 | GET | `/hr/attendance/face/status/:userId`, `/hr/attendance/face/reference/:userId` | hr |
 | GET | `/hr/attendance/face-reviews?status=pending` (approver scope) | hr |
@@ -172,8 +175,21 @@ This deterministically converges to each user's target %, self-corrects as leads
 
 Optional per-org verification of attendance punch selfies against an enrolled
 reference photo, using a **self-hosted CompreFace (Exadel)** instance. Governed by
-three `hr.attendance_rules` columns: `require_face_match` (off by default),
-`face_match_threshold` (default 85), and `face_match_action` (`flag` | `block`).
+`hr.attendance_rules` columns: `require_face_match` (off by default),
+`face_match_threshold` (default 85), `face_match_action` (`flag` | `block`),
+`photo_change_cooldown_days` (default 30 — self-service reference-photo change
+rate limit), and `image_retention_days` (default 90 — how long daily punch
+selfies are kept before the retention job deletes them).
+
+**The reference photo IS the user's profile avatar.** Avatars are platform-wide
+(`iam.users.photo_key` + consent metadata; bytes in `@platform/blob-storage`,
+served by identity-service at `GET /users/:id/photo` with an ETag). Enrollment no
+longer carries an image — hr-service reads the stored avatar and registers it with
+CompreFace, so the displayed avatar and the biometric reference are always the same
+image. Because `hr_svc` has SELECT-only on `iam`, **identity-service is the sole
+writer of `photo_key`**; hr-service only reads it. Daily check-in/out selfies are a
+separate, shorter-lived store (`punch/<userId>/<YYYYMMDD>_chkin|chkout.jpg`) that the
+retention job prunes; avatars (`avatar/<userId>/<epochMs>.jpg`) are never auto-deleted.
 
 **Deployment — internal-only.** CompreFace (compreface-ui/api/core/admin) runs on
 the compose network with its **own** postgres (`compreface-postgres-db` + a
@@ -186,14 +202,34 @@ touches it. hr-service talks to it through a vendor-neutral `FaceVerificationDri
 can replace CompreFace without changing any call site. CompreFace's 0–1 similarity
 is normalized to 0–100 at the driver boundary.
 
-**Enrollment.** `POST /hr/attendance/face/enroll` (hr_admin/org_admin only for now;
-self-enrollment is deferred) requires an explicit `consent: true` (DPDP —
-`face_consent_at` is stamped; a false/absent consent is a 422). The CompreFace
-subject id is the user's UUID; re-enrollment replaces the subject's faces
-(delete-then-add). Unenroll (`DELETE …/face/enroll/:userId`) drops the subject and
-clears the profile columns. There is no automatic hook from identity-service user
-deactivation (that would couple the services) — unenroll-on-exit is an ops task,
-documented in `docs/FACE_VERIFICATION.md`.
+**Enrollment.** Two steps, orchestrated by the client:
+1. **Upload the avatar** — `POST /users/me/photo` (self) or `POST /users/:id/photo`
+   (admin, rank ≥ 40 + rank ceiling) on identity-service, with `consent: true`
+   (DPDP — `photo_consent_at` stamped; false/absent → 422 `PHOTO_CONSENT_REQUIRED`).
+2. **Enroll** — `POST /hr/attendance/face/enroll { user_id, consent }` (no image).
+   A member may enroll **themselves**; hr_admin/org_admin may enroll anyone in-org.
+   hr-service reads the avatar (`FACE_NO_PHOTO` if none), registers it with
+   CompreFace (subject id = user UUID; re-enrollment replaces the faces), and stamps
+   `face_enrolled_at` / `face_consent_at`. Self-service re-enrollment is rate-limited
+   by `photo_change_cooldown_days` (measured from `face_enrolled_at`, so a pre-upload
+   check and the enroll re-check always agree; **admins bypass it**) → 422
+   `FACE_CHANGE_COOLDOWN`. `GET /hr/attendance/face/me` returns the self context
+   (`has_photo`, `enrolled`, `require_face_match`, `can_change_photo`,
+   `next_change_allowed_at`) that drives the check-in gate and the upload modal.
+
+Unenroll (`DELETE …/face/enroll/:userId`, admin) drops the subject and clears the
+profile columns (the avatar itself remains). There is no automatic hook from
+identity-service user deactivation (that would couple the services) — unenroll-on-exit
+is an ops task, documented in `docs/FACE_VERIFICATION.md`.
+
+**Check-in gate (UI).** When `require_face_match` is on, the check-in button first
+ensures the user is enrolled: no avatar → the shared photo-upload modal opens
+(capture or gallery + consent), then auto-enrolls and proceeds; avatar but not yet
+enrolled → silent enroll; enrolled → straight to the punch. Check-out is never gated.
+
+**Retention.** `msq-deploy/retention/retention-cleanup.sh` deletes `punch/**` selfies
+older than each org's `image_retention_days` (using the date embedded in the key, not
+mtime) and never touches `avatar/**`; `setup-cron.sh` installs the daily job.
 
 **Punch integration (check-in AND check-out, after geo/photo validation).** When
 `require_face_match` is on and a photo is present, the CompreFace call happens

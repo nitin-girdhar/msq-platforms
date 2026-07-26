@@ -25,18 +25,22 @@
     (15 then 16) directly against that live database instead of this script —
     see _migrations/README.md.
 
+    Connection defaults are read from the repo-root .env (falling back to
+    .env.example), so this script, docker-compose.yml and the Makefile all agree
+    on one database. Pass any -param explicitly to override.
+
 .EXAMPLE
-    .\db_deploy.ps1
-    .\db_deploy.ps1 -ContainerName crm-postgres -Database crm_v2
+    .\db_deploy.ps1                                        # uses .env
+    .\db_deploy.ps1 -ContainerName msq-db-server -Database crm
     .\db_deploy.ps1 -IncludeDemoSeed:$false
 #>
 param(
-    [string]$Database        = "crm_v2",
+    [string]$Database,
     [string]$DbHost          = "localhost",
-    [string]$Port            = "5433",
-    [string]$User            = "sa",
-    [string]$Password        = "Passw0rd",
-    [string]$ContainerName   = "crm-postgres",
+    [string]$Port,
+    [string]$User,
+    [string]$Password,
+    [string]$ContainerName,
     [string]$SeedPassword    = "Admin@12345",
     [bool]  $IncludeDemoSeed = $true
 )
@@ -45,6 +49,45 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ScriptsDir = $PSScriptRoot
+
+# ── Connection defaults come from the repo's .env ────────────────────────────
+# These used to be hardcoded to crm_v2 / 5433 / sa / crm-postgres, which matched
+# neither docker-compose.yml (container ${DB_CONTAINER_NAME}, user
+# ${POSTGRES_USER}) nor the Makefile (DB_NAME=crm, port 5432) - so the defaults
+# deployed into a database nothing else in the repo talks to. Read .env instead
+# (falling back to .env.example), and let any explicitly-passed -param win.
+$RepoRoot = Split-Path -Parent $ScriptsDir
+$EnvFile  = Join-Path $RepoRoot '.env'
+if (-not (Test-Path $EnvFile)) { $EnvFile = Join-Path $RepoRoot '.env.example' }
+
+# ReadAllText, not Get-Content: PS 5.1's Get-Content decodes a BOM-less file as
+# CP1252, which mangles the box-drawing characters in .env's comment banners.
+$EnvMap = @{}
+if (Test-Path $EnvFile) {
+    foreach ($line in ([System.IO.File]::ReadAllText($EnvFile) -split "`r?`n")) {
+        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$') {
+            $EnvMap[$Matches[1]] = $Matches[2].Trim('"').Trim("'")
+        }
+    }
+}
+
+# Explicit -param always wins; then .env; then the built-in fallback.
+$Defaults = @{
+    Database      = @{ Key = 'DB_NAME';            Fallback = 'crm'           }
+    Port          = @{ Key = 'DB_PORT';            Fallback = '5432'          }
+    User          = @{ Key = 'POSTGRES_USER';      Fallback = 'postgres'      }
+    Password      = @{ Key = 'POSTGRES_PASSWORD';  Fallback = 'Passw0rd'      }
+    ContainerName = @{ Key = 'DB_CONTAINER_NAME';  Fallback = 'msq-db-server' }
+}
+foreach ($name in $Defaults.Keys) {
+    if ($PSBoundParameters.ContainsKey($name)) { continue }
+    $spec  = $Defaults[$name]
+    $value = if ($EnvMap.ContainsKey($spec.Key) -and $EnvMap[$spec.Key]) { $EnvMap[$spec.Key] } else { $spec.Fallback }
+    Set-Variable -Name $name -Value $value -Scope Script
+}
+
+Write-Host "Config source: $(if (Test-Path $EnvFile) { $EnvFile } else { 'built-in defaults' })" -ForegroundColor DarkGray
+Write-Host "  container=$ContainerName  db=$Database  user=$User  port=$Port" -ForegroundColor DarkGray
 
 # Consolidated platform-wide DDL (01-06) + seed/data scripts (07+).
 # _migrations/ (15/16) is deliberately excluded — guarded no-ops on a fresh

@@ -1304,6 +1304,12 @@ CREATE TABLE IF NOT EXISTS hr.attendance_rules (
   require_face_match       BOOLEAN NOT NULL DEFAULT FALSE,
   face_match_threshold     NUMERIC(5,2) NOT NULL DEFAULT 85 CHECK (face_match_threshold BETWEEN 50 AND 100),
   face_match_action        TEXT    NOT NULL DEFAULT 'flag' CHECK (face_match_action IN ('flag','block')),
+  -- Minimum days a member must wait before self-changing their reference photo.
+  -- Enforced for self-service only; hr_admin/org_admin change it with no wait.
+  photo_change_cooldown_days INT   NOT NULL DEFAULT 30 CHECK (photo_change_cooldown_days >= 0),
+  -- How long daily check-in/out selfies are retained before the cleanup job
+  -- deletes them. Does NOT apply to the enrolled reference photo (avatar).
+  image_retention_days       INT   NOT NULL DEFAULT 90 CHECK (image_retention_days >= 1),
   -- ── standard soft-delete / audit ──
   is_active   BOOLEAN NOT NULL DEFAULT TRUE,
   is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,

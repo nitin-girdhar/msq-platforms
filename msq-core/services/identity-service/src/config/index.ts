@@ -59,6 +59,14 @@ export const config = {
   // leads-service owns lms.marketing_leads (N-5) — identity invokes it for the
   // branch-move/deactivation lead-reassignment saga rather than writing lms.*.
   leadsServiceUrl: process.env['LEADS_SERVICE_URL'] ?? 'http://localhost:4002',
+  // Profile-photo / avatar storage. Shares one volume with hr-service (which
+  // reads the avatar as the biometric reference for face attendance), so both
+  // MUST resolve to the same directory — see @platform/blob-storage.
+  blobStorageDriver: process.env['BLOB_STORAGE_DRIVER'] ?? 'local',
+  blobStorageDir: process.env['BLOB_STORAGE_DIR'] ?? '/data/blobs',
+  // Decoded avatar byte ceiling (default 2 MiB), matched to hr-service's punch
+  // photo cap so an enrolled avatar is always a valid face-verification probe.
+  photoMaxBytes: parseInt(process.env['PHOTO_MAX_BYTES'] ?? String(2 * 1024 * 1024), 10),
 } as const;
 
 if (config.nodeEnv === 'production') {

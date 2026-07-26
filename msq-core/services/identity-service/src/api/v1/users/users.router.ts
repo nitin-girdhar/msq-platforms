@@ -2,12 +2,17 @@ import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../../middleware/auth.middleware.js';
 import { validate } from '../../../middleware/validate.middleware.js';
 import { createUserSchema, updateUserSchema, createResetPasswordSchema, updateAssignmentWeightsSchema, addOrgMappingSchema } from '@platform/validation';
-import { listUsersQuerySchema, getAssignableQuerySchema } from './users.schema.js';
+import { listUsersQuerySchema, getAssignableQuerySchema, uploadPhotoSchema } from './users.schema.js';
 import { UsersController } from './users.controller.js';
+import { PhotosController } from './photos.controller.js';
 import { config } from '../../../config/index.js';
+
+// Base64 photo payloads (~2.9M chars) exceed Fastify's 1 MiB default body limit.
+const PHOTO_BODY_LIMIT = 4 * 1024 * 1024;
 
 export async function usersRouter(app: FastifyInstance) {
   const ctrl = new UsersController();
+  const photos = new PhotosController();
   const resetPasswordSchema = createResetPasswordSchema(config.passwordMinLength);
 
   app.get('/users',            { preHandler: [authenticate, validate({ query: listUsersQuerySchema })] }, ctrl.list);
@@ -16,6 +21,14 @@ export async function usersRouter(app: FastifyInstance) {
   app.put('/users/assignment-weights', { preHandler: [authenticate, validate({ body: updateAssignmentWeightsSchema })] }, ctrl.updateAssignmentWeights);
   app.get('/users/team',       { preHandler: [authenticate] }, ctrl.getTeam);
   app.get('/users/org-chart',  { preHandler: [authenticate] }, ctrl.getOrgChart);
+  // Profile photo / avatar. `/users/me/photo` is self-service; `/users/:id/photo`
+  // POST is admin-only (rank ceiling enforced in the service). GET is
+  // authenticated + RLS-scoped and serves cacheable image bytes. Registered
+  // before `/users/:id` so the literal `me` segment is unambiguous.
+  app.post('/users/me/photo',  { bodyLimit: PHOTO_BODY_LIMIT, preHandler: [authenticate, validate({ body: uploadPhotoSchema })] }, photos.uploadMine);
+  app.post('/users/:id/photo', { bodyLimit: PHOTO_BODY_LIMIT, preHandler: [authenticate, validate({ body: uploadPhotoSchema })] }, photos.uploadForUser);
+  app.get('/users/:id/photo',  { preHandler: [authenticate] }, photos.getPhoto);
+
   app.get('/users/:id',        { preHandler: [authenticate] }, ctrl.getById);
   app.post('/users',           { preHandler: [authenticate, validate({ body: createUserSchema })] }, ctrl.create);
   app.patch('/users/:id',      { preHandler: [authenticate, validate({ body: updateUserSchema })] }, ctrl.update);

@@ -114,6 +114,12 @@ function ConvertTo-RelativeComposePaths {
             $l = $l -replace '\\', '/'
             $rewritten++
         }
+        # `config --no-interpolate` treats an unresolved `${VAR}` bind source as
+        # a relative path and anchors it to the project dir, which the rewrite
+        # above turns into `./${VAR}`. That breaks the moment the server's .env
+        # gives VAR an absolute path (`./C:/data/blobs` is not a volume spec),
+        # so put the interpolation back at the start of the value.
+        $l = $l -replace '(?<=^\s*(?:-\s*path|source):\s*)\./(?=\$\{)', ''
         $l
     }
 

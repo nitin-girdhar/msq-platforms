@@ -66,10 +66,27 @@ services:
     environment:
       PORT: ${IDENTITY_SERVICE_PORT}
       <<: *db-env
+      # Profile-photo (avatar) storage. MUST resolve to the SAME shared blob
+      # volume hr-service mounts so the avatar identity writes is the exact
+      # file hr-service enrolls with CompreFace.
+      # Container path is hardcoded, NOT interpolated: .env holds a *host* path
+      # for natively-run services, which would be meaningless inside Linux.
+      BLOB_STORAGE_DRIVER: ${BLOB_STORAGE_DRIVER:-local}
+      BLOB_STORAGE_DIR: /data/blobs
+      PHOTO_MAX_BYTES: ${PHOTO_MAX_BYTES:-2097152}
     # Internal-only: reachable by other services over the compose network, but
     # NOT published to the host. Only the api-gateway is exposed externally.
     expose:
       - "${IDENTITY_SERVICE_PORT}"
+    volumes:
+      # BLOB_HOST_PATH is the *host* directory (OS-specific); BLOB_STORAGE_DIR
+      # is the path *inside* the container. Long syntax so the host dir is
+      # created on first run rather than failing the container.
+      - type: bind
+        source: ${BLOB_HOST_PATH:-./data/blobs}
+        target: /data/blobs
+        bind:
+          create_host_path: true
     depends_on:
       postgres:
         condition: service_healthy

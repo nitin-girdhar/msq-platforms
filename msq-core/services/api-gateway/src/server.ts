@@ -430,6 +430,20 @@ app.get('/users/team', { ...withAuth }, async (req, reply) => {
 app.get('/users/org-chart', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/users/org-chart', req, reply, req.userCtx);
 });
+// Profile photo / avatar. `/users/me/photo` is self-service, `/users/:id/photo`
+// POST is admin-only, GET streams the image bytes — all enforced downstream.
+// Registered before `/users/:id` so the literal `me` segment is unambiguous.
+app.post('/users/me/photo', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/users/me/photo', req, reply, req.userCtx);
+});
+app.post('/users/:id/photo', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.identityServiceUrl, `/api/v1/users/${id}/photo`, req, reply, req.userCtx);
+});
+app.get('/users/:id/photo', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.identityServiceUrl, `/api/v1/users/${id}/photo`, req, reply, req.userCtx);
+});
 app.get('/users/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.identityServiceUrl, `/api/v1/users/${id}`, req, reply, req.userCtx);

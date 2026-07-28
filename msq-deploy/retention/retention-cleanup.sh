@@ -78,7 +78,8 @@ for userdir in "$PUNCH_DIR"/*/; do
     [[ -f "$f" ]] || continue
     scanned=$((scanned + 1))
     fname="$(basename "$f")"
-    # Expect <YYYYMMDD>_chkin.jpg / <YYYYMMDD>_chkout.jpg
+    # Expect <YYYYMMDD>_chkin_<n>.jpg / <YYYYMMDD>_chkout_<n>.jpg (a split shift
+    # punches several times a day). Only the leading date matters here.
     ymd="${fname%%_*}"
     if [[ ! "$ymd" =~ ^[0-9]{8}$ ]]; then
       log "SKIP (unrecognized name): $f"

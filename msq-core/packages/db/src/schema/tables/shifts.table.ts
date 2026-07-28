@@ -14,6 +14,9 @@ export const shiftsTable = hrSchema.table('shifts', {
   minHalfDayMinutes:  smallint('min_half_day_minutes').notNull().default(240),
   minFullDayMinutes:  smallint('min_full_day_minutes').notNull().default(480),
   isNightShift:       boolean('is_night_shift').notNull().default(false),
+  // A split shift works 2+ slots in a day (see shiftSegmentsTable). startTime /
+  // endTime stay the OUTER window those segments live inside.
+  isSplit:            boolean('is_split').notNull().default(false),
   isActive:           boolean('is_active').notNull().default(true),
   isDeleted:          boolean('is_deleted').notNull().default(false),
   deletedAt:          timestamp('deleted_at', { withTimezone: true }),

@@ -1,4 +1,4 @@
-import { uuid, text, boolean, integer, numeric, timestamp } from 'drizzle-orm/pg-core';
+import { uuid, text, boolean, integer, numeric, smallint, timestamp } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { hrSchema } from '../pg-schemas';
 import { organizationsTable } from './organizations.table';
@@ -21,6 +21,10 @@ export const attendanceRulesTable = hrSchema.table('attendance_rules', {
   // Days daily check-in/out selfies are retained before the cleanup job deletes
   // them; does NOT apply to the enrolled reference photo (avatar).
   imageRetentionDays:    integer('image_retention_days').notNull().default(90),
+  // Org-level day-classification fallback. Precedence: the employee's assigned
+  // shift wins, then these, then the service's DEFAULT_THRESHOLDS constant.
+  minHalfDayMinutes:     smallint('min_half_day_minutes').notNull().default(240),
+  minFullDayMinutes:     smallint('min_full_day_minutes').notNull().default(480),
   isActive:              boolean('is_active').notNull().default(true),
   isDeleted:             boolean('is_deleted').notNull().default(false),
   deletedAt:             timestamp('deleted_at', { withTimezone: true }),

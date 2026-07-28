@@ -72,6 +72,7 @@ export * from './tables/reporting-lines.table.js';
 // Attendance (Phase 2)
 export * from './tables/attendance-rules.table.js';
 export * from './tables/shifts.table.js';
+export * from './tables/shift-segments.table.js';
 export * from './tables/shift-assignments.table.js';
 export * from './tables/attendance-events.table.js';
 export * from './tables/attendance-days.table.js';

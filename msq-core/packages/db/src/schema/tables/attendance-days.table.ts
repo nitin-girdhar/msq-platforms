@@ -15,10 +15,18 @@ export const attendanceDaysTable = hrSchema.table('attendance_days', {
   workDate:          date('work_date').notNull(),
   firstIn:           timestamp('first_in', { withTimezone: true }),
   lastOut:           timestamp('last_out', { withTimezone: true }),
+  // SUM of paired check-in→check-out sessions, so the gap between a split
+  // shift's segments is not counted as worked time.
   workedMinutes:     integer('worked_minutes'),
   statusId:          uuid('status_id').notNull().references(() => attendanceStatusesTable.id, { onDelete: 'restrict' }),
   isLate:            boolean('is_late').notNull().default(false),
   isEarlyExit:       boolean('is_early_exit').notNull().default(false),
+  // Any punch of the day landed outside the shift's declared segments.
+  hasOffWindowPunch: boolean('has_off_window_punch').notNull().default(false),
+  // A check-in was never closed; that session contributed zero minutes.
+  hasOpenSession:    boolean('has_open_session').notNull().default(false),
+  // A punch is awaiting face review; its minutes are withheld until cleared.
+  hasPendingFaceReview: boolean('has_pending_face_review').notNull().default(false),
   leaveRequestId:    uuid('leave_request_id').references(() => leaveRequestsTable.id, { onDelete: 'set null' }),
   resolvedAt:        timestamp('resolved_at', { withTimezone: true }),
   resolutionSource:  text('resolution_source'),

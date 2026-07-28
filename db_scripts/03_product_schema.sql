@@ -1310,6 +1310,12 @@ CREATE TABLE IF NOT EXISTS hr.attendance_rules (
   -- How long daily check-in/out selfies are retained before the cleanup job
   -- deletes them. Does NOT apply to the enrolled reference photo (avatar).
   image_retention_days       INT   NOT NULL DEFAULT 90 CHECK (image_retention_days >= 1),
+  -- ── Day-classification thresholds (org-level fallback) ──
+  -- Precedence when classifying a day: the employee's assigned hr.shifts row
+  -- wins; these are the org fallback for employees with NO shift assignment;
+  -- the service's DEFAULT_THRESHOLDS constant is the last resort.
+  min_half_day_minutes     SMALLINT NOT NULL DEFAULT 240 CHECK (min_half_day_minutes BETWEEN 0 AND 1440),
+  min_full_day_minutes     SMALLINT NOT NULL DEFAULT 480 CHECK (min_full_day_minutes BETWEEN 0 AND 1440),
   -- ── standard soft-delete / audit ──
   is_active   BOOLEAN NOT NULL DEFAULT TRUE,
   is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1318,7 +1324,9 @@ CREATE TABLE IF NOT EXISTS hr.attendance_rules (
   created_by  UUID,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
-  CONSTRAINT chk_attendance_rules_active_deleted CHECK (NOT (is_active AND is_deleted))
+  CONSTRAINT chk_attendance_rules_active_deleted CHECK (NOT (is_active AND is_deleted)),
+  -- A half-day floor above the full-day floor would make 'half_day' unreachable.
+  CONSTRAINT chk_attendance_rules_day_threshold_order CHECK (min_half_day_minutes <= min_full_day_minutes)
 );
 
 DROP TRIGGER IF EXISTS trg_attendance_rules_updated_at        ON hr.attendance_rules;
@@ -1377,6 +1385,9 @@ CREATE TABLE IF NOT EXISTS hr.shifts (
   min_half_day_minutes  SMALLINT NOT NULL DEFAULT 240,
   min_full_day_minutes  SMALLINT NOT NULL DEFAULT 480,
   is_night_shift        BOOLEAN NOT NULL DEFAULT FALSE,
+  -- A split shift works 2+ separate slots in a day (see hr.shift_segments).
+  -- start_time/end_time above stay the OUTER window the segments live inside.
+  is_split              BOOLEAN NOT NULL DEFAULT FALSE,
   is_active             BOOLEAN NOT NULL DEFAULT TRUE,
   is_deleted            BOOLEAN NOT NULL DEFAULT FALSE,
   deleted_at            TIMESTAMPTZ,
@@ -1427,6 +1438,83 @@ GRANT SELECT, INSERT, UPDATE ON hr.shifts TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.shifts TO tenant_admin;
 REVOKE DELETE                ON hr.shifts FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON hr.shifts TO root_service;
+
+
+-- ===================================================================
+-- 2b. hr.shift_segments — ordered in-day slots of a split shift
+--     Standard recipe + org/tenant RLS. A split shift (hr.shifts.is_split)
+--     declares 2+ segments, e.g. 09:00-13:00 and 17:00-21:00; the parent shift's
+--     start_time/end_time remain the OUTER window they must nest inside.
+--
+--     Two rules are NOT expressible as table CHECKs and are enforced in the
+--     service layer (attendance.repository createShift/updateShift + the Zod
+--     superRefine in @hr/validation):
+--       - every segment nests inside the parent shift's window (cross-table)
+--       - segments do not overlap each other (cross-row)
+--     The gist exclusion used by hr.shift_assignments does not transfer: these
+--     are TIME columns, and a night-shift segment legitimately wraps midnight
+--     (22:00-02:00), so an inverted range is valid rather than an error.
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.shift_segments (
+  id          UUID     PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  shift_id    UUID     NOT NULL REFERENCES hr.shifts(id)             ON DELETE CASCADE,
+  org_id      UUID     NOT NULL REFERENCES entity.organizations(id)  ON DELETE RESTRICT,
+  seq         SMALLINT NOT NULL,
+  start_time  TIME     NOT NULL,
+  end_time    TIME     NOT NULL,
+  is_active   BOOLEAN  NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN  NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_shift_segments_active_deleted CHECK (NOT (is_active AND is_deleted)),
+  CONSTRAINT chk_shift_segments_seq_positive   CHECK (seq >= 1)
+);
+
+DROP TRIGGER IF EXISTS trg_shift_segments_updated_at        ON hr.shift_segments;
+CREATE TRIGGER trg_shift_segments_updated_at
+  BEFORE UPDATE ON hr.shift_segments FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_shift_segments_soft_delete       ON hr.shift_segments;
+CREATE TRIGGER trg_shift_segments_soft_delete
+  BEFORE DELETE ON hr.shift_segments FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_shift_segments_set_org_id     ON hr.shift_segments;
+CREATE TRIGGER trg_00_shift_segments_set_org_id
+  BEFORE INSERT ON hr.shift_segments FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_shift_segments_set_created_by ON hr.shift_segments;
+CREATE TRIGGER trg_01_shift_segments_set_created_by
+  BEFORE INSERT ON hr.shift_segments FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_shift_segments_audit             ON hr.shift_segments;
+CREATE TRIGGER trg_shift_segments_audit
+  AFTER UPDATE OR DELETE ON hr.shift_segments FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+CREATE UNIQUE INDEX IF NOT EXISTS uix_shift_segments_shift_seq
+  ON hr.shift_segments (shift_id, seq) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_shift_segments_shift
+  ON hr.shift_segments (shift_id) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_shift_segments_org
+  ON hr.shift_segments (org_id) WHERE NOT is_deleted;
+
+ALTER TABLE hr.shift_segments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.shift_segments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.shift_segments;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.shift_segments;
+CREATE POLICY org_isolation_policy ON hr.shift_segments AS PERMISSIVE FOR ALL TO app_user
+  USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted)
+  WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
+CREATE POLICY tenant_isolation_policy ON hr.shift_segments AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+
+GRANT SELECT, INSERT, UPDATE ON hr.shift_segments TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.shift_segments TO tenant_admin;
+REVOKE DELETE                ON hr.shift_segments FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.shift_segments TO root_service;
 
 
 -- ===================================================================
@@ -1533,6 +1621,11 @@ CREATE TABLE IF NOT EXISTS hr.attendance_events (
   face_match_score     NUMERIC(5,2),
   face_match_passed    BOOLEAN,
   face_review_status   TEXT    CHECK (face_review_status IN ('pending','cleared','rejected')),
+  -- TRUE when this punch fell outside every declared hr.shift_segments slot of
+  -- the employee's shift. The punch is still accepted and its minutes still
+  -- count; the flag exists so the day surfaces for review. NULL = there was no
+  -- shift (or no segments) to judge against — the normal non-split case.
+  is_off_segment       BOOLEAN,
   ip                   TEXT,
   device_info          JSONB,
   created_at           TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
@@ -1587,6 +1680,15 @@ CREATE TABLE IF NOT EXISTS hr.attendance_days (
   status_id          UUID    NOT NULL REFERENCES hr.attendance_statuses(id)  ON DELETE RESTRICT,
   is_late            BOOLEAN NOT NULL DEFAULT FALSE,
   is_early_exit      BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Any punch of the day landed outside the shift's declared segments.
+  has_off_window_punch BOOLEAN NOT NULL DEFAULT FALSE,
+  -- A check-in of the day was never closed by a check-out. That session
+  -- contributes ZERO minutes, so the day is short until it is regularized.
+  has_open_session     BOOLEAN NOT NULL DEFAULT FALSE,
+  -- A punch of the day failed (or could not complete) face verification and is
+  -- awaiting review. Those minutes are WITHHELD until a reviewer clears it, so
+  -- this flag is what explains an otherwise mysteriously short day.
+  has_pending_face_review BOOLEAN NOT NULL DEFAULT FALSE,
   leave_request_id   UUID    REFERENCES hr.leave_requests(id)                ON DELETE SET NULL,
   resolved_at        TIMESTAMPTZ,
   resolution_source  TEXT    CHECK (resolution_source IN ('events','leave','holiday','weekly_off','regularization','job')),
@@ -2395,6 +2497,68 @@ LEFT JOIN iam.users            uc ON uc.id = t.created_by
 WHERE NOT t.is_deleted;
 
 GRANT SELECT ON task.vw_tasks_enriched TO app_user, tenant_admin, root_service;
+
+
+-- ===================================================================
+-- 6b. IN-PLACE UPGRADES — columns added to tables this file already creates
+--
+-- Every CREATE TABLE above is `IF NOT EXISTS`, which means a database created
+-- before a column was introduced never gains it: re-running this file is a no-op
+-- on an existing table. This section closes that gap so ONE script serves both
+-- cases — a fresh install gets the columns from the CREATE TABLE, an existing
+-- database gets them here — and no separate migration file is needed per change.
+--
+-- Rules for adding to this section:
+--   * ALTER ... ADD COLUMN IF NOT EXISTS only; never a destructive change.
+--   * Keep every column in lock-step with its CREATE TABLE above, same default.
+--   * CHECK constraints go in the guarded DO block (ADD CONSTRAINT has no
+--     IF NOT EXISTS, so re-running would fail without the catalog lookup).
+--   * Data backfills do NOT belong here — this file is re-run on every deploy.
+-- ===================================================================
+
+-- Attendance: selfie retention + photo-change cooldown; org-level day
+-- classification thresholds; split-shift flag; per-punch and per-day review flags.
+ALTER TABLE hr.attendance_rules
+  ADD COLUMN IF NOT EXISTS photo_change_cooldown_days INT      NOT NULL DEFAULT 30,
+  ADD COLUMN IF NOT EXISTS image_retention_days       INT      NOT NULL DEFAULT 90,
+  ADD COLUMN IF NOT EXISTS min_half_day_minutes       SMALLINT NOT NULL DEFAULT 240,
+  ADD COLUMN IF NOT EXISTS min_full_day_minutes       SMALLINT NOT NULL DEFAULT 480;
+
+ALTER TABLE hr.shifts
+  ADD COLUMN IF NOT EXISTS is_split BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE hr.attendance_events
+  ADD COLUMN IF NOT EXISTS is_off_segment BOOLEAN;
+
+ALTER TABLE hr.attendance_days
+  ADD COLUMN IF NOT EXISTS has_off_window_punch    BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS has_open_session        BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS has_pending_face_review BOOLEAN NOT NULL DEFAULT FALSE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_attendance_rules_cooldown_nonneg') THEN
+    ALTER TABLE hr.attendance_rules
+      ADD CONSTRAINT chk_attendance_rules_cooldown_nonneg CHECK (photo_change_cooldown_days >= 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_attendance_rules_retention_pos') THEN
+    ALTER TABLE hr.attendance_rules
+      ADD CONSTRAINT chk_attendance_rules_retention_pos CHECK (image_retention_days >= 1);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_attendance_rules_half_day_range') THEN
+    ALTER TABLE hr.attendance_rules
+      ADD CONSTRAINT chk_attendance_rules_half_day_range CHECK (min_half_day_minutes BETWEEN 0 AND 1440);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_attendance_rules_full_day_range') THEN
+    ALTER TABLE hr.attendance_rules
+      ADD CONSTRAINT chk_attendance_rules_full_day_range CHECK (min_full_day_minutes BETWEEN 0 AND 1440);
+  END IF;
+  -- A half-day floor above the full-day floor makes 'half_day' unreachable.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_attendance_rules_day_threshold_order') THEN
+    ALTER TABLE hr.attendance_rules
+      ADD CONSTRAINT chk_attendance_rules_day_threshold_order CHECK (min_half_day_minutes <= min_full_day_minutes);
+  END IF;
+END $$;
 
 
 -- ===================================================================

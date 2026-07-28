@@ -9,6 +9,9 @@ export interface PageTab {
   /** Exact-match only — for a section root like `/leave` that would otherwise
    *  swallow every child route. */
   exact?: boolean;
+  /** Count of items awaiting the user on that tab. Rendered as a pill; omitted
+   *  or 0 renders nothing, so a caller can pass a count unconditionally. */
+  badge?: number;
 }
 
 interface Props {
@@ -40,6 +43,18 @@ export default function PageTabs({ tabs, label }: Props) {
             }
           >
             {tab.label}
+            {tab.badge != null && tab.badge > 0 && (
+              <span
+                // Amber rather than the active blue: this is "something needs
+                // you", which must read the same whether the tab is selected.
+                className="ml-1.5 inline-flex min-w-[1.25rem] justify-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-amber-800"
+                // Without this the tab announces as "Team 3", which says nothing
+                // about what the 3 is.
+                aria-label={`${tab.badge} awaiting your attention`}
+              >
+                {tab.badge > 99 ? '99+' : tab.badge}
+              </span>
+            )}
           </Link>
         );
       })}

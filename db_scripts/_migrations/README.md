@@ -1,6 +1,28 @@
 # Migrations
 
-Not all of these are "pre-existing deployments only" — read the section that
+## Adding a column? Don't add a file here.
+
+New columns on tables that `02_schema.sql` / `03_product_schema.sql` already
+create go **in place, in those files** — in the `CREATE TABLE`, and again in that
+file's `IN-PLACE UPGRADES` section as `ALTER ... ADD COLUMN IF NOT EXISTS`.
+
+The two must stay in lock-step. The `CREATE TABLE` is `IF NOT EXISTS`, so on a
+database where the table already exists it is a no-op and the column would never
+appear; the `ALTER` block is what upgrades an existing deployment. Together, one
+re-run of `db_deploy.ps1` brings **any** database current, fresh or not, and the
+folder stops accumulating a file per change.
+
+What still belongs here: anything that **rewrites shape or data** — renames, type
+changes, backfills, one-shot repairs. Those cannot be re-run on every deploy, and
+that is exactly what an in-place `ALTER` block does.
+
+The attendance day-classification, split-shift and face-review columns were
+originally shipped as `21_*` and `22_*` and have been folded into
+`03_product_schema.sql` under that model; the files are gone.
+
+---
+
+Not all of the below are "pre-existing deployments only" — read the section that
 applies to the script you care about.
 
 | Script | Pre-P1.0 upgrade only | In the fresh-install sequence |

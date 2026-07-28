@@ -23,6 +23,10 @@ export const attendanceEventsTable = hrSchema.table('attendance_events', {
   faceMatchScore:     numeric('face_match_score', { precision: 5, scale: 2 }),
   faceMatchPassed:    boolean('face_match_passed'),
   faceReviewStatus:   text('face_review_status'),
+  // TRUE when the punch fell outside every declared segment of the employee's
+  // shift. Still accepted and still counted — the flag only surfaces the day for
+  // review. NULL = no shift/segments to judge against (the non-split default).
+  isOffSegment:       boolean('is_off_segment'),
   ip:                 text('ip'),
   deviceInfo:         jsonb('device_info'),
   createdAt:          timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

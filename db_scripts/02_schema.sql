@@ -3729,3 +3729,25 @@ DECLARE v_db TEXT := current_database();
 BEGIN
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO meta_svc', v_db);
 END; $$;
+
+
+-- ===================================================================
+-- IN-PLACE UPGRADES — columns added to tables this file already creates
+--
+-- Every CREATE TABLE above is `IF NOT EXISTS`, so re-running this file does not
+-- add a column to a table that already exists. This section closes that gap: a
+-- fresh install gets these from the CREATE TABLE, an existing database gets them
+-- here, and no separate migration file is needed per change.
+--
+-- ALTER ... ADD COLUMN IF NOT EXISTS only — never a destructive change, and never
+-- a data backfill (this file is re-run on every deploy).
+-- ===================================================================
+
+-- Profile photo / avatar, also the biometric reference for HR face-attendance.
+-- Kept in lock-step with the iam.users CREATE TABLE above.
+ALTER TABLE iam.users
+  ADD COLUMN IF NOT EXISTS photo_key          TEXT,
+  ADD COLUMN IF NOT EXISTS photo_content_type TEXT,
+  ADD COLUMN IF NOT EXISTS photo_uploaded_at  TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS photo_uploaded_by  UUID,
+  ADD COLUMN IF NOT EXISTS photo_consent_at   TIMESTAMPTZ;

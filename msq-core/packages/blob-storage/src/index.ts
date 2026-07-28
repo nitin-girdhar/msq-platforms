@@ -12,8 +12,12 @@
 // Keys are opaque, caller-chosen relative paths:
 //   avatar/<userId>/<epochMs>.jpg        — enrolled reference photo (immutable;
 //                                           newest key is the active one)
-//   punch/<userId>/<YYYYMMDD>_chkin.jpg  — daily check-in selfie
-//   punch/<userId>/<YYYYMMDD>_chkout.jpg — daily check-out selfie
+//   punch/<userId>/<YYYYMMDD>_chkin_<n>.jpg  — check-in selfie, n-th of the day
+//   punch/<userId>/<YYYYMMDD>_chkout_<n>.jpg — check-out selfie, n-th of the day
+// The <n> suffix exists because a split shift punches several times a day; a
+// fixed <YYYYMMDD>_chkin key overwrote the earlier session's selfie. YYYYMMDD
+// stays LEADING: msq-deploy/retention/retention-cleanup.sh ages selfies out by
+// taking the basename up to the first underscore.
 // The local driver refuses any key that escapes the base directory
 // (path-traversal guard) so a stored key can be echoed back into get() safely.
 // ─────────────────────────────────────────────────────────────────────────────

@@ -617,7 +617,14 @@ GRANT SELECT, INSERT, UPDATE ON TABLE hr.holiday_calendars, hr.holidays TO hr_sv
 GRANT SELECT                 ON TABLE hr.leave_policies, hr.hr_settings TO hr_svc;
 GRANT SELECT, INSERT, UPDATE ON TABLE hr.leave_requests, hr.leave_request_approvals TO hr_svc;
 GRANT SELECT                 ON TABLE hr.leave_request_status_log, hr.leave_ledger TO hr_svc;
-GRANT SELECT, INSERT, UPDATE ON TABLE hr.attendance_rules, hr.shifts, hr.shift_assignments, hr.attendance_regularizations TO hr_svc;
+-- hr.shift_segments must be named explicitly, exactly like hr.shifts: the
+-- ALTER DEFAULT PRIVILEGES below only affects tables created AFTER it runs, and
+-- 03_product_schema.sql creates every hr table before this file executes. An
+-- existing database can appear to work anyway (the default ACL is already in
+-- place from a prior deploy, so a table added later inherits it) while a fresh
+-- install ends up with zero hr_svc privilege on the table -- create-shift then
+-- fails on the segment INSERT with "permission denied".
+GRANT SELECT, INSERT, UPDATE ON TABLE hr.attendance_rules, hr.shifts, hr.shift_segments, hr.shift_assignments, hr.attendance_regularizations TO hr_svc;
 GRANT SELECT, INSERT         ON TABLE hr.attendance_events TO hr_svc;
 GRANT SELECT                 ON TABLE hr.attendance_days TO hr_svc;
 GRANT SELECT ON TABLE

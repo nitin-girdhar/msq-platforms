@@ -714,6 +714,11 @@ app.patch('/hr/holiday-calendars/:id', { ...withAuth }, async (req, reply) => {
 });
 
 // HR — Attendance module (all module-gated by requireModule('attendance') inside hr-service)
+//
+// This gateway is an explicit allowlist with no catch-all, so an hr-service route
+// with no entry here is a 404 the service never sees. Adding an HR route is three
+// edits in ONE change: the hr-service router, an entry here, and the hr-web client
+// method. gateway-route-coverage.test.ts in hr-service fails the build otherwise.
 app.post('/hr/attendance/check-in', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/check-in', req, reply, req.userCtx);
 });
@@ -732,6 +737,11 @@ app.put('/hr/attendance/rules/admin', { ...withAuth }, async (req, reply) => {
 app.get('/hr/attendance/me', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/me', req, reply, req.userCtx);
 });
+// Self-scoped: what the caller's next punch may be right now. Drives the punch
+// button, so a 404 here silently disables check-in/check-out.
+app.get('/hr/attendance/today-state', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/today-state', req, reply, req.userCtx);
+});
 app.get('/hr/attendance/team', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/team', req, reply, req.userCtx);
 });
@@ -741,6 +751,43 @@ app.get('/hr/attendance/today-summary', { ...withAuth }, async (req, reply) => {
 app.get('/hr/attendance/photos/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/attendance/photos/${id}`, req, reply, req.userCtx);
+});
+// Every punch of one employee's work date — the team view carries only the day's
+// first check-in and last check-out, so this is the only way to reach a split
+// shift's middle punches and their selfies.
+app.get('/hr/attendance/events', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/events', req, reply, req.userCtx);
+});
+// HR — Face enrolment & the face-review queue (attendance module)
+app.post('/hr/attendance/face/enroll', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/face/enroll', req, reply, req.userCtx);
+});
+app.get('/hr/attendance/face/me', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/face/me', req, reply, req.userCtx);
+});
+app.delete('/hr/attendance/face/enroll/:userId', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/face/enroll/${userId}`, req, reply, req.userCtx);
+});
+app.get('/hr/attendance/face/status/:userId', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/face/status/${userId}`, req, reply, req.userCtx);
+});
+// Streams image bytes; proxyTo forwards Content-Type and Content-Disposition.
+app.get('/hr/attendance/face/reference/:userId', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/face/reference/${userId}`, req, reply, req.userCtx);
+});
+app.get('/hr/attendance/face-reviews', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/face-reviews', req, reply, req.userCtx);
+});
+app.post('/hr/attendance/face-reviews/:eventId/clear', { ...withAuth }, async (req, reply) => {
+  const { eventId } = req.params as { eventId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/face-reviews/${eventId}/clear`, req, reply, req.userCtx);
+});
+app.post('/hr/attendance/face-reviews/:eventId/reject', { ...withAuth }, async (req, reply) => {
+  const { eventId } = req.params as { eventId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/face-reviews/${eventId}/reject`, req, reply, req.userCtx);
 });
 app.post('/hr/attendance/regularizations', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/regularizations', req, reply, req.userCtx);
@@ -779,6 +826,12 @@ app.post('/hr/shift-assignments', { ...withAuth }, async (req, reply) => {
 app.patch('/hr/shift-assignments/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/shift-assignments/${id}`, req, reply, req.userCtx);
+});
+// Tail of the shift-assignment workflow: re-resolve days that were already
+// resolved. The nightly job only fills days with no row yet, so this is the only
+// way a newly-assigned shift reaches days the employee has already punched.
+app.post('/hr/attendance/recompute', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/recompute', req, reply, req.userCtx);
 });
 
 // HR — active module entitlements for the caller's tenant (drives the web module nav switcher)

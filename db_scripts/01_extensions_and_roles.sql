@@ -46,6 +46,12 @@ CREATE SCHEMA IF NOT EXISTS lms;
 CREATE SCHEMA IF NOT EXISTS marketing;
 CREATE SCHEMA IF NOT EXISTS audit;
 CREATE SCHEMA IF NOT EXISTS ext;
+-- Cross-product messaging config (WhatsApp/email templates). Shared tier, like
+-- entity/iam/audit — communication-service is a cross-product relay, so its
+-- catalog must be readable by every product login. It deliberately does NOT
+-- live in lms/hr/task: 04_roles_and_grants.sql revokes each product schema from
+-- the other products' logins, which would wall the catalog off from them.
+CREATE SCHEMA IF NOT EXISTS comms;
 
 -- ── UUIDv7 generator (RFC 9562 §5.7) ──────────────────────────────
 -- Time-ordered UUIDs: 48-bit ms timestamp prefix eliminates the

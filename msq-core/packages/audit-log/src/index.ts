@@ -23,6 +23,7 @@ export const ACTIVITY_ACTIONS = [
   'lead_transferred',
   'lead_deleted',
   'interaction_created',
+  'whatsapp_sent',
   'follow_up_created',
   'follow_up_updated',
   'follow_up_deleted',

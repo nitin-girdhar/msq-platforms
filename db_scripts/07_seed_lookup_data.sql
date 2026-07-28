@@ -169,6 +169,8 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Record a call, visit or note against a lead.', 8),
 ('lms.leads.timeline.view', 'operation', 'lms.leads', 'View lead timeline',
  'Read a lead''s full activity and ownership history.', 9),
+('lms.leads.whatsapp.send', 'operation', 'lms.leads', 'Send WhatsApp',
+ 'Message a lead on WhatsApp using an approved template. Separate from logging an interaction, because it contacts the customer directly.', 10),
 
 ('lms.followups', 'page', 'lms', 'Follow-ups',
  'The follow-up queue across leads.', 3),
@@ -463,7 +465,7 @@ FROM (VALUES
   'lms','lms.dashboard.view',
   'lms.leads.view','lms.leads.view.own',
   'lms.leads.create','lms.leads.edit','lms.leads.edit.own',
-  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit',
   'lms.history.view','lms.history.view.own',
   'lms.assignments.view',
@@ -488,7 +490,7 @@ FROM (VALUES
   'lms.leads.create','lms.leads.edit','lms.leads.edit.own','lms.leads.edit.team',
   'lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers',
-  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
   'lms.history.view','lms.history.view.own','lms.history.view.team',
   'lms.assignments.view','lms.assignments.edit',
@@ -515,7 +517,7 @@ FROM (VALUES
   'lms.leads.create','lms.leads.edit','lms.leads.edit.own','lms.leads.edit.team',
   'lms.leads.delete','lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers',
-  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
@@ -546,7 +548,7 @@ FROM (VALUES
   'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
   'lms.leads.delete','lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers',
-  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
@@ -605,7 +607,7 @@ FROM (VALUES
   'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
   'lms.leads.delete','lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.any',
-  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
@@ -649,7 +651,7 @@ FROM (VALUES
   'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
   'lms.leads.delete','lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.any',
-  'lms.leads.interaction.log','lms.leads.timeline.view',
+  'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
   'lms.history.view','lms.history.view.own','lms.history.view.team',
   'lms.history.view.org','lms.history.view.tenant',
@@ -745,6 +747,45 @@ JOIN iam.user_roles   r ON r.name = d.role_name AND r.tenant_id IS NULL
 JOIN iam.capabilities c ON c.key = ANY(d.cap_keys)
 ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
 DO UPDATE SET is_granted = EXCLUDED.is_granted;
+
+
+-- ── Back-fill capabilities added after _migrations/19 ───────────────
+-- Every grant block above joins `iam.user_roles ... AND r.tenant_id IS NULL`,
+-- but _migrations/19_tenant_scope_ladder_roles.sql moved the working ladder
+-- roles (sales_representative, senior_sales_executive, org_manager,
+-- org_sr_manager, hr_admin) to one copy PER TENANT, taking a one-time snapshot
+-- of their grants. Only the four anchors (super_admin, tenant_admin, org_admin,
+-- read_only) are still global.
+--
+-- Net effect: a capability introduced AFTER that migration ran lands on the
+-- anchors only, and the per-tenant ladder copies never receive it — so the
+-- reps a feature is built for silently cannot use it.
+--
+-- Rather than re-listing every role name (which drifts, and differs per tenant
+-- once a tenant renames a role), each new capability is pinned to an existing
+-- one with the same audience. Granting WhatsApp wherever interaction logging is
+-- already granted keeps the two in step for every tenant-scoped copy.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.interaction.log'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'lms.leads.whatsapp.send'
+  AND rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO UPDATE SET is_granted = TRUE;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.interaction.log'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'lms.leads.whatsapp.send'
+  AND rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = TRUE;
 
 
 -- ===================================================================
@@ -881,6 +922,75 @@ ON CONFLICT (name) DO NOTHING;
 
 
 -- ===================================================================
+-- COMMS -- MESSAGE TEMPLATES
+-- ===================================================================
+-- Seeded GLOBAL (tenant_id + org_id NULL) so every tenant inherits them. A
+-- tenant or a single branch can override any of these by inserting a row with
+-- the same (module, channel, name) and their own tenant_id/org_id — the
+-- resolver takes the most specific match.
+--
+-- !! The provider_template_name values below are PLACEHOLDERS. WhatsApp sends
+-- !! fail with an Interakt "template not found" error until each one matches a
+-- !! template actually approved in your Interakt/Meta console. Replace them
+-- !! before going live. The email rows need no approval — their copy is right
+-- !! here and we interpolate it ourselves.
+--
+-- body_fields are ORDERED placeholder tokens. The token NAMES are resolved by
+-- the owning product service, which holds its own whitelist: leads-service
+-- knows lead_first_name/rep_name/org_name. A token no resolver recognises is a
+-- config error and fails the send rather than sending a literal '{{1}}'.
+INSERT INTO comms.message_templates
+  (module, channel, name, label, description,
+   provider_template_name, language_code, subject, body_template, preview_text,
+   body_fields, sort_order) VALUES
+
+  -- ── LMS / WhatsApp ────────────────────────────────────────────────
+  ('lms', 'whatsapp', 'lead_intro', 'Introduction',
+   'First contact after a lead comes in.',
+   'lead_intro_v1', 'en', NULL, NULL,
+   'Hi {{1}}, this is {{2}}. Thanks for your interest — I''ll be helping you from here. When is a good time to talk?',
+   ARRAY['lead_first_name','rep_name'], 1),
+  ('lms', 'whatsapp', 'lead_follow_up', 'Follow-up reminder',
+   'Nudge a lead who has gone quiet.',
+   'lead_follow_up_v1', 'en', NULL, NULL,
+   'Hi {{1}}, just following up on our earlier conversation. Let me know if you have any questions — {{2}}',
+   ARRAY['lead_first_name','rep_name'], 2),
+  ('lms', 'whatsapp', 'lead_appointment', 'Appointment confirmation',
+   'Confirm a scheduled visit or call.',
+   'lead_appointment_v1', 'en', NULL, NULL,
+   'Hi {{1}}, your appointment with {{2}} is confirmed. See you soon!',
+   ARRAY['lead_first_name','org_name'], 3),
+  ('lms', 'whatsapp', 'lead_thank_you', 'Thank you',
+   'Send after a visit or a completed conversation.',
+   'lead_thank_you_v1', 'en', NULL, NULL,
+   'Thank you for your time today, {{1}}. Do reach out any time if anything comes up.',
+   ARRAY['lead_first_name'], 4),
+
+  -- ── LMS / Email ───────────────────────────────────────────────────
+  -- Copy lives here, not at a provider. Same {{n}} placeholder convention so
+  -- one resolver serves both channels.
+  ('lms', 'email', 'lead_intro', 'Introduction',
+   'First contact after a lead comes in.',
+   NULL, 'en',
+   'Thanks for your interest, {{1}}',
+   E'Hi {{1}},\n\nThanks for reaching out. I''m {{2}} and I''ll be looking after your enquiry from here.\n\nWhen would be a good time for a quick call?\n\nBest regards,\n{{2}}',
+   'Thanks for your interest, {{1}} — introduction from the assigned rep.',
+   ARRAY['lead_first_name','rep_name'], 1),
+  ('lms', 'email', 'lead_follow_up', 'Follow-up reminder',
+   'Nudge a lead who has gone quiet.',
+   NULL, 'en',
+   'Following up, {{1}}',
+   E'Hi {{1}},\n\nJust following up on our earlier conversation — happy to answer any questions whenever you are ready.\n\nBest regards,\n{{2}}',
+   'Following up, {{1}} — gentle nudge from the assigned rep.',
+   ARRAY['lead_first_name','rep_name'], 2)
+
+-- The WHERE clause is required, not decorative: uix_message_templates_audience_name
+-- is a PARTIAL index, and ON CONFLICT can only infer a partial index when the
+-- predicate is restated here.
+ON CONFLICT (tenant_id, org_id, module, channel, name) WHERE NOT is_deleted DO NOTHING;
+
+
+-- ===================================================================
 -- MARKETING -- PLATFORMS & CAMPAIGN STATUSES
 -- ===================================================================
 
@@ -1007,7 +1117,7 @@ INSERT INTO iam.users
    is_active, is_deleted, deleted_at, deleted_by, created_by, force_password_change, password_changed_at, last_login_at, created_at, updated_at)
 VALUES
   ('870d4958-4a11-4c78-99e0-f240c9f17412', 'e05601c1-bf3e-4b92-b157-8e038bdffab1', 'Root', NULL, 'User',
-   'root@root.com', NULL, '$2b$12$JKkWDgN8P1xNEe.p4LvxU.Pmya5i8ywVg6GRkn7ePBqa6SJczmF7m',
+   'root@root.com', NULL, '$2b$12$7PEk5.dRIUFWSAvR96/XauxtX79YbrMVv1YwihSlsZ5Ko8VInXnIa',
    (SELECT id FROM iam.user_roles WHERE name = 'super_admin'), NULL,
    TRUE, FALSE, NULL, NULL, NULL, FALSE, '2026-07-09 08:35:14+00', NULL, '2026-07-09 08:35:14+00', '2026-07-09 08:35:14+00'),
 

@@ -110,6 +110,7 @@ export const CAPABILITY = {
   LMS_LEADS_TRANSFER:                      'lms.leads.transfer',
   LMS_LEADS_UNASSIGNED_VIEW:               'lms.leads.unassigned.view',
   LMS_LEADS_VIEW:                          'lms.leads.view',
+  LMS_LEADS_WHATSAPP_SEND:                 'lms.leads.whatsapp.send',
   LMS_USERS_MANAGE:                        'lms.users.manage',
   LMS_USERS_VIEW:                          'lms.users.view',
   PLATFORM_WRITE:                          'platform.write',

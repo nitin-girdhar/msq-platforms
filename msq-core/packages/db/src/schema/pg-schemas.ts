@@ -9,3 +9,4 @@ export const auditSchema = pgSchema('audit');
 export const extSchema = pgSchema('ext');
 export const hrSchema = pgSchema('hr');
 export const taskSchema = pgSchema('task');
+export const commsSchema = pgSchema('comms');

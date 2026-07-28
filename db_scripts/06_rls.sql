@@ -210,6 +210,48 @@ CREATE POLICY admin_tenant_config_policy ON iam.role_capabilities AS PERMISSIVE 
 GRANT SELECT                        ON iam.role_capabilities TO app_user, tenant_admin;
 GRANT INSERT, UPDATE, DELETE        ON iam.role_capabilities TO app_user;
 
+-- ── comms.message_templates ─────────────────────────────────────────
+-- Same "global defaults stay visible" shape as iam.role_capabilities above,
+-- extended one level for org_id. A caller must see:
+--   * platform-wide rows (tenant_id IS NULL),
+--   * their tenant's rows aimed at every org (org_id IS NULL),
+--   * their tenant's rows aimed specifically at their own org,
+-- and nothing aimed at a sibling org. Resolution to a single winner
+-- (org > tenant > global) is the caller's ORDER BY; RLS only bounds the
+-- candidate set.
+--
+-- Critically the predicate admits NULL rather than equating it. A plain
+-- `tenant_id = <uuid>` would evaluate NULL for every seeded global row and hide
+-- the entire catalog — the outage _migrations/17_tenant_scope_lms_catalogs.sql
+-- was written to repair. SELECT-only: the catalog is seeded and administered by
+-- root_service, never written on the send path.
+--
+-- DEPENDENCY, easy to trip over: the org -> tenant subquery reads
+-- entity.organizations, which is ITSELF RLS-protected by a policy keyed on
+-- iam.fn_user_active_orgs(app.current_user_id). So this policy only resolves
+-- when app.current_user_id is set too, not just app.current_org_id. withRoleTx
+-- always sets both, so application reads are fine — but a hand-rolled psql
+-- session that sets only current_org_id gets a silent ZERO rows, not an error.
+-- Note that iam.role_capabilities above shares this shape and looks like proof
+-- the pattern is safe; it is not, because every one of its rows is tenant_id
+-- IS NULL, so its first branch always short-circuits and the subquery is never
+-- actually exercised. This table has tenant-owned rows and does exercise it.
+ALTER TABLE comms.message_templates ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON comms.message_templates;
+DROP POLICY IF EXISTS tenant_isolation_policy ON comms.message_templates;
+CREATE POLICY org_isolation_policy ON comms.message_templates AS PERMISSIVE FOR SELECT TO app_user
+  USING (NOT is_deleted
+         AND (tenant_id IS NULL
+              OR (tenant_id = (SELECT tenant_id FROM entity.organizations
+                               WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
+                  AND (org_id IS NULL
+                       OR org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid))));
+CREATE POLICY tenant_isolation_policy ON comms.message_templates AS PERMISSIVE FOR SELECT TO tenant_admin
+  USING (NOT is_deleted
+         AND (tenant_id IS NULL
+              OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid));
+
+
 -- Widen every RLS policy to also name the roles that are MEMBERS of the roles
 -- it already targets.
 --

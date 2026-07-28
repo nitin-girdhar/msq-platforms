@@ -1225,6 +1225,118 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_org_table
   WHERE org_id IS NOT NULL;
 
 -- ===================================================================
+-- COMMS -- CROSS-PRODUCT MESSAGE TEMPLATES
+-- ===================================================================
+-- The catalog of outbound message templates every product picks from:
+-- LMS messaging a lead, HR welcoming a new joiner, Tasks nudging an overdue
+-- item, and whatever ships next. communication-service is a stateless
+-- cross-product relay, so its catalog lives in the shared tier next to
+-- entity/iam/audit rather than inside any one product schema. Putting it in
+-- lms would wall it off outright: 04_roles_and_grants.sql revokes USAGE on
+-- lms/marketing/ext from hr_svc and task_svc.
+--
+-- Resolution is (module, channel, name) narrowed by audience, most specific
+-- wins: an org row beats a tenant row beats a global row. That lets one branch
+-- override the wording of a template without forking it for everyone.
+--
+-- The two channels are genuinely different shapes, which is why the columns
+-- are channel-conditional rather than one-size-fits-all:
+--
+--   whatsapp  Meta forbids business-initiated free text outside the 24h reply
+--             window, so the body lives in the APPROVED TEMPLATE at Meta and we
+--             only send ordered placeholder values. provider_template_name is
+--             the handle; subject/body_template are meaningless and must be NULL.
+--   email     No external approval, so the copy lives HERE in subject +
+--             body_template and we interpolate it ourselves.
+--
+-- header_fields/body_fields are ORDERED placeholder tokens. The table stores
+-- token NAMES only; each product service owns its own whitelist and resolver
+-- (leads-service knows what lead_first_name means, hr-service knows
+-- employee_name). Deliberately no central registry of every product's fields —
+-- that would couple this table to every product's data model.
+CREATE TABLE IF NOT EXISTS comms.message_templates (
+  id                     UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  -- Audience, widest to narrowest. Both NULL = platform-wide default.
+  -- org_id without tenant_id is meaningless, hence the CHECK below.
+  tenant_id              UUID    REFERENCES entity.tenants(id)       ON DELETE CASCADE,
+  org_id                 UUID    REFERENCES entity.organizations(id) ON DELETE CASCADE,
+  -- Which product surface offers this template. Mirrors the vocabulary of
+  -- entity.tenant_modules.module; left unconstrained so a new product can seed
+  -- its templates without a schema change.
+  module                 TEXT    NOT NULL,
+  channel                TEXT    NOT NULL CHECK (channel IN ('whatsapp', 'email')),
+  name                   TEXT    NOT NULL,
+  label                  TEXT    NOT NULL,
+  description            TEXT,
+  -- WhatsApp only: the name approved in the Interakt/Meta console.
+  provider_template_name TEXT,
+  language_code          TEXT    NOT NULL DEFAULT 'en',
+  -- Email only: the copy we send and interpolate ourselves.
+  subject                TEXT,
+  body_template          TEXT,
+  preview_text           TEXT,
+  header_fields          TEXT[]  NOT NULL DEFAULT '{}',
+  body_fields            TEXT[]  NOT NULL DEFAULT '{}',
+  sort_order             INT     NOT NULL DEFAULT 0,
+  is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted             BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at             TIMESTAMPTZ,
+  deleted_by             UUID,
+  created_by             UUID,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+
+  CONSTRAINT ck_message_templates_org_needs_tenant
+    CHECK (org_id IS NULL OR tenant_id IS NOT NULL),
+  -- Each channel must carry its own payload and only its own, so a
+  -- half-configured row fails at seed time rather than at send time.
+  CONSTRAINT ck_message_templates_whatsapp_shape
+    CHECK (channel <> 'whatsapp' OR (
+      provider_template_name IS NOT NULL AND subject IS NULL AND body_template IS NULL)),
+  CONSTRAINT ck_message_templates_email_shape
+    CHECK (channel <> 'email' OR (
+      subject IS NOT NULL AND body_template IS NOT NULL AND provider_template_name IS NULL))
+);
+
+-- NULLS NOT DISTINCT (PG15+) so the global row and a tenant's override of the
+-- same name collide only when they target the same audience. Without it every
+-- NULL tenant_id would be treated as distinct and duplicate globals would slip in.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_message_templates_audience_name
+  ON comms.message_templates (tenant_id, org_id, module, channel, name)
+  NULLS NOT DISTINCT
+  WHERE NOT is_deleted;
+
+CREATE INDEX IF NOT EXISTS idx_message_templates_lookup
+  ON comms.message_templates (module, channel, sort_order)
+  WHERE is_active AND NOT is_deleted;
+
+DROP TRIGGER IF EXISTS trg_message_templates_updated_at ON comms.message_templates;
+CREATE TRIGGER trg_message_templates_updated_at
+  BEFORE UPDATE ON comms.message_templates
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_message_templates_soft_delete ON comms.message_templates;
+CREATE TRIGGER trg_message_templates_soft_delete
+  BEFORE DELETE ON comms.message_templates
+  FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+COMMENT ON TABLE comms.message_templates IS
+  'Cross-product outbound message catalog. Resolve by (module, channel, name), most specific audience wins: org > tenant > global.';
+COMMENT ON COLUMN comms.message_templates.module IS
+  'Product surface offering the template (lms, leave, attendance, tasks, ...). Mirrors entity.tenant_modules.module.';
+COMMENT ON COLUMN comms.message_templates.provider_template_name IS
+  'WhatsApp only. The template name approved in the Interakt/Meta console, sent verbatim to the Interakt API. NULL for email.';
+COMMENT ON COLUMN comms.message_templates.body_template IS
+  'Email only. The body we send and interpolate. NULL for WhatsApp, where the body lives in the approved template at Meta.';
+COMMENT ON COLUMN comms.message_templates.body_fields IS
+  'Ordered placeholder tokens. Token NAMES only — each product service owns its own whitelist and resolver.';
+
+GRANT SELECT ON TABLE comms.message_templates TO app_user, tenant_admin;
+REVOKE INSERT, UPDATE, DELETE ON TABLE comms.message_templates FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES ON TABLE comms.message_templates TO root_service;
+
+
+-- ===================================================================
 -- BUSINESS RULE TRIGGER FUNCTIONS
 -- ===================================================================
 
@@ -2360,6 +2472,7 @@ GRANT  USAGE  ON SCHEMA lms       TO app_user, tenant_admin, root_service;
 GRANT  USAGE  ON SCHEMA marketing TO app_user, tenant_admin, root_service;
 GRANT  USAGE  ON SCHEMA audit     TO app_user, tenant_admin, root_service;
 GRANT  USAGE  ON SCHEMA ext       TO app_user, tenant_admin, root_service;
+GRANT  USAGE  ON SCHEMA comms     TO app_user, tenant_admin, root_service;
 
 DO $$ BEGIN EXECUTE format('GRANT CONNECT ON DATABASE %I TO root_service', current_database()); END; $$;
 
@@ -2421,7 +2534,7 @@ GRANT EXECUTE ON FUNCTION iam.can_assign_to(UUID,UUID,UUID) TO tenant_admin;
 DO $$
 DECLARE s TEXT;
 BEGIN
-  FOREACH s IN ARRAY ARRAY['public','geo','entity','iam','lms','marketing','audit','ext'] LOOP
+  FOREACH s IN ARRAY ARRAY['public','geo','entity','iam','lms','marketing','audit','ext','comms'] LOOP
     EXECUTE format('GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA %I TO root_service', s);
     EXECUTE format('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I TO root_service', s);
     EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT ALL PRIVILEGES ON TABLES    TO root_service', s);
@@ -2497,7 +2610,7 @@ END; $$;
 DO $$
 DECLARE s TEXT;
 BEGIN
-  FOREACH s IN ARRAY ARRAY['public','geo','entity','iam','lms','marketing','audit','ext'] LOOP
+  FOREACH s IN ARRAY ARRAY['public','geo','entity','iam','lms','marketing','audit','ext','comms'] LOOP
     EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO analytics_svc', s);
     EXECUTE format('REVOKE INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I FROM analytics_svc', s);
     EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT ON TABLES TO analytics_svc', s);
@@ -2508,7 +2621,7 @@ END; $$;
 DO $$
 DECLARE s TEXT;
 BEGIN
-  FOREACH s IN ARRAY ARRAY['public','geo','entity','iam','lms','marketing','audit','ext'] LOOP
+  FOREACH s IN ARRAY ARRAY['public','geo','entity','iam','lms','marketing','audit','ext','comms'] LOOP
     EXECUTE format('GRANT USAGE ON SCHEMA %I TO lead_svc, campaign_svc, user_mgmt_svc, notif_svc, intake_svc, tenant_dash_svc, analytics_svc', s);
   END LOOP;
 END; $$;

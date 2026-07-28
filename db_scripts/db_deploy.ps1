@@ -128,6 +128,7 @@ $DemoSeedScripts = @(
 # tenants exist, so it has nothing to fan the catalogs out across.
 $RemainingCoreScripts = @(
     "13_backfill_per_product_roles.sql",
+    "14_scope_comms_templates_to_tenant.sql",
     "_migrations/17_tenant_scope_lms_catalogs.sql",
     "_migrations/19_tenant_scope_ladder_roles.sql"
 )

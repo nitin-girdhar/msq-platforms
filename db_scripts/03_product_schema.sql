@@ -1504,6 +1504,12 @@ ALTER TABLE hr.shift_segments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.shift_segments FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON hr.shift_segments;
 DROP POLICY IF EXISTS tenant_isolation_policy ON hr.shift_segments;
+-- NOTE: `NOT is_deleted` in USING means no app-tier role can ever soft-delete a
+-- segment — an UPDATE that sets is_deleted = TRUE produces a row that no longer
+-- satisfies the policy, and Postgres rejects it ("new row violates row-level
+-- security policy"). Retiring a segment is therefore done with is_active =
+-- FALSE, which the policy permits; see replaceSegments in
+-- hr-service/src/api/v1/attendance/attendance.repository.ts.
 CREATE POLICY org_isolation_policy ON hr.shift_segments AS PERMISSIVE FOR ALL TO app_user
   USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted)
   WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);

@@ -529,9 +529,12 @@ GRANT INSERT, UPDATE ON TABLE
 REVOKE USAGE ON SCHEMA lms, marketing, ext, audit FROM hr_svc, task_svc;
 REVOKE USAGE ON SCHEMA hr, task               FROM lms_svc;
 
-GRANT USAGE ON SCHEMA public, iam, entity, geo, lms, marketing, ext TO lms_svc;
-GRANT USAGE ON SCHEMA public, iam, entity, geo, hr                  TO hr_svc;
-GRANT USAGE ON SCHEMA public, iam, entity, geo, task                TO task_svc;
+-- comms is shared, not a product schema: every product sends messages, so all
+-- three logins read the template catalog. Read-only — the catalog is seeded and
+-- administered, never written on the send path.
+GRANT USAGE ON SCHEMA public, iam, entity, geo, comms, lms, marketing, ext TO lms_svc;
+GRANT USAGE ON SCHEMA public, iam, entity, geo, comms, hr                  TO hr_svc;
+GRANT USAGE ON SCHEMA public, iam, entity, geo, comms, task                TO task_svc;
 
 
 -- ===================================================================
@@ -563,12 +566,14 @@ REVOKE ALL PRIVILEGES ON ALL TABLES    IN SCHEMA task                FROM hr_svc
 -- ===================================================================
 GRANT SELECT ON ALL TABLES IN SCHEMA geo, entity TO lms_svc, hr_svc, task_svc;
 GRANT SELECT ON ALL TABLES IN SCHEMA iam         TO lms_svc, hr_svc, task_svc;
+GRANT SELECT ON ALL TABLES IN SCHEMA comms       TO lms_svc, hr_svc, task_svc;
 GRANT SELECT, INSERT, UPDATE ON TABLE iam.users, iam.user_org_mapping
   TO lms_svc, hr_svc, task_svc;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA geo    GRANT SELECT ON TABLES TO lms_svc, hr_svc, task_svc;
 ALTER DEFAULT PRIVILEGES IN SCHEMA entity GRANT SELECT ON TABLES TO lms_svc, hr_svc, task_svc;
 ALTER DEFAULT PRIVILEGES IN SCHEMA iam    GRANT SELECT ON TABLES TO lms_svc, hr_svc, task_svc;
+ALTER DEFAULT PRIVILEGES IN SCHEMA comms  GRANT SELECT ON TABLES TO lms_svc, hr_svc, task_svc;
 
 
 -- ===================================================================

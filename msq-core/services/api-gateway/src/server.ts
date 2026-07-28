@@ -243,6 +243,18 @@ app.get('/leads/:id/assignment-history', { ...withAuth }, async (req, reply) => 
   const { id } = req.params as { id: string };
   return proxyTo(config.leadsServiceUrl, `/api/v1/leads/${id}/assignment-history`, req, reply, req.userCtx);
 });
+// WhatsApp-to-lead. Not withCommsSend: that guard exists for the direct
+// /communications/* relay routes. Here leads-service is the caller and does its
+// own authorization (lms.leads.whatsapp.send + the per-lead edit scope), which
+// read_only does not hold.
+app.get('/leads/:id/whatsapp/templates', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.leadsServiceUrl, `/api/v1/leads/${id}/whatsapp/templates`, req, reply, req.userCtx);
+});
+app.post('/leads/:id/whatsapp', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.leadsServiceUrl, `/api/v1/leads/${id}/whatsapp`, req, reply, req.userCtx);
+});
 app.get('/leads/:id/follow-ups', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.leadsServiceUrl, `/api/v1/leads/${id}/follow-ups`, req, reply, req.userCtx);
@@ -642,6 +654,10 @@ app.get('/hr/leave/requests/preview', { ...withAuth }, async (req, reply) => {
 });
 app.get('/hr/leave/requests/team', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/leave/requests/team', req, reply, req.userCtx);
+});
+app.patch('/hr/leave/requests/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}`, req, reply, req.userCtx);
 });
 app.post('/hr/leave/requests/:id/approve', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };

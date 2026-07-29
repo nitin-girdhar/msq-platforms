@@ -160,10 +160,11 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      PORT: "3001"
+      # Same port inside and out — see docker-compose.yml for why 3001 was wrong.
+      PORT: "3005"
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
       API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
     ports:
-      - "3005:3001"
+      - "3005:3005"
     depends_on:
       - api-gateway

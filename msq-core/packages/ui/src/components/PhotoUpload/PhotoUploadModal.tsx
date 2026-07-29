@@ -156,27 +156,29 @@ export default function PhotoUploadModal({
   // Stage-aware footer: capture/upload/retake are actions, so they live in the
   // pinned bar (not the scrolling body) — otherwise they can fall below the
   // fold on short viewports and the primary action becomes invisible.
+  // Capture actions sit left, confirm actions right; they stack (confirm row on
+  // top) only when the panel is too narrow for one row, so nothing half-wraps.
   const footer = locked ? (
     <div className="flex justify-end">
-      <Button variant="secondary" onClick={onClose}>
+      <Button variant="secondary" size="md" onClick={onClose}>
         Close
       </Button>
     </div>
   ) : (
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <div className="flex flex-wrap gap-2">
+    <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center gap-2">
         {stage.status === 'streaming' ? (
-          <Button variant="primary" onClick={capture}>
+          <Button variant="primary" size="md" onClick={capture}>
             Capture
           </Button>
         ) : (
           <>
             {cameraSupported && (
-              <Button variant="primary" onClick={startCamera}>
+              <Button variant="primary" size="md" onClick={startCamera}>
                 Use camera
               </Button>
             )}
-            <Button variant="secondary" onClick={() => fileRef.current?.click()}>
+            <Button variant="secondary" size="md" onClick={() => fileRef.current?.click()}>
               Upload from gallery
             </Button>
           </>
@@ -184,18 +186,20 @@ export default function PhotoUploadModal({
         {stage.status === 'captured' && (
           <Button
             variant="ghost"
+            size="md"
             onClick={() => (cameraSupported ? void startCamera() : setStage({ status: 'choose' }))}
           >
             Retake
           </Button>
         )}
       </div>
-      <div className="flex gap-2">
-        <Button variant="ghost" onClick={onClose} disabled={submitting}>
+      <div className="flex items-center justify-end gap-2">
+        <Button variant="ghost" size="md" onClick={onClose} disabled={submitting}>
           Cancel
         </Button>
         <Button
           variant="primary"
+          size="md"
           onClick={submit}
           disabled={stage.status !== 'captured' || !consent || submitting}
           className="!bg-emerald-600 hover:!bg-emerald-700"
@@ -207,14 +211,24 @@ export default function PhotoUploadModal({
   );
 
   return (
-    <Modal open={open} onClose={onClose} title={title} locked={submitting} footer={footer}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={title}
+      locked={submitting}
+      footer={footer}
+      maxWidth="max-w-xl"
+    >
       {locked ? (
         <p className="rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-800">
           {gate?.message ?? 'You cannot change your photo right now.'}
         </p>
       ) : (
-        <div className="flex flex-col gap-4">
-          <div className="flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-slate-100">
+        <div className="flex flex-col gap-3">
+          {/* Height is viewport-relative (not aspect-square) so the preview,
+              consent checkbox and any error all fit between the pinned header
+              and footer — the body never has to scroll. */}
+          <div className="flex h-[min(46vh,20rem)] w-full items-center justify-center overflow-hidden rounded-xl bg-slate-100">
             {stage.status === 'streaming' && (
               <video ref={videoRef} className="h-full w-full object-cover" muted playsInline />
             )}

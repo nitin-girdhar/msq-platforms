@@ -1753,7 +1753,8 @@ CREATE TABLE IF NOT EXISTS hr.attendance_regularizations (
   requested_out       TIMESTAMPTZ,
   reason              TEXT    NOT NULL,
   status              TEXT    NOT NULL DEFAULT 'pending'
-                              CHECK (status IN ('pending','approved','rejected')),
+                              CONSTRAINT chk_attendance_regularizations_status
+                              CHECK (status IN ('pending','approved','rejected','cancelled')),
   approver_id         UUID    REFERENCES iam.users(id)                        ON DELETE SET NULL,
   acted_at            TIMESTAMPTZ,
   approver_comment    TEXT,
@@ -2563,6 +2564,19 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_attendance_rules_day_threshold_order') THEN
     ALTER TABLE hr.attendance_rules
       ADD CONSTRAINT chk_attendance_rules_day_threshold_order CHECK (min_half_day_minutes <= min_full_day_minutes);
+  END IF;
+  -- A requester may withdraw their own still-pending correction: 'cancelled' is
+  -- a fourth terminal status. Databases created before it carry the inline,
+  -- auto-named CHECK from the original CREATE TABLE, so drop that one too — the
+  -- named constraint below is what both fresh and upgraded databases end on.
+  -- The partial unique index is WHERE status='pending', so cancelling frees the
+  -- (user, work_date) slot for a fresh request without any index change.
+  ALTER TABLE hr.attendance_regularizations
+    DROP CONSTRAINT IF EXISTS attendance_regularizations_status_check;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_attendance_regularizations_status') THEN
+    ALTER TABLE hr.attendance_regularizations
+      ADD CONSTRAINT chk_attendance_regularizations_status
+      CHECK (status IN ('pending','approved','rejected','cancelled'));
   END IF;
 END $$;
 

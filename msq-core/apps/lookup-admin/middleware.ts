@@ -1,4 +1,4 @@
-import { createProductMiddleware } from '@platform/ui-kit/middleware';
+import { createProductMiddleware, adminOrigin } from '@platform/ui-kit/middleware';
 
 // Lookup-admin (platform staff tooling). Now runs on the SAME shared factory as
 // lms-web / hr-web / todo-web, replacing a ~90-line hand-rolled copy of
@@ -17,8 +17,15 @@ import { createProductMiddleware } from '@platform/ui-kit/middleware';
 // auth origin instead, and lookup-admin's own origin must be set in
 // NEXT_PUBLIC_ADMIN_URL so auth's open-redirect guard (resolveCallback) accepts
 // the return trip — without it, login would land staff on a product app.
+//
+// `selfOrigin` is NEXT_PUBLIC_ADMIN_URL — the origin the BROWSER reaches this app
+// on. The container listens on 3001 and is published on 3005, and nextUrl reports
+// the listening port, so the callbackUrl used to come back as
+// http://localhost:3001/dashboard — the LMS origin. It passed auth's allowlist
+// (both are ours) and dropped staff into the LMS after signing in.
 export const middleware = createProductMiddleware({
   publicPaths: ['/login', '/change-password'],
+  selfOrigin: adminOrigin(),
 });
 
 export const config = {

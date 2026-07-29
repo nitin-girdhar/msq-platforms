@@ -39,7 +39,7 @@ export default function Button({
     <button
       type={type}
       className={[
-        'inline-flex shrink-0 items-center justify-center font-semibold transition-colors',
+        'inline-flex shrink-0 items-center justify-center whitespace-nowrap font-semibold transition-colors',
         'focus-visible:outline-none focus-visible:ring-2',
         'disabled:cursor-not-allowed disabled:opacity-60',
         SIZES[size],

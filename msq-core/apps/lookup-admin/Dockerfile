@@ -20,5 +20,10 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app /app
-EXPOSE 3001
-CMD ["node_modules/.bin/next", "start", "--port", "3001"]
+# 3005, matching package.json's `start` script and the published port. It used
+# to listen on 3001 and be published on 3005, which put the container's own
+# origin (http://localhost:3001) on top of NEXT_PUBLIC_LMS_URL — anything
+# deriving a URL from the listening port, as the auth bounce once did, produced
+# a valid-looking LMS URL instead of an admin one.
+EXPOSE 3005
+CMD ["node_modules/.bin/next", "start", "--port", "3005"]

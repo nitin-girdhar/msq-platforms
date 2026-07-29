@@ -3,6 +3,11 @@ import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
 import { verifySessionJwt } from './auth/verify-edge';
 import { authOrigin } from './auth/sso';
 
+// Re-exported so an app's middleware.ts can resolve its own public origin for
+// `selfOrigin` without importing the package root (React chrome) into the Edge
+// bundle.
+export { authOrigin, adminOrigin, productOrigins } from './auth/sso';
+
 // Reusable auth gate for a product web app (lms/hr/todo). Each app's
 // `middleware.ts` is a one-liner over this factory. Behavior mirrors the
 // original apps/web middleware but redirects unauthenticated users to the
@@ -22,6 +27,17 @@ export interface ProductMiddlewareOptions {
   // Paths served by this app that must stay public (no auth). Login/change-
   // password live on the auth origin now, so this is usually empty.
   publicPaths?: string[];
+  // This app's own BROWSER-FACING origin, e.g. http://localhost:3005. Used to
+  // build the post-login callbackUrl.
+  //
+  // Without it the callback is built from `request.nextUrl`, which carries the
+  // port the server LISTENS on — inside a container that is the internal port,
+  // not the published one. lookup-admin listens on 3001 and is published on
+  // 3005, so it sent auth `callbackUrl=http://localhost:3001/dashboard`: the
+  // LMS origin, which passes auth's allowlist and silently landed admins in the
+  // LMS after login. Empty/unset keeps the old nextUrl behavior (single-host
+  // dev, where the two agree).
+  selfOrigin?: string;
 }
 
 const DEFAULT_PROTECTED = ['/dashboard', '/api/'];
@@ -29,6 +45,7 @@ const DEFAULT_PROTECTED = ['/dashboard', '/api/'];
 export function createProductMiddleware(options: ProductMiddlewareOptions = {}) {
   const protectedPrefixes = options.protectedPrefixes ?? DEFAULT_PROTECTED;
   const publicPaths = new Set(options.publicPaths ?? []);
+  const selfOrigin = (options.selfOrigin ?? '').replace(/\/$/, '');
 
   return async function middleware(request: NextRequest): Promise<NextResponse> {
     const { pathname } = request.nextUrl;
@@ -43,7 +60,7 @@ export function createProductMiddleware(options: ProductMiddlewareOptions = {}) 
     const payload = token ? await verifySessionJwt(token) : null;
 
     if (!payload) {
-      return bounce(request, pathname);
+      return bounce(request, pathname, selfOrigin);
     }
 
     // Force password change: send interactive traffic to the auth origin's
@@ -61,13 +78,16 @@ export function createProductMiddleware(options: ProductMiddlewareOptions = {}) 
 // Redirect to the shared auth origin's login, preserving the full URL the user
 // was trying to reach so login can return them here (no re-login when they
 // arrived via a product switch — the cookie is already shared on .app.com).
-function bounce(request: NextRequest, pathname: string): NextResponse {
+function bounce(request: NextRequest, pathname: string, selfOrigin: string): NextResponse {
   const isApiRoute = pathname.startsWith('/api/');
   if (isApiRoute) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const origin = authOrigin();
-  const callbackUrl = request.nextUrl.href;
+  // Prefer the configured public origin: nextUrl reports the port this process
+  // listens on, which is the container-internal one behind a port mapping.
+  const { pathname: path, search } = request.nextUrl;
+  const callbackUrl = selfOrigin ? `${selfOrigin}${path}${search}` : request.nextUrl.href;
   if (origin) {
     const loginUrl = new URL('/login', origin);
     loginUrl.searchParams.set('callbackUrl', callbackUrl);

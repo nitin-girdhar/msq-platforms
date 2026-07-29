@@ -174,11 +174,15 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      PORT: "3001"
+      # Same port inside and out. Publishing 3005 onto a container listening on
+      # 3001 made the container's own origin identical to NEXT_PUBLIC_LMS_URL,
+      # so a callback URL derived from the listening port passed auth's
+      # allowlist as the LMS and sent admins there after login.
+      PORT: "3005"
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
       API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
     ports:
-      - "3005:3001"
+      - "3005:3005"
     depends_on:
       - api-gateway
 

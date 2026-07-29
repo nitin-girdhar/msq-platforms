@@ -18,6 +18,17 @@ export interface NavItem {
    * other, and showing or hiding an item becomes a DB change, not a deploy.
    */
   capability: CapabilityKey;
+  /**
+   * Gate on `capability` EXACTLY (plain `can()`) instead of the nav-node rule in
+   * {@link holdsUsableNode}.
+   *
+   * Set this when the entry is guarded by an OPERATION rather than a tool/page
+   * node — e.g. `admin.roles.manage`, which the seed hangs directly off the
+   * `admin` tool with nothing beneath it. holdsUsableNode() demands a granted
+   * descendant, so an operation key can never satisfy it and the item would be
+   * invisible to EVERY user, super admin included.
+   */
+  exact?: boolean;
 }
 
 /**
@@ -55,7 +66,8 @@ export function holdsUsableNode(
  * Filter a product's nav down to what the acting user may actually open.
  *
  * An item appears when its page node is openable per {@link holdsUsableNode} —
- * granted, with something granted beneath it.
+ * granted, with something granted beneath it — or, for an item marked `exact`,
+ * when the actor simply holds the operation it names.
  *
  * The list comes from /auth/me, resolved from the same DB matrix the services
  * gate on. Still a UX affordance, not the boundary — the gateway, the route-level
@@ -66,7 +78,9 @@ export function filterNav(
   actor: CapabilityHolder | null | undefined,
 ): NavItem[] {
   if (!actor) return [];
-  return items.filter((item) => holdsUsableNode(actor, item.capability));
+  return items.filter((item) =>
+    item.exact ? can(actor, item.capability) : holdsUsableNode(actor, item.capability),
+  );
 }
 
 /**

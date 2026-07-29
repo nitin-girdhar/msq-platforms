@@ -20,6 +20,21 @@ describe('filterNav (flat)', () => {
   it('fails closed on a null actor', () => {
     expect(filterNav([ITEM('a', 'admin.lookups')], null)).toEqual([]);
   });
+
+  it('hides an operation-gated item without `exact` — nothing is ever beneath a leaf', () => {
+    const items = [ITEM('a', 'admin.roles.manage')];
+    expect(filterNav(items, actor(['admin', 'admin.roles.manage']))).toEqual([]);
+  });
+
+  it('keeps an `exact` item on a plain grant of its operation', () => {
+    const items = [{ ...ITEM('a', 'admin.roles.manage'), exact: true }];
+    expect(filterNav(items, actor(['admin.roles.manage'])).map((i) => i.id)).toEqual(['a']);
+  });
+
+  it('still fails closed on an `exact` item the actor does not hold', () => {
+    const items = [{ ...ITEM('a', 'admin.roles.manage'), exact: true }];
+    expect(filterNav(items, actor(['admin.lookups.manage']))).toEqual([]);
+  });
 });
 
 describe('filterNavGroups', () => {

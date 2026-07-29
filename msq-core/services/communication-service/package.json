@@ -14,6 +14,7 @@
     "dev:local": "tsx watch --env-file .env src/server.ts"
   },
   "dependencies": {
+    "@platform/http": "workspace:*",
     "@platform/service-auth": "workspace:*",
     "fastify": "^5.2.1",
     "nodemailer": "^9.0.3",

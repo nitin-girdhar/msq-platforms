@@ -205,6 +205,18 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  msq-core/packages/http:
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.20.1
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   msq-core/packages/platform-authz:
     dependencies:
       '@platform/auth-constants':
@@ -247,6 +259,10 @@ importers:
         version: 5.9.3
 
   msq-core/packages/service-auth:
+    dependencies:
+      '@platform/auth-constants':
+        specifier: workspace:*
+        version: link:../auth-constants
     devDependencies:
       '@types/node':
         specifier: ^22
@@ -322,9 +338,6 @@ importers:
       '@platform/audit-log':
         specifier: workspace:*
         version: link:../../packages/audit-log
-      '@platform/auth-constants':
-        specifier: workspace:*
-        version: link:../../packages/auth-constants
       '@platform/authz':
         specifier: workspace:*
         version: link:../../packages/platform-authz
@@ -383,6 +396,9 @@ importers:
       '@platform/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@platform/http':
+        specifier: workspace:*
+        version: link:../../packages/http
       '@platform/service-auth':
         specifier: workspace:*
         version: link:../../packages/service-auth
@@ -417,6 +433,9 @@ importers:
 
   msq-core/services/communication-service:
     dependencies:
+      '@platform/http':
+        specifier: workspace:*
+        version: link:../../packages/http
       '@platform/service-auth':
         specifier: workspace:*
         version: link:../../packages/service-auth
@@ -472,6 +491,9 @@ importers:
       '@platform/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@platform/http':
+        specifier: workspace:*
+        version: link:../../packages/http
       '@platform/rbac':
         specifier: workspace:*
         version: link:../../packages/rbac
@@ -893,6 +915,9 @@ importers:
       '@platform/db':
         specifier: workspace:*
         version: link:../../../msq-core/packages/db
+      '@platform/http':
+        specifier: workspace:*
+        version: link:../../../msq-core/packages/http
       '@platform/rbac':
         specifier: workspace:*
         version: link:../../../msq-core/packages/rbac
@@ -939,6 +964,9 @@ importers:
       '@platform/db':
         specifier: workspace:*
         version: link:../../../msq-core/packages/db
+      '@platform/http':
+        specifier: workspace:*
+        version: link:../../../msq-core/packages/http
       '@platform/service-auth':
         specifier: workspace:*
         version: link:../../../msq-core/packages/service-auth
@@ -982,6 +1010,9 @@ importers:
       '@platform/db':
         specifier: workspace:*
         version: link:../../../msq-core/packages/db
+      '@platform/service-auth':
+        specifier: workspace:*
+        version: link:../../../msq-core/packages/service-auth
       '@platform/types':
         specifier: workspace:*
         version: link:../../../msq-core/packages/types

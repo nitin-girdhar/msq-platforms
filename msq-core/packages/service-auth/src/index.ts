@@ -1,3 +1,4 @@
+import { requireStrongSecret } from '@platform/auth-constants';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 // Shared inter-service authentication logic for backend services.
@@ -99,4 +100,54 @@ export function readAuthContext(
       tenant_id: header(headers, 'x-tenant-id') || '',
     },
   };
+}
+
+/**
+ * Boot-time gate for INTERNAL_SERVICE_SECRET — the shared value this module's
+ * {@link checkInternalSecret} compares against, i.e. the whole basis on which a
+ * downstream service trusts that a request came THROUGH the gateway rather than
+ * around it.
+ *
+ * Previously only api-gateway and identity-service validated it. Every other
+ * service (admin, communication, leads, notifications, meta, hr, tasks) read
+ * `process.env['INTERNAL_SERVICE_SECRET']` directly at module scope across ~20
+ * call sites and checked nothing, so:
+ *
+ *   - a placeholder or too-short secret was accepted platform-wide, even though
+ *     the gateway itself would refuse to boot on one; and
+ *   - a MISSING secret silently degraded checkInternalSecret to "always deny",
+ *     turning every proxied request into a 401 that reads like an auth bug
+ *     rather than the config error it is.
+ *
+ * Call once from each service's startup, BEFORE it accepts traffic. Fails hard
+ * by design — a service that cannot authenticate the gateway is not usefully
+ * "up", and a crash-looping container is visible in a way a log line is not.
+ * Same shape and reasoning as `assertDbEnv` in @platform/db.
+ *
+ * Lives here rather than in @platform/auth-constants because that package is
+ * imported by the product apps' Next.js Edge middleware and therefore carries no
+ * `@types/node` — it cannot reference `process`. service-auth is server-only.
+ */
+export function assertInternalServiceSecret(opts: {
+  nodeEnv: string;
+  logPrefix?: string;
+}): void {
+  const prefix = opts.logPrefix ?? '';
+  const value = process.env['INTERNAL_SERVICE_SECRET'];
+
+  // Absence is checked in EVERY environment, not just production: without it the
+  // service rejects all gateway traffic, which is a broken deployment anywhere.
+  if (!value) {
+    throw new Error(
+      `${prefix}INTERNAL_SERVICE_SECRET is required — without it every request ` +
+        `proxied from the api-gateway is rejected as unauthorized.`,
+    );
+  }
+
+  // Placeholder/length enforcement stays production-only so local dev keeps
+  // working with the .env.example defaults.
+  requireStrongSecret('INTERNAL_SERVICE_SECRET', value, {
+    nodeEnv: opts.nodeEnv,
+    logPrefix: prefix,
+  });
 }

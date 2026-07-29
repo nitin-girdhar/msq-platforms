@@ -1,6 +1,6 @@
 import { jwtVerify, importSPKI, decodeProtectedHeader } from 'jose';
 import type { JwtPayload } from '@platform/types';
-import { JWT_ISSUER, JWT_AUDIENCE } from '@platform/auth-constants';
+import { JWT_ISSUER, JWT_AUDIENCE, hs256Accepted } from '@platform/auth-constants';
 
 // Edge- and Node-safe session-token verification shared by every product web
 // app (its `middleware.ts`) and the server session helpers. Depends only on
@@ -43,6 +43,10 @@ export async function verifySessionJwt(token: string): Promise<JwtPayload | null
     if (rsaKey) {
       key = await rsaKey;
     } else {
+      // Once JWT_ALLOW_HS256=false, a product app refuses HS256 tokens outright.
+      // This is also what finally lets JWT_SECRET be removed from the product
+      // app containers entirely — see hs256Accepted() for the cutover sequence.
+      if (!hs256Accepted(process.env['JWT_ALLOW_HS256'])) return null;
       const secret = process.env['JWT_SECRET'];
       if (!secret) return null;
       key = new TextEncoder().encode(secret);

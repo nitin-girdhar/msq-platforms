@@ -1,3 +1,5 @@
+import { timeoutFromEnv } from '@platform/http';
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`[communication-service] Missing required env var: ${name}`);
@@ -29,6 +31,11 @@ export const config = {
   interakt: {
     apiKey: interaktApiKey ?? '',
     baseUrl: process.env['INTERAKT_API_BASE_URL'] ?? 'https://api.interakt.ai/v1/public/',
+    // Third-party network egress — the least trustworthy dependency here and the
+    // one most likely to hang. Kept short: a WhatsApp send sits in the latency
+    // path of a user-facing request, and it is better to report a failure the
+    // user can retry than to hold the connection.
+    timeoutMs: timeoutFromEnv('INTERAKT_TIMEOUT_MS', 10_000),
   },
 
   isEmailConfigured: Boolean(smtpHost && smtpUser && smtpPass && smtpFromEmail),

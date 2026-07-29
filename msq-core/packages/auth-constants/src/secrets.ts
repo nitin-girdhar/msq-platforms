@@ -61,3 +61,36 @@ export function requireStrongSecret(
 
   return value;
 }
+
+/**
+ * Whether legacy HS256 session tokens may still be accepted.
+ *
+ * Both verifiers (identity-service, api-gateway) and the shared edge verifier
+ * pick their key from the token's own `alg` header so HS256 and RS256 can
+ * coexist during the RS256 rollout. That selection is safe in itself — an
+ * HS256 token is verified with the HMAC secret, never with the RSA public key,
+ * so it is not the classic algorithm-confusion bug.
+ *
+ * The problem is that there was no way to ever STOP accepting HS256. While it
+ * is accepted, RS256 buys nothing security-wise: the RSA private key may live
+ * only in identity-service, but `JWT_SECRET` mints equally valid tokens and has
+ * to be present in every service that verifies. The forgery blast radius stays
+ * "anyone who can read JWT_SECRET anywhere", which is exactly what moving to an
+ * asymmetric key is supposed to shrink.
+ *
+ * Setting `JWT_ALLOW_HS256=false` is therefore the last step of the migration,
+ * and the one that makes the earlier steps worth doing:
+ *
+ *   1. configure JWT_PRIVATE_KEY + JWT_KID on identity-service (signs RS256),
+ *      and JWT_PUBLIC_KEY everywhere that verifies;
+ *   2. wait out one token lifetime so no HS256 tokens remain in circulation;
+ *   3. set JWT_ALLOW_HS256=false everywhere;
+ *   4. delete JWT_SECRET from every service that does not sign.
+ *
+ * Defaults to allowing HS256 so an existing deployment is unaffected until the
+ * operator opts in. ONLY the exact string 'false' disables it — a typo must not
+ * silently keep a migration half-finished while looking complete.
+ */
+export function hs256Accepted(rawEnvValue: string | undefined): boolean {
+  return rawEnvValue !== 'false';
+}

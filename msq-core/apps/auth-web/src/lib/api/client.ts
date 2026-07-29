@@ -4,7 +4,12 @@ import { createApiClient } from '@platform/ui-kit';
 // wrapper (error normalization, credentials, JSON handling) lives in
 // @platform/ui-kit. Product domain namespaces (leads, leave, tasks) live in
 // their own product apps — never here.
-const { request } = createApiClient('/api');
+// redirectOnUnauthorized is OFF for this app specifically. auth-web IS the login
+// surface: here a 401 means "wrong credentials" or "not signed in yet", which is
+// a normal, expected outcome the form must render. Reloading on it would discard
+// the typed password and the error message, and /auth/me deliberately 401s for
+// an anonymous visitor. Product apps keep the redirect on — see createApiClient.
+const { request } = createApiClient('/api', { redirectOnUnauthorized: false });
 
 export const auth = {
   // licensed_products rides alongside the user because the auth cookie is

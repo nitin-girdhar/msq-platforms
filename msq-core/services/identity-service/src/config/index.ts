@@ -1,4 +1,5 @@
 import { requireStrongSecret } from '@platform/auth-constants';
+import { timeoutFromEnv } from '@platform/http';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -56,9 +57,17 @@ export const config = {
   jwtPrivateKey: process.env['JWT_PRIVATE_KEY'],
   jwtPublicKey: process.env['JWT_PUBLIC_KEY'],
   jwtKid: process.env['JWT_KID'],
+  // Set to 'false' to complete the RS256 migration — see hs256Accepted() in
+  // @platform/auth-constants for the full cutover sequence. Raw value; the
+  // shared predicate decides what counts as disabled.
+  jwtAllowHs256: process.env['JWT_ALLOW_HS256'],
   // leads-service owns lms.marketing_leads (N-5) — identity invokes it for the
   // branch-move/deactivation lead-reassignment saga rather than writing lms.*.
   leadsServiceUrl: process.env['LEADS_SERVICE_URL'] ?? 'http://localhost:4002',
+  // Deadline for that saga call. Deliberately long — a branch move can reassign
+  // a lot of leads — but bounded, because until it returns identity is holding
+  // the org/role change open. See lib/leads-service-client.ts.
+  leadsServiceTimeoutMs: timeoutFromEnv('IDENTITY_LEADS_SERVICE_TIMEOUT_MS', 30_000),
   // Profile-photo / avatar storage. Shares one volume with hr-service (which
   // reads the avatar as the biometric reference for face attendance), so both
   // MUST resolve to the same directory — see @platform/blob-storage.

@@ -1,5 +1,5 @@
 import { jwtVerify, importSPKI, decodeProtectedHeader } from 'jose';
-import { JWT_ISSUER, JWT_AUDIENCE } from '@platform/auth-constants';
+import { JWT_ISSUER, JWT_AUDIENCE, hs256Accepted } from '@platform/auth-constants';
 import type { JwtPayload, JwtVerifyResult } from '@platform/types';
 import { config } from '../config.js';
 import { isTokenRevoked, revokeToken } from '@platform/db';
@@ -53,6 +53,11 @@ export async function verifyJwtEdge(token: string): Promise<JwtVerifyResult> {
     }
 
     const rsaKey = header.alg === 'RS256' ? getRsaPublicKey() : null;
+    // Post-migration (JWT_ALLOW_HS256=false) an HS256 token is refused without
+    // the shared secret ever being consulted — see hs256Accepted().
+    if (!rsaKey && !hs256Accepted(config.jwtAllowHs256)) {
+      return { ok: false, reason: 'invalid' };
+    }
     const key = rsaKey ? await rsaKey : encoder.encode(config.jwtSecret);
     const algorithms = rsaKey ? ['RS256'] : ['HS256'];
 

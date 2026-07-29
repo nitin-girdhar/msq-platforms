@@ -4,6 +4,6 @@
 // from a 'use client' module. Kept behind the `./server` export so this code
 // is never bundled into the browser build.
 
-export { getServerSession, GATEWAY_URL } from './server-session';
+export { getServerSession, GATEWAY_URL, type ServerSession } from './server-session';
 export { requireSession, type AuthenticatedSession } from './require-session';
 export { getEnabledModules, type PlatformModule } from './modules';

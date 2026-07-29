@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { findKnownUserContacts, uniqContacts, last10Digits } from '@platform/db';
+import { fetchWithTimeout } from '@platform/http';
 import { config } from '../config.js';
 
 interface CommsBody {
@@ -28,14 +29,25 @@ async function findUnknownLeadContacts(
 ): Promise<{ emails: string[]; phoneKeys: string[] }> {
   if (emails.length === 0 && phoneKeys.length === 0) return { emails: [], phoneKeys: [] };
 
-  const response = await fetch(`${config.leadsServiceUrl}/api/v1/internal/leads/known-contacts`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Internal-Secret': config.serviceSecret,
-    },
-    body: JSON.stringify({ tenant_id: tenantId, emails, phone_keys: phoneKeys }),
-  });
+  // A timeout here lands in the same fail-closed branch as an error response
+  // below: if leads-service cannot confirm a recipient IN TIME, the recipient
+  // stays unknown and the send is refused. Failing open on a slow dependency
+  // would turn the allowlist into an open relay under load.
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(`${config.leadsServiceUrl}/api/v1/internal/leads/known-contacts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Secret': config.serviceSecret,
+      },
+      body: JSON.stringify({ tenant_id: tenantId, emails, phone_keys: phoneKeys }),
+      timeoutMs: config.knownContactsTimeoutMs,
+      target: 'leads-service/known-contacts',
+    });
+  } catch {
+    return { emails, phoneKeys };
+  }
 
   const body = (await response.json().catch(() => null)) as KnownLeadContactsResponse | null;
   if (!response.ok || !body?.success || !body.data) {

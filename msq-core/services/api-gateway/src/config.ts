@@ -1,4 +1,5 @@
 import { requireStrongSecret as sharedRequireStrongSecret } from '@platform/auth-constants';
+import { timeoutFromEnv } from '@platform/http';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -60,6 +61,26 @@ export const config = {
   // When unset, verification falls back to the legacy HS256 shared secret.
   jwtPublicKey: process.env['JWT_PUBLIC_KEY'],
   jwtKid: process.env['JWT_KID'],
+  // Set to 'false' to stop accepting legacy HS256 tokens once the RS256
+  // rollout is complete — see hs256Accepted() in @platform/auth-constants.
+  jwtAllowHs256: process.env['JWT_ALLOW_HS256'],
+
+  // ── Outbound timeouts ─────────────────────────────────────────────────────
+  // Node's fetch has no default timeout, so before these existed a single wedged
+  // upstream could pin gateway sockets open until the process died. Each budget
+  // is separately tunable because the call sites have different latency shapes.
+
+  // Ordinary proxied request/response. Generous enough for the slowest legitimate
+  // work behind the gateway (attendance exports, analytics rollups) while still
+  // bounded. Raise only if a real endpoint needs it — do not disable.
+  proxyTimeoutMs: timeoutFromEnv('GATEWAY_PROXY_TIMEOUT_MS', 30_000),
+  // SSE (/notifications/stream): bounds ONLY the wait for response headers. The
+  // event stream that follows is deliberately unbounded — see proxySSE.
+  sseConnectTimeoutMs: timeoutFromEnv('GATEWAY_SSE_CONNECT_TIMEOUT_MS', 10_000),
+  // The known-contacts recipient allowlist lookup on the public comms path. Sits
+  // in the latency path of an outbound message send and fails CLOSED, so it is
+  // kept short: a slow leads-service should block the send quickly, not hang it.
+  knownContactsTimeoutMs: timeoutFromEnv('GATEWAY_KNOWN_CONTACTS_TIMEOUT_MS', 5_000),
 } as const;
 
 if (config.nodeEnv === 'production') {

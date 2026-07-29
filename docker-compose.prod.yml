@@ -53,3 +53,23 @@ services:
   communication-service:
     environment:
       NODE_ENV: production
+
+  # The web apps were previously left out of this overlay entirely, so they ran
+  # in production with NODE_ENV unset. For a Next.js app that is more than a
+  # logging concern — `next start` reads NODE_ENV, and the product apps'
+  # middleware/config paths branch on it the same way the services do.
+  #
+  # Ports: in production Caddy (the `sso-proxy` profile) is the only thing that
+  # should sit on the host network; the base file publishes 3000/3001 so the apps
+  # are directly reachable in local dev. `!override` is REQUIRED — Compose merges
+  # `ports` by CONCATENATING, so a plain `ports: []` is a no-op and the base
+  # file's publish survives. Verify with `docker compose config`.
+  auth-web:
+    environment:
+      NODE_ENV: production
+    ports: !override []
+
+  lookup-admin:
+    environment:
+      NODE_ENV: production
+    ports: !override []

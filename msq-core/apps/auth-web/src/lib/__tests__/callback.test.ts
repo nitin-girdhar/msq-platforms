@@ -4,7 +4,7 @@ import { resolveCallback, sessionDestination, NO_ACCESS_PATH } from '../callback
 
 // productOrigins()/allowedRedirectOrigins() read these at call time, so each test
 // sets the topology it needs rather than relying on the ambient environment.
-const ENV_KEYS = ['NEXT_PUBLIC_AUTH_URL', 'NEXT_PUBLIC_LMS_URL', 'NEXT_PUBLIC_HR_URL', 'NEXT_PUBLIC_TASK_URL'];
+const ENV_KEYS = ['NEXT_PUBLIC_AUTH_URL', 'NEXT_PUBLIC_LMS_URL', 'NEXT_PUBLIC_HR_URL', 'NEXT_PUBLIC_TASK_URL', 'NEXT_PUBLIC_ADMIN_URL'];
 const saved: Record<string, string | undefined> = {};
 
 function splitTopology() {
@@ -12,6 +12,7 @@ function splitTopology() {
   process.env['NEXT_PUBLIC_LMS_URL'] = 'https://lms.app.com';
   process.env['NEXT_PUBLIC_HR_URL'] = 'https://hr.app.com';
   process.env['NEXT_PUBLIC_TASK_URL'] = 'https://todo.app.com';
+  process.env['NEXT_PUBLIC_ADMIN_URL'] = 'https://admin.app.com';
 }
 
 function singleHostDev() {
@@ -96,5 +97,31 @@ describe('sessionDestination', () => {
   it('falls back to a bare path in single-host dev', () => {
     singleHostDev();
     expect(sessionDestination(['hr'], sessionWith(HR_ONLY))).toBe('/attendance');
+  });
+});
+
+// lookup-admin bounces to this auth origin like any product app, but it is NOT
+// a product: it must be an accepted RETURN target without ever becoming a
+// landing destination or appearing in the product switcher.
+describe('resolveCallback — lookup-admin origin', () => {
+  beforeEach(splitTopology);
+
+  it('honors a callback back to the admin console', () => {
+    expect(resolveCallback('https://admin.app.com/dashboard/users')).toBe(
+      'https://admin.app.com/dashboard/users',
+    );
+  });
+
+  it('rejects the admin origin when NEXT_PUBLIC_ADMIN_URL is unset', () => {
+    delete process.env['NEXT_PUBLIC_ADMIN_URL'];
+    expect(resolveCallback('https://admin.app.com/dashboard')).toBeNull();
+  });
+
+  it('never lands a user on the admin console by default', () => {
+    // sessionDestination reads productOrigins(), which deliberately excludes the
+    // admin origin — an LMS-capable user goes to LMS, never to admin.
+    expect(sessionDestination(['lms'], sessionWith(LMS_ONLY))).toBe(
+      'https://lms.app.com/dashboard/leads',
+    );
   });
 });

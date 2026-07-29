@@ -1,46 +1,28 @@
-const BASE = '/api';
+import { createApiClient } from '@platform/ui-kit';
 
-async function request<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const headers: Record<string, string> = { ...options.headers as Record<string, string> };
-  if (options.body) {
-    headers['Content-Type'] = 'application/json';
-  }
+// Was a hand-rolled copy of the same wrapper. The shared one additionally
+// flattens Zod `details` into a readable message and bounces to login on a 401
+// instead of surfacing "Unauthorized" as a toast on a page that then keeps
+// rendering stale data.
+const { request } = createApiClient('/api');
 
-  const res = await fetch(`${BASE}${path}`, {
-    ...options,
-    headers,
-    credentials: 'include',
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw Object.assign(new Error((err as { error?: string }).error ?? res.statusText), {
-      status: res.status,
-      body: err,
-    });
-  }
-
-  if (res.status === 204 || res.headers.get('content-length') === '0') {
-    return undefined as T;
-  }
-  return res.json() as Promise<T>;
-}
+// Separate instance with the 401 redirect OFF, for the auth surface only. On the
+// login form a 401 means "wrong credentials" — a normal outcome the form must
+// render — and reloading would discard the typed password and the error message.
+const { request: authRequest } = createApiClient('/api', { redirectOnUnauthorized: false });
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 export const auth = {
   login: (email: string, password: string, org_id?: string) =>
-    request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/login', {
+    authRequest<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password, org_id }),
     }),
 
-  logout: () => request<{ success: true; data: null }>('/auth/logout', { method: 'POST' }),
+  logout: () => authRequest<{ success: true; data: null }>('/auth/logout', { method: 'POST' }),
 
-  me: () => request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/me'),
+  me: () => authRequest<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/me'),
 };
 
 // ── Lookups ───────────────────────────────────────────────────────────────────

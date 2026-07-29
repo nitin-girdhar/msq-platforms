@@ -1,3 +1,4 @@
+import { fetchWithTimeout, UpstreamTimeoutError } from '@platform/http';
 import { config } from '../../config/index.js';
 
 // ── Interakt API types ──────────────────────────────────────────────────────
@@ -58,21 +59,48 @@ async function interaktRequest(
   body: Record<string, unknown>,
 ): Promise<InteraktApiResponse> {
   const url = `${config.interakt.baseUrl}${endpoint}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Basic ${config.interakt.apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
 
-  const data = await response.json() as InteraktApiResponse;
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${config.interakt.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      timeoutMs: config.interakt.timeoutMs,
+      // Never the full URL: it is a third-party endpoint and the error text is
+      // surfaced upward.
+      target: 'interakt',
+    });
+  } catch (err) {
+    if (err instanceof UpstreamTimeoutError) {
+      throw new Error(`Interakt API did not respond within ${err.timeoutMs}ms`);
+    }
+    throw new Error(`Could not reach the Interakt API: ${(err as Error).message}`);
+  }
+
+  // Read the body as text first and parse defensively. Interakt sits behind a
+  // CDN, so a 5xx can arrive as an HTML error page — the previous
+  // `await response.json()` ran BEFORE the `response.ok` check and threw an
+  // opaque JSON parse error, hiding the real status from the caller.
+  const raw = await response.text();
+  let data: InteraktApiResponse | null = null;
+  try {
+    data = raw ? (JSON.parse(raw) as InteraktApiResponse) : null;
+  } catch {
+    data = null;
+  }
 
   if (!response.ok) {
     throw new Error(
-      `Interakt API error (${response.status}): ${data.message ?? 'Unknown error'}`,
+      `Interakt API error (${response.status}): ${data?.message ?? (raw.slice(0, 200) || 'Unknown error')}`,
     );
+  }
+
+  if (!data) {
+    throw new Error(`Interakt API returned a non-JSON success body (${response.status})`);
   }
 
   return data;

@@ -1,8 +1,6 @@
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { jwtVerify } from 'jose';
-import { AUTH_COOKIE_NAME, JWT_ISSUER, JWT_AUDIENCE } from '@platform/auth-constants';
+import { getServerSession } from '@platform/ui-kit/server';
 import LoginForm from '@/components/auth/LoginForm';
 
 export const metadata: Metadata = {
@@ -16,25 +14,13 @@ interface LoginPageProps {
   searchParams: Promise<{ callbackUrl?: string }>;
 }
 
-const API_GATEWAY = process.env['API_GATEWAY_INTERNAL_URL'] ?? 'http://localhost:4000';
-
+// Was a third hand-rolled copy of the JWT check — hardcoded to HS256, so it
+// would have started reporting every RS256-signed session as unauthenticated and
+// stranded already-logged-in staff on this page. getServerSession does the same
+// two steps (verify the token, then confirm the session is live via /auth/me)
+// with alg selection driven by the token itself.
 async function isAuthenticated(): Promise<boolean> {
-  try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(AUTH_COOKIE_NAME)?.value;
-    if (!token) return false;
-    const secret = new TextEncoder().encode(process.env['JWT_SECRET']);
-    await jwtVerify(token, secret, { algorithms: ['HS256'], issuer: JWT_ISSUER, audience: JWT_AUDIENCE });
-    // JWT is cryptographically valid — also verify the session is live with the auth service
-    const cookieHeader = cookieStore.getAll().map(c => `${c.name}=${c.value}`).join('; ');
-    const res = await fetch(`${API_GATEWAY}/auth/me`, {
-      headers: { cookie: cookieHeader },
-      cache: 'no-store',
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return (await getServerSession()) !== null;
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {

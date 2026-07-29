@@ -6,6 +6,7 @@ import {
   JWT_AUDIENCE,
   JWT_ALGORITHM,
   JWT_MAX_AGE_SECONDS,
+  hs256Accepted,
 } from '@platform/auth-constants';
 import type { JwtPayload, JwtVerifyResult } from '@platform/types';
 import {
@@ -24,6 +25,17 @@ function normalizePem(pem: string): string {
 const rsaPrivateKey = config.jwtPrivateKey ? normalizePem(config.jwtPrivateKey) : null;
 const rsaPublicKey = config.jwtPublicKey ? normalizePem(config.jwtPublicKey) : null;
 const useRsa = Boolean(rsaPrivateKey && config.jwtKid);
+const allowHs256 = hs256Accepted(config.jwtAllowHs256);
+
+// Refuse an unusable combination at load rather than at the first login: with
+// HS256 rejected and no RSA private key configured, this service can still MINT
+// HS256 tokens that nothing — including itself — will accept.
+if (!allowHs256 && !useRsa) {
+  throw new Error(
+    '[identity-service] JWT_ALLOW_HS256=false requires JWT_PRIVATE_KEY and JWT_KID to be configured, ' +
+      'otherwise tokens are signed HS256 and then rejected by every verifier.',
+  );
+}
 
 export function signJwt(claims: Omit<JwtPayload, 'iat' | 'exp' | 'jti'>): string {
   const payload = { ...claims, jti: randomUUID() };
@@ -50,6 +62,11 @@ export function verifyJwt(token: string): JwtVerifyResult {
       key = rsaPublicKey;
       algorithms = ['RS256'];
     } else {
+      // Post-migration (JWT_ALLOW_HS256=false) an HS256 token is refused
+      // outright instead of being verified against the shared secret. Rejecting
+      // BEFORE the verify call means the secret is never consulted, so a leaked
+      // JWT_SECRET no longer mints usable sessions.
+      if (!allowHs256) return { ok: false, reason: 'invalid' };
       key = config.jwtSecret;
       algorithms = [JWT_ALGORITHM];
     }

@@ -14,16 +14,17 @@
     "dev:local": "tsx watch --env-file .env src/server.ts"
   },
   "dependencies": {
-    "@platform/authz": "workspace:*",
-    "@platform/auth-constants": "workspace:*",
-    "@platform/db": "workspace:*",
-    "@platform/types": "workspace:*",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.2",
+    "@platform/auth-constants": "workspace:*",
+    "@platform/authz": "workspace:*",
+    "@platform/db": "workspace:*",
+    "@platform/http": "workspace:*",
+    "@platform/service-auth": "workspace:*",
+    "@platform/types": "workspace:*",
     "fastify": "^5.2.1",
     "jose": "^6.2.3",
-    "pino": "^9.6.0",
-    "@platform/service-auth": "workspace:*"
+    "pino": "^9.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.10",

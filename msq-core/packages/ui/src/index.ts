@@ -13,6 +13,7 @@ export { MonthGrid, type MonthGridBar, type MonthGridMarker } from './components
 export { UserPicker } from './components/UserPicker';
 export { MultiSelect, type SelectOption } from './components/MultiSelect';
 export { PhotoUploadModal, PhotoAvatar, type PhotoUploadGate } from './components/PhotoUpload';
+export { ErrorState, AppErrorBoundary, type ErrorStateProps, type AppErrorBoundaryProps } from './components/ErrorState';
 
 // Page scaffold — the header band / body / section rhythm and the one button
 // scale every product page is built from. Keeps HR, Tasks and LMS on identical

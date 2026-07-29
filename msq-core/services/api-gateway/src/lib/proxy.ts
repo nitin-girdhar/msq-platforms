@@ -1,5 +1,10 @@
 import { Readable } from 'node:stream';
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import {
+  fetchWithTimeout,
+  fetchStreamWithConnectTimeout,
+  UpstreamTimeoutError,
+} from '@platform/http';
 import { config } from '../config.js';
 
 export interface UserContext {
@@ -87,10 +92,14 @@ export async function proxyTo(
   }
 
   try {
-    const upstream = await fetch(url.toString(), {
+    const upstream = await fetchWithTimeout(url.toString(), {
       method,
       headers: forwardHeaders,
       ...(body !== undefined ? { body } : {}),
+      timeoutMs: config.proxyTimeoutMs,
+      // The registered route pattern, not the resolved URL — keeps record ids
+      // out of an error string that is logged and may reach a client.
+      target: request.routeOptions?.url ?? path,
     });
 
     forwardSetCookies(upstream, reply);
@@ -104,9 +113,40 @@ export async function proxyTo(
       return reply.send(Readable.fromWeb(upstream.body as ReadableStream<Uint8Array>));
     }
     return reply.send('');
-  } catch {
-    return reply.status(502).send(JSON.stringify({ error: 'Upstream service unavailable' }));
+  } catch (err) {
+    return replyUpstreamError(request, reply, err);
   }
+}
+
+/**
+ * Maps a proxy transport failure to a response.
+ *
+ * A timeout is reported as 504, not 502: the two mean different things to an
+ * operator (upstream too slow vs. upstream unreachable) and to a client deciding
+ * whether a retry is worth attempting. Previously every failure was an
+ * indistinguishable 502 and the cause was SWALLOWED — `catch {}` with no log —
+ * so a slow dependency was invisible in the gateway's own telemetry.
+ *
+ * Sends an object, not `JSON.stringify(...)`: passing a pre-serialized string to
+ * `reply.send` makes Fastify emit it as text/plain, so clients that parsed the
+ * error body got a string where every other gateway error is JSON.
+ */
+function replyUpstreamError(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  err: unknown,
+): void {
+  const route = request.routeOptions?.url ?? request.url;
+  if (err instanceof UpstreamTimeoutError) {
+    request.log.error(
+      { err, route, timeoutMs: err.timeoutMs, target: err.target },
+      'upstream request timed out',
+    );
+    reply.status(504).send({ error: 'Upstream service timed out' });
+    return;
+  }
+  request.log.error({ err, route }, 'upstream request failed');
+  reply.status(502).send({ error: 'Upstream service unavailable' });
 }
 
 /**
@@ -126,9 +166,16 @@ export async function proxySSE(
   const forwardHeaders = withUserHeaders({ 'Accept': 'text/event-stream' }, userCtx);
 
   try {
-    const upstream = await fetch(url.toString(), {
+    // Connect-only deadline. A full request timeout would abort the event stream
+    // itself the moment it expired, which is the opposite of what an SSE proxy
+    // needs; this bounds only the wait for response headers, so a notifications
+    // service that accepts the socket and then never answers is cut loose instead
+    // of leaking a connection for the life of the process.
+    const { response: upstream, abort } = await fetchStreamWithConnectTimeout(url.toString(), {
       method: 'GET',
       headers: forwardHeaders,
+      connectTimeoutMs: config.sseConnectTimeoutMs,
+      target: request.routeOptions?.url ?? path,
     });
 
     reply.hijack();
@@ -155,6 +202,10 @@ export async function proxySSE(
 
       request.raw.on('close', () => {
         reader.cancel().catch(() => {});
+        // Cancelling the reader detaches us from the body, but the underlying
+        // upstream request stays open until it is aborted — without this a
+        // client that disconnects leaks a notifications-service connection.
+        abort();
       });
 
       (async () => {
@@ -171,10 +222,13 @@ export async function proxySSE(
         }
       })();
     }
-  } catch {
+  } catch (err) {
     if (!reply.raw.headersSent) {
-      return reply.status(502).send(JSON.stringify({ error: 'Upstream service unavailable' }));
+      return replyUpstreamError(request, reply, err);
     }
+    // Headers already flushed — the stream is live and we cannot change the
+    // status, so record the fault rather than dropping it silently.
+    request.log.error({ err, route: request.routeOptions?.url ?? path }, 'SSE proxy failed after headers sent');
   }
 }
 
@@ -208,13 +262,15 @@ export async function proxyToRaw(
   try {
     const rawBody = (request as unknown as { rawBody?: Buffer }).rawBody;
 
-    const fetchInit: RequestInit = {
+    const fetchInit = {
       method: request.method,
       headers: forwardHeaders,
-    };
+      timeoutMs: config.proxyTimeoutMs,
+      target: request.routeOptions?.url ?? path,
+    } as Parameters<typeof fetchWithTimeout>[1];
     if (rawBody && rawBody.length > 0) fetchInit.body = rawBody;
 
-    const upstream = await fetch(url.toString(), fetchInit);
+    const upstream = await fetchWithTimeout(url.toString(), fetchInit);
 
     reply.header('Content-Type', upstream.headers.get('content-type') ?? 'application/json');
     reply.status(upstream.status);
@@ -223,7 +279,7 @@ export async function proxyToRaw(
       return reply.send(Readable.fromWeb(upstream.body as ReadableStream<Uint8Array>));
     }
     return reply.send('');
-  } catch {
-    return reply.status(502).send(JSON.stringify({ error: 'Upstream service unavailable' }));
+  } catch (err) {
+    return replyUpstreamError(request, reply, err);
   }
 }

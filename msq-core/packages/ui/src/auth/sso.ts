@@ -22,6 +22,16 @@ export function buildLoginUrl(callbackUrl?: string): string {
   return callbackUrl ? `${base}?callbackUrl=${encodeURIComponent(callbackUrl)}` : base;
 }
 
+// The lookup-admin origin (platform staff tooling), e.g. https://admin.app.com.
+//
+// Deliberately NOT part of productOrigins(): lookup-admin is not a licensed
+// product, must never appear in the product switcher, and must never be chosen
+// as a post-login landing destination by sessionDestination(). It only needs to
+// be a permitted RETURN target, so it is added to allowedRedirectOrigins() alone.
+export function adminOrigin(): string {
+  return (process.env['NEXT_PUBLIC_ADMIN_URL'] ?? '').replace(/\/$/, '');
+}
+
 // Per-product origin map (empty string when unset). Drives the product switcher
 // links and the auth callback allowlist.
 export function productOrigins(): Record<ProductKey, string> {
@@ -37,5 +47,7 @@ export function productOrigins(): Record<ProductKey, string> {
 // honored only if its origin is in this set (open-redirect guard); anything
 // else falls back to a safe default.
 export function allowedRedirectOrigins(): string[] {
-  return [authOrigin(), ...Object.values(productOrigins())].filter((o) => o.length > 0);
+  return [authOrigin(), adminOrigin(), ...Object.values(productOrigins())].filter(
+    (o) => o.length > 0,
+  );
 }

@@ -68,6 +68,11 @@ app.addHook('onSend', async (_req, reply, payload) => {
 // Aggressive limit on credential endpoints; looser on public webhooks.
 const loginRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const webhookRateLimit = createRateLimiter({ max: 60, windowMs: 60_000 });
+// Meta's own delivery volume is low, so this is generous for the legitimate
+// caller while still bounding an anonymous flood. Its own bucket rather than
+// sharing webhookRateLimit, so a burst of Meta callbacks cannot exhaust the
+// budget for /intake/webhook (a different integration entirely) or vice versa.
+const metaWebhookRateLimit = createRateLimiter({ max: 120, windowMs: 60_000 });
 
 app.get('/health', async () => ({ status: 'ok', service: 'api-gateway' }));
 
@@ -139,17 +144,24 @@ app.post('/intake/webhook', { preHandler: [webhookRateLimit] }, async (req, repl
 // shared-app secret). Tenant-less route (no :integrationId) is for a single
 // Meta App shared across multiple tenants; resolved to the ext.meta_tenant_config
 // row with tenant_id IS NULL downstream.
-app.get('/meta/webhook', async (req, reply) => {
+//
+// Rate-limited like /intake/webhook, which these four previously were not.
+// Authentication here is HMAC, verified DOWNSTREAM — and it cannot be checked
+// any earlier, because the per-tenant app_secret it needs is stored encrypted in
+// ext.meta_tenant_config. So every unauthenticated request costs a DB read plus
+// an AES decrypt before it can even be rejected, which is precisely what makes
+// an unlimited public route here worth flooding.
+app.get('/meta/webhook', { preHandler: [metaWebhookRateLimit] }, async (req, reply) => {
   return proxyTo(config.metaServiceUrl, '/api/v1/webhook', req, reply);
 });
-app.post('/meta/webhook', async (req, reply) => {
+app.post('/meta/webhook', { preHandler: [metaWebhookRateLimit] }, async (req, reply) => {
   return proxyToRaw(config.metaServiceUrl, '/api/v1/webhook', req, reply);
 });
-app.get('/meta/webhook/:integrationId', async (req, reply) => {
+app.get('/meta/webhook/:integrationId', { preHandler: [metaWebhookRateLimit] }, async (req, reply) => {
   const { integrationId } = req.params as { integrationId: string };
   return proxyTo(config.metaServiceUrl, `/api/v1/webhook/${integrationId}`, req, reply);
 });
-app.post('/meta/webhook/:integrationId', async (req, reply) => {
+app.post('/meta/webhook/:integrationId', { preHandler: [metaWebhookRateLimit] }, async (req, reply) => {
   const { integrationId } = req.params as { integrationId: string };
   return proxyToRaw(config.metaServiceUrl, `/api/v1/webhook/${integrationId}`, req, reply);
 });
@@ -454,6 +466,22 @@ app.post('/users', { ...withAuth }, async (req, reply) => {
 });
 app.get('/users/assignable', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/users/assignable', req, reply, req.userCtx);
+});
+// Bulk lead-assignment weights for a branch: the per-(user, org) % share
+// iam.user_org_mapping.lead_assignment_weight that leads-service's
+// resolveAutoAssignedUser distributes new leads by.
+//
+// Both halves existed in identity-service but neither was ever registered here.
+// GET happened to work anyway — it falls through the `/users/:id` route below
+// and Fastify prefers identity's STATIC route over its own `/users/:id` — but
+// PUT had no `/users/*` match at any method, so writes were a hard 404 at the
+// edge. Registered before `/users/:id` so the literal segment wins locally too,
+// rather than depending on that downstream accident.
+app.get('/users/assignment-weights', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/users/assignment-weights', req, reply, req.userCtx);
+});
+app.put('/users/assignment-weights', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/users/assignment-weights', req, reply, req.userCtx);
 });
 app.get('/users/team', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/users/team', req, reply, req.userCtx);

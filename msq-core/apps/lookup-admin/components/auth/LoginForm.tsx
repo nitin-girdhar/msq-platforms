@@ -122,24 +122,41 @@ interface FieldProps {
 
 function Field({ id, label, type, autoComplete, value, onChange, disabled, error, required }: FieldProps) {
   const errorId = `${id}-error`;
+  const [show, setShow] = useState(false);
+  const isPassword = type === 'password';
+
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={id} className="text-xs font-semibold text-[#0F172A]">
         {label}
       </label>
-      <input
-        id={id}
-        name={id}
-        type={type}
-        autoComplete={autoComplete}
-        required={required}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
-        className="rounded-xl border border-[#E2E8F0] bg-white px-3.5 py-2.5 text-sm text-[#0F172A] shadow-sm transition-colors placeholder:text-[#94A3B8] focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC] disabled:text-[#64748B] aria-invalid:border-red-300 aria-invalid:focus:border-red-400 aria-invalid:focus:ring-red-200"
-      />
+      <div className="relative">
+        <input
+          id={id}
+          name={id}
+          type={isPassword && show ? 'text' : type}
+          autoComplete={autoComplete}
+          required={required}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+          className={`w-full rounded-xl border border-[#E2E8F0] bg-white px-3.5 py-2.5 ${isPassword ? 'pr-16' : ''} text-sm text-[#0F172A] shadow-sm transition-colors placeholder:text-[#94A3B8] focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC] disabled:text-[#64748B] aria-invalid:border-red-300 aria-invalid:focus:border-red-400 aria-invalid:focus:ring-red-200`}
+        />
+        {isPassword && (
+          <button
+            type="button"
+            onClick={() => setShow((s) => !s)}
+            disabled={disabled}
+            tabIndex={-1}
+            aria-label={show ? 'Hide password' : 'Show password'}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] font-semibold text-[#64748B] hover:bg-[#F1F5F9] disabled:cursor-not-allowed"
+          >
+            {show ? 'Hide' : 'Show'}
+          </button>
+        )}
+      </div>
       {error && (
         <p id={errorId} className="text-xs text-red-600">{error}</p>
       )}

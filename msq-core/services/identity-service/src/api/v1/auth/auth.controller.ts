@@ -7,11 +7,14 @@ import { loginSchema, switchOrgSchema, changePasswordSchema } from './auth.schem
 export class AuthController {
   login = async (request: FastifyRequest, reply: FastifyReply) => {
     const body = loginSchema.parse(request.body);
-    const { token, user } = await service.login(body);
+    const { token, user, licensed_products } = await service.login(body);
     return reply
       .setCookie(AUTH_COOKIE_NAME, token, sessionCookieOptions())
       .status(200)
-      .send({ success: true, data: { user } });
+      // licensed_products is echoed alongside the user (not inside it): the auth
+      // cookie is httpOnly, so this is the client's only way to know which
+      // product to land on. Sibling field, so SessionUser stays the /auth/me shape.
+      .send({ success: true, data: { user, licensed_products } });
   };
 
   logout = async (request: FastifyRequest, reply: FastifyReply) => {

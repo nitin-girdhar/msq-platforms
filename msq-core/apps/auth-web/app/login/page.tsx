@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import Image from 'next/image';
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@platform/ui-kit/server';
+import { productOrigins } from '@platform/ui-kit';
 import LoginForm from '@/components/auth/LoginForm';
-import { resolveCallback } from '@/src/lib/callback';
+import { resolveCallback, sessionDestination } from '@/src/lib/callback';
 
 export const metadata: Metadata = {
   title: 'Sign in · FitClass',
@@ -20,13 +21,21 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const [result, params] = await Promise.all([getServerSession(), searchParams]);
 
   // Allowlist-validate the post-login target (open-redirect guard). Absolute
-  // product URLs from a product app's middleware are honored; anything else
-  // falls back to the lead product's dashboard.
-  const destination = resolveCallback(params.callbackUrl);
+  // product URLs from a product app's middleware are honored; anything else is
+  // rejected to null and the landing gets derived from the session instead.
+  const callbackUrl = resolveCallback(params.callbackUrl);
 
   // Already signed in (cookie shared on .app.com): skip the form entirely —
-  // this is what makes switching products a no-login hop.
-  if (result) redirect(destination);
+  // this is what makes switching products a no-login hop. The session is in hand
+  // here, so an absent callback resolves server-side.
+  if (result) {
+    redirect(callbackUrl ?? sessionDestination(result.licensedProducts, result.session));
+  }
+
+  // Not signed in yet, so there is no session to derive from. The form does it
+  // from the login response, which needs the product origins — resolved here
+  // because productOrigins() reads server-only env.
+  const origins = productOrigins();
 
   return (
     <div className="grid h-full min-h-screen w-full overflow-y-auto bg-white lg:grid-cols-2">
@@ -92,7 +101,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             </p>
           </header>
 
-          <LoginForm callbackUrl={destination} />
+          <LoginForm callbackUrl={callbackUrl} productOrigins={origins} />
 
           <p className="mt-8 text-center text-xs leading-relaxed text-slate-400 lg:text-left">
             Access is restricted to authorised FitClass accounts. By signing in

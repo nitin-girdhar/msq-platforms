@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { getServerSession } from '@platform/ui-kit/server';
 import { buildLoginUrl } from '@platform/ui-kit';
 import ChangePasswordForm from '@/components/auth/ChangePasswordForm';
-import { resolveCallback } from '@/src/lib/callback';
+import { resolveCallback, sessionDestination } from '@/src/lib/callback';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +14,11 @@ export default async function ChangePasswordPage({ searchParams }: ChangePasswor
   const [result, params] = await Promise.all([getServerSession(), searchParams]);
   if (!result) redirect(buildLoginUrl());
 
-  const destination = resolveCallback(params.callbackUrl);
+  // The session is already in hand here, so an absent/rejected callback resolves
+  // to a product this user can actually open rather than a hardcoded default.
+  const destination =
+    resolveCallback(params.callbackUrl) ??
+    sessionDestination(result.licensedProducts, result.session);
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-[#F8FAFC] px-4 py-12">

@@ -11,4 +11,5 @@ export { default as HamburgerButton } from './HamburgerButton';
 export { default as ProductSwitcher } from './ProductSwitcher';
 export { default as UserMenu } from './UserMenu';
 export { default as BranchSwitcher } from './BranchSwitcher';
-export { filterNav, type NavItem } from './nav';
+export { filterNav, filterNavGroups, holdsUsableNode, isNavGroups, type NavItem, type NavGroup } from './nav';
+export { usableProducts, landingFor, PRODUCT_LANDING } from './products';

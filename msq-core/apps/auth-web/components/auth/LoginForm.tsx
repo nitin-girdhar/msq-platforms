@@ -2,13 +2,22 @@
 
 import { useState } from 'react';
 import { RANKS } from '@platform/authz';
+import type { ProductKey } from '@platform/types';
+import { usableProducts, landingFor, PRODUCT_LANDING } from '@platform/ui-kit';
 import { auth } from '@/src/lib/api/client';
+import { NO_ACCESS_PATH } from '@/src/lib/callback';
 
 interface Props {
   // Absolute product URL to land on after login (already allowlist-validated
   // server-side). May be cross-origin (e.g. https://lms.app.com/dashboard/leads),
   // so navigation uses window.location, not the Next router.
-  callbackUrl: string;
+  //
+  // null when the request carried no callback (or one that failed the
+  // allowlist). There is no hardcoded fallback: the destination is derived from
+  // the login response, because the tenant may not have LMS at all.
+  callbackUrl: string | null;
+  // Resolved server-side — productOrigins() reads non-public env.
+  productOrigins: Record<ProductKey, string>;
 }
 
 interface FieldErrors {
@@ -16,7 +25,7 @@ interface FieldErrors {
   password?: string;
 }
 
-export default function LoginForm({ callbackUrl }: Props) {
+export default function LoginForm({ callbackUrl, productOrigins }: Props) {
   const [email, setEmail]           = useState('');
   const [password, setPassword]     = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -36,19 +45,31 @@ export default function LoginForm({ callbackUrl }: Props) {
     setBusy(true);
     try {
       const { data } = await auth.login(email.trim(), password);
+      const user = data.user;
+
+      // No explicit callback → land on the first product this user can actually
+      // open: what the TENANT licensed, intersected with what THIS user's
+      // capabilities allow. Neither half alone is enough — an HRMS-only tenant
+      // has no CRM, and an HR-only user in an LMS+HR tenant should not be
+      // dropped onto a CRM screen with an empty sidebar.
+      const target = usableProducts(data.licensed_products, user);
+      const landing =
+        landingFor(target, productOrigins) ??
+        // Single-host dev configures no origins, so fall back to the bare path.
+        (target[0] ? PRODUCT_LANDING[target[0]] : NO_ACCESS_PATH);
+      const productUrl = callbackUrl ?? landing;
 
       // Users mapped to multiple branches pick one before landing on the
       // product. Skipped when a password change is forced first, and for
       // tenant-level roles whose session already spans every branch.
       // select-branch lives on THIS (auth) origin; the product callback is
       // forwarded through it and applied after the branch is chosen.
-      let destination = callbackUrl;
-      const user = data.user;
+      let destination = productUrl;
       if (!user.force_password_change && user.rank < RANKS.TENANT_ADMIN) {
         try {
           const orgsRes = await auth.myOrgs();
           if (orgsRes.data.orgs.length > 1) {
-            destination = `/select-branch?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+            destination = `/select-branch?callbackUrl=${encodeURIComponent(productUrl)}`;
           }
         } catch {
           // Branch list is a nicety at login; fall through to the product
@@ -168,6 +189,7 @@ function Field({ id, label, type, autoComplete, value, onChange, disabled, error
             onClick={() => setShow((s) => !s)}
             disabled={disabled}
             tabIndex={-1}
+            aria-label={show ? 'Hide password' : 'Show password'}
             className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] font-semibold text-[#64748B] hover:bg-[#F1F5F9] disabled:cursor-not-allowed"
           >
             {show ? 'Hide' : 'Show'}

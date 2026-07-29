@@ -1,6 +1,8 @@
 import { redirect } from 'next/navigation';
 import { can, CAPABILITY } from '@platform/rbac';
+import { AppSidebar, MobileSidebar, HamburgerButton, UserMenu } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
+import { ADMIN_NAV } from '@/src/config/navigation';
 import LogoutButton from '@/components/auth/LogoutButton';
 
 export const dynamic = 'force-dynamic';
@@ -38,17 +40,21 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC]">
-      <header className="flex items-center justify-between border-b border-[#E2E8F0] bg-white px-4 py-3 sm:px-6">
-        <span className="text-base font-bold tracking-tight text-[#0F172A]">Lookup Admin</span>
-        <div className="flex items-center gap-4">
-          <span className="text-xs text-[#64748B]">
-            {session.name || session.email}
-          </span>
-          <LogoutButton />
+    <div className="flex min-h-screen w-full flex-col bg-[#F8FAFC] lg:h-full lg:min-h-0 lg:overflow-hidden">
+      <header className="flex shrink-0 items-center gap-3 border-b border-[#E2E8F0] bg-white px-4 py-3 sm:px-6">
+        <HamburgerButton />
+        <span className="text-base font-bold tracking-tight text-[#0F172A]">Admin</span>
+        <div className="ml-auto flex items-center gap-4">
+          <UserMenu user={session} />
         </div>
       </header>
-      {children}
+      <MobileSidebar actor={session} items={ADMIN_NAV} />
+      <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">
+        <AppSidebar actor={session} items={ADMIN_NAV} />
+        <main className="flex w-full min-w-0 flex-1 flex-col lg:overflow-y-auto">
+          {children}
+        </main>
+      </div>
     </div>
   );
 }

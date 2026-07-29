@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation';
 import { getServerSession } from '@platform/ui-kit/server';
 import { buildLoginUrl } from '@platform/ui-kit';
 import SelectBranchList from '@/components/auth/SelectBranchList';
-import { resolveCallback } from '@/src/lib/callback';
+import { resolveCallback, sessionDestination } from '@/src/lib/callback';
 
 export const metadata: Metadata = {
   title: 'Select branch · FitClass',
@@ -20,8 +20,13 @@ interface SelectBranchPageProps {
 export default async function SelectBranchPage({ searchParams }: SelectBranchPageProps) {
   const [result, params] = await Promise.all([getServerSession(), searchParams]);
 
-  const destination = resolveCallback(params.callbackUrl);
-  if (!result) redirect(buildLoginUrl(destination));
+  const callbackUrl = resolveCallback(params.callbackUrl);
+  if (!result) redirect(buildLoginUrl(callbackUrl ?? undefined));
+
+  // Normally arrived at with an explicit callback forwarded from the login form.
+  // Without one, derive from the session rather than assuming a product.
+  const destination =
+    callbackUrl ?? sessionDestination(result.licensedProducts, result.session);
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center overflow-y-auto bg-[#F8FAFC] px-6 py-12">

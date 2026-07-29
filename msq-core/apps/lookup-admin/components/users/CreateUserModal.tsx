@@ -4,11 +4,15 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { UserRole } from '@platform/types';
 import { users as usersApi } from '@/src/lib/api/client';
-import Modal from '../lookups/Modal';
+import { Modal, Button } from '@platform/ui-kit';
 import RoleSelector from './RoleSelector';
 import TemporaryPasswordPanel from './TemporaryPasswordPanel';
 
 const PHONE_RE = /^(\+91[\s-]?)?[6-9]\d{9}$/;
+
+// The submit button lives in the Modal's pinned footer, outside the <form>;
+// the HTML `form` attribute is what still wires it to this form.
+const FORM_ID = 'create-user-form';
 
 interface Props {
   open: boolean;
@@ -97,26 +101,37 @@ export default function CreateUserModal({ open, onClose }: Props) {
     }
   };
 
+  const footer = success ? (
+    <div className="flex justify-end">
+      <Button variant="primary" onClick={handleClose}>
+        Done
+      </Button>
+    </div>
+  ) : (
+    <div className="flex justify-end gap-2">
+      <Button variant="secondary" onClick={handleClose} disabled={pending}>
+        Cancel
+      </Button>
+      <Button variant="primary" type="submit" form={FORM_ID} disabled={pending} aria-busy={pending}>
+        {pending && (
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
+        )}
+        {pending ? 'Creating…' : 'Create user'}
+      </Button>
+    </div>
+  );
+
   return (
-    <Modal open={open} onClose={handleClose} title={success ? 'User created' : 'New user'} locked={pending}>
+    <Modal open={open} onClose={handleClose} title={success ? 'User created' : 'New user'} locked={pending} footer={footer}>
       {success ? (
         <div className="space-y-4">
           <p className="text-sm text-[#0F172A]">
             <span className="font-semibold">{success.email}</span> can now sign in.
           </p>
           <TemporaryPasswordPanel password={success.temporaryPassword} email={success.email} />
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={handleClose}
-              className="rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white hover:bg-[#095699]"
-            >
-              Done
-            </button>
-          </div>
         </div>
       ) : (
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
+        <form id={FORM_ID} onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
           {error && (
             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
               {error}
@@ -159,19 +174,6 @@ export default function CreateUserModal({ open, onClose }: Props) {
             <span>Require password change on first login</span>
           </label>
 
-          <div className="mt-2 flex justify-end gap-2">
-            <button type="button" onClick={handleClose} disabled={pending}
-              className="rounded-xl border border-[#E2E8F0] bg-white px-4 py-2 text-sm font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60">
-              Cancel
-            </button>
-            <button type="submit" disabled={pending} aria-busy={pending}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white hover:bg-[#095699] disabled:cursor-not-allowed disabled:opacity-70">
-              {pending && (
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
-              )}
-              {pending ? 'Creating…' : 'Create user'}
-            </button>
-          </div>
         </form>
       )}
     </Modal>

@@ -370,6 +370,52 @@ Role definitions with rank-based hierarchy.
 
 ---
 
+### iam.capabilities
+
+The global, platform-shipped capability catalog (Tier C3) — a self-referential tree: `tool → page → tab → operation → scope`. Generated into `@platform/rbac`'s `CAPABILITY` map (keys only, no label/kind/parent — a UI reads this table directly for that metadata, see `admin-service`'s `GET /capabilities`). A tenant cannot invent a capability; what a tenant *can* change is the grant (see `iam.role_capabilities` below). Read-only from the app — writes are seed/migration only.
+
+| Column      | Type        | Constraints                                       |
+| ----------- | ----------- | -------------------------------------------------- |
+| id          | UUID        | PK (UUIDv7)                                        |
+| key         | TEXT        | NOT NULL, UNIQUE                                   |
+| kind        | TEXT        | NOT NULL, CHECK IN (`tool`,`page`,`tab`,`operation`,`scope`) |
+| parent_key  | TEXT        | FK → iam.capabilities(key) ON DELETE CASCADE, self-referential |
+| label       | TEXT        | NOT NULL                                           |
+| description | TEXT        |                                                     |
+| sort_order  | INT         | NOT NULL, DEFAULT 0 (also breadth ordering for `kind='scope'`) |
+| is_active   | BOOLEAN     | NOT NULL, DEFAULT TRUE                             |
+| created_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                |
+| updated_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                |
+
+**Check:** `(kind = 'tool') = (parent_key IS NULL)` — only a tool may be a root.
+**RLS:** SELECT for `app_user`/`tenant_admin`; nobody may write from the app.
+**Drizzle:** `capabilitiesTable` in `@platform/db/schema` (`tables/capabilities.table.ts`).
+
+---
+
+### iam.role_capabilities
+
+Role → capability grants (Tier C3), resolved per tenant by `iam.fn_role_capability_matrix(tenant_id)`. `tenant_id NULL` = the platform default grant, shared by every tenant; `tenant_id` set = that tenant's override of the same `(role, capability)` pair, which wins. `is_granted = FALSE` is how a tenant revokes a default without deleting the platform row. Resolution order: tenant override → platform default → deny (default-deny: a key present in code but never seeded a grant denies everyone).
+
+| Column        | Type        | Constraints                                        |
+| ------------- | ----------- | --------------------------------------------------- |
+| id            | UUID        | PK (UUIDv7)                                         |
+| tenant_id     | UUID        | FK → entity.tenants(id) ON DELETE CASCADE, nullable  |
+| role_id       | UUID        | NOT NULL, FK → iam.user_roles(id) ON DELETE CASCADE  |
+| capability_id | UUID        | NOT NULL, FK → iam.capabilities(id) ON DELETE CASCADE |
+| is_granted    | BOOLEAN     | NOT NULL, DEFAULT TRUE                              |
+| created_by    | UUID        |                                                      |
+| created_at    | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                 |
+| updated_at    | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                 |
+
+**Unique:** `(role_id, capability_id) WHERE tenant_id IS NULL`; `(tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL` (partial indexes — a plain UNIQUE would let NULL `tenant_id` duplicate freely).
+**RLS:** SELECT sees platform defaults + the actor's own-tenant overrides (`app_user` via current org's tenant, `tenant_admin` via `app.current_tenant_id`). Writes (`admin_tenant_config_policy`, `FOR ALL TO app_user`) are override-only: `WITH CHECK` pins `tenant_id` to the row derived from **`app.current_org_id`** (via `entity.organizations.tenant_id`) — **not** `app.current_tenant_id` directly, unlike the newer N-6 tenant-scoped-lookup policies. A write on behalf of a super_admin managing an arbitrary tenant must first resolve an org under that tenant and pin `app.current_org_id` to it (see `admin-service`'s `capabilities.repository.ts`).
+**Trigger:** `set_updated_at`, `set_created_by`.
+**Drizzle:** `roleCapabilitiesTable` in `@platform/db/schema` (`tables/role-capabilities.table.ts`).
+**Admin API:** `GET /roles/:id/capabilities?tenant_id=`, `PUT /roles/:id/capabilities` (admin-service, via gateway — see Architecture.md → "Capability administration").
+
+---
+
 ### iam.users
 
 User accounts. `full_name` is a GENERATED STORED column.

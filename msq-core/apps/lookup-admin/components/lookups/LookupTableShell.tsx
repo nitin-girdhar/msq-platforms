@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import type { LookupTableDef } from '@/src/lib/lookupTableConfig';
+import { Button } from '@platform/ui-kit';
 import LookupTable, { type LookupRow } from './LookupTable';
 import CreateLookupModal from './CreateLookupModal';
 import EditLookupModal from './EditLookupModal';
@@ -40,20 +41,16 @@ export default function LookupTableShell({
     <div className="space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Link href="/dashboard" className="text-xs font-semibold text-[#0b6cbf] hover:underline">
-            ← All lookup tables
+          <Link href={`/dashboard/m/${config.module}`} className="text-xs font-semibold text-[#0b6cbf] hover:underline">
+            ← Back
           </Link>
           <h1 className="mt-1 text-2xl font-bold text-[#0F172A]">{config.title}</h1>
           <p className="mt-1 text-xs text-[#64748B]">{typedRows.length} total · {config.description}</p>
         </div>
         {canCreate && (
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#095699]"
-          >
+          <Button variant="primary" onClick={() => setCreateOpen(true)}>
             New
-          </button>
+          </Button>
         )}
       </div>
 

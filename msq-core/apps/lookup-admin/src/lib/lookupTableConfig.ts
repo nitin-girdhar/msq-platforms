@@ -1,23 +1,67 @@
-export type FieldType = 'text' | 'textarea' | 'number' | 'boolean' | 'select' | 'geo-select';
+export type FieldType = 'text' | 'textarea' | 'number' | 'boolean' | 'fk';
+
+export type FormValues = Record<string, string | number | boolean>;
+
+// Describes where an 'fk' field's option list comes from and how it chains
+// off another field on the same form. Replaces the old `selectOptionsFrom`
+// string (which always fetched the whole parent table with no dependency
+// awareness) and the hardcoded country/state/city cascade.
+export interface FkConfig {
+  // A /lookups/{table} slug — the common case (e.g. 'lead-stage', 'org-types').
+  table?: string;
+  // Non-/lookups sources: the geo cascade backing country_id/state_id/city_id.
+  endpoint?: 'geo-countries' | 'geo-states' | 'geo-cities';
+  // Sibling field key that must have a value before this one can fetch/enable.
+  // Chains to any depth: state_id dependsOn country_id, city_id dependsOn state_id.
+  dependsOn?: string;
+  // Whether the parent table takes the form's tenant_id. Global parents
+  // (org-types, tenant-domains, tenants, …) must NOT receive one — the
+  // backend 400s a tenant_id it doesn't expect just as readily as it rejects
+  // a missing one on a tenant-scoped table.
+  scope?: 'tenant' | 'global';
+  labelFrom?: (row: Record<string, unknown>) => string;
+}
 
 export interface LookupFieldConfig {
   key: string;
   label: string;
   type: FieldType;
   required?: boolean;
-  selectOptionsFrom?: string;
+  fk?: FkConfig;
 }
+
+// Mirrors the left-nav grouping: which module owns a table, matched to the
+// backend schema it lives in (entity./iam. = platform, lms./marketing. = lms,
+// hr. = hr, task. = tasks). The four role catalogs are grouped under
+// 'capabilities' since they're the role side of the capabilities admin screen,
+// not a plain lookup — see MODULES below.
+export type ModuleKey = 'platform' | 'lms' | 'hr' | 'tasks' | 'capabilities';
 
 export interface LookupTableDef {
   slug: string;
   title: string;
   description: string;
+  module: ModuleKey;
   fields: LookupFieldConfig[];
   // When true, rows belong to a tenant (task.task_statuses/task_priorities and
   // the hr/lms/task lookup catalogs, per db_scripts/22) — the page requires a
   // tenant selection before rows can be listed/created/edited.
   tenantScoped?: boolean;
 }
+
+export interface ModuleDef {
+  key: ModuleKey;
+  label: string;
+  description: string;
+}
+
+export const MODULES: ModuleDef[] = [
+  { key: 'platform', label: 'Platform', description: 'Tenants, organizations, and platform-wide classifications.' },
+  { key: 'lms', label: 'LMS', description: 'Leads, marketing, and CRM pipeline lookups.' },
+  { key: 'hr', label: 'HRMS', description: 'Leave, employment, and attendance lookups.' },
+  { key: 'tasks', label: 'Tasks', description: 'Task workflow and priority lookups.' },
+  { key: 'capabilities', label: 'Capabilities', description: 'Roles, capability grants, and tenant/org role assignment.' },
+];
 
 const NAME_LABEL_FIELDS: LookupFieldConfig[] = [
   { key: 'name', label: 'Name', type: 'text', required: true },
@@ -31,24 +75,28 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'org-types',
     title: 'Org Types',
     description: 'Classifications for organizations within a tenant.',
+    module: 'platform',
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
   'tenant-domains': {
     slug: 'tenant-domains',
     title: 'Tenant Domains',
     description: 'Business domains tenants can be categorized under.',
+    module: 'platform',
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
   'tenant-plan-types': {
     slug: 'tenant-plan-types',
     title: 'Tenant Plan Types',
     description: 'Subscription plan tiers available to tenants.',
+    module: 'platform',
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
   'user-roles': {
     slug: 'user-roles',
     title: 'User Roles',
     description: 'Roles assignable to users, ordered by rank.',
+    module: 'capabilities',
     fields: [
       ...NAME_LABEL_FIELDS,
       DESCRIPTION_FIELD,
@@ -59,6 +107,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'lead-stage',
     title: 'Lead Stages',
     description: 'Pipeline stages a lead can move through.',
+    module: 'lms',
     tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
@@ -73,10 +122,11 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'lead-stage-outcome',
     title: 'Lead Stage Outcomes',
     description: 'Outcomes recordable against a specific lead stage.',
+    module: 'lms',
     tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
-      { key: 'stage_id', label: 'Stage', type: 'select', required: true, selectOptionsFrom: 'lead-stage' },
+      { key: 'stage_id', label: 'Stage', type: 'fk', required: true, fk: { table: 'lead-stage', scope: 'tenant' } },
       DESCRIPTION_FIELD,
       { key: 'requires_comment', label: 'Requires Comment', type: 'boolean' },
       { key: 'sort_order', label: 'Sort Order', type: 'number' },
@@ -86,6 +136,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'interaction-types',
     title: 'Interaction Types',
     description: 'Types of interactions logged against a lead.',
+    module: 'lms',
     tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
@@ -93,6 +144,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'follow-up-statuses',
     title: 'Follow-up Statuses',
     description: 'Statuses a scheduled follow-up can be in.',
+    module: 'lms',
     tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
@@ -100,6 +152,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'lead-sources',
     title: 'Lead Sources',
     description: 'Where a lead originated from.',
+    module: 'lms',
     tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS],
   },
@@ -107,6 +160,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'marketing-platforms',
     title: 'Marketing Platforms',
     description: 'Ad platforms used to run marketing campaigns.',
+    module: 'lms',
     tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
@@ -114,6 +168,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'campaign-statuses',
     title: 'Campaign Statuses',
     description: 'Lifecycle statuses for marketing campaigns.',
+    module: 'lms',
     tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
@@ -121,6 +176,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'task-statuses',
     title: 'Task Statuses',
     description: 'Workflow statuses a task can be in, per tenant (tasks module).',
+    module: 'tasks',
     tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
@@ -133,6 +189,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'task-priorities',
     title: 'Task Priorities',
     description: 'Priority levels a task can be assigned, per tenant (tasks module).',
+    module: 'tasks',
     tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
@@ -144,6 +201,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'leave-types',
     title: 'Leave Types',
     description: 'Categories of leave employees can request, per tenant (HR module).',
+    module: 'hr',
     tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
@@ -156,6 +214,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'employment-types',
     title: 'Employment Types',
     description: 'Employment classifications for employees, per tenant (HR module).',
+    module: 'hr',
     tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
@@ -163,6 +222,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'attendance-statuses',
     title: 'Attendance Statuses',
     description: 'Statuses an attendance day can resolve to, per tenant (HR module).',
+    module: 'hr',
     tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
@@ -170,6 +230,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'lms-roles',
     title: 'LMS Roles',
     description: 'Roles within the leads/CRM module, per tenant.',
+    module: 'capabilities',
     tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
@@ -182,6 +243,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'hr-roles',
     title: 'HR Roles',
     description: 'Roles within the HR module, per tenant.',
+    module: 'capabilities',
     tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
@@ -194,6 +256,7 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'task-roles',
     title: 'Task Roles',
     description: 'Roles within the tasks module, per tenant.',
+    module: 'capabilities',
     tenantScoped: true,
     fields: [
       ...NAME_LABEL_FIELDS,
@@ -206,29 +269,40 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     slug: 'tenants',
     title: 'Tenants',
     description: 'Top-level tenant accounts on the platform.',
+    module: 'platform',
     fields: [
       { key: 'name', label: 'Name', type: 'text', required: true },
-      { key: 'domain_id', label: 'Domain', type: 'select', required: true, selectOptionsFrom: 'tenant-domains' },
-      { key: 'plan_type_id', label: 'Plan Type', type: 'select', required: true, selectOptionsFrom: 'tenant-plan-types' },
+      { key: 'domain_id', label: 'Domain', type: 'fk', required: true, fk: { table: 'tenant-domains', scope: 'global' } },
+      { key: 'plan_type_id', label: 'Plan Type', type: 'fk', required: true, fk: { table: 'tenant-plan-types', scope: 'global' } },
     ],
   },
   'organizations': {
     slug: 'organizations',
     title: 'Organizations',
     description: 'Branches/locations under a tenant.',
+    module: 'platform',
     fields: [
-      { key: 'tenant_id', label: 'Tenant', type: 'select', required: true, selectOptionsFrom: 'tenants' },
+      { key: 'tenant_id', label: 'Tenant', type: 'fk', required: true, fk: { table: 'tenants', scope: 'global' } },
       { key: 'name', label: 'Name', type: 'text', required: true },
       { key: 'legal_entity_name', label: 'Legal Entity Name', type: 'text' },
       { key: 'brand_name', label: 'Brand Name', type: 'text' },
-      { key: 'org_type_id', label: 'Org Type', type: 'select', required: true, selectOptionsFrom: 'org-types' },
+      { key: 'org_type_id', label: 'Org Type', type: 'fk', required: true, fk: { table: 'org-types', scope: 'global' } },
       { key: 'address_line1', label: 'Address Line 1', type: 'text' },
       { key: 'address_line2', label: 'Address Line 2', type: 'text' },
       { key: 'pincode', label: 'Pincode', type: 'text' },
-      { key: 'country_id', label: 'Country', type: 'geo-select' },
-      { key: 'state_id', label: 'State', type: 'geo-select' },
-      { key: 'city_id', label: 'City', type: 'geo-select' },
+      { key: 'country_id', label: 'Country', type: 'fk', fk: { endpoint: 'geo-countries' } },
+      { key: 'state_id', label: 'State', type: 'fk', fk: { endpoint: 'geo-states', dependsOn: 'country_id' } },
+      { key: 'city_id', label: 'City', type: 'fk', fk: { endpoint: 'geo-cities', dependsOn: 'state_id' } },
       { key: 'timezone', label: 'Timezone', type: 'text' },
     ],
   },
 };
+
+// Card-pane grouping for the module nav (app/dashboard/m/[module]/page.tsx).
+// The four role catalogs (module: 'capabilities') work today as ordinary
+// lookup cards through the same [table] route; once the capability-matrix and
+// tenant/org assignment screens land they'll gain sibling tabs alongside this
+// card grid rather than replacing it.
+export function tablesByModule(module: ModuleKey): LookupTableDef[] {
+  return Object.values(TABLE_CONFIG).filter((t) => t.module === module);
+}

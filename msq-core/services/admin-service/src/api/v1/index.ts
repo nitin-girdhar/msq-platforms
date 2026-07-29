@@ -5,6 +5,8 @@ import { tenantPlanTypesRouter } from './tenant-plan-types/tenant-plan-types.rou
 import { userRolesRouter } from './user-roles/user-roles.router.js';
 import { tenantsRouter } from './tenants/tenants.router.js';
 import { organizationsRouter } from './organizations/organizations.router.js';
+import { capabilitiesRouter } from './capabilities/capabilities.router.js';
+import { departmentsRouter } from './departments/departments.router.js';
 
 // N-6 DONE: every product-schema lookup/role admin module has moved to its
 // owning product service so the writes execute in the schema-owning service
@@ -24,4 +26,6 @@ export async function v1Router(app: FastifyInstance): Promise<void> {
   await app.register(userRolesRouter);
   await app.register(tenantsRouter);
   await app.register(organizationsRouter);
+  await app.register(capabilitiesRouter);
+  await app.register(departmentsRouter);
 }

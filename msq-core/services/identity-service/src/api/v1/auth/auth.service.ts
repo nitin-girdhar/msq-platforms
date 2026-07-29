@@ -16,6 +16,13 @@ import { config } from '../../../config/index.js';
 export interface LoginResult {
   token: string;
   user: ReturnType<typeof toSessionUser>;
+  /**
+   * The same claim the token carries, echoed in the response body. The auth
+   * cookie is httpOnly, so the login form cannot read the JWT — without this it
+   * has no way to work out which product to land on and would have to fall back
+   * to a hardcoded one (which is what broke HRMS-only tenants).
+   */
+  licensed_products: ProductKey[];
 }
 
 // The tenant's licensed products, for the shrunk JWT's licensed_products claim
@@ -134,13 +141,17 @@ export async function login(input: LoginInput): Promise<LoginResult> {
     ? Math.floor(new Date(db_user.password_changed_at as unknown as string).getTime() / 1000)
     : 0;
 
+  // Resolved once and reused for both the claim and the response body — the
+  // client needs the same list to pick a landing product.
+  const licensed_products = await getLicensedProducts(db_user.tenant_id);
+
   const token = signJwt({
     sub: db_user.id,
     email: db_user.email,
     platform_role: platformRoleOf(db_user),
     org_id: db_user.org_id,
     tenant_id: db_user.tenant_id,
-    licensed_products: await getLicensedProducts(db_user.tenant_id),
+    licensed_products,
     pwd_iat,
     force_password_change: db_user.force_password_change,
   });
@@ -150,6 +161,7 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   return {
     token,
     user: await sessionUserWithCapabilities({ ...db_user, last_login_at: new Date() } as DatabaseUser),
+    licensed_products,
   };
 }
 
@@ -250,13 +262,15 @@ export async function switchOrg(
     ? Math.floor(new Date(db_user.password_changed_at as unknown as string).getTime() / 1000)
     : 0;
 
+  const licensed_products = await getLicensedProducts(db_user.tenant_id);
+
   const new_token = signJwt({
     sub: db_user.id,
     email: db_user.email,
     platform_role: platformRoleOf(db_user),
     org_id: db_user.org_id,
     tenant_id: db_user.tenant_id,
-    licensed_products: await getLicensedProducts(db_user.tenant_id),
+    licensed_products,
     pwd_iat,
     force_password_change: db_user.force_password_change,
   });
@@ -272,7 +286,11 @@ export async function switchOrg(
 
   await logActivity({ action_type: 'org_switch', performed_by: db_user.id, org_id: db_user.org_id });
 
-  return { token: new_token, user: await sessionUserWithCapabilities(db_user) };
+  return {
+    token: new_token,
+    user: await sessionUserWithCapabilities(db_user),
+    licensed_products,
+  };
 }
 
 export async function changePassword(

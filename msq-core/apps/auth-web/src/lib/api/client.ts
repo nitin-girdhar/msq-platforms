@@ -7,8 +7,16 @@ import { createApiClient } from '@platform/ui-kit';
 const { request } = createApiClient('/api');
 
 export const auth = {
+  // licensed_products rides alongside the user because the auth cookie is
+  // httpOnly — it is how the form works out which product to land on.
   login: (email: string, password: string, org_id?: string) =>
-    request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/login', {
+    request<{
+      success: true;
+      data: {
+        user: import('@platform/types').SessionUser;
+        licensed_products: import('@platform/types').ProductKey[];
+      };
+    }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password, org_id }),
     }),

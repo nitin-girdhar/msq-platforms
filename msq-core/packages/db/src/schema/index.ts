@@ -4,6 +4,8 @@ export * from './tables/countries.table.js';
 export * from './tables/states.table.js';
 export * from './tables/cities.table.js';
 export * from './tables/user-roles.table.js';
+export * from './tables/capabilities.table.js';
+export * from './tables/role-capabilities.table.js';
 export * from './tables/lead-stage.table.js';
 export * from './tables/lead-stage-outcome.table.js';
 export * from './tables/interaction-types.table.js';

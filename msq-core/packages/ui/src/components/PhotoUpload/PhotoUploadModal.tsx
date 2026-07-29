@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Modal from '../Modal/Modal';
+import Button from '../page/Button';
 
 const TARGET_MAX_BYTES = 500_000;
 
@@ -152,11 +153,61 @@ export default function PhotoUploadModal({
     }
   }, [stage, consent, onSubmit, onClose]);
 
-  const btn =
-    'inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors';
+  // Stage-aware footer: capture/upload/retake are actions, so they live in the
+  // pinned bar (not the scrolling body) — otherwise they can fall below the
+  // fold on short viewports and the primary action becomes invisible.
+  const footer = locked ? (
+    <div className="flex justify-end">
+      <Button variant="secondary" onClick={onClose}>
+        Close
+      </Button>
+    </div>
+  ) : (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap gap-2">
+        {stage.status === 'streaming' ? (
+          <Button variant="primary" onClick={capture}>
+            Capture
+          </Button>
+        ) : (
+          <>
+            {cameraSupported && (
+              <Button variant="primary" onClick={startCamera}>
+                Use camera
+              </Button>
+            )}
+            <Button variant="secondary" onClick={() => fileRef.current?.click()}>
+              Upload from gallery
+            </Button>
+          </>
+        )}
+        {stage.status === 'captured' && (
+          <Button
+            variant="ghost"
+            onClick={() => (cameraSupported ? void startCamera() : setStage({ status: 'choose' }))}
+          >
+            Retake
+          </Button>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Button variant="ghost" onClick={onClose} disabled={submitting}>
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          onClick={submit}
+          disabled={stage.status !== 'captured' || !consent || submitting}
+          className="!bg-emerald-600 hover:!bg-emerald-700"
+        >
+          {submitting ? 'Saving…' : 'Save photo'}
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
-    <Modal open={open} onClose={onClose} title={title} locked={submitting}>
+    <Modal open={open} onClose={onClose} title={title} locked={submitting} footer={footer}>
       {locked ? (
         <p className="rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-800">
           {gate?.message ?? 'You cannot change your photo right now.'}
@@ -178,32 +229,7 @@ export default function PhotoUploadModal({
             )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            {stage.status === 'streaming' ? (
-              <button type="button" onClick={capture} className={`${btn} bg-[#0b6cbf] text-white hover:bg-[#0a5da3]`}>
-                Capture
-              </button>
-            ) : (
-              cameraSupported && (
-                <button type="button" onClick={startCamera} className={`${btn} bg-[#0b6cbf] text-white hover:bg-[#0a5da3]`}>
-                  Use camera
-                </button>
-              )
-            )}
-            <button type="button" onClick={() => fileRef.current?.click()} className={`${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`}>
-              Upload from gallery
-            </button>
-            {stage.status === 'captured' && (
-              <button
-                type="button"
-                onClick={() => (cameraSupported ? void startCamera() : setStage({ status: 'choose' }))}
-                className={`${btn} text-slate-500 hover:bg-slate-50`}
-              >
-                Retake
-              </button>
-            )}
-            <input ref={fileRef} type="file" accept="image/*" capture="user" onChange={onFile} className="hidden" />
-          </div>
+          <input ref={fileRef} type="file" accept="image/*" capture="user" onChange={onFile} className="hidden" />
 
           <label className="flex items-start gap-2 text-xs text-slate-600">
             <input
@@ -216,20 +242,6 @@ export default function PhotoUploadModal({
           </label>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
-
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={onClose} disabled={submitting} className={`${btn} text-slate-500 hover:bg-slate-50`}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={submit}
-              disabled={stage.status !== 'captured' || !consent || submitting}
-              className={`${btn} bg-emerald-600 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50`}
-            >
-              {submitting ? 'Saving…' : 'Save photo'}
-            </button>
-          </div>
         </div>
       )}
     </Modal>

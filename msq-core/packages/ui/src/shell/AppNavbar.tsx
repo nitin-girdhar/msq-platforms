@@ -53,6 +53,7 @@ export default function AppNavbar({
         <div className="flex-1" />
         <ProductSwitcher
           licensedProducts={licensedProducts}
+          actor={user}
           origins={productOrigins}
           activeProduct={activeProduct}
         />

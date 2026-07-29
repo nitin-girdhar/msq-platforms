@@ -89,6 +89,56 @@ export const lookupAdmin = {
   },
 };
 
+// ── Capabilities (admin.roles.manage) ───────────────────────────────────────
+
+export interface CapabilityRow {
+  id: string;
+  key: string;
+  kind: 'tool' | 'page' | 'tab' | 'operation' | 'scope';
+  parent_key: string | null;
+  label: string;
+  description: string | null;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export interface RoleCapabilityRow {
+  id: string;
+  tenant_id: string | null;
+  role_id: string;
+  capability_id: string;
+  is_granted: boolean;
+}
+
+export interface DepartmentRow {
+  id: string;
+  tenant_id: string;
+  org_id: string | null;
+  name: string;
+  label: string;
+  is_active: boolean;
+}
+
+export const capabilitiesApi = {
+  list: () => request<{ success: true; data: CapabilityRow[] }>('/capabilities'),
+
+  forRole: (roleId: string, tenantId: string) =>
+    request<{ success: true; data: RoleCapabilityRow[] }>(
+      `/roles/${roleId}/capabilities?tenant_id=${tenantId}`,
+    ),
+
+  putGrants: (roleId: string, tenantId: string, grants: Array<{ capability_id: string; is_granted: boolean }>) =>
+    request<{ success: true; data: RoleCapabilityRow[] }>(`/roles/${roleId}/capabilities`, {
+      method: 'PUT',
+      body: JSON.stringify({ tenant_id: tenantId, grants }),
+    }),
+};
+
+export const departmentsApi = {
+  list: (tenantId: string) =>
+    request<{ success: true; data: DepartmentRow[] }>(`/departments?tenant_id=${tenantId}`),
+};
+
 // ── Orgs (cross-tenant) ────────────────────────────────────────────────────
 
 export const orgs = {

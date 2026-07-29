@@ -108,7 +108,7 @@ export default function LookupTable({ config, rows, onEdit }: Props) {
         continue;
       }
 
-      if (field.type === 'select' || field.type === 'geo-select') {
+      if (field.type === 'fk') {
         // Joined display fields follow the "<relation>_label" / "<relation>_name"
         // convention (e.g. stage_id -> stage_label / stage_name) per the backend contract.
         const base = field.key.replace(/_id$/, '');

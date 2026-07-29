@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
-import { filterNav, type NavItem } from './nav';
+import { filterNav, filterNavGroups, isNavGroups, type NavItem, type NavGroup } from './nav';
 
 const TOGGLE_EVENT = 'fc:sidebar-toggle';
 const SET_EVENT = 'fc:sidebar-set';
@@ -25,7 +25,24 @@ function setSidebar(open: boolean): void {
 interface Props {
   // Carries the DB-resolved capability list that decides which entries appear.
   actor: SessionUser;
-  items: readonly NavItem[];
+  items: readonly NavItem[] | readonly NavGroup[];
+}
+
+function MobileNavLink({ item, pathname }: { item: NavItem; pathname: string }) {
+  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+  return (
+    <Link
+      href={item.href}
+      aria-current={active ? 'page' : undefined}
+      className={
+        active
+          ? 'rounded-lg bg-[#EFF6FF] px-3 py-2.5 text-sm font-semibold text-[#0b6cbf]'
+          : 'rounded-lg px-3 py-2.5 text-sm font-medium text-[#475569] transition-colors hover:bg-[#F8FAFC] hover:text-[#0F172A]'
+      }
+    >
+      {item.label}
+    </Link>
+  );
 }
 
 // Mobile slide-over nav, shared across product apps. Same product-agnostic
@@ -33,7 +50,9 @@ interface Props {
 export default function MobileSidebar({ actor, items }: Props) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
-  const visible = filterNav(items, actor);
+  const grouped = isNavGroups(items);
+  const flatVisible = grouped ? [] : filterNav(items, actor);
+  const groupsVisible = grouped ? filterNavGroups(items, actor) : [];
 
   useEffect(() => {
     const onToggle = () => setOpen((v) => !v);
@@ -101,23 +120,20 @@ export default function MobileSidebar({ actor, items }: Props) {
           </button>
         </div>
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-3" aria-label="Primary mobile">
-          {visible.map((item) => {
-            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-            return (
-              <Link
-                key={item.id}
-                href={item.href}
-                aria-current={active ? 'page' : undefined}
-                className={
-                  active
-                    ? 'rounded-lg bg-[#EFF6FF] px-3 py-2.5 text-sm font-semibold text-[#0b6cbf]'
-                    : 'rounded-lg px-3 py-2.5 text-sm font-medium text-[#475569] transition-colors hover:bg-[#F8FAFC] hover:text-[#0F172A]'
-                }
-              >
-                {item.label}
-              </Link>
-            );
-          })}
+          {grouped
+            ? groupsVisible.map((group) => (
+                <div key={group.id} className="flex flex-col gap-1 pb-3">
+                  <span className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8]">
+                    {group.label}
+                  </span>
+                  {group.items.map((item) => (
+                    <MobileNavLink key={item.id} item={item} pathname={pathname} />
+                  ))}
+                </div>
+              ))
+            : flatVisible.map((item) => (
+                <MobileNavLink key={item.id} item={item} pathname={pathname} />
+              ))}
         </nav>
       </aside>
     </div>

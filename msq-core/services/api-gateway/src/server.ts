@@ -389,6 +389,25 @@ app.patch('/lookups/organizations/:id', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.adminServiceUrl, `/api/v1/lookups/organizations/${id}`, req, reply, req.userCtx);
 });
 
+// Capabilities admin (super_admin only — enforced in admin-service). The
+// capability catalog is global; role↔capability grants are read/written per
+// tenant_id query/body param, same "advisory selector, backend enforces"
+// shape as the tenant-scoped lookups above.
+app.get('/capabilities', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.adminServiceUrl, '/api/v1/capabilities', req, reply, req.userCtx);
+});
+app.get('/roles/:id/capabilities', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.adminServiceUrl, `/api/v1/roles/${id}/capabilities`, req, reply, req.userCtx);
+});
+app.put('/roles/:id/capabilities', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.adminServiceUrl, `/api/v1/roles/${id}/capabilities`, req, reply, req.userCtx);
+});
+app.get('/departments', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.adminServiceUrl, '/api/v1/departments', req, reply, req.userCtx);
+});
+
 // Tenant-scoped lookup/role admin (N-6 Half A): super_admin manages a SELECTED
 // tenant's product reference data. These 8 slugs are owned by their product
 // service (which writes its own schema under tenant RLS — never root_service via

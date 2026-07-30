@@ -593,7 +593,8 @@ GRANT SELECT ON TABLE
   lms.lead_assignment_log, lms.lead_status_log, audit.marketing_leads_history, audit.audit_log,
   lms.vw_dashboard_leads, lms.vw_lead_followup_timeline, lms.vw_lead_assignment_timeline,
   lms.vw_sales_follow_up_pipeline, lms.vw_followup_pipeline_enriched, lms.vw_org_performance_snapshot,
-  lms.vw_rep_performance, marketing.vw_campaign_lookup,
+  lms.vw_rep_performance, lms.vw_lead_report_branch, lms.vw_lead_report_user,
+  marketing.vw_campaign_lookup,
   iam.vw_user_org_chart, iam.vw_user_team_members, iam.vw_user_org_access
   TO lms_svc;
 

@@ -612,6 +612,16 @@ app.get('/analytics/performance', { ...withAuth }, async (req, reply) => {
 app.get('/analytics/pipeline', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/pipeline', req, reply, req.userCtx);
 });
+// Daily lead report (branch / assignee breakdowns + on-demand email send)
+app.get('/analytics/report/branches', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/report/branches', req, reply, req.userCtx);
+});
+app.get('/analytics/report/users', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/report/users', req, reply, req.userCtx);
+});
+app.post('/analytics/report/send', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/report/send', req, reply, req.userCtx);
+});
 
 // Meta CAPI (protected — manual conversion event trigger)
 app.post('/meta/crm-event', { ...withAuth }, async (req, reply) => {

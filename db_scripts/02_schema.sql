@@ -2047,6 +2047,142 @@ JOIN lms.lead_stage     ls ON ls.id = ml.stage_id
 WHERE NOT ml.is_deleted
 GROUP BY ml.org_id, o.name, u.id, u.full_name, u.email, ur.name;
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Daily lead report counters. Two views, one metric set, three result shapes:
+--   branch level  -> lms.vw_lead_report_branch WHERE org_id = ?
+--   tenant level  -> lms.vw_lead_report_branch WHERE tenant_id = ?  (one row per
+--                    branch; the caller adds a GROUPING SETS rollup row)
+--   user level    -> lms.vw_lead_report_user   (per assignee, plus one
+--                    "Unassigned" row per branch)
+--
+-- Population is `NOT is_deleted AND is_active` in BOTH views. is_active = FALSE
+-- means the row was superseded by a dedup re-submission or transferred out to
+-- another branch (see COMMENT ON lms.marketing_leads.is_active). A transferred
+-- lead is inactive in the source branch and active in the destination, so
+-- counting inactive rows double-counts the same person in a tenant rollup --
+-- the one thing a branch-breakdown report must never do. Note that
+-- lms.vw_org_performance_snapshot above filters only NOT is_deleted and is
+-- therefore inflated; do not copy it.
+--
+-- Follow-up counters read lms.marketing_leads.scheduled_at and use the SAME
+-- expression as lms.vw_dashboard_leads.is_followup_overdue, deliberately
+-- including terminal stages. If that rule ever tightens, it has to change here
+-- and in vw_dashboard_leads together, or the emailed count stops matching the
+-- overdue badge in the leads list.
+--
+-- NOW() (not CLOCK_TIMESTAMP()) inside the filters: it is stable for the whole
+-- statement, so a lead whose scheduled_at crosses the boundary mid-scan cannot
+-- land in both followup_scheduled and followup_overdue. CLOCK_TIMESTAMP() is
+-- used only for the snapshot_at output column, matching the views above.
+--
+-- Neither view joins entity.tenants, and neither exposes tenant_name, even
+-- though tenant_id is right there. Under security_invoker the CALLER's grants
+-- apply, and neither app_user nor tenant_admin has SELECT on entity.tenants —
+-- adding the join would make both views fail with "permission denied for table
+-- tenants" for every HTTP caller on the tenant_admin path. (This is not
+-- hypothetical: lms.vw_tenant_full_dashboard above does exactly that and is
+-- unreadable by the tenant_admin role it is granted to.) The report's tenant
+-- name is resolved separately, by the caller, which does hold that privilege.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Per-branch report counters. One row per non-deleted org -- a branch with no
+-- leads still appears, as a zero row, so a silent join failure looks different
+-- from a genuinely quiet branch.
+--
+-- new_leads_today is the only date-bounded metric, and it is bounded in the
+-- BRANCH's own timezone (entity.organizations.timezone). date_trunc/::date on a
+-- timestamptz truncates in UTC, which for an Asia/Kolkata branch (UTC+5:30)
+-- files everything created before 05:30 local under the previous day and makes
+-- the report disagree with the leads list. Hence AT TIME ZONE o.timezone.
+CREATE OR REPLACE VIEW lms.vw_lead_report_branch WITH (security_invoker = true) AS
+WITH counters AS (
+  SELECT
+    ml.org_id,
+    COUNT(*)                                                         AS total_leads,
+    COUNT(*) FILTER (WHERE ls.name = 'new')                          AS new_count,
+    COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
+                         = (NOW()          AT TIME ZONE o.timezone)::date) AS new_leads_today,
+    COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)              AS unassigned_count,
+    COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                       AND ml.scheduled_at >= NOW())                 AS followup_scheduled,
+    COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                       AND ml.scheduled_at <  NOW())                 AS followup_overdue,
+    COUNT(*) FILTER (WHERE ls.name = 'converted')                    AS converted_count,
+    COUNT(*) FILTER (WHERE ls.name = 'unqualified')                  AS unqualified_count
+  FROM lms.marketing_leads ml
+  JOIN entity.organizations o ON o.id = ml.org_id
+  -- LEFT, not INNER: stage_id is nullable, and an inner join would silently drop
+  -- stage-less leads from total_leads and new_leads_today.
+  LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id
+  WHERE NOT ml.is_deleted AND ml.is_active
+  GROUP BY ml.org_id
+)
+SELECT
+  o.tenant_id,
+  o.id                                     AS org_id,
+  o.name                                   AS org_name,
+  o.timezone                               AS org_timezone,
+  (NOW() AT TIME ZONE o.timezone)::date    AS report_date,
+  COALESCE(c.total_leads,        0)::INT    AS total_leads,
+  COALESCE(c.new_count,          0)::INT    AS new_count,
+  COALESCE(c.new_leads_today,    0)::INT    AS new_leads_today,
+  COALESCE(c.unassigned_count,   0)::INT    AS unassigned_count,
+  COALESCE(c.followup_scheduled, 0)::INT    AS followup_scheduled,
+  COALESCE(c.followup_overdue,   0)::INT    AS followup_overdue,
+  COALESCE(c.converted_count,    0)::INT    AS converted_count,
+  COALESCE(c.unqualified_count,  0)::INT    AS unqualified_count,
+  CLOCK_TIMESTAMP()                        AS snapshot_at
+FROM entity.organizations o
+LEFT JOIN counters c ON c.org_id = o.id
+WHERE NOT o.is_deleted;
+
+-- Per (branch, assignee) report counters, with an explicit "Unassigned" bucket
+-- per branch. That bucket is just the assigned_user_id IS NULL group: grouping
+-- on a nullable column already yields exactly one NULL group per branch, so no
+-- UNION ALL and no second scan is needed, and because assigned_user_id is
+-- ON DELETE SET NULL an orphaned assignment folds in here rather than vanishing.
+--
+-- Keyed on ml.org_id -- the branch the LEAD belongs to, not the assignee's home
+-- org (iam.users.org_id). A rep with iam.user_org_mapping rows in two branches
+-- therefore appears once per branch, which is what a branch breakdown must show.
+-- Branches with no leads at all produce no row here (use vw_lead_report_branch
+-- for the guaranteed-complete branch list).
+--
+-- unassigned_count is carried here too -- it equals total_leads on the
+-- Unassigned row and 0 elsewhere -- purely so the metric column set is identical
+-- across all three result shapes and one renderer serves them all.
+--
+-- Same population, timezone and follow-up rules as lms.vw_lead_report_branch.
+CREATE OR REPLACE VIEW lms.vw_lead_report_user WITH (security_invoker = true) AS
+SELECT
+  o.tenant_id,
+  ml.org_id,
+  o.name                                   AS org_name,
+  ml.assigned_user_id,                     -- NULL = the Unassigned bucket
+  COALESCE(u.full_name, 'Unassigned')      AS assignee,
+  u.email                                  AS assignee_email,
+  (ml.assigned_user_id IS NULL)            AS is_unassigned,
+  (NOW() AT TIME ZONE o.timezone)::date    AS report_date,
+  COUNT(*)::INT                                                    AS total_leads,
+  COUNT(*) FILTER (WHERE ls.name = 'new')::INT                     AS new_count,
+  COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
+                       = (NOW()          AT TIME ZONE o.timezone)::date)::INT AS new_leads_today,
+  COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)::INT          AS unassigned_count,
+  COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                     AND ml.scheduled_at >= NOW())::INT             AS followup_scheduled,
+  COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                     AND ml.scheduled_at <  NOW())::INT             AS followup_overdue,
+  COUNT(*) FILTER (WHERE ls.name = 'converted')::INT                AS converted_count,
+  COUNT(*) FILTER (WHERE ls.name = 'unqualified')::INT              AS unqualified_count,
+  CLOCK_TIMESTAMP()                        AS snapshot_at
+FROM lms.marketing_leads ml
+JOIN entity.organizations o ON o.id = ml.org_id AND NOT o.is_deleted
+LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id
+LEFT JOIN iam.users      u  ON u.id  = ml.assigned_user_id AND NOT u.is_deleted
+WHERE NOT ml.is_deleted AND ml.is_active
+GROUP BY o.tenant_id, ml.org_id, o.name, o.timezone,
+         ml.assigned_user_id, u.full_name, u.email;
+
 -- Campaign performance (tenant_admin scope).
 CREATE OR REPLACE VIEW marketing.vw_tenant_campaign_summary WITH (security_invoker = true) AS
 WITH cls AS (
@@ -2497,6 +2633,7 @@ GRANT SELECT ON TABLE
   lms.vw_lead_followup_timeline, lms.vw_lead_assignment_timeline,
   lms.vw_sales_follow_up_pipeline, lms.vw_followup_pipeline_enriched,
   lms.vw_org_performance_snapshot,
+  lms.vw_lead_report_branch, lms.vw_lead_report_user,
   iam.vw_user_org_access, marketing.vw_campaign_lookup, lms.vw_rep_performance
 TO app_user;
 
@@ -2525,6 +2662,7 @@ GRANT SELECT ON TABLE
   lms.vw_sales_follow_up_pipeline, lms.vw_followup_pipeline_enriched,
   marketing.vw_tenant_campaign_summary, lms.vw_tenant_full_dashboard,
   lms.vw_org_performance_snapshot,
+  lms.vw_lead_report_branch, lms.vw_lead_report_user,
   iam.vw_user_org_access, marketing.vw_campaign_lookup, lms.vw_rep_performance
 TO tenant_admin;
 

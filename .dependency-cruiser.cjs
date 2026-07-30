@@ -25,7 +25,7 @@
 // msq-core/, so those rules can never match here — cross-boundary checks for
 // those repos need their own dependency-cruiser config in their own repo.
 const SHARED =
-  '^msq-core/(packages/(platform-authz|ui|db|types|service-auth|auth-constants|audit-log|validation)|services/(identity-service|api-gateway|admin-service|communication-service)|apps/(auth-web|lookup-admin))/';
+  '^msq-core/(packages/(platform-authz|ui|db|types|service-auth|auth-constants|audit-log|validation|reporting)|services/(identity-service|api-gateway|admin-service|communication-service)|apps/(auth-web|lookup-admin))/';
 
 const LMS =
   '^(services/(leads-service|meta-conversion-api|notifications-service)|apps/lms-web|packages/lms-(authz|web))/';

@@ -2,7 +2,8 @@
 // ONE ladder, stored in iam.user_roles.rank and resolved server-side by
 // iam.fn_user_org_rank. It replaces the three scales that used to disagree
 // (global iam rank, coarse platform rank, per-product member_roles rank) — the
-// direct cause of the "page renders but every call 403s" bugs.
+// direct cause of the "page renders but every call 403s" bugs. The per-product
+// member_roles tables have since been dropped entirely.
 //
 // Only the FOUR anchor roles have fixed ranks; they are global rows in
 // iam.user_roles (tenant_id IS NULL) shared by every tenant. Every other role is

@@ -8,7 +8,7 @@ import type { ListUsersQuery, GetAssignableQuery } from './users.schema.js';
 // User management runs on the GLOBAL iam.user_roles ladder (P1.1/P1.2), not on
 // any single product's rank scale — identity is platform-shared and must not
 // take a product-authz dependency (N-1). This threshold is numerically the
-// same tier LMS calls "senior_sales_executive" (see lms.roles.rank), but it's
+// same tier LMS calls "senior_sales_executive" (see iam.user_roles.rank), but it's
 // inlined here rather than imported so identity-service takes no @lms/authz
 // dependency. Matches the RANK_READ_ONLY/RANK_ADMIN inlining already used in
 // users.repository.ts and packages/db/src/assignment.ts.

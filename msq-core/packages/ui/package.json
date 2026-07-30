@@ -26,8 +26,10 @@
     "@platform/auth-constants": "workspace:*",
     "@platform/authz": "workspace:*",
     "@platform/rbac": "workspace:*",
+    "@platform/reporting": "workspace:^",
     "@platform/types": "workspace:*",
     "jose": "^6.2.3",
+    "recharts": "^3.10.1",
     "xlsx": "^0.18.5"
   },
   "peerDependencies": {
@@ -39,8 +41,8 @@
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
     "next": "^15.2.4",
-    "typescript": "^5.7.3",
     "rimraf": "^6.0.1",
+    "typescript": "^5.7.3",
     "vitest": "^3.0.0"
   }
 }

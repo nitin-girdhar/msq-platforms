@@ -20,7 +20,8 @@ export const usersTable = iamSchema.table('users', {
   // Coarse cross-product role that survives in the shrunk JWT (P1.1). Nullable
   // until the Phase E contract makes it NOT NULL. Values: super_admin |
   // tenant_admin | org_admin | member. Drives PG-role selection + platform-wide
-  // capability only; product authority lives in <product>.member_roles.
+  // capability only; per-org role authority lives in iam.user_org_mapping,
+  // resolved via iam.fn_user_org_role (Tier C).
   platformRole:        text('platform_role'),
   // Profile photo / avatar (platform-wide; also the biometric reference for HR
   // face-attendance once enrolled). Bytes live in blob storage — only the opaque

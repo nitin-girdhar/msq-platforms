@@ -30,6 +30,59 @@ export {
   type PageTab,
 } from './components/page';
 
+// Chart primitives for @platform/reporting results. Domain-free: they take a
+// ReportSpec + ReportResult and draw them. Everything product-specific (which
+// dataset, which capability, which endpoint) stays in the app that composes
+// them — the barrel rule above applies here with no exceptions.
+export {
+  ReportChart,
+  ChartFrame,
+  ChartTooltip,
+  ChartLegend,
+  Sparkline,
+  KpiTile,
+  KpiRow,
+  DataTable,
+  CHART_PALETTE,
+  CHART_PALETTE_DARK,
+  CHART_TOKENS,
+  CHART_TOKENS_DARK,
+  CATEGORICAL_SLOTS,
+  SCATTER_SERIES_CAP,
+  chartTheme,
+  deltaColor,
+  exceedsSlots,
+  isChartColor,
+  sequentialColor,
+  seriesColor,
+  resolveSeries,
+  xAxisKey,
+  xAxisLabel,
+  formatCompact,
+  formatDimension,
+  formatDurationMinutes,
+  formatElapsed,
+  formatMeasure,
+  formatShare,
+  toPlotValue,
+  truncateLabel,
+  EMPTY_CELL,
+  type ChartPoint,
+  type ReportChartProps,
+  type ChartFrameProps,
+  type ChartTooltipProps,
+  type ChartLegendProps,
+  type SparklineProps,
+  type KpiTileProps,
+  type KpiRowProps,
+  type DataTableProps,
+  type ChartMode,
+  type ChartPalette,
+  type ChartTheme,
+  type ChartTokens,
+  type DrawnSeries,
+} from './components/Chart';
+
 export { useIsMobile } from './hooks/useIsMobile';
 export { useDismissible, useDropdown } from './hooks/useDropdown';
 

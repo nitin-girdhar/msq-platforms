@@ -41,14 +41,13 @@
 --   entity.reset_tenant_catalog(tenant, key, ver?)  opt-in restore-to-default.
 --   entity._apply_catalog_rows(...)                 shared per-catalog copy.
 --
--- Catalogs covered (the 8 tenant-scoped lookups from script 22):
---   lms.roles                (module: lms)
+-- Catalogs covered (the 5 tenant-scoped lookups from script 22 that remain;
+-- lms.roles / hr.roles / task.roles were dropped when Tier C consolidated role
+-- management onto the single iam ladder):
 --   task.task_statuses       (module: tasks)
 --   task.task_priorities     (module: tasks)
---   task.roles               (module: tasks)
 --   hr.leave_types           (module: leave)
 --   hr.attendance_statuses   (module: attendance)
---   hr.roles                 (modules: leave OR attendance — HR-wide)
 --   hr.employment_types      (modules: leave OR attendance — HR-wide)
 --
 -- Idempotent: tables use IF NOT EXISTS; functions CREATE OR REPLACE; the
@@ -233,36 +232,6 @@ BEGIN
       SET label = EXCLUDED.label, description = EXCLUDED.description, is_active = EXCLUDED.is_active
       WHERE p_reset;
 
-  ELSIF p_catalog_key = 'lms.roles' THEN
-    INSERT INTO lms.roles (tenant_id, name, label, description, rank, sort_order, is_active)
-    SELECT p_tenant_id, d.name, d.label, d.description, COALESCE(d.rank, 0), d.sort_order, d.is_active
-    FROM entity.catalog_defaults d
-    WHERE d.catalog_key = p_catalog_key AND d.version = p_version
-    ON CONFLICT (tenant_id, name) DO UPDATE
-      SET label = EXCLUDED.label, description = EXCLUDED.description,
-          rank = EXCLUDED.rank, sort_order = EXCLUDED.sort_order, is_active = EXCLUDED.is_active
-      WHERE p_reset;
-
-  ELSIF p_catalog_key = 'hr.roles' THEN
-    INSERT INTO hr.roles (tenant_id, name, label, description, rank, sort_order, is_active)
-    SELECT p_tenant_id, d.name, d.label, d.description, COALESCE(d.rank, 0), d.sort_order, d.is_active
-    FROM entity.catalog_defaults d
-    WHERE d.catalog_key = p_catalog_key AND d.version = p_version
-    ON CONFLICT (tenant_id, name) DO UPDATE
-      SET label = EXCLUDED.label, description = EXCLUDED.description,
-          rank = EXCLUDED.rank, sort_order = EXCLUDED.sort_order, is_active = EXCLUDED.is_active
-      WHERE p_reset;
-
-  ELSIF p_catalog_key = 'task.roles' THEN
-    INSERT INTO task.roles (tenant_id, name, label, description, rank, sort_order, is_active)
-    SELECT p_tenant_id, d.name, d.label, d.description, COALESCE(d.rank, 0), d.sort_order, d.is_active
-    FROM entity.catalog_defaults d
-    WHERE d.catalog_key = p_catalog_key AND d.version = p_version
-    ON CONFLICT (tenant_id, name) DO UPDATE
-      SET label = EXCLUDED.label, description = EXCLUDED.description,
-          rank = EXCLUDED.rank, sort_order = EXCLUDED.sort_order, is_active = EXCLUDED.is_active
-      WHERE p_reset;
-
   ELSE
     RAISE EXCEPTION '_apply_catalog_rows: unknown catalog_key %', p_catalog_key;
   END IF;
@@ -439,48 +408,24 @@ INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label,
   ('hr.attendance_statuses', 'attendance', 1, 'wfh',        'Work From Home',  7)
 ON CONFLICT (catalog_key, version, name) DO NOTHING;
 
--- lms.roles (module: lms)
-INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label, description, rank, sort_order) VALUES
-  ('lms.roles', 'lms', 1, 'read_only',              'Read Only',              'Read-only viewer — dashboards and reports only',                    0,  1),
-  ('lms.roles', 'lms', 1, 'sales_representative',   'Sales Representative',   'Front-line sales — manages own assigned leads and follow-ups',     20, 2),
-  ('lms.roles', 'lms', 1, 'senior_sales_executive', 'Senior Sales Executive', 'Manages a team of sales reps',                                     40, 3),
-  ('lms.roles', 'lms', 1, 'org_manager',            'Manager',                'Manages a team of Senior Sales Executives and reps within an org', 60, 4),
-  ('lms.roles', 'lms', 1, 'org_sr_manager',         'Senior Manager',         'Manages a team of managers and reps within an org',                70, 5),
-  ('lms.roles', 'lms', 1, 'lms_admin',              'LMS Admin',              'Full control of the LMS product within an org',                    80, 6)
-ON CONFLICT (catalog_key, version, name) DO NOTHING;
-
--- hr.roles (modules: leave OR attendance — HR-wide)
-INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label, description, rank, sort_order) VALUES
-  ('hr.roles', 'leave', 1, 'hr_viewer',  'HR Viewer',  'Read-only access to HR data',                                  0,  1),
-  ('hr.roles', 'leave', 1, 'hr_staff',   'HR Staff',   'Day-to-day HR operations — leave/attendance entry',           40, 2),
-  ('hr.roles', 'leave', 1, 'hr_manager', 'HR Manager', 'Approves leave, manages team attendance',                     70, 3),
-  ('hr.roles', 'leave', 1, 'hr_admin',   'HR Admin',   'Full control of the HR product — profiles, policies, config', 80, 4)
-ON CONFLICT (catalog_key, version, name) DO NOTHING;
-
--- task.roles (module: tasks)
-INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label, description, rank, sort_order) VALUES
-  ('task.roles', 'tasks', 1, 'task_member', 'Task Member', 'Creates and works own tasks',                     20, 1),
-  ('task.roles', 'tasks', 1, 'task_lead',   'Task Lead',   'Manages a team''s tasks and lists',               40, 2),
-  ('task.roles', 'tasks', 1, 'task_admin',  'Task Admin',  'Full control of the Tasks product within an org', 80, 3)
-ON CONFLICT (catalog_key, version, name) DO NOTHING;
+-- NOTE: the lms.roles / hr.roles / task.roles default catalogs were removed —
+-- Tier C consolidated role management onto the single iam ladder, and the
+-- per-product role tables they seeded no longer exist.
 
 
 -- Register the current version + module gating per catalog.
 INSERT INTO entity.catalog_versions (catalog_key, product, modules, current_version) VALUES
   ('task.task_statuses',     'tasks',      ARRAY['tasks'],               1),
   ('task.task_priorities',   'tasks',      ARRAY['tasks'],               1),
-  ('task.roles',             'tasks',      ARRAY['tasks'],               1),
   ('hr.leave_types',         'leave',      ARRAY['leave'],               1),
   ('hr.attendance_statuses', 'attendance', ARRAY['attendance'],          1),
-  ('hr.employment_types',    'leave',      ARRAY['leave','attendance'],  1),
-  ('hr.roles',               'leave',      ARRAY['leave','attendance'],  1),
-  ('lms.roles',              'lms',        ARRAY['lms'],                 1)
+  ('hr.employment_types',    'leave',      ARRAY['leave','attendance'],  1)
 ON CONFLICT (catalog_key) DO NOTHING;
 
 
 -- ═══════════════════════════════════════════════════════════════════
 -- 10. Backfill entity.tenant_catalog_versions for EXISTING tenants.
---     Script 22 already gave every existing tenant a copy of all 8
+--     Script 22 already gave every existing tenant a copy of all 5
 --     catalogs. Record that provisioning fact (version 1) for each
 --     (tenant, catalog) that actually has rows, so the reset path has a
 --     baseline. Idempotent via ON CONFLICT DO NOTHING.
@@ -492,9 +437,6 @@ INSERT INTO entity.tenant_catalog_versions (tenant_id, catalog_key, version)
 SELECT DISTINCT t.tenant_id, 'task.task_priorities', 1 FROM task.task_priorities t
 ON CONFLICT (tenant_id, catalog_key) DO NOTHING;
 INSERT INTO entity.tenant_catalog_versions (tenant_id, catalog_key, version)
-SELECT DISTINCT t.tenant_id, 'task.roles', 1 FROM task.roles t
-ON CONFLICT (tenant_id, catalog_key) DO NOTHING;
-INSERT INTO entity.tenant_catalog_versions (tenant_id, catalog_key, version)
 SELECT DISTINCT t.tenant_id, 'hr.leave_types', 1 FROM hr.leave_types t
 ON CONFLICT (tenant_id, catalog_key) DO NOTHING;
 INSERT INTO entity.tenant_catalog_versions (tenant_id, catalog_key, version)
@@ -503,19 +445,13 @@ ON CONFLICT (tenant_id, catalog_key) DO NOTHING;
 INSERT INTO entity.tenant_catalog_versions (tenant_id, catalog_key, version)
 SELECT DISTINCT t.tenant_id, 'hr.attendance_statuses', 1 FROM hr.attendance_statuses t
 ON CONFLICT (tenant_id, catalog_key) DO NOTHING;
-INSERT INTO entity.tenant_catalog_versions (tenant_id, catalog_key, version)
-SELECT DISTINCT t.tenant_id, 'hr.roles', 1 FROM hr.roles t
-ON CONFLICT (tenant_id, catalog_key) DO NOTHING;
-INSERT INTO entity.tenant_catalog_versions (tenant_id, catalog_key, version)
-SELECT DISTINCT t.tenant_id, 'lms.roles', 1 FROM lms.roles t
-ON CONFLICT (tenant_id, catalog_key) DO NOTHING;
 
 
 -- ===================================================================
 -- SCHEMA VERSION TRACKING
 -- ===================================================================
 INSERT INTO public.schema_versions (version, description) VALUES
-  ('1.17.0', 'Tenant default seeding: entity.catalog_defaults/catalog_versions (versioned per-product default catalogs) + entity.tenant_catalog_versions (per-tenant provisioning record, RLS) + entity.seed_tenant_defaults()/reset_tenant_catalog() functions; seeds v1 defaults for the 8 tenant-scoped lookups and backfills existing tenants')
+  ('1.17.0', 'Tenant default seeding: entity.catalog_defaults/catalog_versions (versioned per-product default catalogs) + entity.tenant_catalog_versions (per-tenant provisioning record, RLS) + entity.seed_tenant_defaults()/reset_tenant_catalog() functions; seeds v1 defaults for the 5 tenant-scoped lookups and backfills existing tenants')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

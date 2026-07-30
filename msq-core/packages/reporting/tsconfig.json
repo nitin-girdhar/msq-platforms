@@ -1,0 +1,12 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  // The whole __tests__ folder, not just *.test.ts: fixtures.ts is neither a test
+  // file nor shippable, and excluding only the tests emitted it into dist along
+  // with its drizzle-orm/pg-core import.
+  "exclude": ["src/__tests__"]
+}

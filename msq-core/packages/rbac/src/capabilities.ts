@@ -20,7 +20,7 @@ export const CAPABILITY = {
   PLATFORM:       'platform',
   TASKS:          'tasks',
 
-  // ── Pages (15) ──
+  // ── Pages (16) ──
   ADMIN_LOOKUPS:        'admin.lookups',
   ADMIN_ORGS:           'admin.orgs',
   ADMIN_USERS:          'admin.users',
@@ -34,6 +34,7 @@ export const CAPABILITY = {
   LMS_FOLLOWUPS:        'lms.followups',
   LMS_HISTORY:          'lms.history',
   LMS_LEADS:            'lms.leads',
+  LMS_REPORTS:          'lms.reports',
   LMS_USERS:            'lms.users',
   TASKS_LISTS:          'tasks.lists',
 
@@ -111,6 +112,9 @@ export const CAPABILITY = {
   LMS_LEADS_UNASSIGNED_VIEW:               'lms.leads.unassigned.view',
   LMS_LEADS_VIEW:                          'lms.leads.view',
   LMS_LEADS_WHATSAPP_SEND:                 'lms.leads.whatsapp.send',
+  LMS_REPORTS_MANAGE:                      'lms.reports.manage',
+  LMS_REPORTS_SHARE:                       'lms.reports.share',
+  LMS_REPORTS_VIEW:                        'lms.reports.view',
   LMS_USERS_MANAGE:                        'lms.users.manage',
   LMS_USERS_VIEW:                          'lms.users.view',
   PLATFORM_WRITE:                          'platform.write',

@@ -126,11 +126,19 @@ $DemoSeedScripts = @(
 #
 # They belong here rather than being folded into 07 because 07 runs before
 # tenants exist, so it has nothing to fan the catalogs out across.
+#
+# 15_drop_per_product_roles.sql runs LAST: it tears down the per-product role
+# ladders (lms/hr/task.roles + .member_roles and their resolvers), which Tier C
+# superseded with the single iam ladder. It must follow 13 and the _migrations
+# because those still reference the tables on an older database; on a fresh
+# install 04 no longer creates them and every statement is IF EXISTS, so it is
+# a no-op either way.
 $RemainingCoreScripts = @(
     "13_backfill_per_product_roles.sql",
     "14_scope_comms_templates_to_tenant.sql",
     "_migrations/17_tenant_scope_lms_catalogs.sql",
-    "_migrations/19_tenant_scope_ladder_roles.sql"
+    "_migrations/19_tenant_scope_ladder_roles.sql",
+    "15_drop_per_product_roles.sql"
 )
 
 $SqlScripts = if ($IncludeDemoSeed) {

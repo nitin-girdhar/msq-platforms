@@ -110,13 +110,7 @@ export * from './tables/tasks.table.js';
 export * from './tables/task-status-log.table.js';
 export * from './tables/task-comments.table.js';
 
-// Per-product roles (P1.1 — per-product role ladders + (user, product, role) grants)
-export * from './tables/lms-roles.table.js';
-export * from './tables/hr-roles.table.js';
-export * from './tables/task-roles.table.js';
-export * from './tables/lms-member-roles.table.js';
-export * from './tables/hr-member-roles.table.js';
-export * from './tables/task-member-roles.table.js';
-export * from './views/lms-member-roles.view.js';
-export * from './views/hr-member-roles.view.js';
-export * from './views/task-member-roles.view.js';
+// NOTE: the per-product role ladders (lms/hr/task.roles + .member_roles and
+// their vw_member_roles resolvers, P1.1) were removed — Tier C consolidated all
+// role/rank resolution onto the single iam ladder (iam.user_roles +
+// iam.fn_user_org_role). See packages/db/src/member-role.ts.

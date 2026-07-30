@@ -344,7 +344,7 @@ Per-tenant **product/module entitlements** (D6). Gates which products a tenant h
 
 Role definitions with rank-based hierarchy.
 
-> **Legacy (P1.1):** this single global ladder is being replaced by per-product ladders (`lms.roles`, `hr.roles`, `task.roles`) plus per-product grants (`<product>.member_roles`). During the migration it stays authoritative (Phases A–C); the Phase E contract deprecates it. See those sections below.
+> **Tier C:** this single ladder is **the** ladder. P1.1 briefly split it into per-product ladders (`lms.roles`, `hr.roles`, `task.roles`) plus per-product grants (`<product>.member_roles`); those three scales could disagree, so Tier C consolidated everything back here and the per-product tables were dropped. See the "REMOVED" section below.
 
 | Column      | Type | Constraints                       |
 | ----------- | ---- | --------------------------------- |
@@ -502,62 +502,35 @@ reassigning LMS leads cannot affect the other tree. See P2.2 tests proving this 
 
 ---
 
-### lms.roles / hr.roles / task.roles
+### lms.roles / hr.roles / task.roles / *.member_roles — REMOVED
 
-Per-product role **catalogs** (P1.1, `17_init-per-product-roles.sql`). Each product owns its own ladder; **ranks are only comparable within a product**. Machine key is `name` (stable), display is `label`.
+The per-product role model (P1.1, originally `17_init-per-product-roles.sql`) has
+been **dropped**. It consisted of, per product schema (`lms` | `hr` | `task`):
 
-> **Tenant-scoped (`22_tenant-scope-lookups.sql`):** originally global reference data; now carries `tenant_id NOT NULL` and RLS. Every tenant starts with an identical copy of the seeded ladder below. **P3.3** added the per-tenant customization API; **N-6 (Half A)** then moved that API from admin-service to the **owning product service** (`{lms,hr,task}-roles` → leads/hr/tasks-service), each `GET/POST /lookups/{…}-roles` + `PATCH …/:id` requiring a `tenant_id` query param (super_admin JWTs carry no tenant). The write runs as the product-scoped login via `withTenantConfigTx` (pins `app.current_tenant_id` to the selected tenant); `25_lookup-admin-write-rls.sql` adds the tenant-pinned admin write policy (`FOR ALL TO app_user` keyed on `app.current_tenant_id`) + `INSERT,UPDATE` GRANTs to the product role — **no `root_service`/BYPASSRLS**. `apps/lookup-admin` gates editing behind a tenant selector. See "Lookup table administration" in Architecture.md.
+- `<product>.roles` — the per-product role **catalog**, each with its own rank scale
+- `<product>.member_roles` — the `(user, org)` role **grant**
+- `<product>.fn_member_rank(user, org)` / `<product>.fn_member_role(user, org)` — resolvers
+- `<product>.vw_member_roles` — resolver view
+- `public.set_member_role_tenant_id()` — the shared grant-table trigger
 
-| Column      | Type    | Constraints                                          |
-| ----------- | ------- | ----------------------------------------------------- |
-| id          | UUID    | PK (UUIDv7)                                           |
-| tenant_id   | UUID    | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE   |
-| name        | TEXT    | NOT NULL, UNIQUE per `(tenant_id, name)`              |
-| label       | TEXT    | NOT NULL                                              |
-| description | TEXT    |                                                        |
-| rank        | INT     | NOT NULL, DEFAULT 0 (range 0-100)                     |
-| sort_order  | INT     | NOT NULL, DEFAULT 0                                   |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                |
+**Why:** Tier C consolidated all role/rank/department resolution onto the **single
+iam ladder** — `iam.user_roles` + `iam.user_org_mapping`, resolved by
+`iam.fn_user_org_role(user, org)`. Three parallel rank scales that could disagree
+were the direct cause of the "page renders but every call 403s" class of bug. Once
+every service read the iam ladder, the per-product tables had no remaining readers
+(the last one was the gateway's `communicationSendGuard`, now on
+`resolveGlobalRole`), so they were removed rather than left as a decoy.
 
-**Seeded ladders** (per tenant):
+**Teardown:** `db_scripts/15_drop_per_product_roles.sql` (idempotent, `IF EXISTS`
+throughout) drops the objects above plus the `lms.roles`/`hr.roles`/`task.roles`
+rows in `entity.catalog_defaults`, `entity.catalog_versions` and
+`entity.tenant_catalog_versions`. The matching Drizzle schemas, the
+`resolveMemberRole` helper, the three `/lookups/{lms,hr,task}-roles` service
+modules and their gateway routes, and the three `apps/lookup-admin` cards were all
+deleted in the same change.
 
-| `lms.roles` (rank) | `hr.roles` (rank) | `task.roles` (rank) |
-| ------------------ | ----------------- | ------------------- |
-| read_only (0)      | hr_viewer (0)     | task_member (20)    |
-| sales_representative (20) | hr_staff (40) | task_lead (40)   |
-| senior_sales_executive (40) | hr_manager (70) | task_admin (80) |
-| org_manager (60)   | hr_admin (80)     |                     |
-| org_sr_manager (70)|                   |                     |
-| lms_admin (80)     |                   |                     |
-
-**RLS:** app_user `SELECT`s rows for the tenant owning its current org (`org_isolation_policy`); tenant_admin `SELECT`s rows for its own tenant directly (`tenant_isolation_policy`). Matches the `hr.leave_policies`/`hr.hr_settings` read-only-tenant-data pattern.
-**Grants:** `SELECT` to app_user/tenant_admin (unchanged — no write access added); `ALL` to root_service.
-**Known follow-up:** tenant provisioning doesn't auto-seed these rows for a brand-new tenant yet (same gap as `hr.hr_settings`).
-
----
-
-### lms.member_roles / hr.member_roles / task.member_roles
-
-The `(user, product, role)` **grant** (P1.1, `17_init-per-product-roles.sql`). Org-grained (preserves multi-org users), tenant-isolated via RLS. Shape mirrors `iam.user_org_mapping`. Backfilled from the old ladder in `18_backfill-per-product-roles.sql`.
-
-| Column     | Type        | Constraints                                              |
-| ---------- | ----------- | ------------------------------------------------------- |
-| user_id    | UUID        | NOT NULL, FK → iam.users(id) ON DELETE CASCADE, PK (composite) |
-| org_id     | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE, PK (composite) |
-| tenant_id  | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE; **set by trigger from org_id** — never written directly |
-| role_id    | UUID        | NOT NULL, FK → `<product>`.roles(id) ON DELETE RESTRICT  |
-| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                   |
-| granted_by | UUID        | FK → iam.users(id) ON DELETE SET NULL                   |
-| granted_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                     |
-| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                     |
-
-**PK:** `(user_id, org_id)` — one role per user per org per product.  
-**RLS:** `FORCE`d. app_user: `org_id = app.current_org_id` (ALL, incl. `WITH CHECK`); tenant_admin: `tenant_id = app.current_tenant_id`; root_service bypasses.  
-**Grants:** `SELECT, INSERT, UPDATE` to app_user/tenant_admin (revoke = `is_active=false`, no DELETE grant); `ALL` to root_service.  
-**Triggers:** `set_member_role_tenant_id` (BEFORE INSERT/UPDATE, derives `tenant_id` from `org_id` so a client cannot spoof it), `set_updated_at`.  
-**Helper:** `<product>.fn_member_rank(user, org)` — SECURITY DEFINER, returns the user's active rank in that product+org or **-1** if no grant (how "no product access" is encoded); safe to call inside other tables' RLS policies.  
-**Helper (P1.3, `20_member-role-resolver-fn.sql`):** `<product>.fn_member_role(user, org)` — SECURITY DEFINER, returns `(role TEXT, rank INT)` for the active grant, or `(NULL, -1)` if none. Sibling of `fn_member_rank` that also returns the role **name** the authz packages need. Each product service resolves the acting user's product role/rank through this (via `@platform/db`'s `resolveMemberRole`) instead of trusting a JWT/header rank. `GRANT EXECUTE` to `app_user`, `tenant_admin`, and the product's `*_svc` login (+ `lead_svc` for lms).  
-**View:** `<product>.vw_member_roles` (`security_invoker`) resolves `role`/`role_label`/`rank` + `org_name` + user.
+Role administration now lives entirely in the **`user-roles`** lookup + the
+**Capability Matrix** (see `iam.user_roles` and `iam.role_capabilities`).
 
 ---
 
@@ -602,7 +575,7 @@ Versioned default-catalog registry + provisioning seeder that gives a brand-new 
 
 `UNIQUE (catalog_key, version, name)`.
 
-**`entity.catalog_versions`** — one row per catalog: `current_version` (which version a NEW tenant gets) + `modules TEXT[]` (seed only if the tenant has ANY of these active `entity.tenant_modules`). Editing a catalog for future tenants = insert v N+1 rows into `catalog_defaults` and bump `current_version`. The eight registered catalogs and their gating modules: `lms.roles`→`{lms}`; `task.task_statuses`/`task.task_priorities`/`task.roles`→`{tasks}`; `hr.leave_types`→`{leave}`; `hr.attendance_statuses`→`{attendance}`; `hr.roles`/`hr.employment_types`→`{leave,attendance}` (HR-wide).
+**`entity.catalog_versions`** — one row per catalog: `current_version` (which version a NEW tenant gets) + `modules TEXT[]` (seed only if the tenant has ANY of these active `entity.tenant_modules`). Editing a catalog for future tenants = insert v N+1 rows into `catalog_defaults` and bump `current_version`. The five registered catalogs and their gating modules: `task.task_statuses`/`task.task_priorities`→`{tasks}`; `hr.leave_types`→`{leave}`; `hr.attendance_statuses`→`{attendance}`; `hr.employment_types`→`{leave,attendance}` (HR-wide). (Originally eight — the `lms.roles`/`hr.roles`/`task.roles` catalogs were removed with the per-product role model.)
 
 **`entity.tenant_catalog_versions`** — per-tenant record of the seeded/reset version per catalog. `UNIQUE (tenant_id, catalog_key)`; `tenant_id` FK → `entity.tenants` ON DELETE CASCADE. Drives seeder idempotency (a catalog already recorded is never re-seeded). **RLS:** SELECT-only, mirroring `entity.tenant_modules` (app_user via current org, tenant_admin own tenant); only `root_service` writes.
 
@@ -655,7 +628,7 @@ DB-backed JWT revocation supporting multiple scope levels.
 
 Pipeline stages for leads.
 
-> **Tenant-scoped (`26_tenant-scope-lms-lookups.sql`, N-6 Half B):** this and the other 6 LMS marketing lookups (`lead_stage_outcome`, `interaction_types`, `follow_up_statuses`, `lead_sources`, `marketing.marketing_platforms`, `marketing.campaign_statuses`) were originally **global** reference data. Script 26 added `tenant_id NOT NULL` + RLS, replaced the global `UNIQUE(name)` with `UNIQUE(tenant_id, name)`, migrated each global row into one copy per tenant, and repointed every dependent FK (`marketing_leads`, `lead_follow_ups`, `lead_status_log`, `lead_interactions`, `ad_campaigns`, `ext.lead_stage_capi_event_map`, self-ref `lead_stage_outcome.stage_id`) at the correct tenant's copy. The follow-up-status default/sync triggers, which resolved statuses by name globally, were rewritten to scope by the follow-up's own tenant. Runtime RLS is SELECT-only for `app_user`/`tenant_admin`; super_admin management CRUD moved to **leads-service** under the tenant-pinned admin write policy (see `lms.roles` note and Architecture.md → "Tenant-scoped lookup tables"). Seed values below are the per-tenant defaults each existing tenant was backfilled with.
+> **Tenant-scoped (`26_tenant-scope-lms-lookups.sql`, N-6 Half B):** this and the other 6 LMS marketing lookups (`lead_stage_outcome`, `interaction_types`, `follow_up_statuses`, `lead_sources`, `marketing.marketing_platforms`, `marketing.campaign_statuses`) were originally **global** reference data. Script 26 added `tenant_id NOT NULL` + RLS, replaced the global `UNIQUE(name)` with `UNIQUE(tenant_id, name)`, migrated each global row into one copy per tenant, and repointed every dependent FK (`marketing_leads`, `lead_follow_ups`, `lead_status_log`, `lead_interactions`, `ad_campaigns`, `ext.lead_stage_capi_event_map`, self-ref `lead_stage_outcome.stage_id`) at the correct tenant's copy. The follow-up-status default/sync triggers, which resolved statuses by name globally, were rewritten to scope by the follow-up's own tenant. Runtime RLS is SELECT-only for `app_user`/`tenant_admin`; super_admin management CRUD moved to **leads-service** under the tenant-pinned admin write policy (see Architecture.md → "Tenant-scoped lookup tables"). Seed values below are the per-tenant defaults each existing tenant was backfilled with.
 
 | Column            | Type    | Constraints      |
 | ----------------- | ------- | ---------------- |
@@ -1326,8 +1299,6 @@ Schema migration tracking.
 | `iam.fn_org_active_users(UUID)`          | iam    | Returns array of user UUIDs with active access to org   |
 | `iam.fn_user_org_rank(UUID,UUID)`        | iam    | Returns user's role rank in a specific org              |
 | `iam.purge_expired_token_blocklist()`    | iam    | Cleanup: removes expired token blocklist entries        |
-| `<product>.fn_member_rank(UUID,UUID)`    | lms/hr/task | Returns user's active product rank in an org, or -1 |
-| `<product>.fn_member_role(UUID,UUID)`    | lms/hr/task | Returns `(role, rank)` of the user's active product grant in an org, or `(NULL,-1)` — per-service role resolver (P1.3) |
 
 ---
 

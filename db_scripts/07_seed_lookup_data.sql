@@ -239,6 +239,21 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
 ('lms.apiclients.manage', 'operation', 'lms.apiclients', 'Manage API clients',
  'Create clients and rotate their secrets.', 2),
 
+-- Reports = the config-driven report builder (@platform/reporting). Distinct from
+-- lms.analytics, which is the fixed dashboard: analytics.view reads pre-built
+-- pipeline/performance screens, reports.view builds arbitrary aggregations over
+-- whatever the dataset registry exposes. Row scoping is NOT controlled here — a
+-- dataset declares a scopeOperation (lms.leads.view for the leads dataset), so a
+-- rep who can only see their own leads sees only their own leads in a report.
+('lms.reports', 'page', 'lms', 'Reports',
+ 'The report builder: pivot any dataset and chart it.', 10),
+('lms.reports.view',   'operation', 'lms.reports', 'View reports',
+ 'Build and run reports, and open reports shared with them.', 1),
+('lms.reports.manage', 'operation', 'lms.reports', 'Manage saved reports',
+ 'Save, rename and delete report definitions.', 2),
+('lms.reports.share',  'operation', 'lms.reports', 'Share reports',
+ 'Promote a saved report beyond private, to the branch or the tenant.', 3),
+
 -- ── ATTENDANCE ──────────────────────────────────────────────────────
 ('hr.attendance', 'tool', NULL, 'Attendance',
  'The attendance product. Sold separately from Leave.', 2),
@@ -451,6 +466,12 @@ FROM (VALUES
 ('read_only', ARRAY[
   'platform',
   'lms','lms.dashboard.view','lms.leads.view','lms.leads.view.org',
+  -- The report builder, read-only. Deliberately NOT reports.manage/.share:
+  -- saving a definition INSERTs into report.report_definitions, and this role
+  -- holds no 'platform.write', so withRoleTx runs it under readonly_user with
+  -- transaction_read_only = on and the database refuses the write. Granting
+  -- .manage here would render a Save button that can only ever error.
+  'lms.reports','lms.reports.view',
   'lms.leads.timeline.view','lms.followups.view',
   'lms.history.view','lms.history.view.org',
   'lms.assignments.view',
@@ -570,7 +591,8 @@ FROM (VALUES
 
 -- ── hr_admin (75) ───────────────────────────────────────────────────
 -- Full HR authority and NO CRM tool at all. Before Tier C this was implicit —
--- hr_admin had no row in lms.member_roles. Unifying the ladder made rank 75
+-- hr_admin had no row in the (since-removed) lms.member_roles. Unifying the
+-- ladder made rank 75
 -- clear every LMS floor, so the exclusion is now stated rather than assumed.
 ('hr_admin', ARRAY[
   'platform','platform.write',
@@ -612,6 +634,7 @@ FROM (VALUES
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.analytics.view',
+  'lms.reports','lms.reports.view','lms.reports.manage','lms.reports.share',
   'lms.campaigns.view','lms.campaigns.manage',
   'lms.users.view','lms.users.view.team','lms.users.view.org','lms.users.manage',
   'lms.apiclients.view','lms.apiclients.manage',
@@ -657,6 +680,7 @@ FROM (VALUES
   'lms.history.view.org','lms.history.view.tenant',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.analytics.view','lms.analytics.org.view',
+  'lms.reports','lms.reports.view','lms.reports.manage','lms.reports.share',
   'lms.campaigns.view','lms.campaigns.manage',
   'lms.users.view','lms.users.view.team','lms.users.view.org','lms.users.manage',
   'lms.apiclients.view','lms.apiclients.manage',
@@ -736,9 +760,17 @@ END $seedcheck$;
 INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
 SELECT NULL, r.id, c.id, FALSE
 FROM (VALUES
+  -- 'lms.reports' (the report builder) is deliberately NOT denied everywhere
+  -- 'lms.analytics' (the fixed dashboard) is. Reporting is open to managers and
+  -- above, plus read_only — which exists for precisely this ("Read-only viewer —
+  -- dashboards and reports only") and is read-only at the DATABASE because it
+  -- holds no 'platform.write'. It stays denied for the two front-line roles.
+  --
+  -- Row scoping is orthogonal and always applies: the leads dataset scopes on
+  -- lms.leads.view, so a manager sees their team and read_only sees the org.
   ('read_only',              ARRAY['lms.analytics','lms.campaigns','lms.users','lms.apiclients','hr.attendance.admin','hr.leave.admin','tasks.lists']),
-  ('sales_representative',   ARRAY['lms.analytics','lms.campaigns','lms.users','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
-  ('senior_sales_executive', ARRAY['lms.analytics','lms.campaigns','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
+  ('sales_representative',   ARRAY['lms.analytics','lms.reports','lms.campaigns','lms.users','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
+  ('senior_sales_executive', ARRAY['lms.analytics','lms.reports','lms.campaigns','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
   ('org_manager',            ARRAY['lms.analytics','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
   ('org_sr_manager',         ARRAY['lms.analytics','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
   ('org_admin',              ARRAY['admin.lookups'])
@@ -782,6 +814,40 @@ FROM iam.role_capabilities rc
 JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.interaction.log'
 CROSS JOIN iam.capabilities tgt
 WHERE tgt.key = 'lms.leads.whatsapp.send'
+  AND rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = TRUE;
+
+-- Reports for managers and above, pinned to 'lms.campaigns.view'.
+--
+-- That is the discriminator that means "manager and above" in this seed:
+-- org_manager and org_sr_manager hold it, senior_sales_executive and
+-- sales_representative are denied the whole lms.campaigns page. Pinning to it
+-- rather than listing role names is what carries the grant onto the PER-TENANT
+-- ladder copies created by _migrations/19 — and keeps working after a tenant
+-- renames its roles.
+--
+-- Only the page + view operation. Saving is not granted by this pin: whether a
+-- manager may persist a shared definition is a separate decision from whether
+-- they may run a report.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.campaigns.view'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key IN ('lms.reports', 'lms.reports.view')
+  AND rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO UPDATE SET is_granted = TRUE;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.campaigns.view'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key IN ('lms.reports', 'lms.reports.view')
   AND rc.is_granted
   AND rc.tenant_id IS NOT NULL
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL

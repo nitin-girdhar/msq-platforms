@@ -226,45 +226,9 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     tenantScoped: true,
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
-  'lms-roles': {
-    slug: 'lms-roles',
-    title: 'LMS Roles',
-    description: 'Roles within the leads/CRM module, per tenant.',
-    module: 'capabilities',
-    tenantScoped: true,
-    fields: [
-      ...NAME_LABEL_FIELDS,
-      DESCRIPTION_FIELD,
-      { key: 'rank', label: 'Rank', type: 'number', required: true },
-      { key: 'sort_order', label: 'Sort Order', type: 'number' },
-    ],
-  },
-  'hr-roles': {
-    slug: 'hr-roles',
-    title: 'HR Roles',
-    description: 'Roles within the HR module, per tenant.',
-    module: 'capabilities',
-    tenantScoped: true,
-    fields: [
-      ...NAME_LABEL_FIELDS,
-      DESCRIPTION_FIELD,
-      { key: 'rank', label: 'Rank', type: 'number', required: true },
-      { key: 'sort_order', label: 'Sort Order', type: 'number' },
-    ],
-  },
-  'task-roles': {
-    slug: 'task-roles',
-    title: 'Task Roles',
-    description: 'Roles within the tasks module, per tenant.',
-    module: 'capabilities',
-    tenantScoped: true,
-    fields: [
-      ...NAME_LABEL_FIELDS,
-      DESCRIPTION_FIELD,
-      { key: 'rank', label: 'Rank', type: 'number', required: true },
-      { key: 'sort_order', label: 'Sort Order', type: 'number' },
-    ],
-  },
+  // NOTE: lms-roles / hr-roles / task-roles were removed — Tier C consolidated
+  // role management onto the single iam ladder, which is the 'user-roles' table
+  // above. The per-product role catalogs they administered no longer exist.
   'tenants': {
     slug: 'tenants',
     title: 'Tenants',

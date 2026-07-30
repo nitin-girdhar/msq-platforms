@@ -12,9 +12,9 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 // P1.3 — the BASE identity the gateway injects, read from headers only. The
 // shrunk JWT no longer carries a product role/rank, so this no longer includes
 // them: each service layers on the acting user's rank/role by resolving it from
-// the DB (product services → <product>.member_roles; identity → the global
-// iam ladder; admin/meta → the coarse platform rank). `platform_role` drives
-// PG-role selection in withRoleTx and platform-level gates.
+// the DB — the single iam ladder via iam.fn_user_org_role (Tier C); admin/meta
+// use the coarse platform rank. `platform_role` drives PG-role selection in
+// withRoleTx and platform-level gates.
 export interface AuthContext {
   org_id: string;
   user_id: string;

@@ -2,8 +2,11 @@ import { redirect } from 'next/navigation';
 import { can, CAPABILITY } from '@platform/rbac';
 import { AppSidebar, MobileSidebar, HamburgerButton, UserMenu } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
+import { fetchTenants, getSelectedTenantId } from '@/src/lib/tenant-scope';
 import { ADMIN_NAV } from '@/src/config/navigation';
 import LogoutButton from '@/components/auth/LogoutButton';
+import TenantScopeProvider from '@/components/tenant/TenantScopeProvider';
+import TenantScopeSelector from '@/components/tenant/TenantScopeSelector';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,22 +42,34 @@ export default async function DashboardLayout({ children }: { children: React.Re
     );
   }
 
+  // The tenant list and the current selection are resolved ONCE here, for every
+  // page under /dashboard. Previously each tenant-scoped page fetched
+  // /lookups/tenants itself just to render its own dropdown; now the selector
+  // lives in the header and the choice (a cookie) flows down through context.
+  const [tenants, selectedTenantId] = await Promise.all([
+    fetchTenants(result.cookieHeader),
+    getSelectedTenantId(),
+  ]);
+
   return (
-    <div className="flex min-h-screen w-full flex-col bg-[#F8FAFC] lg:h-full lg:min-h-0 lg:overflow-hidden">
-      <header className="flex shrink-0 items-center gap-3 border-b border-[#E2E8F0] bg-white px-4 py-3 sm:px-6">
-        <HamburgerButton />
-        <span className="text-base font-bold tracking-tight text-[#0F172A]">Admin</span>
-        <div className="ml-auto flex items-center gap-4">
-          <UserMenu user={session} />
+    <TenantScopeProvider tenants={tenants} selectedTenantId={selectedTenantId}>
+      <div className="flex min-h-screen w-full flex-col bg-[#F8FAFC] lg:h-full lg:min-h-0 lg:overflow-hidden">
+        <header className="flex shrink-0 items-center gap-3 border-b border-[#E2E8F0] bg-white px-4 py-3 sm:px-6">
+          <HamburgerButton />
+          <span className="text-base font-bold tracking-tight text-[#0F172A]">Admin</span>
+          <div className="ml-auto flex items-center gap-4">
+            <TenantScopeSelector tenants={tenants} selectedTenantId={selectedTenantId} />
+            <UserMenu user={session} />
+          </div>
+        </header>
+        <MobileSidebar actor={session} items={ADMIN_NAV} />
+        <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">
+          <AppSidebar actor={session} items={ADMIN_NAV} />
+          <main className="flex w-full min-w-0 flex-1 flex-col lg:overflow-y-auto">
+            {children}
+          </main>
         </div>
-      </header>
-      <MobileSidebar actor={session} items={ADMIN_NAV} />
-      <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">
-        <AppSidebar actor={session} items={ADMIN_NAV} />
-        <main className="flex w-full min-w-0 flex-1 flex-col lg:overflow-y-auto">
-          {children}
-        </main>
       </div>
-    </div>
+    </TenantScopeProvider>
   );
 }

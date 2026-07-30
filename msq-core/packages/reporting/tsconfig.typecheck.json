@@ -1,0 +1,13 @@
+// Typecheck EVERYTHING, tests included. tsconfig.json is the build config and
+// excludes *.test.ts so they stay out of dist — but vitest does not typecheck,
+// so without this the test suite would be the only unchecked code in the package,
+// and a fixture drifting from a type would surface as a confusing runtime failure
+// instead of a compile error.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src"],
+  "exclude": []
+}

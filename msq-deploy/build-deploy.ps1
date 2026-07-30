@@ -58,9 +58,17 @@ $SchemaScripts = @(
 # run after the demo seed because they need entity.tenants populated - they fan
 # rows that 07 seeds as GLOBAL (tenant_id IS NULL) out into one copy per tenant.
 # Mirrors $RemainingCoreScripts in db_scripts/db_deploy.ps1; keep the two in sync.
+#
+# 15_drop_per_product_roles.sql is last: it tears down the per-product role
+# ladders that Tier C superseded, and must follow the migrations above (which
+# still touch those tables on an older database). Lives in db_scripts/ proper,
+# not _migrations/, so it is referenced by name below.
 $MigrationScripts = @(
     '17_tenant_scope_lms_catalogs.sql'
     '19_tenant_scope_ladder_roles.sql'
+)
+$PostMigrationScripts = @(
+    '15_drop_per_product_roles.sql'
 )
 
 # -- Helpers ------------------------------------------------------------------
@@ -365,6 +373,14 @@ foreach ($f in $SchemaScripts) {
 Get-ChildItem -Path $SrcDbScripts -Filter '*.sql' -File |
     Where-Object { $SchemaScripts -notcontains $_.Name } |
     ForEach-Object { Copy-Item $_.FullName (Join-Path $DbScriptsDst $_.Name) }
+
+# The generic copy above already picks these up; assert they exist so a rename
+# fails the build here instead of silently shipping a bundle without them.
+foreach ($f in $PostMigrationScripts) {
+    if (-not (Test-Path (Join-Path $SrcDbScripts $f))) {
+        Write-Error "Required post-migration script missing: $f"
+    }
+}
 
 # _migrations/ is NOT optional: 17 and 19 are part of every install (see
 # db_scripts/_migrations/README.md and the $RemainingCoreScripts list in

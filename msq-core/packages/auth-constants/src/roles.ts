@@ -50,8 +50,9 @@ export const ROLE_TIERS = {
 } satisfies Record<string, readonly UserRole[]>;
 
 // ── Platform roles (P1.3 shrunk JWT) ────────────────────────────────────────
-// The coarse cross-product role that survives in the JWT. Product authority no
-// longer lives here — it comes from <product>.member_roles, resolved per service.
+// The coarse cross-product role that survives in the JWT. Per-org role authority
+// no longer lives here — it comes from the iam ladder (iam.fn_user_org_role),
+// resolved server-side per request.
 // `platform_role` drives (a) which Postgres role withRoleTx selects (RLS) and
 // (b) platform-wide gates (cross-org visibility, tenant/user administration).
 export const PLATFORM_ROLES = ['super_admin', 'tenant_admin', 'org_admin', 'member'] as const;

@@ -64,9 +64,9 @@ export interface UserOrgOption {
 /**
  * The shrunk platform JWT (P1.3). Carries only identity, the coarse
  * `platform_role`, tenancy, and the tenant's licensed products — NO global
- * product role/rank. Each product service resolves the acting user's product
- * role/rank from its own `<product>.member_roles` table; identity-service
- * resolves the global-ladder rank from `iam`. See docs/Architecture.md.
+ * product role/rank. Every service resolves the acting user's role/rank/
+ * department from the one iam ladder via `iam.fn_user_org_role` (Tier C).
+ * See docs/Architecture.md.
  */
 export interface JwtPayload {
   sub: string;

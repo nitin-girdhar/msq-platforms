@@ -3,23 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@platform/ui-kit';
 import { capabilitiesApi, lookupAdmin, type CapabilityRow, type RoleCapabilityRow } from '@/src/lib/api/client';
-import TenantSelector from '@/components/lookups/TenantSelector';
-
-interface TenantOption {
-  id: string;
-  name: string;
-}
+import { useTenantScope } from '@/components/tenant/TenantScopeProvider';
 
 interface RoleOption {
   id: string;
   name: string;
   label: string;
   is_active: boolean;
-}
-
-interface Props {
-  tenants: TenantOption[];
-  selectedTenantId?: string | undefined;
 }
 
 const KIND_ORDER: Record<CapabilityRow['kind'], number> = {
@@ -34,7 +24,9 @@ function depthOf(key: string): number {
   return key.split('.').length - 1;
 }
 
-export default function CapabilityMatrixClient({ tenants, selectedTenantId }: Props) {
+export default function CapabilityMatrixClient() {
+  // Tenant comes from the ONE header selector, not a local dropdown.
+  const { selectedTenantId } = useTenantScope();
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [roleId, setRoleId] = useState('');
   const [tree, setTree] = useState<CapabilityRow[]>([]);
@@ -127,8 +119,6 @@ export default function CapabilityMatrixClient({ tenants, selectedTenantId }: Pr
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end gap-3">
-        <TenantSelector tenants={tenants} selectedTenantId={selectedTenantId} />
-
         <div className="flex flex-col gap-1.5 sm:w-72">
           <label htmlFor="matrix-role" className="text-xs font-semibold text-[#0F172A]">Role</label>
           <select
@@ -157,7 +147,7 @@ export default function CapabilityMatrixClient({ tenants, selectedTenantId }: Pr
 
       {!selectedTenantId ? (
         <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
-          Select a tenant to manage its role grants.
+          Select a tenant in the header to manage its role grants.
         </p>
       ) : !roleId ? (
         <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">

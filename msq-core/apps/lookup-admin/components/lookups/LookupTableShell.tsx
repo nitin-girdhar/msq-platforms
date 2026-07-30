@@ -7,28 +7,23 @@ import { Button } from '@platform/ui-kit';
 import LookupTable, { type LookupRow } from './LookupTable';
 import CreateLookupModal from './CreateLookupModal';
 import EditLookupModal from './EditLookupModal';
-import TenantSelector from './TenantSelector';
-
-interface TenantOption {
-  id: string;
-  name: string;
-}
 
 interface Props {
   table: string;
   config: LookupTableDef;
   rows: Record<string, unknown>[];
   tenantScoped?: boolean | undefined;
-  tenants?: TenantOption[];
   selectedTenantId?: string | undefined;
 }
 
+// The tenant picker used to live here, once per table page. It now lives in the
+// dashboard header (TenantScopeSelector) so one selection scopes every page;
+// this shell just reflects the selection it was rendered under.
 export default function LookupTableShell({
   table,
   config,
   rows,
   tenantScoped,
-  tenants = [],
   selectedTenantId,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
@@ -54,11 +49,9 @@ export default function LookupTableShell({
         )}
       </div>
 
-      {tenantScoped && <TenantSelector tenants={tenants} selectedTenantId={selectedTenantId} />}
-
       {tenantScoped && !selectedTenantId ? (
         <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
-          Select a tenant to manage this table.
+          Select a tenant in the header to manage this table.
         </p>
       ) : (
         <LookupTable config={config} rows={typedRows} onEdit={setEditTarget} />

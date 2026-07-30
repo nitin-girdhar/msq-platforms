@@ -320,16 +320,13 @@ CROSS JOIN (VALUES ('lms'), ('leave'), ('attendance'), ('tasks')) AS m(module)
 ON CONFLICT (tenant_id, module) DO NOTHING;
 
 -- ============================================================
--- Per-tenant catalogs (lms.roles, hr/task lookups, ...).
+-- Per-tenant catalogs (hr/task lookups, ...).
 --
 -- entity.seed_tenant_defaults() is documented as "the provisioning entry
 -- point", but nothing in the SQL path ever calls it: there is no trigger on
 -- entity.tenants, and the app only invokes it when a tenant is created through
 -- the API. A tenant seeded here therefore came up with EMPTY per-tenant
--- catalogs -- most visibly lms.roles, which 13_backfill_per_product_roles.sql
--- joins against to populate <product>.member_roles. With no roles the join
--- matched nothing, member_roles stayed empty, and the gateway refused every
--- product request with "You do not have access to the LMS product".
+-- catalogs, which surfaced as missing lookup rows in every product UI.
 --
 -- Must run AFTER the tenant_modules insert above: the function only seeds
 -- catalogs whose gating modules overlap the tenant's ACTIVE modules.

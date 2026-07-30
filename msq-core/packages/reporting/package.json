@@ -1,0 +1,41 @@
+{
+  "name": "@platform/reporting",
+  "version": "0.0.1",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./sql": {
+      "types": "./dist/sql/index.d.ts",
+      "require": "./dist/sql/index.js",
+      "default": "./dist/sql/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch --preserveWatchOutput",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@platform/rbac": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.10",
+    "typescript": "^5.7.3",
+    "rimraf": "^6.0.1",
+    "vitest": "^3.0.5"
+  }
+}

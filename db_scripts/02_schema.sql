@@ -527,7 +527,8 @@ CREATE TABLE IF NOT EXISTS iam.users (
   -- The single, coarse cross-product role that survives in the shrunk JWT.
   -- Nullable (backfilled by the roles/grants backfill step, made NOT NULL in
   -- the Phase E contract). Drives PG-role selection and platform-wide
-  -- capabilities only; product authority comes from <product>.member_roles.
+  -- capabilities only; per-org role authority comes from iam.user_org_mapping
+  -- resolved via iam.fn_user_org_role (Tier C).
   platform_role         TEXT
                         CONSTRAINT chk_users_platform_role
                         CHECK (platform_role IN ('super_admin','tenant_admin','org_admin','member')),
@@ -3022,9 +3023,9 @@ GRANT EXECUTE ON FUNCTION iam.fn_user_org_rank(UUID,UUID) TO app_user, tenant_ad
 
 -- Tier C: the single authoritative role resolver. Returns the acting user's role
 -- NAME, RANK and DEPARTMENT for an org, straight from the unified iam ladder —
--- this is what every product service now calls instead of its own
--- <product>.member_roles lookup, so page guards and services can no longer
--- disagree. SECURITY DEFINER so it bypasses RLS on iam.user_roles /
+-- this is what every product service now calls instead of the per-product
+-- member_roles lookups it replaced (since dropped), so page guards and services
+-- can no longer disagree. SECURITY DEFINER so it bypasses RLS on iam.user_roles /
 -- iam.departments (same rationale as fn_user_org_rank above).
 -- rank -1 / NULL role means "no active role in this org".
 CREATE OR REPLACE FUNCTION iam.fn_user_org_role(p_user_id UUID, p_org_id UUID)
@@ -3044,8 +3045,7 @@ BEGIN
   END IF;
 END; $$;
 -- Product-service logins are created later (lead_svc below, hr/task in 03,
--- lms_svc in 04), so their EXECUTE grant lives at the end of 04 alongside the
--- <product>.fn_member_role grants.
+-- lms_svc in 04), so their EXECUTE grant lives at the end of 04.
 GRANT EXECUTE ON FUNCTION iam.fn_user_org_role(UUID,UUID) TO app_user, tenant_admin;
 
 -- Tier C3 — the effective capability matrix for one tenant, already resolved.

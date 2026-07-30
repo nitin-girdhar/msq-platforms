@@ -429,12 +429,9 @@ app.get('/departments', { ...withAuth }, async (req, reply) => {
 const TENANT_LOOKUP_TARGETS: Record<string, string> = {
   'task-statuses':      config.tasksServiceUrl,
   'task-priorities':    config.tasksServiceUrl,
-  'task-roles':         config.tasksServiceUrl,
   'leave-types':        config.hrServiceUrl,
   'employment-types':   config.hrServiceUrl,
   'attendance-statuses':config.hrServiceUrl,
-  'hr-roles':           config.hrServiceUrl,
-  'lms-roles':          config.leadsServiceUrl,
   // N-6 Half B — 7 tenant-scoped LMS marketing lookups
   'lead-stage':         config.leadsServiceUrl,
   'lead-stage-outcome': config.leadsServiceUrl,
@@ -611,6 +608,21 @@ app.get('/analytics/performance', { ...withAuth }, async (req, reply) => {
 });
 app.get('/analytics/pipeline', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/pipeline', req, reply, req.userCtx);
+});
+
+// Report builder (@platform/reporting). Under /analytics/* so productForRoute()
+// already resolves these to 'lms' — see src/lib/product-map.ts.
+app.get('/analytics/reports/datasets', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/reports/datasets', req, reply, req.userCtx);
+});
+app.get('/analytics/reports/datasets/:key', { ...withAuth }, async (req, reply) => {
+  const { key } = req.params as { key: string };
+  return proxyTo(config.leadsServiceUrl, `/api/v1/analytics/reports/datasets/${key}`, req, reply, req.userCtx);
+});
+// POST rather than GET: a report spec is too large and too nested for a query
+// string, and must not land in access logs or browser history.
+app.post('/analytics/reports/query', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/reports/query', req, reply, req.userCtx);
 });
 
 // Meta CAPI (protected — manual conversion event trigger)
@@ -901,9 +913,10 @@ app.post('/hr/attendance/recompute', { ...withAuth }, async (req, reply) => {
 app.get('/hr/modules', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/modules', req, reply, req.userCtx);
 });
-// HR — the caller's resolved HR product role/rank (hr.member_roles), distinct
-// from the platform/session rank — drives HR-admin-only UI gating (Leave/
-// Attendance "Admin" tabs) against the same authority the backend enforces.
+// HR — the caller's resolved HR role/rank (the iam ladder, via
+// iam.fn_user_org_role), distinct from the coarse platform/session rank — drives
+// HR-admin-only UI gating (Leave/Attendance "Admin" tabs) against the same
+// authority the backend enforces.
 app.get('/hr/me', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/me', req, reply, req.userCtx);
 });

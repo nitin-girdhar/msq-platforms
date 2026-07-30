@@ -11,9 +11,10 @@ import { departmentsRouter } from './departments/departments.router.js';
 // N-6 DONE: every product-schema lookup/role admin module has moved to its
 // owning product service so the writes execute in the schema-owning service
 // under tenant RLS — admin-service (shared) no longer reaches lms/hr/task.*.
-//   Half A → lms.roles (leads); hr.{leave_types,employment_types,
-//            attendance_statuses,roles} (hr); task.{task_statuses,
-//            task_priorities,roles} (tasks).
+//   Half A → hr.{leave_types,employment_types,attendance_statuses} (hr);
+//            task.{task_statuses,task_priorities} (tasks). The per-product role
+//            catalogs (lms/hr/task.roles) that were also in Half A have since
+//            been dropped — Tier C unified roles onto the iam ladder.
 //   Half B → the 7 lms/marketing marketing lookups (lead-stage,
 //            lead-stage-outcome, interaction-types, follow-up-statuses,
 //            lead-sources, marketing-platforms, campaign-statuses) → leads.

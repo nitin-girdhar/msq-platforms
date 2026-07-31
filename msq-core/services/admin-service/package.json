@@ -18,6 +18,7 @@
     "@platform/audit-log": "workspace:*",
     "@platform/authz": "workspace:*",
     "@platform/db": "workspace:*",
+    "@platform/rbac": "workspace:*",
     "@platform/service-auth": "workspace:*",
     "@platform/types": "workspace:*",
     "drizzle-orm": "^0.45.2",

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { filterNav, filterNavGroups, isNavGroups, type NavItem, type NavGroup } from '../nav';
+import {
+  filterNav,
+  filterNavGroups,
+  holdsUsableNode,
+  isNavGroups,
+  type NavItem,
+  type NavGroup,
+} from '../nav';
 
 const actor = (capabilities: string[]) => ({ capabilities });
 
@@ -8,6 +15,33 @@ const ITEM = (id: string, capability: string): NavItem => ({
   label: id,
   href: `/${id}`,
   capability: capability as NavItem['capability'],
+});
+
+// holdsUsableNode now lives in @platform/rbac and is re-exported from ../nav so
+// the LMS page guards can ask the sidebar's exact question. These cover the
+// re-export path directly — the rule itself must not have shifted in the move.
+describe('holdsUsableNode (re-exported from @platform/rbac)', () => {
+  const KEY = 'admin.lookups' as NavItem['capability'];
+
+  it('needs the node AND something granted beneath it', () => {
+    expect(holdsUsableNode(actor(['admin.lookups', 'admin.lookups.manage']), KEY)).toBe(true);
+  });
+
+  it('rejects a node held with nothing usable under it', () => {
+    expect(holdsUsableNode(actor(['admin.lookups']), KEY)).toBe(false);
+  });
+
+  it('rejects a descendant held without the node itself', () => {
+    expect(holdsUsableNode(actor(['admin.lookups.manage']), KEY)).toBe(false);
+  });
+
+  it('fails closed on a null actor', () => {
+    expect(holdsUsableNode(null, KEY)).toBe(false);
+  });
+
+  it('accepts a Set as well as an array', () => {
+    expect(holdsUsableNode({ capabilities: new Set(['admin.lookups', 'admin.lookups.manage']) }, KEY)).toBe(true);
+  });
 });
 
 describe('filterNav (flat)', () => {

@@ -145,10 +145,11 @@ What happens, in order:
    | `13_backfill_per_product_roles.sql` | Per-product role backfill. |
    | `_migrations/17_tenant_scope_lms_catalogs.sql` | **Mandatory.** Fans the global LMS lead catalogs out into one copy per tenant. |
    | `_migrations/19_tenant_scope_ladder_roles.sql` | **Mandatory.** Same for the ladder roles + their capability grants. |
+   | `_migrations/23_tenant_scope_admin_roles.sql` | **Mandatory.** Same for `tenant_admin`/`org_admin`/`read_only`, leaving `super_admin` as the only global role. |
 
-   17 and 19 run *last* because they need `entity.tenants` populated — script 07
-   seeds those rows as global (`tenant_id IS NULL`) before any tenant exists.
-   Both are idempotent and self-guarding: with no tenants they find nothing to
+   17, 19 and 23 run *last* because they need `entity.tenants` populated — script
+   07 seeds those rows as global (`tenant_id IS NULL`) before any tenant exists.
+   All are idempotent and self-guarding: with no tenants they find nothing to
    clone and do nothing.
 
 4. Dangling images pruned, endpoints printed.

@@ -1,6 +1,6 @@
-import { asc, eq, and, or, isNull, isNotNull, sql } from 'drizzle-orm';
-import { appDrizzle, withServiceTx, type DrizzleTx } from '@platform/db';
-import { capabilitiesTable, roleCapabilitiesTable, organizationsTable } from '@platform/db/schema';
+import { asc, eq, and, or, isNull, isNotNull } from 'drizzle-orm';
+import { withServiceTx, withTenantConfigTx } from '@platform/db';
+import { capabilitiesTable, roleCapabilitiesTable, userRolesTable } from '@platform/db/schema';
 
 export async function listCapabilities() {
   return withServiceTx((tx) =>
@@ -28,53 +28,49 @@ export async function listRoleCapabilities(roleId: string, tenantId: string) {
   );
 }
 
+// The rank of the role a grant is being written TO, for putGrants' platform-admin
+// invariant. Returns undefined for an unknown or deleted id, which the caller
+// treats as a rejection rather than a skip.
+export async function getRoleRank(roleId: string): Promise<number | undefined> {
+  const rows = await withServiceTx((tx) =>
+    tx
+      .select({ rank: userRolesTable.rank })
+      .from(userRolesTable)
+      .where(eq(userRolesTable.id, roleId))
+      .limit(1),
+  );
+  return rows[0]?.rank;
+}
+
 interface GrantInput {
   capabilityId: string;
   isGranted: boolean;
 }
 
-// iam.role_capabilities' admin_tenant_config_policy (db_scripts/06_rls.sql)
-// derives the writable tenant from the ACTOR'S CURRENT ORG
-// (app.current_org_id -> entity.organizations.tenant_id), not
-// app.current_tenant_id directly — unlike the newer per-product lookup
-// policies that @platform/db's withTenantConfigTx targets. A super_admin
-// managing an arbitrary tenant has no "current org" in that tenant, so this
-// resolves one before writing. See role-capabilities.table.ts for the same
-// note next to the schema.
-async function withTenantOrgTx<T>(
-  params: { actorUserId: string; tenantId: string },
-  fn: (tx: DrizzleTx) => Promise<T>,
-): Promise<T> {
-  return appDrizzle().transaction(async (tx) => {
-    const [org] = await tx
-      .select({ id: organizationsTable.id })
-      .from(organizationsTable)
-      .where(eq(organizationsTable.tenantId, params.tenantId))
-      .limit(1);
-    if (!org) {
-      throw new Error('This tenant has no organizations yet — create one before assigning capability overrides.');
-    }
-
-    if (process.env['DB_PRODUCT_SCOPED_LOGIN'] !== 'true') {
-      await tx.execute(sql.raw('SET LOCAL ROLE app_user'));
-    }
-    await tx.execute(sql`SELECT set_config('app.current_org_id', ${org.id}, true)`);
-    await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${params.tenantId}, true)`);
-    await tx.execute(sql`SELECT set_config('app.current_user_id', ${params.actorUserId}, true)`);
-    return fn(tx);
-  });
-}
-
 // Upserts tenant OVERRIDE rows only (tenant_id always set) — writes never
 // touch the tenant_id IS NULL platform-default rows, matching the RLS
-// WITH CHECK, which pins every write to the actor's own tenant.
+// WITH CHECK, which pins every write to the admin-selected tenant.
+//
+// withTenantConfigTx is the standard N-6 admin-config path: app_user with
+// app.current_tenant_id pinned to the target tenant, which is exactly what
+// iam.role_capabilities' admin_tenant_config_policy now keys on. The previous
+// version hand-rolled a transaction that first looked up an org in the target
+// tenant, because the policy used to derive the tenant from app.current_org_id.
+// That read ran before its own SET LOCAL ROLE app_user, so it hit the pool's
+// login role (lead_svc), which holds no table grant on entity.organizations —
+// every save 500'd with "permission denied for table organizations". Ordering
+// was only the first fault: entity.organizations is also FORCE RLS'd to the
+// actor's own mapped orgs, so a super_admin editing a tenant they are not a
+// member of would have found no org, and the policy's identical subquery would
+// have failed the WITH CHECK anyway. Keying on the selected tenant drops the
+// entity.organizations dependency on both sides.
 export async function upsertGrants(params: {
   actorUserId: string;
   tenantId: string;
   roleId: string;
   grants: GrantInput[];
 }) {
-  return withTenantOrgTx({ actorUserId: params.actorUserId, tenantId: params.tenantId }, async (tx) => {
+  return withTenantConfigTx({ actorUserId: params.actorUserId, tenantId: params.tenantId }, async (tx) => {
     const rows = [];
     for (const grant of params.grants) {
       const [row] = await tx

@@ -20,10 +20,8 @@ export const CAPABILITY = {
   PLATFORM:       'platform',
   TASKS:          'tasks',
 
-  // ── Pages (15) ──
+  // ── Pages (13) ──
   ADMIN_LOOKUPS:        'admin.lookups',
-  ADMIN_ORGS:           'admin.orgs',
-  ADMIN_USERS:          'admin.users',
   HR_ATTENDANCE_ADMIN:  'hr.attendance.admin',
   HR_LEAVE_ADMIN:       'hr.leave.admin',
   LMS_ANALYTICS:        'lms.analytics',
@@ -47,18 +45,9 @@ export const CAPABILITY = {
   HR_LEAVE_ADMIN_HOLIDAYS:          'hr.leave.admin.holidays',
   HR_LEAVE_ADMIN_POLICIES:          'hr.leave.admin.policies',
 
-  // ── Operations (75) ──
-  ADMIN_COMMS_SEND:                        'admin.comms.send',
-  ADMIN_CONFIG_LMS_MANAGE:                 'admin.config.lms.manage',
+  // ── Operations (66) ──
   ADMIN_LOOKUPS_MANAGE:                    'admin.lookups.manage',
-  ADMIN_LOOKUPS_VIEW:                      'admin.lookups.view',
-  ADMIN_META_MANAGE:                       'admin.meta.manage',
-  ADMIN_ORGS_MANAGE:                       'admin.orgs.manage',
-  ADMIN_ORGS_VIEW:                         'admin.orgs.view',
   ADMIN_ROLES_MANAGE:                      'admin.roles.manage',
-  ADMIN_USERS_MANAGE:                      'admin.users.manage',
-  ADMIN_USERS_MAPPINGS_MANAGE:             'admin.users.mappings.manage',
-  ADMIN_USERS_PASSWORD_RESET:              'admin.users.password.reset',
   HR_ATTENDANCE_ADMIN_ASSIGNMENTS_MANAGE:  'hr.attendance.admin.assignments.manage',
   HR_ATTENDANCE_ADMIN_ASSIGNMENTS_VIEW:    'hr.attendance.admin.assignments.view',
   HR_ATTENDANCE_ADMIN_REPORTS_VIEW:        'hr.attendance.admin.reports.view',
@@ -177,6 +166,38 @@ function holds(actor: CapabilityHolder, key: string): boolean {
 }
 
 /**
+ * Is `key` part of the PLATFORM ADMINISTRATION subtree — the `admin` tool and
+ * everything under it?
+ *
+ * That subtree gates exactly one surface: the lookup-admin console, which is
+ * super_admin-only and stays that way. Every route behind it re-checks
+ * `rank >= SUPER_ADMIN` in admin-service on its own, and super_admin receives
+ * these capabilities through the `*` wildcard grant in db_scripts/07 rather than
+ * through per-key rows. So granting one of these keys to a tenant role is never
+ * something an operator wants: it cannot make the console work, only make it
+ * open onto a screen where every call 403s. This predicate is what lets both
+ * sides refuse that.
+ *
+ * A prefix test, for the same reason holdsUsableNode() is one: keys nest by
+ * construction, so the subtree IS the prefix. The dot guard matters — a future
+ * tool named `administration` must not be swept in.
+ *
+ * NOT to be confused with the HR and Tasks admin surfaces. `hr.leave.admin.*`,
+ * `hr.attendance.admin.*` and `tasks.lists.*` are ordinary tenant capabilities,
+ * enforced route-by-route in hr-service and tasks-service, and are freely
+ * assignable. Only the `admin` ROOT is platform administration.
+ *
+ * Lives here rather than in admin-service for the reason holdsUsableNode() lives
+ * here: it is asked on BOTH sides of one decision — the write validation in
+ * admin-service's putGrants, and the row state on the Capability Matrix screen.
+ * If those two ever disagree the screen offers a save the server rejects, which
+ * is the same render-then-403 shape this package exists to prevent.
+ */
+export function isPlatformAdminCapability(key: string): boolean {
+  return key === CAPABILITY.ADMIN || key.startsWith(`${CAPABILITY.ADMIN}.`);
+}
+
+/**
  * Does this actor hold `key`?
  *
  * Fails CLOSED — a missing or empty list denies. For a scoped operation this
@@ -185,6 +206,41 @@ function holds(actor: CapabilityHolder, key: string): boolean {
  */
 export function can(actor: CapabilityHolder | null | undefined, key: CapabilityKey): boolean {
   return actor ? holds(actor, key) : false;
+}
+
+/**
+ * Is `key` a nav node the actor can actually OPEN — as opposed to merely holding?
+ *
+ * Needs BOTH of:
+ *   1. the node itself granted, and
+ *   2. at least one granted capability BENEATH it.
+ *
+ * The second condition matters because nav grants cascade: granting the `lms`
+ * tool lights up every page under it, including ones whose operations the role
+ * was never given. Without this check a tenant-defined role would see Analytics,
+ * click it, and get an empty screen — the render-then-403 bug this whole model
+ * exists to remove. A node with nothing usable under it is not one you can open.
+ *
+ * Derived, not another grant: keys nest by construction, so "is anything granted
+ * below this node" is a prefix test over the same list.
+ *
+ * Lives here rather than in the UI package because it is asked on BOTH sides of
+ * every nav decision: the sidebar filter (@platform/ui-kit's filterNav, and
+ * products.ts one level up for the product switcher) and the page guard behind
+ * each link (@lms/authz's canOpenX). Those two must ask the identical question
+ * or a link can appear that its own page bounces — and @lms/authz has no
+ * business depending on a React package to find out.
+ */
+export function holdsUsableNode(
+  actor: CapabilityHolder | null | undefined,
+  key: CapabilityKey,
+): boolean {
+  if (!actor) return false;
+  const held = actor.capabilities instanceof Set
+    ? [...actor.capabilities]
+    : (actor.capabilities as readonly string[]);
+
+  return can(actor, key) && held.some((k) => k.startsWith(`${key}.`));
 }
 
 /**

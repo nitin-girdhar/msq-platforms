@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { lookupAdmin } from '@/src/lib/api/client';
+import { lookupAdmin, departmentsApi } from '@/src/lib/api/client';
 import type { LookupFieldConfig, FormValues } from '@/src/lib/lookupTableConfig';
 
 interface OptionRow {
@@ -27,6 +27,8 @@ interface Props {
   idPrefix: string;
   /** Label of the field this one `dependsOn`, for the "select X first" hint. */
   dependsOnLabel?: string | undefined;
+  /** Explanatory note under the control, e.g. why it is locked. */
+  hint?: string | undefined;
 }
 
 async function fetchOptions(field: LookupFieldConfig, formValues: FormValues, tenantId?: string): Promise<OptionRow[]> {
@@ -48,6 +50,13 @@ async function fetchOptions(field: LookupFieldConfig, formValues: FormValues, te
     if (!stateId) return [];
     const res = await lookupAdmin.geo.cities(stateId);
     return res.data.map((c) => ({ id: String(c.id), label: c.name }));
+  }
+  // Departments are not a /lookups/{table} catalog — they live on their own
+  // tenant-scoped route, so they cannot go through the fk.table branch below.
+  if (fk.endpoint === 'departments') {
+    if (!tenantId) return [];
+    const res = await departmentsApi.list(tenantId);
+    return res.data.map((d) => ({ id: String(d.id), label: d.name }));
   }
   if (fk.table) {
     if (fk.dependsOn && !formValues[fk.dependsOn]) return [];
@@ -73,7 +82,7 @@ async function fetchOptions(field: LookupFieldConfig, formValues: FormValues, te
 // old ad-hoc `selectOptionsFrom` fetch (duplicated in Create/EditLookupModal)
 // and the hardcoded GeoCascadeSelect triple — country/state/city are now just
 // three fields with dependsOn chaining like any other FK.
-export default function FkSelect({ field, value, onChange, formValues, tenantId, disabled, idPrefix, dependsOnLabel }: Props) {
+export default function FkSelect({ field, value, onChange, formValues, tenantId, disabled, idPrefix, dependsOnLabel, hint }: Props) {
   const [options, setOptions] = useState<OptionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -132,6 +141,7 @@ export default function FkSelect({ field, value, onChange, formValues, tenantId,
           <option key={opt.id} value={opt.id}>{opt.label}</option>
         ))}
       </select>
+      {hint && !error && <p className="text-[11px] text-[#94A3B8]">{hint}</p>}
       {error && <p className="text-[11px] text-red-600">Couldn&apos;t load options — try again.</p>}
     </div>
   );

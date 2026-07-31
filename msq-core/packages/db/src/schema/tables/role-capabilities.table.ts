@@ -10,11 +10,13 @@ import { capabilitiesTable } from './capabilities.table';
 // which wins per iam.fn_role_capability_matrix's resolution order. is_granted
 // FALSE is how a tenant revokes a default without deleting the platform row.
 //
-// RLS note (db_scripts/06_rls.sql admin_tenant_config_policy): writes are
-// scoped by the ACTOR'S CURRENT ORG's tenant (app.current_org_id), not
-// app.current_tenant_id directly — unlike the newer N-6 product-lookup
-// policies. A write on this table must run with app.current_org_id set to an
-// org under the target tenant; see capabilities.repository.ts.
+// RLS note (db_scripts/06_rls.sql): reads are scoped by the actor's current
+// org's tenant (org_isolation_policy, app.current_org_id) plus the always-
+// visible platform defaults. WRITES go through admin_tenant_config_policy,
+// which — like every other N-6 admin-config table — keys on
+// app.current_tenant_id, so a write must run under @platform/db's
+// withTenantConfigTx with the admin-SELECTED tenant pinned. See
+// capabilities.repository.ts.
 export const roleCapabilitiesTable = iamSchema.table('role_capabilities', {
   id:           uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   tenantId:     uuid('tenant_id').references(() => tenantsTable.id, { onDelete: 'cascade' }),

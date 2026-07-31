@@ -1,4 +1,10 @@
-import { can, type CapabilityHolder, type CapabilityKey } from '@platform/rbac';
+import { can, holdsUsableNode, type CapabilityHolder, type CapabilityKey } from '@platform/rbac';
+
+// holdsUsableNode moved down into @platform/rbac so the product PAGE GUARDS can
+// ask the same question the sidebar asks without depending on a React package —
+// see its doc comment there. Re-exported unchanged so ./products, this package's
+// shell barrel and the existing tests keep importing it from here.
+export { holdsUsableNode };
 
 // A single sidebar/nav entry. Each product app owns its own list of these (LMS
 // leads/follow-ups/…, HR leave/attendance, Task tasks) and passes it into the
@@ -29,37 +35,6 @@ export interface NavItem {
    * invisible to EVERY user, super admin included.
    */
   exact?: boolean;
-}
-
-/**
- * Is `key` a nav node the actor can actually OPEN — as opposed to merely holding?
- *
- * Needs BOTH of:
- *   1. the node itself granted, and
- *   2. at least one granted capability BENEATH it.
- *
- * The second condition matters because nav grants cascade: granting the `lms`
- * tool lights up every page under it, including ones whose operations the role
- * was never given. Without this check a tenant-defined role would see Analytics,
- * click it, and get an empty screen — the render-then-403 bug this whole model
- * exists to remove. A node with nothing usable under it is not one you can open.
- *
- * Derived, not another grant: keys nest by construction, so "is anything granted
- * below this node" is a prefix test over the same list.
- *
- * Shared with products.ts, which applies the identical rule one level up — to
- * the product TOOL nodes behind the CRM/HR/Tasks switcher.
- */
-export function holdsUsableNode(
-  actor: CapabilityHolder | null | undefined,
-  key: CapabilityKey,
-): boolean {
-  if (!actor) return false;
-  const held = actor.capabilities instanceof Set
-    ? [...actor.capabilities]
-    : (actor.capabilities as readonly string[]);
-
-  return can(actor, key) && held.some((k) => k.startsWith(`${key}.`));
 }
 
 /**

@@ -168,6 +168,16 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
         setField={setField}
         disabled={locked}
         tenantId={tenantId}
+        // A row's owning tenant is not an edit — moving an org between tenants
+        // would silently re-parent all its data. Shown, never re-picked here.
+        lockedKeys={[
+          'tenant_id',
+          ...(config.reservedRanks?.[String(row['name'] ?? '')] !== undefined ? ['rank'] : []),
+        ]}
+        lockedHints={{
+          tenant_id: "A row's tenant cannot be changed after it is created.",
+          rank: 'Fixed for this role — set by the platform.',
+        }}
         error={error}
         onSubmit={handleSave}
       />

@@ -33,14 +33,17 @@ applies to the script you care about.
 | `18_platform_role_autoderive.sql` | no | no — see below |
 | `19_tenant_scope_ladder_roles.sql` | no | **yes** |
 | `20_user_photos_and_attendance_retention.sql` | no | no — see below |
+| `21_role_nav_denies.sql` | no | no — operator-run template, see below |
+| `22_prune_unused_admin_capabilities.sql` | no | no — existing DBs only, see below |
+| `23_tenant_scope_admin_roles.sql` | no | **yes** |
 
-## Tenant-scoping (17 and 19) — part of every install
+## Tenant-scoping (17, 19 and 23) — part of every install
 
 `db_deploy.ps1` runs these after the demo seed, because they need
 `entity.tenants` to exist: `07_seed_lookup_data.sql` seeds the LMS lead catalogs
-and the ladder roles as GLOBAL rows (`tenant_id IS NULL`), and these two fan each
-one out into an identical per-tenant copy, repoint every reference, and drop the
-global original.
+and the ladder roles as GLOBAL rows (`tenant_id IS NULL`), and these three fan
+each one out into an identical per-tenant copy, repoint every reference, and drop
+the global original.
 
 - `17_tenant_scope_lms_catalogs.sql` — `lms.lead_stage`, `lead_stage_outcome`,
   `interaction_types`, `follow_up_statuses`, `lead_sources`. Without it the
@@ -49,11 +52,27 @@ global original.
   except `super_admin`.
 - `19_tenant_scope_ladder_roles.sql` — `hr_admin`, `org_sr_manager`,
   `org_manager`, `senior_sales_executive`, `sales_representative` (with their
-  capability grants). Only the four anchors `super_admin`, `tenant_admin`,
-  `org_admin`, `read_only` stay global.
+  capability grants).
+- `23_tenant_scope_admin_roles.sql` — `tenant_admin`, `org_admin`, `read_only`
+  (with their capability grants). After this, **`super_admin` is the only role
+  that remains global**, which is what `19`'s header anticipated as the one true
+  platform contract: a super_admin acts across tenants by design, so there is no
+  single tenant its row could belong to. `19`'s warning that a per-tenant copy of
+  the other three "would fork a platform-wide invariant" turned out not to hold —
+  both `iam.set_user_platform_role()` and `withRoleTx`'s PG-role selection key on
+  the role NAME, which a clone preserves.
 
-Both are idempotent and self-guarding: with no tenants (a core-only install)
-they find nothing global to clone and do nothing.
+All three are idempotent and self-guarding: with no tenants (a core-only
+install) they find nothing global to clone and do nothing.
+
+### Consequence for `21_role_nav_denies.sql`
+
+Its **platform-default** path (`v_tenant_id = NULL`) joins
+`iam.user_roles ... AND r.tenant_id IS NULL`, so after `23` it no longer matches
+`org_admin` or `tenant_admin` — those roles are per-tenant now and a global deny
+has nothing to attach to. Use the tenant-scoped form (`v_tenant_id = '<uuid>'`),
+which was already the recommended one below because it is reversible from the
+Capability Matrix screen.
 
 ## `18_platform_role_autoderive.sql` — existing databases only
 
@@ -76,6 +95,48 @@ A fresh install never needs it: `02_schema.sql` and `03_product_schema.sql`
 create all of these columns directly. The script is `ADD COLUMN IF NOT EXISTS`
 plus a guarded backfill, so it's a harmless no-op on a fresh DB and safe to
 re-run. Run it on any database created before this increment.
+
+## `21_role_nav_denies.sql` — a template, run on demand
+
+Not a migration in the usual sense and not part of `db_deploy.ps1`: it is the
+supported way to take a page or tab away from a role. Edit the three
+declarations at the top (role, tenant, capability keys) and run it.
+
+It exists because "hide this tab" is not "delete its grant row". For a `page` or
+`tab`, `iam.fn_role_capability_matrix` treats a missing row as **inherit from
+the parent**, so deleting one *reveals* the page. `org_admin` and `tenant_admin`
+hold no explicit page/tab rows at all — every CRM page they see is inherited off
+the `lms` tool — so there is nothing there to delete. An explicit
+`is_granted = FALSE` row is the mechanism, and this script writes it.
+
+Prefer a tenant-scoped deny (`v_tenant_id = '<uuid>'`): that is the same row the
+Capability Matrix screen writes, so it can be reversed from the admin UI. A
+platform-default deny (`v_tenant_id = NULL`) applies to every tenant and is
+invisible to that screen.
+
+Idempotent (upserts), and it refuses to run with an empty or misspelled key
+list rather than silently matching nothing.
+
+## `22_prune_unused_admin_capabilities.sql` — existing databases only
+
+Deletes eleven `admin.*` capability nodes that no app or service ever read —
+`admin.orgs*`, `admin.users*`, `admin.lookups.view`, `admin.config.lms.manage`,
+`admin.meta.manage`, `admin.comms.send` — plus any now-pointless bare `admin`
+tool grant. They rendered on the Capability Matrix screen as boxes that changed
+nothing, because the surfaces they name live in admin-service /
+identity-service / communication-service, none of which gates on a capability
+(rank only). Surviving: `admin`, `admin.lookups`, `admin.lookups.manage`,
+`admin.roles.manage` — the real gates on the super_admin lookup-admin console.
+
+A fresh install never needs it: `07_seed_lookup_data.sql` no longer seeds the
+removed keys. Re-running `07` on an existing database will **not** clear them —
+its `ON CONFLICT` clause only upserts and re-sets `is_active = TRUE` — which is
+why this is a file here rather than an edit to the seed alone. Idempotent and a
+no-op once run.
+
+Note this prunes the *keys*, not the enforcement gap they exposed: admin-service
+and identity-service still authorize by rank alone. If either grows a real
+`requireCapability` gate, re-add the key **with** the gate in the same change.
 
 # One-time migrations (pre-P1.0 deployments only)
 

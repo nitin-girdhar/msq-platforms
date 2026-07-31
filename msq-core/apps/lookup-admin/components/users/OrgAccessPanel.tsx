@@ -33,7 +33,10 @@ export default function OrgAccessPanel({ userId }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [orgOptions, setOrgOptions] = useState<OrgOption[]>([]);
-  const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
+  // Roles are tenant-owned (_migrations/23), and this panel spans every tenant's
+  // orgs — so one flat role list cannot serve it. Keyed by tenant, and each org
+  // row offers only the roles its own tenant owns.
+  const [rolesByTenant, setRolesByTenant] = useState<Record<string, RoleOption[]>>({});
   const [rowState, setRowState] = useState<Record<string, RowState>>({});
 
   const loadMappings = () => {
@@ -50,18 +53,36 @@ export default function OrgAccessPanel({ userId }: Props) {
     orgsApi.listAll()
       .then((res) => setOrgOptions(res.data.map((o) => ({ id: o.id, name: o.name, tenant_id: o.tenant_id }))))
       .catch(() => setOrgOptions([]));
-    lookupAdmin.list('user-roles')
-      .then((res) => {
-        const rows = res.data as unknown as Array<{ id: string; name: string; label: string; is_active: boolean; rank: number }>;
-        const active = rows
-          .filter((r) => r.is_active)
-          .sort((a, b) => a.rank - b.rank)
-          .map((r) => ({ id: r.id, name: r.name, label: r.label, rank: r.rank }));
-        setRoleOptions(active);
-      })
-      .catch(() => setRoleOptions([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  // One role fetch per tenant represented in the org list.
+  useEffect(() => {
+    const tenantIds = [...new Set(orgOptions.map((o) => o.tenant_id))];
+    if (tenantIds.length === 0) return;
+    let cancelled = false;
+
+    Promise.all(
+      tenantIds.map((tenantId) =>
+        lookupAdmin.list('user-roles', tenantId)
+          .then((res) => {
+            const rows = res.data as unknown as Array<{ id: string; name: string; label: string; is_active: boolean; rank: number }>;
+            const active = rows
+              .filter((r) => r.is_active)
+              .sort((a, b) => a.rank - b.rank)
+              .map((r) => ({ id: r.id, name: r.name, label: r.label, rank: r.rank }));
+            return [tenantId, active] as const;
+          })
+          .catch(() => [tenantId, [] as RoleOption[]] as const),
+      ),
+    ).then((entries) => {
+      if (!cancelled) setRolesByTenant(Object.fromEntries(entries));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orgOptions]);
 
   // Map org_id -> active mapping, for O(1) lookups while rendering the checklist.
   const mappingByOrgId = useMemo(() => {
@@ -70,7 +91,8 @@ export default function OrgAccessPanel({ userId }: Props) {
     return map;
   }, [mappings]);
 
-  const defaultRoleId = roleOptions[0]?.id ?? '';
+  // The lowest-ranked role of the org's OWN tenant — the safe default to grant.
+  const defaultRoleFor = (tenantId: string) => rolesByTenant[tenantId]?.[0]?.id ?? '';
 
   // Seed/refresh per-row role selection from the current mappings once both
   // orgs and mappings/roles are known — never clobber a role the user is
@@ -82,15 +104,17 @@ export default function OrgAccessPanel({ userId }: Props) {
       for (const org of orgOptions) {
         if (next[org.id]) continue;
         const mapping = mappingByOrgId.get(org.id);
+        const tenantRoles = rolesByTenant[org.tenant_id] ?? [];
+        const fallback = defaultRoleFor(org.tenant_id);
         const roleId = mapping
-          ? (roleOptions.find((r) => r.name === mapping.role_name)?.id ?? defaultRoleId)
-          : defaultRoleId;
+          ? (tenantRoles.find((r) => r.name === mapping.role_name)?.id ?? fallback)
+          : fallback;
         next[org.id] = { roleId, weight: '', pending: false, error: null };
       }
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgOptions, mappingByOrgId, roleOptions, defaultRoleId]);
+  }, [orgOptions, mappingByOrgId, rolesByTenant]);
 
   const setRow = (orgId: string, patch: Partial<RowState>) => {
     setRowState((prev) => ({ ...prev, [orgId]: { ...prev[orgId], ...patch } as RowState }));
@@ -130,7 +154,8 @@ export default function OrgAccessPanel({ userId }: Props) {
     const row = rowState[orgId];
     if (!row) return;
     if (checked) {
-      grant(orgId, row.roleId || defaultRoleId, row.weight);
+      const org = orgOptions.find((o) => o.id === orgId);
+      grant(orgId, row.roleId || (org ? defaultRoleFor(org.tenant_id) : ''), row.weight);
     } else {
       revoke(orgId);
     }
@@ -153,7 +178,8 @@ export default function OrgAccessPanel({ userId }: Props) {
     const mapping = mappingByOrgId.get(orgId);
     const row = rowState[orgId];
     if (!mapping || !row) return;
-    grant(orgId, row.roleId || defaultRoleId, row.weight);
+    const org = orgOptions.find((o) => o.id === orgId);
+    grant(orgId, row.roleId || (org ? defaultRoleFor(org.tenant_id) : ''), row.weight);
   };
 
   return (
@@ -175,7 +201,10 @@ export default function OrgAccessPanel({ userId }: Props) {
           {orgOptions.map((org) => {
             const mapping = mappingByOrgId.get(org.id);
             const checked = !!mapping;
-            const row = rowState[org.id] ?? { roleId: defaultRoleId, weight: '', pending: false, error: null };
+            // Only this org's own tenant's roles are assignable to it.
+            const orgRoles = rolesByTenant[org.tenant_id] ?? [];
+            const row = rowState[org.id]
+              ?? { roleId: defaultRoleFor(org.tenant_id), weight: '', pending: false, error: null };
 
             return (
               <li key={org.id} className="rounded-xl border border-[#E2E8F0] px-3 py-2">
@@ -184,7 +213,7 @@ export default function OrgAccessPanel({ userId }: Props) {
                     type="checkbox"
                     id={`oap-check-${org.id}`}
                     checked={checked}
-                    disabled={row.pending || roleOptions.length === 0}
+                    disabled={row.pending || orgRoles.length === 0}
                     onChange={(e) => handleToggle(org.id, e.target.checked)}
                     className="h-4 w-4 shrink-0 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed"
                   />
@@ -204,7 +233,7 @@ export default function OrgAccessPanel({ userId }: Props) {
                     onChange={(e) => handleRoleChange(org.id, e.target.value)}
                     className="shrink-0 rounded-lg border border-[#E2E8F0] bg-white px-2 py-1.5 text-xs text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC] disabled:text-[#94A3B8]"
                   >
-                    {roleOptions.map((r) => (
+                    {orgRoles.map((r) => (
                       <option key={r.id} value={r.id}>{r.label}</option>
                     ))}
                   </select>

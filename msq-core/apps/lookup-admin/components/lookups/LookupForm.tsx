@@ -11,6 +11,14 @@ interface Props {
   setField: (key: string, value: string | number | boolean) => void;
   disabled: boolean;
   tenantId?: string | undefined;
+  // Field keys the form shows but does not let you change — used for a row's
+  // own `tenant_id`, which now comes from the navbar tenant scope instead of
+  // being re-picked in every form.
+  lockedKeys?: readonly string[];
+  /** Per-key note rendered under a locked field, explaining where its value
+   *  comes from. Keyed by field key, since a form can lock two fields for two
+   *  different reasons. */
+  lockedHints?: Readonly<Record<string, string>>;
   error?: string | null;
   onSubmit: (e: React.FormEvent) => void;
 }
@@ -22,7 +30,7 @@ const INPUT_CLASS =
 // JSX used to be duplicated between them near-verbatim. Owns nothing but
 // rendering; form state and submit/validation stay with the caller since
 // Create and Edit build very different bodies (fresh values vs. a dirty diff).
-export default function LookupForm({ formId, idPrefix, config, values, setField, disabled, tenantId, error, onSubmit }: Props) {
+export default function LookupForm({ formId, idPrefix, config, values, setField, disabled, tenantId, lockedKeys = [], lockedHints = {}, error, onSubmit }: Props) {
   return (
     <form id={formId} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       {error && (
@@ -32,6 +40,9 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
       )}
 
       {config.fields.map((field) => {
+        const locked = lockedKeys.includes(field.key);
+        const lockedHint = locked ? lockedHints[field.key] : undefined;
+
         if (field.type === 'fk') {
           const dependsOnLabel = field.fk?.dependsOn
             ? config.fields.find((f) => f.key === field.fk?.dependsOn)?.label
@@ -44,9 +55,10 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
               onChange={(v) => setField(field.key, v)}
               formValues={values}
               tenantId={tenantId}
-              disabled={disabled}
+              disabled={disabled || locked}
               idPrefix={idPrefix}
               dependsOnLabel={dependsOnLabel}
+              {...(lockedHint ? { hint: lockedHint } : {})}
             />
           );
         }
@@ -65,7 +77,7 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
                 type="text"
                 value={values[field.key] as string}
                 onChange={(e) => setField(field.key, e.target.value)}
-                disabled={disabled}
+                disabled={disabled || locked}
                 required={field.required}
                 className={INPUT_CLASS}
               />
@@ -88,7 +100,7 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
                 type="number"
                 value={values[field.key] as string | number}
                 onChange={(e) => setField(field.key, e.target.value)}
-                disabled={disabled}
+                disabled={disabled || locked}
                 required={field.required}
                 className={INPUT_CLASS}
               />
@@ -106,6 +118,8 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
                 <span>{field.label}</span>
               </label>
             )}
+
+            {lockedHint && <p className="text-[11px] text-[#94A3B8]">{lockedHint}</p>}
           </div>
         );
       })}

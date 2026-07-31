@@ -61,6 +61,7 @@ $SchemaScripts = @(
 $MigrationScripts = @(
     '17_tenant_scope_lms_catalogs.sql'
     '19_tenant_scope_ladder_roles.sql'
+    '23_tenant_scope_admin_roles.sql'
 )
 
 # -- Helpers ------------------------------------------------------------------
@@ -79,6 +80,26 @@ function Invoke-Native([scriptblock]$block, [string]$failMessage) {
 # chars, and WriteAllText re-encoded each of those as UTF-8 - turning one 3-byte
 # char into 6 bytes of mojibake that the merged bundle then shipped.
 # .NET's ReadAllText defaults to UTF-8 and honours a BOM if present.
+# Rancher Desktop proxies the Windows npipe to dockerd inside WSL over a
+# Hyper-V socket. `docker compose pull` fans its per-service image lookups out
+# in parallel and that bridge intermittently drops one, failing the whole pull
+# with "timed out dialing Hyper-V socket" on an arbitrary service. The daemon
+# itself is fine - a serial retry of the identical command succeeds - so retry
+# rather than abort a 400s build.
+function Invoke-NativeWithRetry([scriptblock]$block, [string]$failMessage, [int]$Attempts = 3) {
+    for ($n = 1; $n -le $Attempts; $n++) {
+        $savedEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { & $block } finally { $ErrorActionPreference = $savedEAP }
+        if ($LASTEXITCODE -eq 0) { return }
+        if ($n -lt $Attempts) {
+            Write-Host "  attempt $n/$Attempts failed, retrying in 5s..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 5
+        }
+    }
+    Write-Error $failMessage
+}
+
 function Read-Utf8Text([string]$Path) {
     return [System.IO.File]::ReadAllText($Path)
 }
@@ -171,6 +192,12 @@ for ($i = 1; $i -le 10; $i++) {
 }
 if (-not $ready) { Write-Error 'Docker engine not reachable. Start Rancher Desktop / Docker Desktop and retry.' }
 
+# Serialise compose's per-service image lookups. Parallel lookups are what
+# trips the Rancher Desktop npipe->WSL bridge (see Invoke-NativeWithRetry);
+# the pull is a handful of small third-party images, so losing the parallelism
+# costs seconds and buys a build that does not fall over 400s in.
+$env:COMPOSE_PARALLEL_LIMIT = '1'
+
 # -- Step 1: Build every repo -------------------------------------------------
 if ($SkipBuild) {
     Write-Step 'Skipping Docker build (repackage only)'
@@ -190,7 +217,7 @@ if ($SkipBuild) {
             # file back in restores the build contexts, leaving only third-party
             # images (postgres, caddy, ...) to actually pull.
             Write-Host "  pulling third-party images for $name"
-            Invoke-Native {
+            Invoke-NativeWithRetry {
                 docker compose -f docker-compose.yml -f docker-compose-linux.yml `
                     --env-file .env.example pull --ignore-buildable
             } "docker compose pull failed in $name."
@@ -579,6 +606,7 @@ REST=(
     13_backfill_per_product_roles.sql
     _migrations/17_tenant_scope_lms_catalogs.sql
     _migrations/19_tenant_scope_ladder_roles.sql
+    _migrations/23_tenant_scope_admin_roles.sql
 )
 
 if $SEED; then

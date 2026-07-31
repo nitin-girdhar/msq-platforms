@@ -381,40 +381,35 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Remove a list. Its tasks are not deleted.', 3),
 
 -- ── ADMINISTRATION ──────────────────────────────────────────────────
+-- Scope: the lookup-admin console, which is super_admin-only (its layout gates
+-- on admin.lookups.manage, and every admin-service route behind it additionally
+-- requires RANKS.SUPER_ADMIN). Nothing here describes the HR or Tasks admin
+-- tabs — those are the `hr.*.admin.*` tab nodes and `tasks.lists`.
+--
+-- KEEP THIS SUBTREE TO WHAT IS ACTUALLY GATED. It previously also carried
+-- admin.orgs{,.view,.manage}, admin.users{,.manage,.mappings.manage,
+-- .password.reset}, admin.lookups.view, admin.config.lms.manage,
+-- admin.meta.manage and admin.comms.send — eleven keys with no reader in any
+-- app or service. They rendered as tickable boxes on the Capability Matrix
+-- screen that changed nothing, because the surfaces they named live in
+-- admin-service / identity-service, which gate on rank alone. Removed in
+-- _migrations/22_prune_unused_admin_capabilities.sql. If one of those surfaces
+-- ever grows a real requireCapability gate, re-add the key WITH the gate, in
+-- the same change.
 ('admin', 'tool', NULL, 'Administration',
  'Tenant and platform configuration.', 6),
 
-('admin.orgs', 'page', 'admin', 'Branches',
- 'The tenant''s branches and their settings.', 1),
-('admin.orgs.view',   'operation', 'admin.orgs', 'View branches',
- 'Read the branch list and settings.', 1),
-('admin.orgs.manage', 'operation', 'admin.orgs', 'Manage branches',
- 'Create branches and change their configuration.', 2),
-
-('admin.users', 'page', 'admin', 'User administration',
- 'Accounts across the tenant, independent of any product.', 2),
-('admin.users.manage', 'operation', 'admin.users', 'Manage accounts',
- 'Create, edit and deactivate accounts.', 1),
-('admin.users.mappings.manage', 'operation', 'admin.users', 'Manage branch access',
- 'Give or remove a person''s access to a branch.', 2),
-('admin.users.password.reset', 'operation', 'admin.users', 'Reset passwords',
- 'Force a password reset on another account.', 3),
-
 ('admin.lookups', 'page', 'admin', 'Lookup data',
  'Platform-wide reference tables. Changes affect every tenant.', 3),
-('admin.lookups.view',   'operation', 'admin.lookups', 'View lookup data',
- 'Read the reference tables.', 1),
+-- No sibling `.view`: lookup-admin is manage-or-nothing. A view-only grant
+-- would light up the sidebar (filterNav wants any granted descendant) and then
+-- hit the layout's "Access restricted" screen — the render-then-403 shape the
+-- capability tree exists to prevent.
 ('admin.lookups.manage', 'operation', 'admin.lookups', 'Manage lookup data',
  'Edit reference tables. Affects every tenant on the platform.', 2),
 
 ('admin.roles.manage', 'operation', 'admin', 'Manage roles',
- 'Define roles, ranks, departments and these capability grants.', 4),
-('admin.config.lms.manage', 'operation', 'admin', 'Manage CRM configuration',
- 'Edit lead stages, sources and interaction types.', 5),
-('admin.meta.manage', 'operation', 'admin', 'Manage lead integrations',
- 'Connect and configure external lead sources.', 6),
-('admin.comms.send', 'operation', 'admin', 'Send messages',
- 'Send email and WhatsApp through the platform.', 7)
+ 'Define roles, ranks, departments and these capability grants.', 4)
 
 ON CONFLICT (key) DO UPDATE SET
   kind        = EXCLUDED.kind,
@@ -635,9 +630,9 @@ FROM (VALUES
   'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.view.org',
   'tasks.create','tasks.edit','tasks.edit.own','tasks.edit.team','tasks.edit.any',
   'tasks.delete','tasks.assign','tasks.comment','tasks.history.view',
-  'tasks.lists.view','tasks.lists.manage','tasks.lists.delete',
-  'admin','admin.orgs.view','admin.users.manage','admin.config.lms.manage',
-  'admin.comms.send'
+  'tasks.lists.view','tasks.lists.manage','tasks.lists.delete'
+  -- No `admin` tool: the only pages left under it are lookup-admin's, which
+  -- org_admin is explicitly denied below, so the grant reached nothing.
 ]),
 
 -- ── tenant_admin (990) ──────────────────────────────────────────────
@@ -680,10 +675,12 @@ FROM (VALUES
   'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.view.org',
   'tasks.create','tasks.edit','tasks.edit.own','tasks.edit.team','tasks.edit.any',
   'tasks.delete','tasks.assign','tasks.comment','tasks.history.view',
-  'tasks.lists.view','tasks.lists.manage','tasks.lists.delete',
-  'admin','admin.orgs.view','admin.orgs.manage',
-  'admin.users.manage','admin.users.mappings.manage','admin.users.password.reset',
-  'admin.roles.manage','admin.config.lms.manage','admin.meta.manage','admin.comms.send'
+  -- No `admin` subtree. Platform administration (the lookup-admin console) is
+  -- super_admin-only by decision, and admin-service's putGrants now REFUSES to
+  -- write any admin.* grant to a role below that rank — so seeding one here
+  -- would be the seed doing what the API forbids. super_admin receives those
+  -- keys through the `*` wildcard below, not through rows like these.
+  'tasks.lists.view','tasks.lists.manage','tasks.lists.delete'
 ]),
 
 -- ── super_admin (1000) ──────────────────────────────────────────────
@@ -733,6 +730,25 @@ END $seedcheck$;
 -- everyone, and the operations under them would still be denied — leaving a
 -- visible screen that returns nothing, which is the exact bug class Tier C
 -- exists to remove.
+--
+-- READ THIS BEFORE TRYING TO HIDE A PAGE. A page or tab with NO ROW AT ALL is
+-- not "off" — it is ON, inherited from its parent (fn_role_capability_matrix:
+-- `COALESCE(g.is_granted, w.nav_inherited)`). DELETING a grant row therefore
+-- REVEALS a page rather than hiding it. This VALUES list is the one place a
+-- page is taken away; adding the role and the page/tab key here is the whole
+-- mechanism. Note what goes with it: denying `lms.users` also prunes
+-- lms.users.view, lms.users.manage and their scopes, so the service gates on
+-- those start refusing too. That is the intent, but it is not visible from the
+-- key alone.
+--
+-- Only tools and operations/scopes behave the way most people expect — those
+-- need their own row and default to denied. It is exactly the nav nodes
+-- (page/tab), the ones an operator actually wants to hide, that inherit.
+--
+-- This block writes PLATFORM DEFAULTS (tenant_id NULL), i.e. every tenant. To
+-- take a page away from one customer only, write a tenant-scoped row instead —
+-- see _migrations/21_role_nav_denies.sql, or just untick it in the Capability
+-- Matrix screen, which writes the same thing and can put it back.
 INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
 SELECT NULL, r.id, c.id, FALSE
 FROM (VALUES

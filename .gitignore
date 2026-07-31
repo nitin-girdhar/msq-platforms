@@ -86,3 +86,4 @@ ec2-deploy/deploy.sh
 # rather than file-by-file, so newly generated files don't silently show up as
 # untracked the next time the bundle layout changes.
 msq-deploy/artifacts/
+msq-deploy/msq-images.tar

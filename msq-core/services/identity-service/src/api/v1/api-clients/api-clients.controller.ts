@@ -26,12 +26,22 @@ function requireApiClientAdmin(rank: number): void {
 // capability cache: a tenant that revokes `lms.apiclients` must lose API-token
 // management immediately, not after the cache backstop expires (Issue #2). The
 // per-call DB round trip is acceptable on this low-traffic, high-sensitivity path.
+//
+// Resolved against `role_name` — the user's iam.user_roles role IN THIS ORG —
+// NOT `role`, which carries platform_role. That distinction was a live bug:
+// platform_role is a 4-value denormalisation of the user's GLOBAL role, so this
+// gate was reading a different role's grants than /auth/me, the LMS nav and every
+// leads-service route. Someone globally org_admin but mapped into this org under
+// a restricted role was denied everywhere in LMS and allowed here — on the one
+// endpoint family that mints integration credentials — while any tenant-defined
+// role collapsed to 'member', which matches no row and was denied even when the
+// capability was granted. hasCapabilityFresh still fails closed on a null name.
 async function requireApiClientCapability(
-  auth: { tenant_id: string; role: string; rank: number },
+  auth: { tenant_id: string; role_name: string | null; rank: number },
   capability: CapabilityKey,
 ): Promise<void> {
   requireApiClientAdmin(auth.rank);
-  const granted = await hasCapabilityFresh(auth.tenant_id, auth.role, capability);
+  const granted = await hasCapabilityFresh(auth.tenant_id, auth.role_name, capability);
   if (!granted) {
     throw new ForbiddenError('API client management is not enabled for your role');
   }
@@ -39,8 +49,8 @@ async function requireApiClientCapability(
 
 export class ApiClientsController {
   create = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
+    const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
     const data = request.body as CreateApiClientInput;
     const isOrgAdmin = rank < RANKS.TENANT_ADMIN;
     const result = await service.createApiClient({ org_id, user_id, role, tenant_id }, data, isOrgAdmin);
@@ -48,15 +58,15 @@ export class ApiClientsController {
   };
 
   list = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role, rank }, CAPABILITY.LMS_APICLIENTS_VIEW);
+    const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.LMS_APICLIENTS_VIEW);
     const clients = await service.listApiClients({ org_id, user_id, role, tenant_id });
     return reply.send({ success: true, data: clients });
   };
 
   update = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
+    const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
     const { id } = request.params as { id: string };
     const data = request.body as UpdateApiClientInput;
     const isOrgAdmin = rank < RANKS.TENANT_ADMIN;
@@ -65,16 +75,16 @@ export class ApiClientsController {
   };
 
   rotate = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
+    const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
     const { id } = request.params as { id: string };
     const result = await service.rotateApiClient({ org_id, user_id, role, tenant_id }, id);
     return reply.header('Cache-Control', 'no-store').send({ success: true, data: result });
   };
 
   revoke = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
+    const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
     const { id } = request.params as { id: string };
     await service.revokeApiClient({ org_id, user_id, role, tenant_id }, id);
     return reply.status(204).send();

@@ -189,8 +189,27 @@ GRANT SELECT ON iam.capabilities TO app_user, tenant_admin;
 -- Reads must see BOTH the platform defaults (tenant_id IS NULL) and the tenant's
 -- own overrides, or fn_role_capability_matrix's precedence would silently
 -- collapse to deny. Writes are override-only: the WITH CHECK pins tenant_id to
--- the actor's tenant, so an admin can never edit a platform default or another
--- tenant's grant — the worst they can do is shape their own tenant.
+-- the admin-SELECTED tenant, so an admin can never edit a platform default or
+-- some other tenant's grant — the worst they can do is shape the one tenant
+-- they picked.
+--
+-- The write policy keys on app.current_tenant_id, exactly like the N-6
+-- admin_tenant_config_policy on every other tenant-scoped config table above,
+-- and is reached through @platform/db's withTenantConfigTx.
+--
+-- It previously derived the tenant from app.current_org_id via a subquery on
+-- entity.organizations, which cannot work for the actor this policy exists to
+-- serve. The Capability Matrix screen is super_admin-only and cross-tenant by
+-- design, but entity.organizations has FORCE RLS and its org_isolation_policy
+-- shows app_user only the orgs in iam.fn_user_active_orgs(current_user_id) — so
+-- for any tenant the super_admin is not personally mapped into, that subquery
+-- evaluated to NULL and every write failed the WITH CHECK. Keying on the
+-- selected tenant directly removes the dependency on entity.organizations.
+--
+-- Still safe at runtime for the same reason the other N-6 policies are: the
+-- product runtime (withRoleTx's app_user branch) sets app.current_org_id and
+-- never app.current_tenant_id, so this predicate is NULL — no match — on that
+-- path and grants nothing extra. Only the explicit admin tx sets it.
 ALTER TABLE iam.role_capabilities ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy       ON iam.role_capabilities;
 DROP POLICY IF EXISTS tenant_isolation_policy    ON iam.role_capabilities;
@@ -203,10 +222,8 @@ CREATE POLICY tenant_isolation_policy ON iam.role_capabilities AS PERMISSIVE FOR
   USING (tenant_id IS NULL
          OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 CREATE POLICY admin_tenant_config_policy ON iam.role_capabilities AS PERMISSIVE FOR ALL TO app_user
-  USING      (tenant_id = (SELECT tenant_id FROM entity.organizations
-                           WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid))
-  WITH CHECK (tenant_id = (SELECT tenant_id FROM entity.organizations
-                           WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 GRANT SELECT                        ON iam.role_capabilities TO app_user, tenant_admin;
 GRANT INSERT, UPDATE, DELETE        ON iam.role_capabilities TO app_user;
 

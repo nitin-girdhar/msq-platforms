@@ -182,15 +182,18 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
   if (data.force_password_change !== undefined) fields.force_password_change = data.force_password_change;
   if (data.manager_id !== undefined)            fields.manager_id = data.manager_id;
 
+  // Resolved before the role lookup: roles are tenant-owned, so the role name
+  // only identifies a row once you know which tenant — and that comes from the
+  // org this user actually sits in, not the actor's.
+  const targetOrgId = (beforeUser as Record<string, unknown> | null)?.['org_id'] as string ?? ctx.org_id;
+  const targetCtx: RoleTxContext = { ...ctx, org_id: targetOrgId };
+
   if (data.role_name !== undefined) {
-    const roleRow = await repo.resolveRoleByName(data.role_name);
+    const roleRow = await repo.resolveRoleByName(data.role_name, targetOrgId);
     if (!roleRow) throw new NotFoundError(`Role not found: ${data.role_name}`);
     fields.role_id = roleRow.id;
     fields.password_changed_at = new Date();
   }
-
-  const targetOrgId = (beforeUser as Record<string, unknown> | null)?.['org_id'] as string ?? ctx.org_id;
-  const targetCtx: RoleTxContext = { ...ctx, org_id: targetOrgId };
 
   // fields may legitimately be empty (e.g. an org-only branch move below) — don't
   // treat "nothing to SET" as "user not found"; only call the generic UPDATE when

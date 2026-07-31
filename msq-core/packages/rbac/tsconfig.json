@@ -4,5 +4,8 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src"]
+  "include": ["src"],
+  // This package EMITS to dist (unlike @platform/ui-kit, which is consumed as
+  // source), so tests must be excluded or they ship inside the build output.
+  "exclude": ["src/**/*.test.ts"]
 }

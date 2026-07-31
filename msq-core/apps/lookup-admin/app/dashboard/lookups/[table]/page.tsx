@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { TABLE_CONFIG } from '@/src/lib/lookupTableConfig';
 import { getServerSession, GATEWAY_URL } from '@/src/lib/server-session';
+import { getSelectedTenantId } from '@/src/lib/tenant-scope';
 import LookupTableShell from '@/components/lookups/LookupTableShell';
 import LookupLoadError from '@/components/lookups/LookupLoadError';
 
@@ -8,10 +9,9 @@ export const dynamic = 'force-dynamic';
 
 interface PageProps {
   params: Promise<{ table: string }>;
-  searchParams: Promise<{ tenant_id?: string }>;
 }
 
-export default async function LookupTablePage({ params, searchParams }: PageProps) {
+export default async function LookupTablePage({ params }: PageProps) {
   const { table } = await params;
   const config = TABLE_CONFIG[table];
   if (!config) notFound();
@@ -24,23 +24,12 @@ export default async function LookupTablePage({ params, searchParams }: PageProp
 
   const { cookieHeader } = result;
 
-  const { tenant_id: selectedTenantId } = await searchParams;
+  // Scope comes from the app-wide selector in the navbar (dashboard/layout.tsx).
+  const selectedTenantId = await getSelectedTenantId();
 
   let rows: Record<string, unknown>[] = [];
-  let tenants: Array<{ id: string; name: string }> = [];
 
   if (config.tenantScoped) {
-    // Advisory-only selector data — the real scoping/authorization check is
-    // the backend's required `tenant_id` query param + RANKS.SUPER_ADMIN gate.
-    const tenantsRes = await fetch(`${GATEWAY_URL}/lookups/tenants`, {
-      headers: { cookie: cookieHeader },
-      cache: 'no-store',
-    });
-    if (tenantsRes.ok) {
-      const tenantsBody = await tenantsRes.json() as { success: true; data: Record<string, unknown>[] };
-      tenants = tenantsBody.data.map((t) => ({ id: String(t['id']), name: String(t['name']) }));
-    }
-
     if (selectedTenantId) {
       const res = await fetch(`${GATEWAY_URL}/lookups/${table}?tenant_id=${selectedTenantId}`, {
         headers: { cookie: cookieHeader },
@@ -80,7 +69,6 @@ export default async function LookupTablePage({ params, searchParams }: PageProp
       config={config}
       rows={rows}
       tenantScoped={config.tenantScoped}
-      tenants={tenants}
       selectedTenantId={selectedTenantId}
     />
   );

@@ -12,33 +12,40 @@ interface Props {
   onClose: () => void;
   table: string;
   config: LookupTableDef;
+  // Scopes the create request itself (tenant-scoped tables only).
   tenantId?: string | undefined;
+  // The app-wide tenant from the navbar. Seeds a `tenant_id` COLUMN on tables
+  // that carry one (Organizations) so it is never re-picked per form.
+  scopeTenantId?: string | undefined;
 }
 
 // The submit button lives in the Modal's pinned footer, outside the <form>;
 // the HTML `form` attribute is what still wires it to this form.
 const FORM_ID = 'create-lookup-form';
 
-function initialValues(config: LookupTableDef): FormValues {
+const TENANT_KEY = 'tenant_id';
+
+function initialValues(config: LookupTableDef, scopeTenantId?: string): FormValues {
   const values: FormValues = {};
   for (const field of config.fields) {
     if (field.type === 'boolean') values[field.key] = false;
+    else if (field.key === TENANT_KEY && scopeTenantId) values[field.key] = scopeTenantId;
     else values[field.key] = '';
   }
   return values;
 }
 
-export default function CreateLookupModal({ open, onClose, table, config, tenantId }: Props) {
+export default function CreateLookupModal({ open, onClose, table, config, tenantId, scopeTenantId }: Props) {
   const router = useRouter();
-  const [values, setValues] = useState<FormValues>(() => initialValues(config));
+  const [values, setValues] = useState<FormValues>(() => initialValues(config, scopeTenantId));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    setValues(initialValues(config));
+    setValues(initialValues(config, scopeTenantId));
     setError(null);
-  }, [open, config]);
+  }, [open, config, scopeTenantId]);
 
   const handleClose = () => {
     if (pending) return;
@@ -46,8 +53,20 @@ export default function CreateLookupModal({ open, onClose, table, config, tenant
     onClose();
   };
 
+  // Typing a reserved name (org_admin, …) pins Rank to the platform's fixed
+  // value as you type, so the locked field never shows a stale number the
+  // server is about to overwrite.
+  const reservedRank = config.reservedRanks?.[String(values['name'] ?? '')];
+
   const setField = (key: string, value: string | number | boolean) => {
-    setValues((prev) => ({ ...prev, [key]: value }));
+    setValues((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === 'name') {
+        const pinned = config.reservedRanks?.[String(value)];
+        if (pinned !== undefined) next['rank'] = pinned;
+      }
+      return next;
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -111,6 +130,14 @@ export default function CreateLookupModal({ open, onClose, table, config, tenant
         setField={setField}
         disabled={pending}
         tenantId={tenantId}
+        lockedKeys={[
+          ...(scopeTenantId ? [TENANT_KEY] : []),
+          ...(reservedRank !== undefined ? ['rank'] : []),
+        ]}
+        lockedHints={{
+          [TENANT_KEY]: 'Set by the tenant selected in the top bar.',
+          rank: 'Fixed for this role — set by the platform.',
+        }}
         error={error}
         onSubmit={handleSubmit}
       />

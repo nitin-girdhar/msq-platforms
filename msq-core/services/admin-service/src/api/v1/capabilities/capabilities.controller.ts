@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { RANKS } from '@platform/authz';
-import { ForbiddenError, BadRequestError } from '../../../lib/errors.js';
+import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './capabilities.service.js';
 import type { TenantQuery, RoleIdParams, PutGrantsInput } from './capabilities.schema.js';
 
@@ -29,16 +29,10 @@ export class CapabilitiesController {
     if (request.auth.rank < RANKS.SUPER_ADMIN) throw new ForbiddenError('Super admin only');
     const { id } = request.params as RoleIdParams;
     const body = request.body as PutGrantsInput;
-    try {
-      const data = await service.putGrants(request.auth.user_id, id, body);
-      return reply.send({ success: true, data });
-    } catch (err) {
-      // Only the "tenant has no organizations" precondition from the
-      // repository surfaces here as a plain Error; anything else rethrows.
-      if (err instanceof Error && err.message.includes('no organizations')) {
-        throw new BadRequestError(err.message);
-      }
-      throw err;
-    }
+    // No precondition to translate: the write is pinned to the selected tenant
+    // by RLS (app.current_tenant_id) and no longer needs an org in that tenant
+    // to resolve first, so nothing here throws a plain Error worth catching.
+    const data = await service.putGrants(request.auth.user_id, id, body);
+    return reply.send({ success: true, data });
   };
 }

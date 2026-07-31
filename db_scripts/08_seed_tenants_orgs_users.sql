@@ -462,15 +462,12 @@ WHERE tr.tenant_id IS NOT NULL AND tr.name IN ('hr_manager', 'hr_head')
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO UPDATE SET is_granted = TRUE;
 
--- Admin managers get branch user administration; ops/admin keep Tasks as their
--- primary tool.
-INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
-SELECT tr.tenant_id, tr.id, c.id, TRUE
-FROM iam.user_roles tr
-JOIN iam.capabilities c ON c.key = ANY (ARRAY['admin','admin.orgs.view','admin.users.manage'])
-WHERE tr.tenant_id IS NOT NULL AND tr.name = 'admin_manager'
-ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
-DO UPDATE SET is_granted = TRUE;
+-- admin_manager used to be granted 'admin', 'admin.orgs.view' and
+-- 'admin.users.manage' here. The latter two no longer exist — branch and user
+-- administration is gated on RANK in identity-service, never on a capability,
+-- so those keys granted nothing (see 07's ADMINISTRATION block). What remains
+-- under `admin` is lookup-admin, which is super_admin-only, so the tool grant
+-- had nothing to reach either. Ops/admin roles keep Tasks as their primary tool.
 
 
 -- ===================================================================

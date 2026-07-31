@@ -130,7 +130,8 @@ $RemainingCoreScripts = @(
     "13_backfill_per_product_roles.sql",
     "14_scope_comms_templates_to_tenant.sql",
     "_migrations/17_tenant_scope_lms_catalogs.sql",
-    "_migrations/19_tenant_scope_ladder_roles.sql"
+    "_migrations/19_tenant_scope_ladder_roles.sql",
+    "_migrations/23_tenant_scope_admin_roles.sql"
 )
 
 $SqlScripts = if ($IncludeDemoSeed) {

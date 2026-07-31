@@ -1,3 +1,5 @@
+import { RESERVED_ROLE_RANK } from '@platform/rbac';
+
 export type FieldType = 'text' | 'textarea' | 'number' | 'boolean' | 'fk';
 
 export type FormValues = Record<string, string | number | boolean>;
@@ -9,8 +11,9 @@ export type FormValues = Record<string, string | number | boolean>;
 export interface FkConfig {
   // A /lookups/{table} slug — the common case (e.g. 'lead-stage', 'org-types').
   table?: string;
-  // Non-/lookups sources: the geo cascade backing country_id/state_id/city_id.
-  endpoint?: 'geo-countries' | 'geo-states' | 'geo-cities';
+  // Non-/lookups sources: the geo cascade backing country_id/state_id/city_id,
+  // and iam.departments, which is tenant-scoped and has its own route.
+  endpoint?: 'geo-countries' | 'geo-states' | 'geo-cities' | 'departments';
   // Sibling field key that must have a value before this one can fetch/enable.
   // Chains to any depth: state_id dependsOn country_id, city_id dependsOn state_id.
   dependsOn?: string;
@@ -47,6 +50,10 @@ export interface LookupTableDef {
   // the hr/lms/task lookup catalogs, per db_scripts/22) — the page requires a
   // tenant selection before rows can be listed/created/edited.
   tenantScoped?: boolean;
+  // Rows whose `rank` is fixed by the platform, keyed by the row's `name`.
+  // Declared here rather than special-cased inside the form components, so the
+  // shared Create/Edit modals stay config-driven.
+  reservedRanks?: Readonly<Record<string, number>>;
 }
 
 export interface ModuleDef {
@@ -97,11 +104,21 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     title: 'User Roles',
     description: 'Roles assignable to users, ordered by rank.',
     module: 'capabilities',
+    // Every role belongs to a tenant since _migrations/23 — super_admin is the
+    // one global row and admin-service filters it out of this list entirely, so
+    // it can never be handed out from here.
+    tenantScoped: true,
     fields: [
+      { key: 'department_id', label: 'Department', type: 'fk', required: true, fk: { endpoint: 'departments' } },
       ...NAME_LABEL_FIELDS,
       DESCRIPTION_FIELD,
       { key: 'rank', label: 'Rank', type: 'number', required: true },
     ],
+    // read_only / org_admin / tenant_admin exist per tenant and are editable
+    // here like any other row, but their rank is a platform contract:
+    // platform_role derivation and PG-role selection resolve off it. The form
+    // locks the field to these values; admin-service re-asserts them on write.
+    reservedRanks: RESERVED_ROLE_RANK,
   },
   'lead-stage': {
     slug: 'lead-stage',

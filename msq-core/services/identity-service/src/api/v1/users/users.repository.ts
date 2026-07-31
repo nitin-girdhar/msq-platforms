@@ -5,6 +5,7 @@ import {
   usersTable,
   userRolesTable,
   userOrgMappingTable,
+  organizationsTable,
   vwUserTeamMembers,
   vwUserOrgChart,
   vwUserOrgAccess,
@@ -237,24 +238,34 @@ export interface CreateUserData {
   password_hash: string;
 }
 
-export async function resolveRoleByName(roleName: string) {
+// Roles are tenant-owned since _migrations/23_tenant_scope_admin_roles.sql, so
+// the same name legitimately exists once per tenant. Resolving by name alone
+// with limit(1) would pick an ARBITRARY tenant's row — handing this user a role
+// their own tenant does not own, which fn_role_capability_matrix then resolves
+// to no capabilities at all. The org pins which tenant's copy is meant.
+function roleIdByNameForOrg(
+  tx: Parameters<Parameters<typeof withServiceTx>[0]>[0],
+  roleName: string,
+  orgId: string,
+) {
+  return tx
+    .select({ id: userRolesTable.id })
+    .from(userRolesTable)
+    .innerJoin(organizationsTable, eq(organizationsTable.tenantId, userRolesTable.tenantId))
+    .where(and(eq(userRolesTable.name, roleName), eq(organizationsTable.id, orgId)))
+    .limit(1);
+}
+
+export async function resolveRoleByName(roleName: string, orgId: string) {
   return withServiceTx(async (tx) => {
-    const [row] = await tx
-      .select({ id: userRolesTable.id })
-      .from(userRolesTable)
-      .where(eq(userRolesTable.name, roleName))
-      .limit(1);
+    const [row] = await roleIdByNameForOrg(tx, roleName, orgId);
     return row ?? null;
   });
 }
 
 export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
   return withRoleTx(ctx, async (tx) => {
-    const [roleRow] = await tx
-      .select({ id: userRolesTable.id })
-      .from(userRolesTable)
-      .where(eq(userRolesTable.name, data.role_name))
-      .limit(1);
+    const [roleRow] = await roleIdByNameForOrg(tx, data.role_name, ctx.org_id);
     if (!roleRow) throw new BadRequestError(`Role not found: ${data.role_name}`);
     const roleId = roleRow.id;
 

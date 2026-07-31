@@ -863,6 +863,9 @@ importers:
       '@platform/authz':
         specifier: workspace:*
         version: link:../../../msq-core/packages/platform-authz
+      '@platform/rbac':
+        specifier: workspace:*
+        version: link:../../../msq-core/packages/rbac
       '@platform/types':
         specifier: workspace:*
         version: link:../../../msq-core/packages/types

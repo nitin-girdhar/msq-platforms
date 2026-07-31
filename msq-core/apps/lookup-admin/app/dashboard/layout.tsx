@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { can, CAPABILITY, ANCHOR_RANK } from '@platform/rbac';
+import { buildLoginUrl } from '@platform/ui-kit';
 import { AppSidebar, MobileSidebar, HamburgerButton, UserMenu } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { fetchTenants, getSelectedTenantId } from '@/src/lib/tenant-scope';
@@ -74,7 +75,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <span className="text-base font-bold tracking-tight text-[#0F172A]">Admin</span>
         <div className="ml-auto flex items-center gap-3">
           <TenantScopeSwitcher tenants={tenants} selectedTenantId={selectedTenantId} />
-          <UserMenu user={session} />
+          <UserMenu user={session} loginUrl={buildLoginUrl()} />
         </div>
       </header>
       <MobileSidebar actor={session} items={ADMIN_NAV} />

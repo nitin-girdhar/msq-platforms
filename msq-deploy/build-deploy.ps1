@@ -43,26 +43,27 @@ $TarFile      = Join-Path $ArtifactsDir 'msq-images.tar'
 $ComposeDst   = Join-Path $ArtifactsDir 'docker-compose.yml'
 $EnvDst       = Join-Path $ArtifactsDir '.env.example'
 
-# Schema scripts docker-compose-linux.yml mounts at first boot. Seed/cleanup
-# scripts (07+) ship too but stay opt-in - run them by hand.
+# Schema scripts docker-compose-linux.yml mounts at first boot. Mirrors
+# $SchemaScripts in db_scripts/db_deploy.ps1; keep the two in sync.
 $SchemaScripts = @(
-    '01_extensions_and_roles.sql'
-    '02_schema.sql'
-    '03_product_schema.sql'
-    '04_roles_and_grants.sql'
-    '05_catalogs.sql'
-    '06_rls.sql'
+    '00_extensions_schemas_roles.sql'
+    '01_functions_shared.sql'
+    '02_tables_core.sql'
+    '03_tables_product.sql'
+    '04_functions_triggers.sql'
+    '05_views.sql'
+    '06_indexes.sql'
+    '07_grants.sql'
+    '08_rls.sql'
+    '09_schema_version.sql'
+    '10_tenant_provisioning.sql'
 )
 
-# Migrations that are part of EVERY install, not just pre-P1.0 upgrades. They
-# run after the demo seed because they need entity.tenants populated - they fan
-# rows that 07 seeds as GLOBAL (tenant_id IS NULL) out into one copy per tenant.
-# Mirrors $RemainingCoreScripts in db_scripts/db_deploy.ps1; keep the two in sync.
-$MigrationScripts = @(
-    '17_tenant_scope_lms_catalogs.sql'
-    '19_tenant_scope_ladder_roles.sql'
-    '23_tenant_scope_admin_roles.sql'
-)
+# Sub-folders of db_scripts that ship with the bundle. reference_data/ is
+# required by every deployment and dummy_data/ is opt-in demo data; both are
+# driven by bootstrap-db.sh after first boot, not mounted into initdb.d.
+# tools/ is operator-run only, so it does not ship.
+$DbScriptFolders = @('reference_data', 'dummy_data')
 
 # -- Helpers ------------------------------------------------------------------
 function Write-Step([string]$msg) { Write-Host "`n>> $msg" -ForegroundColor Cyan }
@@ -113,7 +114,7 @@ function Get-NativeOutput([scriptblock]$block) {
 
 # `docker compose config` resolves every relative path (bind-mount sources,
 # env_file entries) to an ABSOLUTE path on THIS build host - e.g.
-# `C:\Girdhar\...\db_scripts\02_schema.sql`. Shipped as-is, the bundle can only
+# `C:\Girdhar\...\db_scripts\02_tables_core.sql`. Shipped as-is, the bundle can only
 # ever start on this one machine. Rewrite those prefixes back to `./` (and
 # flip the Windows separators) so the compose file resolves against whatever
 # directory it is dropped into on the target - which is exactly the layout
@@ -393,23 +394,22 @@ Get-ChildItem -Path $SrcDbScripts -Filter '*.sql' -File |
     Where-Object { $SchemaScripts -notcontains $_.Name } |
     ForEach-Object { Copy-Item $_.FullName (Join-Path $DbScriptsDst $_.Name) }
 
-# _migrations/ is NOT optional: 17 and 19 are part of every install (see
-# db_scripts/_migrations/README.md and the $RemainingCoreScripts list in
-# db_scripts/db_deploy.ps1). Without 17 the tenant-scoped RLS in 06 hides every
-# LMS lead catalog row, so Status/Outcome/Source/Follow-up render blank for
-# every non-super_admin user. Copying only top-level *.sql silently dropped them.
-$SrcMigrations = Join-Path $SrcDbScripts '_migrations'
-$DstMigrations = Join-Path $DbScriptsDst '_migrations'
-foreach ($f in $MigrationScripts) {
-    if (-not (Test-Path (Join-Path $SrcMigrations $f))) {
-        Write-Error "Required migration script missing: _migrations/$f"
-    }
+# reference_data/ is NOT optional - it holds the capability tree, the role
+# ladder and the catalog templates that entity.provision_tenant() clones per
+# tenant. Copying only top-level *.sql would silently drop it and leave every
+# lookup empty. dummy_data/ ships too so --no-seed stays a runtime choice.
+# tools/ is operator-run on demand, so it does not ship.
+foreach ($folder in $DbScriptFolders) {
+    $src = Join-Path $SrcDbScripts $folder
+    if (-not (Test-Path $src)) { Write-Error "Required db_scripts folder missing: $folder/" }
+    $dst = Join-Path $DbScriptsDst $folder
+    New-Item -ItemType Directory -Force $dst | Out-Null
+    Get-ChildItem -Path $src -Filter '*.sql' -File |
+        ForEach-Object { Copy-Item $_.FullName (Join-Path $dst $_.Name) }
+    Write-Host "  db_scripts/$folder/ ($((Get-ChildItem $dst -File).Count) .sql files)"
 }
-New-Item -ItemType Directory -Force $DstMigrations | Out-Null
-Get-ChildItem -Path $SrcMigrations -Filter '*.sql' -File |
-    ForEach-Object { Copy-Item $_.FullName (Join-Path $DstMigrations $_.Name) }
 
-Write-Host "  db_scripts/ ($((Get-ChildItem $DbScriptsDst -File).Count) .sql files, $((Get-ChildItem $DstMigrations -File).Count) in _migrations/)"
+Write-Host "  db_scripts/ ($((Get-ChildItem $DbScriptsDst -File).Count) schema .sql files)"
 
 # -- Step 8: Linux deploy helper ----------------------------------------------
 Write-Step 'Generating deploy.sh'
@@ -420,7 +420,7 @@ set -euo pipefail
 # -- MSQ Deploy / Redeploy Script ---------------------------------------------
 # Deploys the full platform (core + lms + hrms + todo) as one compose project.
 # Usage:
-#   sudo ./deploy.sh              # first-time install (schema + lookups + demo seed)
+#   sudo ./deploy.sh              # first-time install (schema + reference data + demo seed)
 #   sudo ./deploy.sh --no-seed    # first-time install, no demo tenants/orgs/users
 #   sudo ./deploy.sh --redeploy   # update images and restart, leave the DB alone
 #
@@ -447,8 +447,8 @@ mkdir -p "$INSTALL_DIR/data/postgres" "$INSTALL_DIR/backups" "$INSTALL_DIR/db_sc
 
 echo "==> Copying deployment files"
 cp "$SCRIPT_DIR/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
-# -r and the trailing /. so db_scripts/_migrations/ comes along: 17 and 19 are
-# part of every install, not optional extras.
+# -r and the trailing /. so db_scripts/reference_data/ and dummy_data/ come
+# along: reference_data is part of every install, not an optional extra.
 cp -r "$SCRIPT_DIR/db_scripts/." "$INSTALL_DIR/db_scripts/"
 install -m 0755 "$SCRIPT_DIR/bootstrap-db.sh" "$INSTALL_DIR/bootstrap-db.sh"
 
@@ -464,8 +464,16 @@ if [[ ! -f "$INSTALL_DIR/.env" ]]; then
     echo "    DB_DATA_PATH      - the example is a Windows path (C:/...), invalid here."
     echo "                        Use $INSTALL_DIR/data/postgres"
     echo "    POSTGRES_PASSWORD, DB_*_SVC_PASSWORD, JWT/session secrets"
-    echo "    NEXT_PUBLIC_* URLs - must be this host's address, not localhost,"
-    echo "                        if anything connects from another machine."
+    echo "    AUTH_URL, LMS_URL, HR_URL, TASK_URL, ADMIN_URL"
+    echo "                      - the PUBLIC origins browsers reach each app on."
+    echo "                        Leaving these as localhost is the single most"
+    echo "                        common broken deploy: sign-in redirects the"
+    echo "                        browser to localhost and login is unreachable."
+    echo "    WEB_URL           - the public auth origin. Drives the gateway CORS"
+    echo "                        allow-list; wrong value blocks every API call."
+    echo ""
+    echo "  These are read at RUNTIME, so you can change them later - but only"
+    echo "  via 'docker compose up -d --force-recreate', not 'restart'."
     echo ""
     echo "  Stopping here on purpose: starting the stack now would initialise"
     echo "  the database with the example credentials, and postgres only applies"
@@ -499,10 +507,10 @@ echo "==> Waiting for containers to start..."
 sleep 5
 docker compose ps
 
-# The postgres container applies schema 01-06 itself, from the files compose
+# The postgres container applies schema 00-10 itself, from the files compose
 # mounts into /docker-entrypoint-initdb.d -- but ONLY on the first boot of an
-# empty data directory. Everything after that (lookup data, demo seed, and the
-# mandatory tenant-scoping migrations 17/19) has to be driven in explicitly.
+# empty data directory. Everything after that (reference data, and the demo
+# seed if requested) has to be driven in explicitly.
 # Skipped on --redeploy: the DB already exists and the images are all that moved.
 if $REDEPLOY; then
     echo ""
@@ -545,24 +553,25 @@ $bootstrapScript = @'
 set -euo pipefail
 
 # -- MSQ post-schema database bootstrap ---------------------------------------
-# The postgres container applies schema 01-06 itself, from the files
+# The postgres container applies schema 00-10 itself, from the files
 # docker-compose.yml mounts into /docker-entrypoint-initdb.d -- but only on the
 # FIRST boot of an empty data directory. Everything after that is not mounted
 # and must be driven from here.
 #
-# Order mirrors db_scripts/db_deploy.ps1 exactly. 17 and 19 run LAST, after the
-# demo seed, because they need entity.tenants populated: 07 seeds the LMS lead
-# catalogs and the ladder roles as GLOBAL rows (tenant_id IS NULL) and these two
-# fan each one into an identical copy per tenant. Skip them and the
-# tenant-scoped RLS in 06_rls.sql hides every catalog row (`NULL = <tenant>` is
-# never true), so Status / Outcome / Source / Follow-up render blank for every
-# user except super_admin.
+# Order mirrors db_scripts/db_deploy.ps1 exactly: reference_data/ in filename
+# order, then dummy_data/ if seeding. reference_data/ is required by EVERY
+# deployment, demo or production -- it holds the capability tree, the role
+# ladder and the catalog templates that entity.provision_tenant() clones into
+# each tenant. Skip it and every lookup renders blank.
+#
+# 99_cleanup_dummy_data.sql is deliberately excluded: it is a tool, run by hand
+# when you want the demo data gone, never a deploy step.
 #
 # Every script here is idempotent - re-running this is safe.
 #
 # Usage:
-#   ./bootstrap-db.sh             # lookup data + demo seed + tenant scoping
-#   ./bootstrap-db.sh --no-seed   # lookup data + tenant scoping only
+#   ./bootstrap-db.sh             # reference data + demo tenants/users/leads
+#   ./bootstrap-db.sh --no-seed   # reference data only (production shape)
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/msq}"
 SEED=true
@@ -590,32 +599,28 @@ set +a
 : "${POSTGRES_PASSWORD:?not set in .env}"
 : "${DB_NAME:?not set in .env}"
 
-CORE=(
-    07_seed_lookup_data.sql
-)
-DEMO=(
-    08_seed_tenants_orgs_users.sql
-    09_seed_leads_bulk.sql
-    10_seed_interactions_followups.sql
-    11_cleanup_seed_helpers.sql
-    12a_cleanup_demo_data_pre.sql
-    12b_cleanup_demo_data.sql
-    12c_cleanup_demo_data_post.sql
-)
-REST=(
-    13_backfill_per_product_roles.sql
-    _migrations/17_tenant_scope_lms_catalogs.sql
-    _migrations/19_tenant_scope_ladder_roles.sql
-    _migrations/23_tenant_scope_admin_roles.sql
-)
+# Both folders are globbed and sorted, so adding a .sql file needs no edit here
+# - same contract as Get-FolderScripts in db_scripts/db_deploy.ps1. 99_* is
+# excluded: it is the demo teardown, a tool rather than a deploy step.
+collect() {
+    local folder="$1" f
+    for f in $(ls "db_scripts/$folder"/*.sql 2>/dev/null | sort); do
+        case "$(basename "$f")" in 99_*) continue ;; esac
+        SCRIPTS+=("${folder}/$(basename "$f")")
+    done
+}
 
+SCRIPTS=()
+collect reference_data
 if $SEED; then
-    SCRIPTS=("${CORE[@]}" "${DEMO[@]}" "${REST[@]}")
-else
-    SCRIPTS=("${CORE[@]}" "${REST[@]}")
+    collect dummy_data
 fi
 
 echo "==> Verifying SQL scripts"
+if [[ ${#SCRIPTS[@]} -eq 0 ]]; then
+    echo "!! No SQL scripts found under $INSTALL_DIR/db_scripts/reference_data/"
+    exit 1
+fi
 for f in "${SCRIPTS[@]}"; do
     if [[ ! -f "db_scripts/$f" ]]; then
         echo "!! Missing script: $INSTALL_DIR/db_scripts/$f"
@@ -637,9 +642,9 @@ for i in $(seq 1 60); do
     sleep 2
 done
 
-# Connect as the superuser, not root_service: 17 issues ALTER TABLE and must
-# also see the global rows it is replacing. root_service is BYPASSRLS but does
-# not own these tables, so it cannot do the ALTERs.
+# Connect as the superuser, not root_service: the reference data is written as
+# global template rows (tenant_id IS NULL) that tenant-scoped RLS hides, and
+# root_service does not own these tables. Same connection db_deploy.ps1 uses.
 # ON_ERROR_STOP=1 makes psql exit non-zero on the first error, printing the
 # exact line, so a failure here stops the run instead of half-applying.
 echo "==> Running post-schema scripts against $DB_NAME"

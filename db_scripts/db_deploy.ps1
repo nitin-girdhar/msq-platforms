@@ -1,48 +1,60 @@
 <#
 .SYNOPSIS
-    Deploy the entire MSquare platform database (fresh install) to a PostgreSQL
+    Deploy the MSquare platform database (fresh install) to a PostgreSQL
     Docker container.
 
 .DESCRIPTION
-    Drops and recreates the target database, then runs the single, platform-wide
-    fresh-install SQL sequence in order. Stops immediately on any SQL error and
-    prints the full error output.
+    Drops and recreates the target database, then runs the schema scripts
+    (00-10), then reference_data/. Stops on the first SQL error and prints it.
 
-    This is now the ONE AND ONLY deploy script for the platform. The four product
-    repos (msq-core / msq-hrms / msq-lms / msq-todo) no longer carry their own
-    db_scripts folders — all schema for every product (shared core, lms/marketing,
-    hr, task) is consolidated into this directory's ordered 01-06 DDL set and
-    deploys to one shared database.
+    This is a FRESH-INSTALL tool, not an upgrade tool. The scripts describe the
+    target schema declaratively -- every column and constraint lives in its
+    CREATE statement, there is no ALTER-after-the-fact section and no
+    _migrations/ folder. To change the schema, edit the CREATE and redeploy.
 
-    Demo/seed data (tenants, orgs, users, sample leads) is included by default via
-    -IncludeDemoSeed:$true; pass -IncludeDemoSeed:$false for a clean production-shape
-    bootstrap with no demo rows.
+    LAYOUT
+      00_extensions_schemas_roles  extensions, schemas, every DB role
+      01_functions_shared          functions used in column DEFAULTs
+      02_tables_core               geo/entity/iam/lms/marketing/audit/ext/comms
+      03_tables_product            hr/task, per-product RBAC, catalog engine
+      04_functions_triggers        business logic + every trigger
+      05_views                     all views
+      06_indexes                   all indexes
+      07_grants                    all privileges
+      08_rls                       row-level security
+      09_schema_version            version history
+      10_tenant_provisioning       entity.provision_tenant() and friends
+      reference_data/              required by every deployment
+      dummy_data/                  demo data for local development only
 
-    This script always DROPs and recreates the database — it is a fresh-install tool,
-    not an upgrade tool. To bring an already-deployed database (created before the
-    P1.0 crm-naming cleanup, i.e. still has schema `crm` / role `crm_service`) up to
-    the current shape without losing data, run the two migrations in _migrations/
-    (15 then 16) directly against that live database instead of this script —
-    see _migrations/README.md.
+    DEFAULT BEHAVIOUR
+    A plain run gives you a production-shape database: schema + reference data,
+    no tenants. Pass -IncludeDummyData to add the demo tenants, users and leads.
 
-    Connection defaults are read from the repo-root .env (falling back to
-    .env.example), so this script, docker-compose.yml and the Makefile all agree
-    on one database. Pass any -param explicitly to override.
+    The cleanup script (dummy_data/99_cleanup_dummy_data.sql) is deliberately
+    NOT in any list here. It used to be: the old script ran the demo seed and
+    then the teardown in the same sequence, so a default deploy created two
+    tenants and 5000 leads and immediately deleted them, and the tenant-scoping
+    scripts that ran afterwards found no tenants and silently did nothing.
+    Run it by hand when you want the demo data gone.
+
+    Connection defaults come from the repo-root .env (falling back to
+    .env.example). Pass any -param explicitly to override.
 
 .EXAMPLE
-    .\db_deploy.ps1                                        # uses .env
-    .\db_deploy.ps1 -ContainerName msq-db-server -Database crm
-    .\db_deploy.ps1 -IncludeDemoSeed:$false
+    .\db_deploy.ps1                        # production shape: schema + reference data
+    .\db_deploy.ps1 -IncludeDummyData      # + demo tenants, users, leads
+    .\db_deploy.ps1 -Database platforms_test
 #>
 param(
     [string]$Database,
-    [string]$DbHost          = "localhost",
+    [string]$DbHost           = "localhost",
     [string]$Port,
     [string]$User,
     [string]$Password,
     [string]$ContainerName,
-    [string]$SeedPassword    = "Admin@12345",
-    [bool]  $IncludeDemoSeed = $true
+    [string]$SeedPassword     = "Admin@12345",
+    [switch]$IncludeDummyData
 )
 
 Set-StrictMode -Version Latest
@@ -51,11 +63,6 @@ $ErrorActionPreference = "Stop"
 $ScriptsDir = $PSScriptRoot
 
 # ── Connection defaults come from the repo's .env ────────────────────────────
-# These used to be hardcoded to crm_v2 / 5433 / sa / crm-postgres, which matched
-# neither docker-compose.yml (container ${DB_CONTAINER_NAME}, user
-# ${POSTGRES_USER}) nor the Makefile (DB_NAME=crm, port 5432) - so the defaults
-# deployed into a database nothing else in the repo talks to. Read .env instead
-# (falling back to .env.example), and let any explicitly-passed -param win.
 $RepoRoot = Split-Path -Parent $ScriptsDir
 $EnvFile  = Join-Path $RepoRoot '.env'
 if (-not (Test-Path $EnvFile)) { $EnvFile = Join-Path $RepoRoot '.env.example' }
@@ -71,9 +78,8 @@ if (Test-Path $EnvFile) {
     }
 }
 
-# Explicit -param always wins; then .env; then the built-in fallback.
 $Defaults = @{
-    Database      = @{ Key = 'DB_NAME';            Fallback = 'crm'           }
+    Database      = @{ Key = 'DB_NAME';            Fallback = 'platforms'     }
     Port          = @{ Key = 'DB_PORT';            Fallback = '5432'          }
     User          = @{ Key = 'POSTGRES_USER';      Fallback = 'postgres'      }
     Password      = @{ Key = 'POSTGRES_PASSWORD';  Fallback = 'Passw0rd'      }
@@ -89,56 +95,34 @@ foreach ($name in $Defaults.Keys) {
 Write-Host "Config source: $(if (Test-Path $EnvFile) { $EnvFile } else { 'built-in defaults' })" -ForegroundColor DarkGray
 Write-Host "  container=$ContainerName  db=$Database  user=$User  port=$Port" -ForegroundColor DarkGray
 
-# Consolidated platform-wide DDL (01-06) + seed/data scripts (07+).
-# _migrations/ (15/16) is deliberately excluded — guarded no-ops on a fresh
-# install (01/03 already create schema `lms` / role `root_service` / the 'lms'
-# entitlement key directly); they only matter when upgrading a pre-P1.0
-# deployment in place. See _migrations/README.md.
-# The old 24_move-api-clients-to-iam.sql was dropped outright: it only relocated
-# ext.api_clients -> iam.api_clients for pre-existing deployments; 02_schema.sql
-# now creates iam.api_clients directly, so it was already a guaranteed no-op
-# on every fresh install.
-$CoreScripts = @(
-    "01_extensions_and_roles.sql",
-    "02_schema.sql",
-    "03_product_schema.sql",
-    "04_roles_and_grants.sql",
-    "05_catalogs.sql",
-    "06_rls.sql",
-    "07_seed_lookup_data.sql"
+# ── Script sequence ──────────────────────────────────────────────────────────
+# Both folders are globbed and sorted, so adding a file needs no edit here.
+$SchemaScripts = @(
+    "00_extensions_schemas_roles.sql",
+    "01_functions_shared.sql",
+    "02_tables_core.sql",
+    "03_tables_product.sql",
+    "04_functions_triggers.sql",
+    "05_views.sql",
+    "06_indexes.sql",
+    "07_grants.sql",
+    "08_rls.sql",
+    "09_schema_version.sql",
+    "10_tenant_provisioning.sql"
 )
 
-$DemoSeedScripts = @(
-    "08_seed_tenants_orgs_users.sql",
-    "09_seed_leads_bulk.sql",
-    "10_seed_interactions_followups.sql",
-    "11_cleanup_seed_helpers.sql",
-    "12a_cleanup_demo_data_pre.sql",
-    "12b_cleanup_demo_data.sql",
-    "12c_cleanup_demo_data_post.sql"
-)
-
-# Run AFTER the demo seed, because both need entity.tenants to be populated:
-# they turn rows that 07 seeds as GLOBAL (tenant_id IS NULL) into one identical
-# copy per tenant. Both are idempotent and self-guarding — with no tenants (a
-# core-only install) they find nothing global to clone and do nothing, so they
-# are safe in the sequence either way.
-#
-# They belong here rather than being folded into 07 because 07 runs before
-# tenants exist, so it has nothing to fan the catalogs out across.
-$RemainingCoreScripts = @(
-    "13_backfill_per_product_roles.sql",
-    "14_scope_comms_templates_to_tenant.sql",
-    "_migrations/17_tenant_scope_lms_catalogs.sql",
-    "_migrations/19_tenant_scope_ladder_roles.sql",
-    "_migrations/23_tenant_scope_admin_roles.sql"
-)
-
-$SqlScripts = if ($IncludeDemoSeed) {
-    $CoreScripts + $DemoSeedScripts + $RemainingCoreScripts
-} else {
-    $CoreScripts + $RemainingCoreScripts
+function Get-FolderScripts([string]$Folder) {
+    $dir = Join-Path $ScriptsDir $Folder
+    if (-not (Test-Path $dir)) { return @() }
+    # 99_cleanup is a tool, never a deploy step.
+    Get-ChildItem -Path $dir -Filter '*.sql' |
+        Where-Object { $_.Name -notlike '99_*' } |
+        Sort-Object Name |
+        ForEach-Object { "$Folder/$($_.Name)" }
 }
+
+$SqlScripts = @($SchemaScripts) + @(Get-FolderScripts 'reference_data')
+if ($IncludeDummyData) { $SqlScripts += @(Get-FolderScripts 'dummy_data') }
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -147,8 +131,6 @@ function Write-Step([string]$msg) {
     Write-Host ">> $msg" -ForegroundColor Cyan
 }
 
-# Run a short inline SQL command against the container (e.g. DROP/CREATE DATABASE).
-# Errors print naturally to the console; non-zero exit stops the script.
 function Invoke-Sql {
     param([string]$Db, [string]$Sql, [string]$Label)
     Write-Host "   $Label ..." -NoNewline
@@ -170,9 +152,8 @@ function Invoke-SqlFile {
     Write-Host ""
     Write-Host "   -- $Label" -ForegroundColor White
 
-    # Random name to avoid collisions if two runs overlap
     $rand          = -join ((65..90) | Get-Random -Count 10 | ForEach-Object { [char]$_ })
-    $containerPath = "/tmp/crm_deploy_$rand.sql"
+    $containerPath = "/tmp/msq_deploy_$rand.sql"
     $tmpHost       = [System.IO.Path]::GetTempFileName()
 
     try {
@@ -186,13 +167,10 @@ function Invoke-SqlFile {
             exit 1
         }
 
-        # psql prints the error (file:line: ERROR: ...) then exits non-zero
         docker exec -e "PGPASSWORD=$Password" $ContainerName `
             psql -U $User -d $Db -v ON_ERROR_STOP=1 -f $containerPath
 
         $psqlExit = $LASTEXITCODE
-
-        # Clean up temp file in container regardless of outcome
         docker exec $ContainerName rm -f $containerPath | Out-Null
 
         if ($psqlExit -ne 0) {
@@ -241,13 +219,8 @@ Invoke-Sql -Db "postgres" `
     -Sql "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$Database' AND pid <> pg_backend_pid();" `
     -Label "Terminate active connections"
 
-Invoke-Sql -Db "postgres" `
-    -Sql "DROP DATABASE IF EXISTS $Database;" `
-    -Label "Drop database"
-
-Invoke-Sql -Db "postgres" `
-    -Sql "CREATE DATABASE $Database;" `
-    -Label "Create database"
+Invoke-Sql -Db "postgres" -Sql "DROP DATABASE IF EXISTS $Database;" -Label "Drop database"
+Invoke-Sql -Db "postgres" -Sql "CREATE DATABASE $Database;"         -Label "Create database"
 
 # ── 4. Run the fresh-install sequence in order ───────────────────────────────
 Write-Step "Running SQL scripts against $Database"
@@ -262,6 +235,12 @@ Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host "  Database  : $Database" -ForegroundColor Green
 Write-Host "  Container : $ContainerName" -ForegroundColor Green
-Write-Host "  Seed password: $SeedPassword" -ForegroundColor Green
+Write-Host "  Contents  : schema + reference data$(if ($IncludeDummyData) { ' + dummy data' })" -ForegroundColor Green
+if ($IncludeDummyData) {
+    Write-Host "  Seed password: $SeedPassword" -ForegroundColor Green
+    Write-Host "  Remove demo data: psql -f dummy_data/99_cleanup_dummy_data.sql" -ForegroundColor DarkGray
+} else {
+    Write-Host "  Add a tenant : SELECT entity.provision_tenant('<tenant-uuid>');" -ForegroundColor DarkGray
+}
 Write-Host "  Connect   : psql -h $DbHost -p $Port -U $User -d $Database" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Green

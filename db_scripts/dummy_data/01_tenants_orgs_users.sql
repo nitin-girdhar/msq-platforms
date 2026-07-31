@@ -1,25 +1,16 @@
---rollback
 -- ===================================================================
--- CRM Monorepo — Bulk Demo Seed: STEP 2
--- Tenants + Organizations + Users (full role hierarchy)
+-- dummy_data/01_tenants_orgs_users.sql
 --
--- Run AFTER: init-db.sql, init-seed.sql
--- Run BEFORE: seed-03-leads-bulk.sql
+-- Demo tenants, branches, users and ad campaigns for local development.
 --
--- Adds:
---   - 1 new tenant: MSquare Professionals (professional services)
---   - 8 new orgs (org_seq 3-10): 3 more FitClass + 5 MSquare
---     (combined with the 2 existing FitClass orgs from init-seed.sql,
---      this gives 5 FitClass orgs + 5 MSquare orgs = 10 total)
---   - 8 iam.users per NEW org: org_admin, org_sr_manager, org_manager,
---     senior_sales_executive, sales_representative x3, read_only
---   - 2 marketing.ad_campaigns per NEW org
+-- NOT reference data: nothing here is required by a production deploy.
+-- Everything a tenant genuinely needs to function is created by
+-- entity.provision_tenant() (10_tenant_provisioning.sql), which this
+-- script calls -- the same call the application makes for a real tenant.
 --
--- Idempotent: ON CONFLICT DO NOTHING / DO UPDATE throughout.
--- All demo accounts password: Admin@12345
+-- Remove everything this creates with dummy_data/99_cleanup_dummy_data.sql.
 -- ===================================================================
 
-SET client_encoding = 'UTF8';
 BEGIN;
 
 -- ============================================================
@@ -300,174 +291,27 @@ BEGIN
 END $$;
 
 -- ============================================================
--- Module entitlements for the tenants seeded above.
+-- Provision every tenant seeded above.
 --
--- 03_product_schema.sql has the same INSERT, but it runs as DDL before any
--- tenant exists on a fresh install, so it is always a no-op there and every
--- freshly deployed tenant came out with zero entitlements. That empties
--- licensed_products in the login JWT, which the product apps read to decide
--- what a user may open -- so a fresh deploy produced accounts that could
--- authenticate but not enter any product.
+-- entity.provision_tenant() does all of it in one call: module
+-- entitlements, the eight registry catalogs, the LMS lead catalogs,
+-- departments, the role ladder with its capability grants, and the
+-- message templates. See 10_tenant_provisioning.sql.
 --
--- All four modules, matching the CHECK on entity.tenant_modules: these are
--- demo tenants for local development and every product app needs to be
--- reachable. Restrict this list to model a narrower plan.
+-- This is the ONLY thing a new tenant needs, and it is the same call the
+-- application makes when a tenant is created through the API — so a demo
+-- tenant and a real one are provisioned by identical code.
+--
+-- All four modules, so every product app is reachable in a dev
+-- environment. Pass a narrower array to model a restricted plan.
 -- ============================================================
-INSERT INTO entity.tenant_modules (tenant_id, module)
-SELECT t.id, m.module
-FROM entity.tenants t
-CROSS JOIN (VALUES ('lms'), ('leave'), ('attendance'), ('tasks')) AS m(module)
-ON CONFLICT (tenant_id, module) DO NOTHING;
-
--- ============================================================
--- Per-tenant catalogs (lms.roles, hr/task lookups, ...).
---
--- entity.seed_tenant_defaults() is documented as "the provisioning entry
--- point", but nothing in the SQL path ever calls it: there is no trigger on
--- entity.tenants, and the app only invokes it when a tenant is created through
--- the API. A tenant seeded here therefore came up with EMPTY per-tenant
--- catalogs -- most visibly lms.roles, which 13_backfill_per_product_roles.sql
--- joins against to populate <product>.member_roles. With no roles the join
--- matched nothing, member_roles stayed empty, and the gateway refused every
--- product request with "You do not have access to the LMS product".
---
--- Must run AFTER the tenant_modules insert above: the function only seeds
--- catalogs whose gating modules overlap the tenant's ACTIVE modules.
--- Idempotent -- catalogs already recorded in tenant_catalog_versions are
--- skipped, so re-running never overwrites tenant customisations.
--- ============================================================
-DO $seed_catalogs$
-DECLARE
-  t RECORD;
+DO $provision$
+DECLARE t RECORD;
 BEGIN
-  FOR t IN SELECT id FROM entity.tenants LOOP
-    PERFORM entity.seed_tenant_defaults(t.id);
+  FOR t IN SELECT id FROM entity.tenants ORDER BY name LOOP
+    RAISE NOTICE '%', entity.provision_tenant(t.id, ARRAY['lms','leave','attendance','tasks']);
   END LOOP;
-END $seed_catalogs$;
-
--- ============================================================
--- Tier C: standard tenant-wide departments for every tenant (org_id NULL).
--- Roles (iam.user_roles) can belong to a department; these are the defaults a
--- tenant starts with and can extend. Idempotent on (tenant, tenant-wide, name).
--- ============================================================
-INSERT INTO iam.departments (tenant_id, org_id, name, label, description)
-SELECT t.id, NULL, d.name, d.label, d.description
-FROM entity.tenants t
-CROSS JOIN (VALUES
-  ('sales',      'Sales',           'Lead management, follow-ups, and conversions'),
-  ('hr',         'Human Resources', 'Employee profiles, leave, and attendance'),
-  ('operations', 'Operations',      'Day-to-day operational teams'),
-  ('admin',      'Administration',  'Org and tenant administration')
-) AS d(name, label, description)
-ON CONFLICT (tenant_id, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid), name)
-  WHERE NOT is_deleted
-  DO NOTHING;
-
--- ===================================================================
--- TENANT-SCOPED, DEPARTMENT-SCOPED ROLES
--- ===================================================================
--- Every role below is tenant_id NOT NULL and department_id NOT NULL — the shape
--- Tier C1 exists for. Ranks are unique per (tenant, department), so each
--- department carries its own ladder and the same rank may recur across
--- departments without collision.
---
--- The four global anchors (read_only 0, org_admin 980, tenant_admin 990,
--- super_admin 1000) stay tenant_id NULL and are shared by both tenants.
-
-INSERT INTO iam.user_roles (tenant_id, department_id, name, label, description, rank)
-SELECT t.id, d.id, r.name, r.label, r.description, r.rank
-FROM entity.tenants t
-JOIN iam.departments d ON d.tenant_id = t.id AND NOT d.is_deleted
-JOIN (VALUES
-  -- ── sales ──
-  ('sales', 'sales_executive',        'Sales Executive',        'Front-line sales — works own assigned leads',                     20),
-  ('sales', 'sales_senior_executive', 'Senior Sales Executive', 'Leads a pod of executives; works the unassigned queue',           40),
-  ('sales', 'sales_manager',          'Sales Manager',          'Owns a branch pipeline; approves and reassigns',                  60),
-  ('sales', 'sales_head',             'Head of Sales',          'Branch-wide sales authority across all pods',                     70),
-  -- ── hr ──
-  ('hr', 'hr_executive', 'HR Executive', 'Employee records and day-to-day HR queries',                    25),
-  ('hr', 'hr_manager',   'HR Manager',   'Approves leave and attendance corrections for the branch',      60),
-  ('hr', 'hr_head',      'Head of HR',   'Full HR configuration — policies, holidays, shifts, balances', 75),
-  -- ── operations ──
-  ('operations', 'ops_executive', 'Operations Executive', 'Day-to-day service delivery tasks',                 25),
-  ('operations', 'ops_manager',   'Operations Manager',   'Coordinates delivery across a branch team',         60),
-  ('operations', 'ops_head',      'Head of Operations',   'Branch-wide operational authority',                 70),
-  -- ── admin ──
-  ('admin', 'admin_executive', 'Admin Executive', 'Branch administration and record keeping',      25),
-  ('admin', 'admin_manager',   'Admin Manager',   'Branch administration with user management',    60)
-) AS r(dept, name, label, description, rank) ON r.dept = d.name
-ON CONFLICT (tenant_id, name) WHERE tenant_id IS NOT NULL
-DO UPDATE SET label = EXCLUDED.label, description = EXCLUDED.description, rank = EXCLUDED.rank;
-
-
--- ===================================================================
--- CAPABILITY GRANTS FOR THE TENANT ROLES
--- ===================================================================
--- Each tenant role inherits the grant set of the global role it mirrors, then
--- has whole tools subtracted where the department has no business there. Doing
--- it by TEMPLATE rather than by hand keeps the ladders consistent between the
--- two tenants and makes the intent legible: "sales_manager is org_manager,
--- scoped to Sales".
---
--- Note the LMS subtraction for hr/operations/admin: this is the hr_admin problem
--- generalised. On one rank ladder a department role would otherwise clear a
--- sales floor purely by seniority.
-
-INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
-SELECT tr.tenant_id, tr.id, rc.capability_id, rc.is_granted
-FROM (VALUES
-  ('sales_executive',        'sales_representative'),
-  ('sales_senior_executive', 'senior_sales_executive'),
-  ('sales_manager',          'org_manager'),
-  ('sales_head',             'org_sr_manager'),
-  ('hr_executive',           'sales_representative'),
-  ('hr_manager',             'org_manager'),
-  ('hr_head',                'hr_admin'),
-  ('ops_executive',          'sales_representative'),
-  ('ops_manager',            'org_manager'),
-  ('ops_head',               'org_sr_manager'),
-  ('admin_executive',        'sales_representative'),
-  ('admin_manager',          'org_manager')
-) AS tmpl(role_name, template_name)
-JOIN iam.user_roles tr ON tr.name = tmpl.role_name AND tr.tenant_id IS NOT NULL
-JOIN iam.user_roles gr ON gr.name = tmpl.template_name AND gr.tenant_id IS NULL
-JOIN iam.role_capabilities rc ON rc.role_id = gr.id AND rc.tenant_id IS NULL
-ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
-DO UPDATE SET is_granted = EXCLUDED.is_granted;
-
--- Non-sales departments hold no CRM at all: denying the `lms` TOOL prunes every
--- page, operation and scope beneath it in a single row.
-INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
-SELECT tr.tenant_id, tr.id, c.id, FALSE
-FROM iam.user_roles tr
-JOIN iam.departments d ON d.id = tr.department_id
-JOIN iam.capabilities c ON c.key = 'lms'
-WHERE tr.tenant_id IS NOT NULL AND d.name IN ('hr', 'operations', 'admin')
-ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
-DO UPDATE SET is_granted = FALSE;
-
--- HR managers and heads additionally need the HR admin surface their template
--- (org_manager) does not carry.
-INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
-SELECT tr.tenant_id, tr.id, c.id, TRUE
-FROM iam.user_roles tr
-JOIN iam.capabilities c ON c.key = ANY (ARRAY[
-  'hr.attendance.view.org','hr.leave.view.org',
-  'hr.attendance.admin.rules.view','hr.attendance.admin.shifts.view',
-  'hr.attendance.admin.assignments.view','hr.attendance.admin.reports.view',
-  'hr.leave.admin.policies.view','hr.leave.admin.holidays.view',
-  'hr.employees.manage'
-])
-WHERE tr.tenant_id IS NOT NULL AND tr.name IN ('hr_manager', 'hr_head')
-ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
-DO UPDATE SET is_granted = TRUE;
-
--- admin_manager used to be granted 'admin', 'admin.orgs.view' and
--- 'admin.users.manage' here. The latter two no longer exist — branch and user
--- administration is gated on RANK in identity-service, never on a capability,
--- so those keys granted nothing (see 07's ADMINISTRATION block). What remains
--- under `admin` is lookup-admin, which is super_admin-only, so the tool grant
--- had nothing to reach either. Ops/admin roles keep Tasks as their primary tool.
+END $provision$;
 
 
 -- ===================================================================
@@ -533,7 +377,7 @@ BEGIN
     VALUES (v_uid, v_org, 'Tenant', 'Admin',
             '+9199' || LPAD((abs(hashtext('ta' || v_tenant.name)) % 100000000)::TEXT, 8, '0'),
             'tenant.admin@' || v_domain,
-            (SELECT id FROM iam.user_roles WHERE name = 'tenant_admin' AND tenant_id IS NULL),
+            (SELECT id FROM iam.user_roles WHERE name = 'tenant_admin' AND tenant_id = v_tenant.id),
             NULL, v_hash, TRUE, FALSE)
     ON CONFLICT (email) DO UPDATE SET role_id = EXCLUDED.role_id, password_hash = EXCLUDED.password_hash;
 
@@ -562,13 +406,24 @@ BEGIN
   ON CONFLICT (user_id, org_id) DO UPDATE SET role_id = EXCLUDED.role_id, is_active = TRUE;
 END $seedusers$;
 
--- Both tenants licensed for every module, so entitlement never masks a
--- capability result during end-to-end validation.
-INSERT INTO entity.tenant_modules (tenant_id, module)
-SELECT t.id, m.module
-FROM entity.tenants t
-CROSS JOIN (VALUES ('lms'), ('tasks'), ('attendance'), ('leave')) AS m(module)
-ON CONFLICT (tenant_id, module) DO UPDATE SET is_active = TRUE;
+
+-- ============================================================
+-- Record the demo tenants so the cleanup script can find them.
+--
+-- The old teardown hardcoded two tenant UUIDs, so adding a third demo
+-- tenant here would have silently left it (and everything under it)
+-- behind. Registering them makes cleanup self-maintaining.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public._dummy_data_tenants (
+  tenant_id  UUID PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
+);
+COMMENT ON TABLE public._dummy_data_tenants IS
+  'Tenants created by dummy_data/. Read by dummy_data/99_cleanup_dummy_data.sql. Absent in a production deploy.';
+
+INSERT INTO public._dummy_data_tenants (tenant_id)
+SELECT id FROM entity.tenants ON CONFLICT DO NOTHING;
+
 
 COMMIT;
 

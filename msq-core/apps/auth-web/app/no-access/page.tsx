@@ -78,7 +78,7 @@ export default async function NoAccessPage() {
           </dl>
 
           <div className="mt-6">
-            <SignOutButton />
+            <SignOutButton loginUrl={buildLoginUrl()} />
           </div>
         </div>
 

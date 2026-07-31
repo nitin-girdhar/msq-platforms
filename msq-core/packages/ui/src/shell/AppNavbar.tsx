@@ -1,6 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import type { SessionUser, ProductKey } from '@platform/types';
+import { buildLoginUrl } from '../auth/sso';
 import UserMenu from './UserMenu';
 import BranchSwitcher from './BranchSwitcher';
 import HamburgerButton from './HamburgerButton';
@@ -59,7 +60,7 @@ export default function AppNavbar({
         />
         <BranchSwitcher user={user} homeHref={homeHref} />
         {notificationSlot}
-        <UserMenu user={user} />
+        <UserMenu user={user} loginUrl={buildLoginUrl()} />
       </div>
     </header>
   );

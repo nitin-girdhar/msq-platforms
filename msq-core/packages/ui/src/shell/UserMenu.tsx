@@ -4,12 +4,17 @@ import { useEffect, useRef, useState } from 'react';
 import type { SessionUser } from '@platform/types';
 import { RANKS } from '@platform/authz';
 import { auth, users } from '../api/resources';
-import { buildLoginUrl } from '../auth/sso';
 import PhotoAvatar from '../components/PhotoUpload/PhotoAvatar';
 import PhotoUploadModal, { type PhotoUploadGate } from '../components/PhotoUpload/PhotoUploadModal';
 
 interface Props {
   user: SessionUser;
+  // Resolved by the rendering Server Component via buildLoginUrl(). Passed as a
+  // prop rather than called here: this is a Client Component, and calling it
+  // here made Next inline NEXT_PUBLIC_AUTH_URL into every product's browser
+  // bundle at build time — freezing the auth origin into the image, so a
+  // deployment could not be repointed by editing .env on the server.
+  loginUrl: string;
 }
 
 // Best-effort HR cooldown pre-check. Returns a gate only for HR employees who
@@ -37,7 +42,7 @@ async function fetchPhotoGate(): Promise<PhotoUploadGate | null> {
   }
 }
 
-export default function UserMenu({ user }: Props) {
+export default function UserMenu({ user, loginUrl }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
@@ -66,7 +71,7 @@ export default function UserMenu({ user }: Props) {
     } finally {
       // Full navigation to the shared auth origin (cross-origin in the split),
       // clearing the .app.com cookie ends the session for every product.
-      window.location.assign(buildLoginUrl());
+      window.location.assign(loginUrl);
     }
   };
 

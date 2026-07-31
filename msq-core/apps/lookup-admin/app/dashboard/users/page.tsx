@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { getServerSession, GATEWAY_URL } from '@/src/lib/server-session';
 import UsersShell from '@/components/users/UsersShell';
+import LookupLoadError from '@/components/lookups/LookupLoadError';
 import type { UserRow } from '@/src/lib/api/client';
 
 export const dynamic = 'force-dynamic';
@@ -20,8 +21,14 @@ export default async function UsersPage() {
     cache: 'no-store',
   });
 
+  // notFound() here was the wrong signal: /dashboard/users IS a real route, so a
+  // failed fetch is an authorization or backend problem, not a missing page.
+  // Rendering Next's 404 hid the gateway's own status behind "Page not found" —
+  // the same defect already fixed on the lookups screen (see
+  // app/dashboard/lookups/[table]/page.tsx).
   if (!res.ok) {
-    notFound();
+    console.error(`[users] GET ${GATEWAY_URL}/users failed: ${res.status} ${res.statusText}`);
+    return <LookupLoadError title="Users" status={res.status} />;
   }
 
   const body = await res.json() as { success: true; data: UserRow[] };

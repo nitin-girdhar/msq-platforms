@@ -39,17 +39,22 @@ services:
         target: /var/lib/postgresql
         bind:
           create_host_path: true
-      # Schema bootstrap. The DDL that used to live in the single
-      # msq-core/db_scripts/01_init-db.sql is now the ordered 01-06 set in the
-      # platform-root db_scripts/. Mounted file-by-file (rather than mounting
-      # the whole directory) so ONLY the schema runs at first-boot -- the
-      # seed/cleanup scripts 07+ stay opt-in, exactly as before.
-      - ./db_scripts/01_extensions_and_roles.sql:/docker-entrypoint-initdb.d/01-extensions-and-roles.sql
-      - ./db_scripts/02_schema.sql:/docker-entrypoint-initdb.d/02-schema.sql
-      - ./db_scripts/03_product_schema.sql:/docker-entrypoint-initdb.d/03-product-schema.sql
-      - ./db_scripts/04_roles_and_grants.sql:/docker-entrypoint-initdb.d/04-roles-and-grants.sql
-      - ./db_scripts/05_catalogs.sql:/docker-entrypoint-initdb.d/05-catalogs.sql
-      - ./db_scripts/06_rls.sql:/docker-entrypoint-initdb.d/06-rls.sql
+      # Schema bootstrap: the ordered 00-10 set in the platform-root db_scripts/,
+      # the same sequence db_scripts/db_deploy.ps1 runs. Mounted file-by-file
+      # (rather than mounting the whole directory) so ONLY the schema runs at
+      # first-boot -- reference_data/ and dummy_data/ are driven afterwards by
+      # bootstrap-db.sh, because dummy_data must stay opt-in.
+      - ./db_scripts/00_extensions_schemas_roles.sql:/docker-entrypoint-initdb.d/00-extensions-schemas-roles.sql
+      - ./db_scripts/01_functions_shared.sql:/docker-entrypoint-initdb.d/01-functions-shared.sql
+      - ./db_scripts/02_tables_core.sql:/docker-entrypoint-initdb.d/02-tables-core.sql
+      - ./db_scripts/03_tables_product.sql:/docker-entrypoint-initdb.d/03-tables-product.sql
+      - ./db_scripts/04_functions_triggers.sql:/docker-entrypoint-initdb.d/04-functions-triggers.sql
+      - ./db_scripts/05_views.sql:/docker-entrypoint-initdb.d/05-views.sql
+      - ./db_scripts/06_indexes.sql:/docker-entrypoint-initdb.d/06-indexes.sql
+      - ./db_scripts/07_grants.sql:/docker-entrypoint-initdb.d/07-grants.sql
+      - ./db_scripts/08_rls.sql:/docker-entrypoint-initdb.d/08-rls.sql
+      - ./db_scripts/09_schema_version.sql:/docker-entrypoint-initdb.d/09-schema-version.sql
+      - ./db_scripts/10_tenant_provisioning.sql:/docker-entrypoint-initdb.d/10-tenant-provisioning.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${DB_NAME}"]
       interval: 5s

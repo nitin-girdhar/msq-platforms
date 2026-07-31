@@ -1,14 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { buildLoginUrl } from '@platform/ui-kit';
 import { auth } from '@/src/lib/api/client';
 
 // Clears the shared .app.com session and returns to the sign-in form. Used by
 // the no-access page, which is the one authenticated screen with nowhere else
 // to go. Navigation is a full assign, not the Next router, so every product
 // origin sees the cleared cookie.
-export default function SignOutButton() {
+interface Props {
+  // Resolved server-side via buildLoginUrl() — see the note in UserMenu.
+  loginUrl: string;
+}
+
+export default function SignOutButton({ loginUrl }: Props) {
   const [busy, setBusy] = useState(false);
 
   const handleClick = async () => {
@@ -20,7 +24,7 @@ export default function SignOutButton() {
       // The cookie may already be gone or the gateway unreachable. Either way the
       // useful next step is the same — send them to sign in.
     }
-    window.location.assign(buildLoginUrl());
+    window.location.assign(loginUrl);
   };
 
   return (

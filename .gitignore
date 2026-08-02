@@ -87,3 +87,25 @@ ec2-deploy/deploy.sh
 # untracked the next time the bundle layout changes.
 msq-deploy/artifacts/
 msq-deploy/msq-images.tar
+DB_Migration/.gitignore
+DB_Migration/export_source.ps1
+DB_Migration/README.md
+DB_Migration/run_migration.ps1
+DB_Migration/tables.psv
+DB_Migration/sql/00_staging_schema.sql
+DB_Migration/sql/01_load_staging.sql
+DB_Migration/sql/02_preflight.sql
+DB_Migration/sql/05_missing_lookups.sql
+DB_Migration/sql/10_entity.sql
+DB_Migration/sql/15_tenant_modules.sql
+DB_Migration/sql/20_iam.sql
+DB_Migration/sql/30_lms_leads.sql
+DB_Migration/sql/35_lms_children.sql
+DB_Migration/sql/40_marketing.sql
+DB_Migration/sql/50_ext_meta.sql
+DB_Migration/sql/60_audit.sql
+DB_Migration/sql/65_fanout_triggers_off.sql
+DB_Migration/sql/70_fanout_triggers_on.sql
+DB_Migration/sql/75_post_fanout.sql
+DB_Migration/sql/90_verify.sql
+DB_Migration/sql/99_drop_staging.sql

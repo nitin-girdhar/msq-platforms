@@ -157,14 +157,91 @@ RETURNS UUID[] LANGUAGE sql STABLE SECURITY DEFINER AS $$
   SELECT ARRAY(SELECT user_id FROM iam.user_org_mapping WHERE org_id = p_org_id AND is_active)
 $$;
 
+-- The EFFECTIVE role a user acts with in one org — the single place the
+-- "which role row applies here" question is answered, so the rank resolver, the
+-- Tier C role resolver and identity-service's login query cannot drift apart.
+-- Returns NULL when the user may not act in the org at all.
+--
+-- Two paths, matching iam.fn_actor_can_act_in_org below:
+--
+--   (1) an active iam.user_org_mapping row — the normal case, every ladder role;
+--   (2) the GLOBAL role on iam.users.role_id, for the three cases where a
+--       mapping row is not the design:
+--         • super_admin  — platform scope, acts in ANY org by design, which is
+--           why no single mapping row could ever express its reach;
+--         • tenant_admin — any org inside its own tenant, same reason;
+--         • the user's OWN home org (iam.users.org_id) with no mapping row —
+--           legacy users created before mappings were seeded. identity-service
+--           already honours this (auth.repository's COALESCE(uom_r, ur) and
+--           getUserOrgs' UNION), so without it here login succeeds and every
+--           product service then refuses the very session it just issued.
+--
+-- Anything else stays fail-closed: no mapping, no global reach, no role.
+CREATE OR REPLACE FUNCTION iam.fn_effective_role_id(p_user_id UUID, p_org_id UUID)
+RETURNS UUID LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
+DECLARE
+  v_role_id   UUID;
+  v_role_name TEXT;
+  v_home_org  UUID;
+BEGIN
+  IF p_user_id IS NULL OR p_org_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  -- (1) Normal path: an active mapping to this org.
+  SELECT uom.role_id INTO v_role_id
+  FROM iam.user_org_mapping uom
+  JOIN iam.users u ON u.id = uom.user_id
+  WHERE uom.user_id = p_user_id
+    AND uom.org_id  = p_org_id
+    AND uom.is_active
+    AND u.is_active AND NOT u.is_deleted
+  LIMIT 1;
+  IF v_role_id IS NOT NULL THEN
+    RETURN v_role_id;
+  END IF;
+
+  -- (2) Fall back to the user's global role.
+  SELECT u.role_id, ur.name::TEXT, u.org_id
+    INTO v_role_id, v_role_name, v_home_org
+  FROM iam.users u
+  JOIN iam.user_roles ur ON ur.id = u.role_id
+  WHERE u.id = p_user_id AND u.is_active AND NOT u.is_deleted;
+
+  IF v_role_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  IF v_role_name = 'super_admin' THEN
+    RETURN v_role_id;                                  -- platform scope: any org
+  END IF;
+
+  IF v_role_name = 'tenant_admin' AND (
+       SELECT o_target.tenant_id
+       FROM entity.organizations o_target
+       WHERE o_target.id = p_org_id AND NOT o_target.is_deleted
+     ) = (
+       SELECT o_home.tenant_id
+       FROM entity.organizations o_home
+       WHERE o_home.id = v_home_org
+     ) THEN
+    RETURN v_role_id;                                  -- tenant scope
+  END IF;
+
+  IF p_org_id = v_home_org THEN
+    RETURN v_role_id;                                  -- home org, no mapping row
+  END IF;
+
+  RETURN NULL;
+END; $$;
+
 CREATE OR REPLACE FUNCTION iam.fn_user_org_rank(p_user_id UUID, p_org_id UUID)
 RETURNS INT LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
 DECLARE v_rank INT;
 BEGIN
   SELECT ur.rank INTO v_rank
-  FROM iam.user_org_mapping uom
-  JOIN iam.user_roles ur ON ur.id = uom.role_id
-  WHERE uom.user_id = p_user_id AND uom.org_id = p_org_id AND uom.is_active;
+  FROM iam.user_roles ur
+  WHERE ur.id = iam.fn_effective_role_id(p_user_id, p_org_id);
   RETURN COALESCE(v_rank, -1);
 END; $$;
 
@@ -859,16 +936,20 @@ END; $$;
 -- disagree. SECURITY DEFINER so it bypasses RLS on iam.user_roles /
 -- iam.departments (same rationale as fn_user_org_rank above).
 -- rank -1 / NULL role means "no active role in this org".
+--
+-- Which role applies is iam.fn_effective_role_id's answer, NOT a direct
+-- user_org_mapping lookup: reading the mapping table here is what locked
+-- super_admin and tenant_admin out of every org they had no mapping row for —
+-- i.e. every org, since acting without one is the whole point of those roles.
 CREATE OR REPLACE FUNCTION iam.fn_user_org_role(p_user_id UUID, p_org_id UUID)
 RETURNS TABLE (role TEXT, rank INT, department TEXT)
 LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
 BEGIN
   RETURN QUERY
   SELECT ur.name::TEXT, ur.rank, d.name::TEXT
-  FROM iam.user_org_mapping uom
-  JOIN iam.user_roles ur      ON ur.id = uom.role_id
+  FROM iam.user_roles ur
   LEFT JOIN iam.departments d ON d.id = ur.department_id AND NOT d.is_deleted
-  WHERE uom.user_id = p_user_id AND uom.org_id = p_org_id AND uom.is_active
+  WHERE ur.id = iam.fn_effective_role_id(p_user_id, p_org_id)
   LIMIT 1;
 
   IF NOT FOUND THEN

@@ -51,9 +51,109 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================
+-- Provision every tenant seeded above.
+--
+-- entity.provision_tenant() does all of it in one call: module
+-- entitlements, the geography catalog, the eight registry catalogs, the LMS
+-- lead catalogs, departments, the role ladder with its capability grants,
+-- and the message templates. See 10_tenant_provisioning.sql.
+--
+-- This is the ONLY thing a new tenant needs, and it is the same call the
+-- application makes when a tenant is created through the API — so a demo
+-- tenant and a real one are provisioned by identical code.
+--
+-- It runs HERE, before organizations, because geo.* is tenant-scoped and
+-- entity.organizations carries a composite (tenant_id, city_id) FK: a
+-- branch cannot be inserted until its tenant owns the place it sits in.
+--
+-- All four modules, so every product app is reachable in a dev
+-- environment. Pass a narrower array to model a restricted plan.
+-- ============================================================
+DO $provision$
+DECLARE t RECORD;
+BEGIN
+  FOR t IN SELECT id FROM entity.tenants ORDER BY name LOOP
+    RAISE NOTICE '%', entity.provision_tenant(t.id, ARRAY['lms','leave','attendance','tasks']);
+  END LOOP;
+END $provision$;
+
+-- ============================================================
+-- WHERE EACH DEMO TENANT ACTUALLY OPERATES
+--
+-- provision_tenant() above cloned the generic template geography
+-- (reference_data/01_geo.sql) into both tenants. Here we add the states and
+-- cities the template does not carry, then deactivate everything each
+-- tenant does NOT operate in.
+--
+-- Deactivate rather than delete: that is the platform's delete semantics for
+-- geo (07_grants.sql grants no DELETE), and it exercises the same path
+-- lookup-admin uses.
+--
+-- FitClass  — India: Haryana, Punjab, Delhi, Uttar Pradesh, Uttarakhand.
+--             Punjab is a stated presence with no centre in it, which is
+--             why it stays active with zero cities.
+-- MSquare   — India: Haryana / Gurgaon only.
+-- ============================================================
+CREATE TEMP TABLE _tenant_geo (
+  tenant_uuid UUID NOT NULL,
+  state_name  TEXT NOT NULL,
+  state_code  TEXT,
+  city_name   TEXT              -- NULL = the state is a presence with no city
+) ON COMMIT DROP;
+
+INSERT INTO _tenant_geo (tenant_uuid, state_name, state_code, city_name) VALUES
+  -- ── FitClass ──
+  ('a1000000-0000-0000-0000-000000000001', 'Haryana',       'HR', 'Gurgaon'),
+  ('a1000000-0000-0000-0000-000000000001', 'Haryana',       'HR', 'Rewari'),
+  ('a1000000-0000-0000-0000-000000000001', 'Delhi',         'DL', 'Delhi'),
+  ('a1000000-0000-0000-0000-000000000001', 'Uttar Pradesh', 'UP', 'Noida'),
+  ('a1000000-0000-0000-0000-000000000001', 'Uttarakhand',   'UK', 'Dehradun'),
+  ('a1000000-0000-0000-0000-000000000001', 'Punjab',        'PB', NULL),
+  -- ── MSquare Professionals ──
+  ('a3000000-0000-0000-0000-000000000001', 'Haryana',       'HR', 'Gurgaon');
+
+-- States the template did not supply (Uttarakhand), under each tenant's India.
+INSERT INTO geo.states (tenant_id, country_id, name, code)
+SELECT DISTINCT tg.tenant_uuid, c.id, tg.state_name, tg.state_code
+FROM _tenant_geo tg
+JOIN geo.countries c ON c.tenant_id = tg.tenant_uuid AND c.iso_code = 'IN'
+ON CONFLICT DO NOTHING;
+
+-- Cities the template did not supply (Gurgaon exists, Rewari/Dehradun/Delhi-city do not).
+INSERT INTO geo.cities (tenant_id, state_id, name)
+SELECT tg.tenant_uuid, s.id, tg.city_name
+FROM _tenant_geo tg
+JOIN geo.states s ON s.tenant_id = tg.tenant_uuid AND s.name = tg.state_name
+WHERE tg.city_name IS NOT NULL
+ON CONFLICT DO NOTHING;
+
+-- Everything else the template cloned in is not a place these tenants work in.
+UPDATE geo.cities c SET is_active = FALSE
+WHERE c.tenant_id IN (SELECT DISTINCT tenant_uuid FROM _tenant_geo)
+  AND NOT EXISTS (
+    SELECT 1 FROM _tenant_geo tg
+    JOIN geo.states s ON s.id = c.state_id AND s.tenant_id = c.tenant_id
+    WHERE tg.tenant_uuid = c.tenant_id
+      AND tg.state_name  = s.name
+      AND tg.city_name   = c.name
+  );
+
+UPDATE geo.states s SET is_active = FALSE
+WHERE s.tenant_id IN (SELECT DISTINCT tenant_uuid FROM _tenant_geo)
+  AND NOT EXISTS (
+    SELECT 1 FROM _tenant_geo tg
+    WHERE tg.tenant_uuid = s.tenant_id AND tg.state_name = s.name
+  );
+
+-- Both demo tenants are India-only.
+UPDATE geo.countries SET is_active = FALSE
+WHERE tenant_id IN (SELECT DISTINCT tenant_uuid FROM _tenant_geo)
+  AND iso_code <> 'IN';
+
+-- ============================================================
 -- Config table driving org + user generation.
 -- org_seq 1-2 = FitClass orgs using literal UUIDs (for script 03 compatibility).
--- org_seq 3-10 = new orgs using _seed_uuid(seq, 0) pattern.
+-- org_seq 3-27 = new orgs using _seed_uuid(seq, 0) pattern.
 -- ============================================================
 CREATE TEMP TABLE _org_config (
   org_seq      INT PRIMARY KEY,
@@ -75,25 +175,47 @@ CREATE TEMP TABLE _org_config (
 --   slots 1-8    = iam.users (1 admin, 2 sr_manager, 3 manager, 4 sse, 5-7 reps, 8 read_only)
 --   slots 101-102 = marketing.ad_campaigns
 -- Keeping these disjoint avoids any collision between an org row and its iam.users.
+-- The centre level. geo stops at the city (Gurgaon, Delhi, Noida, Dehradun,
+-- Rewari); the individual centres — Gurugram-Sector-49, Moti-Nagar and the
+-- rest — are organizations sitting in those cities. city_name/state_name
+-- below are the geo row each centre points at, not the centre's own name.
 INSERT INTO _org_config
   (org_seq, org_uuid, tenant_uuid, org_name, org_type, city_name, state_name, email_domain, address1, landmark, pincode, tenant_label)
 VALUES
-  -- ── Existing FitClass orgs (org_seq 1-2 use literal UUIDs so script 03 can reference them) ──
-  (1, 'b1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'FitClass - Connaught Place', 'gym_location', 'Connaught Place', 'Delhi',  'fitclass.cp.in',  'A-12, Barakhamba Road',            'Near Statesman House',   '110001', 'fitclass'),
-  (2, 'b1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'FitClass - Saket',          'gym_location', 'Saket',           'Delhi',  'fitclass.skt.in', 'Shop 14, MGF Metropolitan Mall',   'Near Select Citywalk',   '110017', 'fitclass'),
-  -- ── New FitClass orgs ──
-  (3, _seed_uuid(3,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurgaon', 'gym_location', 'Gurgaon', 'Haryana',       'fitclass.ggn.in', 'Tower 3, Cyber Hub',          'Near DLF Cyber City',    '122002', 'fitclass'),
-  (4, _seed_uuid(4,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Noida',   'gym_location', 'Noida',   'Uttar Pradesh', 'fitclass.noi.in', 'Sector 18 Atta Market',       'Near DLF Mall of India', '201301', 'fitclass'),
-  (5, _seed_uuid(5,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Rohini',  'gym_location', 'Rohini',  'Delhi',         'fitclass.roh.in', 'Sector 7 Community Centre',   'Near Rohini West Metro', '110085', 'fitclass'),
-  -- ── MSquare Professionals orgs ──
-  (6, _seed_uuid(6,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Gurgaon HQ', 'branch', 'Gurgaon',   'Haryana',       'msq.ggn.in', 'Tower B, Golf Course Road',   'Near Sector 54 Metro',   '122002', 'msq'),
-  (7, _seed_uuid(7,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Delhi',      'branch', 'New Delhi', 'Delhi',         'msq.del.in', 'Barakhamba Road',             'Near Mandi House',       '110001', 'msq'),
-  (8, _seed_uuid(8,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Noida',      'branch', 'Noida',     'Uttar Pradesh', 'msq.noi.in', 'Sector 62, Block C',          'Near Electronic City',   '201309', 'msq'),
-  (9, _seed_uuid(9,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Faridabad',  'branch', 'Faridabad', 'Haryana',       'msq.fbd.in', 'Sector 16A, Mathura Road',    'Near Neelam Chowk',      '121002', 'msq'),
-  (10,_seed_uuid(10,0),'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Lucknow',    'branch', 'Lucknow',   'Uttar Pradesh', 'msq.lko.in', 'Gomti Nagar, Vibhuti Khand', 'Near Riverside Mall',    '226010', 'msq');
+  -- ── FitClass — Gurgaon, Haryana (org_seq 1-2 keep literal UUIDs so script 03 can reference them) ──
+  (1, 'b1000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'FitClass - Ashok Vihar',          'gym_location', 'Gurgaon', 'Haryana', 'fitclass.avr.in', 'Ashok Vihar Phase 3',        'Near Ashok Vihar Chowk',   '122001', 'fitclass'),
+  (2, 'b1000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurugram Sector 49',   'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g49.in', 'Sector 49, Sohna Road',      'Near Uniworld Garden',     '122018', 'fitclass'),
+  (3,  _seed_uuid(3,0),  'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurgaon Sector 102',  'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g102.in', 'Sector 102, Dwarka Expressway', 'Near Bajghera Road',    '122006', 'fitclass'),
+  (4,  _seed_uuid(4,0),  'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurgaon Sector 104',  'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g104.in', 'Sector 104, Dwarka Expressway', 'Near Chintels Serenity','122006', 'fitclass'),
+  (5,  _seed_uuid(5,0),  'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurgaon Sector 57',   'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g57.in',  'Sector 57, Sushant Lok 2',      'Near Hong Kong Bazaar', '122011', 'fitclass'),
+  (6,  _seed_uuid(6,0),  'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurgaon Sector 83',   'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g83.in',  'Sector 83, New Gurgaon',        'Near Vatika India Next', '122004', 'fitclass'),
+  (7,  _seed_uuid(7,0),  'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurgaon Sector 92',   'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g92.in',  'Sector 92, New Gurgaon',        'Near Sohna Road Link',  '122505', 'fitclass'),
+  (8,  _seed_uuid(8,0),  'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurugram Sector 109', 'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g109.in', 'Sector 109, Dwarka Expressway', 'Near Chintels Paradiso','122017', 'fitclass'),
+  (9,  _seed_uuid(9,0),  'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurugram Sector 47',  'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g47.in',  'Sector 47, Sohna Road',         'Near Subhash Chowk',    '122018', 'fitclass'),
+  (10, _seed_uuid(10,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurugram Sector 82',  'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g82.in',  'Sector 82, New Gurgaon',        'Near Vatika City Centre','122004', 'fitclass'),
+  (11, _seed_uuid(11,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Manesar',             'gym_location', 'Gurgaon', 'Haryana', 'fitclass.mnr.in',  'IMT Manesar Sector 8',          'Near Honda Chowk',      '122052', 'fitclass'),
+  (12, _seed_uuid(12,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Palam Vihar',         'gym_location', 'Gurgaon', 'Haryana', 'fitclass.pvr.in',  'Palam Vihar Block C',           'Near Palam Vihar Chowk','122017', 'fitclass'),
+  (13, _seed_uuid(13,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurugram Sector 37',  'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g37.in',  'Sector 37, Pace City',          'Near Basai Road',       '122001', 'fitclass'),
+  (14, _seed_uuid(14,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Gurugram Sector 69',  'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g69.in',  'Sector 69, Golf Course Ext',    'Near Tulip Violet',     '122101', 'fitclass'),
+  (15, _seed_uuid(15,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Sector 7',            'gym_location', 'Gurgaon', 'Haryana', 'fitclass.g7.in',   'Sector 7 Urban Estate',         'Near Sector 7 Market',  '122001', 'fitclass'),
+  -- ── FitClass — Delhi ──
+  (16, _seed_uuid(16,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Budh Vihar',   'gym_location', 'Delhi', 'Delhi', 'fitclass.bvr.in', 'Budh Vihar Phase 1',   'Near Budh Vihar Chowk',  '110086', 'fitclass'),
+  (17, _seed_uuid(17,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Moti Nagar',   'gym_location', 'Delhi', 'Delhi', 'fitclass.mnr2.in','Moti Nagar Main Road',  'Near Moti Nagar Metro',  '110015', 'fitclass'),
+  (18, _seed_uuid(18,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Ramesh Nagar', 'gym_location', 'Delhi', 'Delhi', 'fitclass.rnr.in', 'Ramesh Nagar Block B',  'Near Ramesh Nagar Metro','110015', 'fitclass'),
+  (19, _seed_uuid(19,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Rohini',       'gym_location', 'Delhi', 'Delhi', 'fitclass.roh.in', 'Sector 7 Community Centre','Near Rohini West Metro','110085', 'fitclass'),
+  -- ── FitClass — the rest ──
+  (20, _seed_uuid(20,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Knowledge Park 2', 'gym_location', 'Noida',    'Uttar Pradesh', 'fitclass.kp2.in', 'Knowledge Park 2',      'Near Pari Chowk',       '201310', 'fitclass'),
+  (21, _seed_uuid(21,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Dehradun',         'gym_location', 'Dehradun', 'Uttarakhand',   'fitclass.ddn.in', 'Rajpur Road',           'Near Clock Tower',      '248001', 'fitclass'),
+  (22, _seed_uuid(22,0), 'a1000000-0000-0000-0000-000000000001', 'FitClass - Anaj Mandi',       'gym_location', 'Rewari',   'Haryana',       'fitclass.amd.in', 'Anaj Mandi Main Road',  'Near Rewari Bus Stand', '123401', 'fitclass'),
+  -- ── MSquare Professionals — Gurgaon, Haryana only ──
+  (23, _seed_uuid(23,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Gurgaon HQ',         'branch', 'Gurgaon', 'Haryana', 'msq.ggn.in', 'Tower B, Golf Course Road', 'Near Sector 54 Metro',  '122002', 'msq'),
+  (24, _seed_uuid(24,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Gurgaon Cyber City', 'branch', 'Gurgaon', 'Haryana', 'msq.gcc.in', 'DLF Cyber City Phase 2',    'Near Cyber Hub',        '122002', 'msq'),
+  (25, _seed_uuid(25,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Gurgaon Sector 44',  'branch', 'Gurgaon', 'Haryana', 'msq.g44.in', 'Sector 44, Huda City',      'Near Huda City Centre',  '122003', 'msq'),
+  (26, _seed_uuid(26,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Gurgaon Udyog Vihar','branch', 'Gurgaon', 'Haryana', 'msq.uvr.in', 'Udyog Vihar Phase 4',       'Near Signature Tower',   '122015', 'msq'),
+  (27, _seed_uuid(27,0), 'a3000000-0000-0000-0000-000000000001', 'MSquare Professionals - Gurgaon Sohna Road', 'branch', 'Gurgaon', 'Haryana', 'msq.shr.in', 'Sohna Road, Sector 48',     'Near Omaxe Gurgaon Mall','122018', 'msq');
 
 -- ============================================================
--- ORGANIZATIONS (all 10 orgs; ON CONFLICT DO NOTHING is idempotent)
+-- ORGANIZATIONS (all 27 orgs; ON CONFLICT DO NOTHING is idempotent)
 -- ============================================================
 INSERT INTO entity.organizations
     (id, tenant_id, name, legal_entity_name, brand_name, org_type_id,
@@ -108,9 +230,14 @@ SELECT
     CASE WHEN oc.tenant_label = 'fitclass' THEN 'FitClass' ELSE 'MSquare' END,
     (SELECT id FROM entity.org_types WHERE name = oc.org_type),
     oc.address1, oc.landmark, oc.pincode,
-    (SELECT id FROM geo.cities  WHERE name = oc.city_name),
-    (SELECT id FROM geo.states  WHERE name = oc.state_name),
-    (SELECT id FROM geo.countries WHERE iso_code = 'IN'),
+    -- geo.* is per-tenant now, so every tenant has its own row called
+    -- "Gurgaon". Without the tenant_id filter these subqueries return more
+    -- than one row and the insert fails.
+    (SELECT ci.id FROM geo.cities ci
+       JOIN geo.states s ON s.id = ci.state_id AND s.tenant_id = ci.tenant_id
+      WHERE ci.tenant_id = oc.tenant_uuid AND ci.name = oc.city_name AND s.name = oc.state_name),
+    (SELECT s.id  FROM geo.states    s WHERE s.tenant_id = oc.tenant_uuid AND s.name     = oc.state_name),
+    (SELECT c.id  FROM geo.countries c WHERE c.tenant_id = oc.tenant_uuid AND c.iso_code = 'IN'),
     'Asia/Kolkata',
     CASE WHEN oc.tenant_label = 'fitclass'
          THEN jsonb_build_object('capacity', 150 + (oc.org_seq * 20), 'equipment_tier', 'standard')
@@ -121,7 +248,7 @@ FROM _org_config oc
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================
--- USERS — 8 per org (all 10 orgs).
+-- USERS — 8 per org (all 27 orgs).
 -- Slot numbering within _seed_uuid(org_seq, slot):
 --   1 org_admin | 2 org_sr_manager | 3 org_manager | 4 senior_sales_executive
 --   5/6/7 sales_representative (x3) | 8 read_only
@@ -305,13 +432,9 @@ END $$;
 -- All four modules, so every product app is reachable in a dev
 -- environment. Pass a narrower array to model a restricted plan.
 -- ============================================================
-DO $provision$
-DECLARE t RECORD;
-BEGIN
-  FOR t IN SELECT id FROM entity.tenants ORDER BY name LOOP
-    RAISE NOTICE '%', entity.provision_tenant(t.id, ARRAY['lms','leave','attendance','tasks']);
-  END LOOP;
-END $provision$;
+-- (Moved to just after the TENANTS insert above: geo.* is tenant-scoped now,
+-- and entity.organizations has a composite (tenant_id, city_id) FK, so a
+-- tenant's geography has to exist before its branches can be inserted.)
 
 
 -- ===================================================================

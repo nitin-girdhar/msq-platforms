@@ -47,10 +47,56 @@ async function resolveScope(request: FastifyRequest): Promise<{ tenantId: string
   return { tenantId };
 }
 
+// Optional geo filters, shared by /branches and the three /locations routes.
+// Comma-separated uuids; anything malformed is dropped rather than rejected,
+// so a bad id degrades to "no filter" exactly as an absent parameter does.
+// The repository interpolates the survivors into a ::uuid[] cast, so nothing
+// non-UUID may get through.
+function parseUuidCsv(value: unknown): string[] {
+  if (typeof value !== 'string' || !value) return [];
+  return value.split(',').map((s) => s.trim()).filter((s) => UUID_RE.test(s));
+}
+
+function geoFilter(request: FastifyRequest) {
+  const q = request.query as Record<string, unknown>;
+  return {
+    cityIds: parseUuidCsv(q['city_id']),
+    stateIds: parseUuidCsv(q['state_id']),
+    countryIds: parseUuidCsv(q['country_id']),
+    // Only places the tenant actually has an active branch in. A tenant can
+    // legitimately list a state it operates in with no branch there yet.
+    hasBranches: String(q['has_branches'] ?? '') === 'true',
+  };
+}
+
 export class PublicReadController {
   getBranches = async (request: FastifyRequest, reply: FastifyReply) => {
     const { tenantId, orgId } = await resolveScope(request);
-    const data = await repo.listBranches(tenantId, orgId);
+    const { hasBranches: _ignored, ...filter } = geoFilter(request);
+    const data = await repo.listBranches(tenantId, orgId, filter);
+    return reply.send({ success: true, data });
+  };
+
+  // ── Tenant presence drill-down ──────────────────────────────────────────
+  // Every parameter is optional at every level: /states with no country_id
+  // returns all of the tenant's states, /cities with only a country_id drills
+  // straight past states.
+
+  getCountries = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { tenantId, orgId } = await resolveScope(request);
+    const data = await repo.listCountries(tenantId, { ...geoFilter(request), ...(orgId ? { orgId } : {}) });
+    return reply.send({ success: true, data });
+  };
+
+  getStates = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { tenantId, orgId } = await resolveScope(request);
+    const data = await repo.listStates(tenantId, { ...geoFilter(request), ...(orgId ? { orgId } : {}) });
+    return reply.send({ success: true, data });
+  };
+
+  getCities = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { tenantId, orgId } = await resolveScope(request);
+    const data = await repo.listCities(tenantId, { ...geoFilter(request), ...(orgId ? { orgId } : {}) });
     return reply.send({ success: true, data });
   };
 

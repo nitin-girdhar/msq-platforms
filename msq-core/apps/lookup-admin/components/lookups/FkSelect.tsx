@@ -35,21 +35,39 @@ async function fetchOptions(field: LookupFieldConfig, formValues: FormValues, te
   const fk = field.fk;
   if (!fk) return [];
 
-  if (fk.endpoint === 'geo-countries') {
-    const res = await lookupAdmin.geo.countries();
-    return res.data.map((c) => ({ id: String(c.id), label: c.name }));
-  }
-  if (fk.endpoint === 'geo-states') {
-    const countryId = fk.dependsOn ? String(formValues[fk.dependsOn] ?? '') : '';
-    if (!countryId) return [];
-    const res = await lookupAdmin.geo.states(countryId);
-    return res.data.map((s) => ({ id: String(s.id), label: s.name }));
-  }
-  if (fk.endpoint === 'geo-cities') {
+  // geo.* is a tenant catalog, so its options need a tenant. On the
+  // organizations form that is the form's own tenant_id field (a super_admin
+  // is editing some other tenant's branch); elsewhere it is the tenant
+  // selected in the navbar. Without one there is nothing to offer.
+  if (fk.endpoint === 'geo-countries' || fk.endpoint === 'geo-states' || fk.endpoint === 'geo-cities') {
+    const geoTenantId = String(formValues['tenant_id'] ?? tenantId ?? '');
+    if (!geoTenantId) return [];
+
+    // Deactivated places stay in the table so existing branches keep
+    // resolving, but must never be offered as a new choice.
+    const active = <T extends { is_active?: boolean }>(rows: T[]) => rows.filter((r) => r.is_active !== false);
+
+    if (fk.endpoint === 'geo-countries') {
+      const res = await lookupAdmin.geo.countries(geoTenantId);
+      return active(res.data).map((c) => ({ id: c.id, label: c.name }));
+    }
+    // The parent filter only applies when the field declares a dependsOn.
+    // Without one (the Cities admin page picks a state directly) the whole
+    // tenant's list is offered.
+    if (fk.endpoint === 'geo-states') {
+      const countryId = fk.dependsOn ? String(formValues[fk.dependsOn] ?? '') : '';
+      if (fk.dependsOn && !countryId) return [];
+      const res = await lookupAdmin.geo.states(geoTenantId);
+      return active(res.data)
+        .filter((s) => !countryId || s.country_id === countryId)
+        .map((s) => ({ id: s.id, label: s.name }));
+    }
     const stateId = fk.dependsOn ? String(formValues[fk.dependsOn] ?? '') : '';
-    if (!stateId) return [];
-    const res = await lookupAdmin.geo.cities(stateId);
-    return res.data.map((c) => ({ id: String(c.id), label: c.name }));
+    if (fk.dependsOn && !stateId) return [];
+    const res = await lookupAdmin.geo.cities(geoTenantId);
+    return active(res.data)
+      .filter((c) => !stateId || c.state_id === stateId)
+      .map((c) => ({ id: c.id, label: c.name }));
   }
   // Departments are not a /lookups/{table} catalog — they live on their own
   // tenant-scoped route, so they cannot go through the fk.table branch below.

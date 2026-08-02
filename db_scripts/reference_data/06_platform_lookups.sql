@@ -15,26 +15,29 @@ BEGIN;
 -- MARKETING -- PLATFORMS & CAMPAIGN STATUSES
 -- ===================================================================
 
-INSERT INTO marketing.marketing_platforms (name, label, description) VALUES
-  ('facebook',     'Facebook',     'Facebook / Instagram Lead Ads and Campaigns'),
-  ('google',       'Google',       'Google Ads (Search, Display, Shopping, Performance Max)'),
-  ('instagram',    'Instagram',    'Instagram organic and paid posts'),
-  ('youtube',      'YouTube',      'YouTube video ads'),
-  ('whatsapp',     'WhatsApp',     'WhatsApp click-to-chat ads via Facebook Ads Manager'),
-  ('linkedin',     'LinkedIn',     'LinkedIn Lead Gen Forms and sponsored content'),
-  ('tiktok',       'TikTok',       'TikTok for Business lead generation'),
-  ('organic',      'Organic',      'Walk-in, direct website, or offline enquiry with no paid source'),
-  ('referral',     'Referral',     'Referred by an existing customer or partner'),
-  ('whatsapp_ads', 'WhatsApp Ads', 'WhatsApp click-to-chat ads via Facebook Ads Manager (legacy alias)')
-ON CONFLICT (name) DO NOTHING;
+-- Template rows (tenant_id NULL); entity.seed_tenant_lms_catalogs() clones
+-- them per tenant. The conflict target is the partial template index from
+-- 06_indexes.sql -- (tenant_id, name) would not dedupe, since NULLs are distinct.
+INSERT INTO marketing.marketing_platforms (tenant_id, name, label, description) VALUES
+  (NULL, 'facebook',     'Facebook',     'Facebook / Instagram Lead Ads and Campaigns'),
+  (NULL, 'google',       'Google',       'Google Ads (Search, Display, Shopping, Performance Max)'),
+  (NULL, 'instagram',    'Instagram',    'Instagram organic and paid posts'),
+  (NULL, 'youtube',      'YouTube',      'YouTube video ads'),
+  (NULL, 'whatsapp',     'WhatsApp',     'WhatsApp click-to-chat ads via Facebook Ads Manager'),
+  (NULL, 'linkedin',     'LinkedIn',     'LinkedIn Lead Gen Forms and sponsored content'),
+  (NULL, 'tiktok',       'TikTok',       'TikTok for Business lead generation'),
+  (NULL, 'organic',      'Organic',      'Walk-in, direct website, or offline enquiry with no paid source'),
+  (NULL, 'referral',     'Referral',     'Referred by an existing customer or partner'),
+  (NULL, 'whatsapp_ads', 'WhatsApp Ads', 'WhatsApp click-to-chat ads via Facebook Ads Manager (legacy alias)')
+ON CONFLICT (name) WHERE tenant_id IS NULL DO NOTHING;
 
-INSERT INTO marketing.campaign_statuses (name, label, description) VALUES
-  ('draft',     'Draft',     'Campaign created but not yet submitted for review or activation'),
-  ('active',    'Active',    'Campaign is live and currently running'),
-  ('paused',    'Paused',    'Campaign temporarily paused; can be resumed'),
-  ('completed', 'Completed', 'Campaign ran its full duration and ended normally'),
-  ('archived',  'Archived',  'Campaign permanently closed and moved to archive')
-ON CONFLICT (name) DO NOTHING;
+INSERT INTO marketing.campaign_statuses (tenant_id, name, label, description) VALUES
+  (NULL, 'draft',     'Draft',     'Campaign created but not yet submitted for review or activation'),
+  (NULL, 'active',    'Active',    'Campaign is live and currently running'),
+  (NULL, 'paused',    'Paused',    'Campaign temporarily paused; can be resumed'),
+  (NULL, 'completed', 'Completed', 'Campaign ran its full duration and ended normally'),
+  (NULL, 'archived',  'Archived',  'Campaign permanently closed and moved to archive')
+ON CONFLICT (name) WHERE tenant_id IS NULL DO NOTHING;
 
 
 -- ===================================================================
@@ -72,14 +75,9 @@ INSERT INTO entity.tenant_plan_types (name, label, description) VALUES
   ('enterprise', 'Enterprise', 'Unlimited iam.users and orgs, dedicated support, custom SLA')
 ON CONFLICT (name) DO NOTHING;
 
--- ── Lookup seed data (hr.leave_request_statuses only — global, not tenant-scoped) ──
-INSERT INTO hr.leave_request_statuses (name, label) VALUES
-  ('draft',     'Draft'),
-  ('pending',   'Pending'),
-  ('approved',  'Approved'),
-  ('rejected',  'Rejected'),
-  ('cancelled', 'Cancelled'),
-  ('withdrawn', 'Withdrawn')
-ON CONFLICT (name) DO NOTHING;
+-- hr.leave_request_statuses used to be seeded here as global rows. It is
+-- tenant-scoped as of 1.26.0, like its three sibling HR lookups, so its
+-- defaults now live in the catalog registry (07_catalog_registry.sql) and are
+-- provisioned per tenant by entity.seed_tenant_defaults().
 
 COMMIT;

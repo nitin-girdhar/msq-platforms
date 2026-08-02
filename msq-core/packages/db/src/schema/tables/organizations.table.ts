@@ -1,4 +1,4 @@
-import { uuid, text, boolean, integer, smallint, numeric, timestamp, jsonb, unique } from 'drizzle-orm/pg-core';
+import { uuid, text, boolean, numeric, timestamp, jsonb, unique, foreignKey } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { entitySchema } from '../pg-schemas';
 import { tenantsTable } from './tenants.table';
@@ -19,9 +19,11 @@ export const organizationsTable = entitySchema.table('organizations', {
   landmark:        text('landmark'),
   pincode:         text('pincode'),
   city:            text('city'),
-  cityId:          integer('city_id').references(() => citiesTable.id, { onDelete: 'restrict' }),
-  stateId:         smallint('state_id').references(() => statesTable.id, { onDelete: 'restrict' }),
-  countryId:       smallint('country_id').references(() => countriesTable.id, { onDelete: 'restrict' }),
+  // geo.* is tenant-scoped, so these are COMPOSITE FKs on (tenant_id, x_id) —
+  // declared below. An org can only point at a place its own tenant owns.
+  cityId:          uuid('city_id'),
+  stateId:         uuid('state_id'),
+  countryId:       uuid('country_id'),
   timezone:        text('timezone').notNull().default('Asia/Kolkata'),
   // Geofence centre for attendance (additive, added in db_scripts/13).
   geoLat:          numeric('geo_lat', { precision: 9, scale: 6 }),
@@ -35,4 +37,19 @@ export const organizationsTable = entitySchema.table('organizations', {
   updatedAt:       timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uqOrganizationsTenantName: unique('uq_organizations_tenant_name').on(t.tenantId, t.name),
+  fkOrganizationsCity: foreignKey({
+    name: 'fk_organizations_city',
+    columns: [t.tenantId, t.cityId],
+    foreignColumns: [citiesTable.tenantId, citiesTable.id],
+  }).onDelete('restrict'),
+  fkOrganizationsState: foreignKey({
+    name: 'fk_organizations_state',
+    columns: [t.tenantId, t.stateId],
+    foreignColumns: [statesTable.tenantId, statesTable.id],
+  }).onDelete('restrict'),
+  fkOrganizationsCountry: foreignKey({
+    name: 'fk_organizations_country',
+    columns: [t.tenantId, t.countryId],
+    foreignColumns: [countriesTable.tenantId, countriesTable.id],
+  }).onDelete('restrict'),
 }));

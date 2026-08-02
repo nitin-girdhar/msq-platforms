@@ -48,17 +48,14 @@ CREATE TEMP TABLE _io_org_ref (
   org_uuid UUID NOT NULL
 ) ON COMMIT DROP;
 
-INSERT INTO _io_org_ref (org_seq, org_uuid) VALUES
-  (1,  'b1000000-0000-0000-0000-000000000001'),
-  (2,  'b1000000-0000-0000-0000-000000000002'),
-  (3,  _seed_uuid(3,0)),
-  (4,  _seed_uuid(4,0)),
-  (5,  _seed_uuid(5,0)),
-  (6,  _seed_uuid(6,0)),
-  (7,  _seed_uuid(7,0)),
-  (8,  _seed_uuid(8,0)),
-  (9,  _seed_uuid(9,0)),
-  (10, _seed_uuid(10,0));
+INSERT INTO _io_org_ref (org_seq, org_uuid)
+SELECT s.org_seq,
+       CASE s.org_seq
+         WHEN 1 THEN 'b1000000-0000-0000-0000-000000000001'::UUID
+         WHEN 2 THEN 'b1000000-0000-0000-0000-000000000002'::UUID
+         ELSE _seed_uuid(s.org_seq, 0)
+       END
+FROM generate_series(1, 27) AS s(org_seq);
 
 -- ============================================================
 -- INTERACTIONS — 1 to 4 per lead.

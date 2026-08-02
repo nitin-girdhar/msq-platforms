@@ -48,34 +48,12 @@ CREATE TABLE IF NOT EXISTS public.schema_versions (
 -- ===================================================================
 
 -- ===================================================================
--- GEOGRAPHIC LOOKUP TABLES
--- SMALLINT/INTEGER PKs (GENERATED ALWAYS AS IDENTITY) — high-cardinality
--- safe with SMALLINT for geo.countries/states; INTEGER for geo.cities.
+-- GEOGRAPHIC LOOKUP TABLES — see below, after entity.tenants.
+--
+-- geo.* used to live here, at the very top of the file, because it was
+-- global reference data with no dependencies. It is now tenant-scoped and
+-- carries a tenant_id FK, so it has to be created AFTER entity.tenants.
 -- ===================================================================
-
-CREATE TABLE IF NOT EXISTS geo.countries (
-  id       SMALLINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-  name     TEXT     NOT NULL UNIQUE,
-  iso_code CHAR(2)  NOT NULL UNIQUE,
-  description TEXT
-);
-
-CREATE TABLE IF NOT EXISTS geo.states (
-  id         SMALLINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-  country_id SMALLINT NOT NULL REFERENCES geo.countries(id) ON DELETE RESTRICT,
-  name       TEXT     NOT NULL,
-  code       TEXT,
-  description TEXT,
-  CONSTRAINT uq_states_country_name UNIQUE (country_id, name)
-);
-
-CREATE TABLE IF NOT EXISTS geo.cities (
-  id          INTEGER  PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-  state_id    SMALLINT NOT NULL REFERENCES geo.states(id) ON DELETE RESTRICT,
-  name        TEXT     NOT NULL,
-  description TEXT,
-  CONSTRAINT uq_cities_state_name UNIQUE (state_id, name)
-);
 
 
 -- ===================================================================
@@ -127,6 +105,71 @@ CREATE TABLE IF NOT EXISTS entity.tenants (
 );
 
 -- ===================================================================
+-- GEOGRAPHIC LOOKUP TABLES  (UUID PKs, tenant-scoped)
+--
+-- Tenants operate in different countries, states and cities, and each one
+-- curates its own list — so geo is a tenant catalog like lms.lead_stage,
+-- not global reference data. It follows the same template pattern:
+--   tenant_id IS NULL     = platform template row, seeded by
+--                           reference_data/01_geo.sql. RLS (08_rls.sql)
+--                           hides these from every application role;
+--                           entity.seed_tenant_geo() clones them into a
+--                           tenant at provisioning time.
+--   tenant_id IS NOT NULL = a row the tenant owns and can edit.
+--
+-- PKs are UUID v7 (public.gen_uuidv7()), matching every other table in the
+-- model. The old SMALLINT/INTEGER identity keys could not survive rows
+-- being authored independently per tenant.
+--
+-- Deletes are soft (is_active = FALSE): entity.organizations and
+-- lms.marketing_leads reference these rows ON DELETE RESTRICT, so a place
+-- that has ever been used must stay resolvable.
+--
+-- The UNIQUE (tenant_id, id) keys exist so the child FKs can be composite.
+-- Without them a tenant's city could hang off another tenant's state; RLS
+-- does not prevent that, only a composite FK does. Name uniqueness lives in
+-- 06_indexes.sql as partial index pairs (NULLs are distinct in a unique
+-- index, so one constraint cannot cover both templates and tenant rows).
+-- ===================================================================
+
+CREATE TABLE IF NOT EXISTS geo.countries (
+  id          UUID     PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id   UUID     REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  name        TEXT     NOT NULL,
+  iso_code    CHAR(2)  NOT NULL,
+  description TEXT,
+  is_active   BOOLEAN  NOT NULL DEFAULT TRUE,
+  CONSTRAINT uq_countries_tenant_id UNIQUE (tenant_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS geo.states (
+  id          UUID     PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id   UUID     REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  country_id  UUID     NOT NULL,
+  name        TEXT     NOT NULL,
+  code        TEXT,
+  description TEXT,
+  is_active   BOOLEAN  NOT NULL DEFAULT TRUE,
+  CONSTRAINT uq_states_tenant_id UNIQUE (tenant_id, id),
+  CONSTRAINT fk_states_country
+    FOREIGN KEY (tenant_id, country_id) REFERENCES geo.countries (tenant_id, id)
+    ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS geo.cities (
+  id          UUID     PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id   UUID     REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  state_id    UUID     NOT NULL,
+  name        TEXT     NOT NULL,
+  description TEXT,
+  is_active   BOOLEAN  NOT NULL DEFAULT TRUE,
+  CONSTRAINT uq_cities_tenant_id UNIQUE (tenant_id, id),
+  CONSTRAINT fk_cities_state
+    FOREIGN KEY (tenant_id, state_id) REFERENCES geo.states (tenant_id, id)
+    ON DELETE RESTRICT
+);
+
+-- ===================================================================
 -- TENANT-SCOPED LMS / MARKETING LOOKUP TABLES
 -- Created here (rather than up in the OPERATIONAL LOOKUP TABLES block)
 -- because each carries a tenant_id FK to entity.tenants, which must exist
@@ -159,7 +202,10 @@ CREATE TABLE IF NOT EXISTS lms.lead_stage (
   is_active         BOOLEAN NOT NULL DEFAULT TRUE,
   -- Per-tenant uniqueness: each tenant owns its own copy of this
   -- catalog, so the machine key is only unique within a tenant.
-  CONSTRAINT uq_lead_stage_tenant_name UNIQUE (tenant_id, name)
+  CONSTRAINT uq_lead_stage_tenant_name UNIQUE (tenant_id, name),
+  -- Lets ext.lead_stage_capi_event_map take a composite (tenant_id, stage_id)
+  -- FK, so a tenant's CAPI mapping cannot hang off another tenant's stage.
+  CONSTRAINT uq_lead_stage_tenant_id UNIQUE (tenant_id, id)
 );
 
 CREATE TABLE IF NOT EXISTS lms.lead_stage_outcome (
@@ -203,19 +249,31 @@ CREATE TABLE IF NOT EXISTS lms.follow_up_statuses (
 CREATE TABLE IF NOT EXISTS marketing.marketing_platforms (
   id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   tenant_id   UUID    REFERENCES entity.tenants(id) ON DELETE CASCADE,
-  name        TEXT    NOT NULL UNIQUE,
+  name        TEXT    NOT NULL,
   label       TEXT    NOT NULL,
   description TEXT,
-  is_active   BOOLEAN NOT NULL DEFAULT TRUE
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  -- Per-tenant, not global. This was UNIQUE (name) while the table was
+  -- already tenant-scoped and RLS'd, which made it impossible to clone the
+  -- templates into a tenant -- the second tenant's copy collided with the
+  -- first. That is why entity.seed_tenant_lms_catalogs() never provisioned
+  -- these two and every tenant saw an empty dropdown.
+  CONSTRAINT uq_marketing_platforms_tenant_name UNIQUE (tenant_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS marketing.campaign_statuses (
   id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   tenant_id   UUID    REFERENCES entity.tenants(id) ON DELETE CASCADE,
-  name        TEXT    NOT NULL UNIQUE,
+  name        TEXT    NOT NULL,
   label       TEXT    NOT NULL,
   description TEXT,
-  is_active   BOOLEAN NOT NULL DEFAULT TRUE
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  -- Per-tenant, not global. This was UNIQUE (name) while the table was
+  -- already tenant-scoped and RLS'd, which made it impossible to clone the
+  -- templates into a tenant -- the second tenant's copy collided with the
+  -- first. That is why entity.seed_tenant_lms_catalogs() never provisioned
+  -- these two and every tenant saw an empty dropdown.
+  CONSTRAINT uq_campaign_statuses_tenant_name UNIQUE (tenant_id, name)
 );
 
 -- Monorepo addition: source channel for organic / non-campaign leads
@@ -244,9 +302,12 @@ CREATE TABLE IF NOT EXISTS entity.organizations (
   pincode       TEXT,
   -- free-text city (monorepo); structured FK city below for enriched queries
   city          TEXT,
-  city_id       INTEGER  REFERENCES geo.cities(id)    ON DELETE RESTRICT,
-  state_id      SMALLINT REFERENCES geo.states(id)    ON DELETE RESTRICT,
-  country_id    SMALLINT REFERENCES geo.countries(id) ON DELETE RESTRICT,
+  -- geo.* is tenant-scoped, so these are COMPOSITE FKs on (tenant_id, x_id).
+  -- An org can only point at a place its own tenant owns — enforced here at
+  -- write time, not left to the RLS on geo.
+  city_id       UUID,
+  state_id      UUID,
+  country_id    UUID,
   timezone      TEXT    NOT NULL DEFAULT 'Asia/Kolkata',
   -- Geofence-centre coordinates used by the HR attendance module
   -- (historically added via 13_init-attendance.sql ALTER TABLE ... ADD COLUMN
@@ -261,7 +322,13 @@ CREATE TABLE IF NOT EXISTS entity.organizations (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   CONSTRAINT uq_organizations_tenant_name  UNIQUE (tenant_id, name),
-  CONSTRAINT chk_organizations_active_deleted CHECK (NOT (is_active AND is_deleted))
+  CONSTRAINT chk_organizations_active_deleted CHECK (NOT (is_active AND is_deleted)),
+  CONSTRAINT fk_organizations_city
+    FOREIGN KEY (tenant_id, city_id)    REFERENCES geo.cities    (tenant_id, id) ON DELETE RESTRICT,
+  CONSTRAINT fk_organizations_state
+    FOREIGN KEY (tenant_id, state_id)   REFERENCES geo.states    (tenant_id, id) ON DELETE RESTRICT,
+  CONSTRAINT fk_organizations_country
+    FOREIGN KEY (tenant_id, country_id) REFERENCES geo.countries (tenant_id, id) ON DELETE RESTRICT
 );
 
 -- ── DEPARTMENTS (IAM, tenant-scoped — Tier C) ─────────────────────
@@ -487,9 +554,14 @@ CREATE TABLE IF NOT EXISTS lms.marketing_leads (
   pincode          TEXT,
   -- free-text city (backwards-compatible); structured FKs below
   city             TEXT,
-  city_id          INTEGER  REFERENCES geo.cities(id)    ON DELETE RESTRICT,
-  state_id         SMALLINT REFERENCES geo.states(id)    ON DELETE RESTRICT,
-  country_id       SMALLINT REFERENCES geo.countries(id) ON DELETE RESTRICT,
+  -- geo.* is tenant-scoped, but a lead carries only org_id — its tenant is
+  -- reached through entity.organizations — so these cannot be composite FKs
+  -- the way entity.organizations' are. Same-tenant-ness is enforced by
+  -- public.check_lead_geo_tenant() in 04_functions_triggers.sql, and every
+  -- read joins geo on tenant_id as well as id.
+  city_id          UUID REFERENCES geo.cities(id)    ON DELETE RESTRICT,
+  state_id         UUID REFERENCES geo.states(id)    ON DELETE RESTRICT,
+  country_id       UUID REFERENCES geo.countries(id) ON DELETE RESTRICT,
   -- CRM state
   stage_id         UUID    REFERENCES lms.lead_stage(id)         ON DELETE RESTRICT,
   outcome_id       UUID    REFERENCES lms.lead_stage_outcome(id)  ON DELETE RESTRICT,
@@ -967,15 +1039,33 @@ CREATE TABLE IF NOT EXISTS ext.meta_capi_event_types (
 );
 
 -- ── LEAD_STAGE_CAPI_EVENT_MAP: lms.lead_stage -> Meta CAPI event fired on transition ──
--- Global mapping (no org_id), mirroring lms.lead_stage itself being a shared
--- lookup table. Joined by stage_id (UUID), never by stage name text — a stage
--- with no row here simply does not fire a CAPI event on transition.
+-- Joined by stage_id (UUID), never by stage name text — a stage with no row
+-- here simply does not fire a CAPI event on transition.
+--
+-- TENANT-SCOPED, because lms.lead_stage is: every tenant owns its own copy of
+-- the stage catalog, so this table holds one row per tenant per mapped stage.
+-- The header used to call it a "global mapping mirroring lms.lead_stage being
+-- a shared lookup" — that stopped being true when the stage catalog was
+-- cloned per tenant, and the tenant_id/RLS never followed. app_user holds
+-- SELECT/INSERT/UPDATE here (07_grants.sql), so without them one tenant could
+-- read and repoint another tenant's conversion-event wiring.
+--
+-- tenant_id IS NULL marks a platform template row, exactly as in lms.lead_stage
+-- itself; entity.seed_tenant_lms_catalogs() clones it per tenant.
+--
+-- The FK is composite on (tenant_id, stage_id): RLS scopes reads, but only the
+-- FK stops a row being written against another tenant's stage in the first
+-- place. Same reasoning as the geo tables above.
 CREATE TABLE IF NOT EXISTS ext.lead_stage_capi_event_map (
   id                 UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  stage_id           UUID        NOT NULL UNIQUE REFERENCES lms.lead_stage(id) ON DELETE CASCADE,
+  tenant_id          UUID        REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  stage_id           UUID        NOT NULL UNIQUE,
   capi_event_type_id SMALLINT    NOT NULL REFERENCES ext.meta_capi_event_types(id) ON DELETE RESTRICT,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT fk_capi_event_map_stage
+    FOREIGN KEY (tenant_id, stage_id) REFERENCES lms.lead_stage (tenant_id, id)
+    ON DELETE CASCADE
 );
 
 -- ── META_LEAD_ADDRESSES: address fields from Meta lead forms (1:1) ────

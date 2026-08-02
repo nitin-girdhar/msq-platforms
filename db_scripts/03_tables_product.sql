@@ -36,13 +36,22 @@ CREATE TABLE IF NOT EXISTS entity.tenant_modules (
 -- Managed globally (admin-service slugs); readable by every subject role.
 -- ===================================================================
 
--- employment_types / leave_types / attendance_statuses are tenant-scoped
--- (historically added via 22_tenant-scope-lookups.sql ALTER; folded directly
--- into the CREATE TABLE here). No un-scoped seed INSERT: per-tenant default
--- rows are provisioned by entity.seed_tenant_defaults() (05_catalogs.sql) at
--- tenant-creation time, not at DDL time (no tenant exists yet when this
--- script runs). hr.leave_request_statuses is explicitly NOT tenant-scoped
--- (per 22's original scope note) and keeps its global seed data.
+-- employment_types / leave_types / attendance_statuses / leave_request_statuses
+-- are tenant-scoped (the first three historically via 22_tenant-scope-lookups.sql
+-- ALTER; folded directly into the CREATE TABLE here). No un-scoped seed INSERT:
+-- per-tenant default rows are provisioned by entity.seed_tenant_defaults()
+-- (registry in reference_data/07_catalog_registry.sql) at tenant-creation time,
+-- not at DDL time — no tenant exists yet when this script runs.
+--
+-- hr.leave_request_statuses was the one exception, left global "per 22's
+-- original scope note". That made it the odd one out among four sibling HR
+-- lookups and the only one a tenant could not see listed alongside the rest.
+-- It is tenant-scoped as of 1.26.0 and provisioned through the same registry.
+--
+-- NOTE the `name` values here are a MACHINE vocabulary, not free text:
+-- lms/hr workflow logic keys on 'approved'/'pending'/'cancelled' etc. — see
+-- hr.check_leave_request_completion() in 04_functions_triggers.sql. A tenant
+-- may relabel a status; renaming or deleting one breaks leave approval.
 CREATE TABLE IF NOT EXISTS hr.employment_types (
   id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   tenant_id   UUID    NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
@@ -67,10 +76,12 @@ CREATE TABLE IF NOT EXISTS hr.leave_types (
 
 CREATE TABLE IF NOT EXISTS hr.leave_request_statuses (
   id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  name        TEXT    NOT NULL UNIQUE,
+  tenant_id   UUID    NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  name        TEXT    NOT NULL,
   label       TEXT    NOT NULL,
   description TEXT,
-  is_active   BOOLEAN NOT NULL DEFAULT TRUE
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  CONSTRAINT uq_leave_request_statuses_tenant_name UNIQUE (tenant_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS hr.attendance_statuses (

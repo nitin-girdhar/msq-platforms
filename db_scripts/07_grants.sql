@@ -96,6 +96,13 @@ GRANT SELECT ON TABLE
   geo.countries, geo.states, geo.cities
 TO tenant_admin;
 
+-- geo.* is a tenant catalog now, and tenant_admin curates it (lookup-admin →
+-- admin-service). INSERT/UPDATE only: "delete" is is_active = FALSE, because
+-- entity.organizations and lms.marketing_leads reference these rows
+-- ON DELETE RESTRICT and a place that has been used must stay resolvable.
+GRANT INSERT, UPDATE ON TABLE geo.countries, geo.states, geo.cities TO tenant_admin;
+REVOKE DELETE ON TABLE geo.countries, geo.states, geo.cities FROM tenant_admin, app_user;
+
 GRANT SELECT ON TABLE
   lms.vw_dashboard_leads, iam.vw_user_org_chart, iam.vw_user_team_members,
   lms.vw_lead_followup_timeline, lms.vw_lead_assignment_timeline,

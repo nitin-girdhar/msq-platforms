@@ -700,6 +700,17 @@ CREATE POLICY org_isolation_policy ON hr.attendance_statuses AS PERMISSIVE FOR S
 CREATE POLICY tenant_isolation_policy ON hr.attendance_statuses AS PERMISSIVE FOR SELECT TO tenant_admin
   USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
+-- Tenant-scoped as of 1.26.0 — it was the only one of the four HR lookups
+-- left global, with no tenant_id and no RLS at all.
+ALTER TABLE hr.leave_request_statuses ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.leave_request_statuses;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.leave_request_statuses;
+CREATE POLICY org_isolation_policy ON hr.leave_request_statuses AS PERMISSIVE FOR SELECT TO app_user
+  USING (tenant_id = (SELECT tenant_id FROM entity.organizations
+                      WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+CREATE POLICY tenant_isolation_policy ON hr.leave_request_statuses AS PERMISSIVE FOR SELECT TO tenant_admin
+  USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
 ALTER TABLE hr.designations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.designations FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON hr.designations;
@@ -1158,7 +1169,14 @@ CREATE POLICY admin_tenant_config_policy ON lms.roles
   USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
--- ── hr.leave_types / employment_types / attendance_statuses / roles  (hr_svc) ──
+-- ── hr.leave_types / employment_types / attendance_statuses /
+--    leave_request_statuses / roles  (hr_svc) ──
+DROP POLICY IF EXISTS admin_tenant_config_policy ON hr.leave_request_statuses;
+CREATE POLICY admin_tenant_config_policy ON hr.leave_request_statuses
+  AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
 DROP POLICY IF EXISTS admin_tenant_config_policy ON hr.leave_types;
 CREATE POLICY admin_tenant_config_policy ON hr.leave_types
   AS PERMISSIVE FOR ALL TO app_user
@@ -1231,6 +1249,76 @@ BEGIN
       WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)$p$, t);
   END LOOP;
 END $rls$;
+
+-- ── ext.lead_stage_capi_event_map — tenant-scoped CAPI wiring ─────────
+-- Had no tenant_id and no RLS at all while app_user held SELECT/INSERT/UPDATE
+-- (07_grants.sql), so every tenant could read and repoint every other
+-- tenant's stage -> Meta conversion-event mapping. It carries tenant_id as of
+-- 1.25.0 and gets the same policy set as the LMS lookups its rows hang off.
+--
+-- Template rows (tenant_id IS NULL) match no policy and stay invisible, as
+-- everywhere else.
+ALTER TABLE ext.lead_stage_capi_event_map ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy       ON ext.lead_stage_capi_event_map;
+DROP POLICY IF EXISTS tenant_isolation_policy    ON ext.lead_stage_capi_event_map;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON ext.lead_stage_capi_event_map;
+CREATE POLICY org_isolation_policy ON ext.lead_stage_capi_event_map
+  AS PERMISSIVE FOR SELECT TO app_user
+  USING (tenant_id = (SELECT tenant_id FROM entity.organizations
+                      WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+CREATE POLICY tenant_isolation_policy ON ext.lead_stage_capi_event_map
+  AS PERMISSIVE FOR SELECT TO tenant_admin
+  USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+-- The INSERT/UPDATE grant app_user already holds needs a matching write
+-- policy, or the grant is dead once RLS is on.
+CREATE POLICY admin_tenant_config_policy ON ext.lead_stage_capi_event_map
+  AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+-- ── geo.* — tenant-scoped geography catalog ───────────────────────────
+-- geo used to be global reference data with no RLS at all and a bare
+-- GRANT SELECT to every role. It is now a tenant catalog (02_tables_core.sql)
+-- and gets the same three policies as the LMS lookups above, plus a
+-- tenant_admin write policy to back the INSERT/UPDATE grant in 07_grants.sql
+-- (lookup-admin → admin-service curates a tenant's countries/states/cities).
+--
+-- Template rows (tenant_id IS NULL) match NO policy, so they are invisible to
+-- app_user and tenant_admin alike — exactly as documented in
+-- 10_tenant_provisioning.sql. entity.seed_tenant_geo() clones them.
+--
+-- ENABLE without FORCE, matching the lookup loop above: the deploy role owns
+-- these tables and has to be able to seed the templates, and
+-- entity.provision_tenant() has to be able to read them.
+DO $geo_rls$
+DECLARE
+  t TEXT;
+  tables TEXT[] := ARRAY['geo.countries', 'geo.states', 'geo.cities'];
+BEGIN
+  FOREACH t IN ARRAY tables LOOP
+    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS org_isolation_policy ON %s', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %s', t);
+    EXECUTE format('DROP POLICY IF EXISTS admin_tenant_config_policy ON %s', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_admin_write_policy ON %s', t);
+    -- Ordinary users set current_org_id, not current_tenant_id; read
+    -- visibility is derived from the current org's tenant.
+    EXECUTE format($p$CREATE POLICY org_isolation_policy ON %s AS PERMISSIVE FOR SELECT TO app_user
+      USING (tenant_id = (SELECT tenant_id FROM entity.organizations
+                          WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid))$p$, t);
+    EXECUTE format($p$CREATE POLICY tenant_isolation_policy ON %s AS PERMISSIVE FOR SELECT TO tenant_admin
+      USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)$p$, t);
+    -- super_admin curating a selected tenant via withTenantConfigTx.
+    EXECUTE format($p$CREATE POLICY admin_tenant_config_policy ON %s AS PERMISSIVE FOR ALL TO app_user
+      USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+      WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)$p$, t);
+    -- tenant_admin editing its own catalog. Unlike the LMS lookups, geo is
+    -- writable by tenant_admin directly (see 07_grants.sql).
+    EXECUTE format($p$CREATE POLICY tenant_admin_write_policy ON %s AS PERMISSIVE FOR ALL TO tenant_admin
+      USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+      WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)$p$, t);
+  END LOOP;
+END $geo_rls$;
 
 -- ── iam.departments (Tier C) — tenant-scoped, org-derived read ────────
 -- Normal users (app_user pool) set current_org_id, not current_tenant_id, so

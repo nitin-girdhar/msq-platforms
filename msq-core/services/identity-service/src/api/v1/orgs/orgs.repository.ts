@@ -3,10 +3,11 @@ import { withRoleTx, withServiceTx } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
 import { leadSourcesTable } from '@platform/db/schema';
 
+// geo.* PKs are UUID v7 now (db_scripts/02_tables_core.sql).
 export interface LocationFilter {
-  cityIds?:    number[];
-  stateIds?:   number[];
-  countryIds?: number[];
+  cityIds?:    string[];
+  stateIds?:   string[];
+  countryIds?: string[];
 }
 
 export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter) {
@@ -16,13 +17,17 @@ export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter) {
       ? sql`o.tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = ${ctx.org_id}::uuid)`
       : sql`o.id = ${ctx.org_id}::uuid`;
 
+    // Narrowest wins. The org's own tenant_id already fences these — geo is
+    // tenant-scoped and entity.organizations carries a composite
+    // (tenant_id, city_id) FK, so an id from another tenant simply matches
+    // nothing rather than leaking a row.
     let locationClause = sql``;
     if (filter.cityIds?.length) {
-      locationClause = sql`AND o.city_id = ANY(${filter.cityIds}::int[])`;
+      locationClause = sql`AND o.city_id = ANY(${filter.cityIds}::uuid[])`;
     } else if (filter.stateIds?.length) {
-      locationClause = sql`AND o.state_id = ANY(${filter.stateIds}::smallint[])`;
+      locationClause = sql`AND o.state_id = ANY(${filter.stateIds}::uuid[])`;
     } else if (filter.countryIds?.length) {
-      locationClause = sql`AND o.country_id = ANY(${filter.countryIds}::smallint[])`;
+      locationClause = sql`AND o.country_id = ANY(${filter.countryIds}::uuid[])`;
     }
 
     return (await tx.execute(sql`

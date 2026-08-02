@@ -10,9 +10,10 @@ export const createOrganizationSchema = z.object({
   address_line2: z.string().trim().optional(),
   landmark: z.string().trim().optional(),
   pincode: z.string().trim().optional(),
-  city_id: z.number().int().optional(),
-  state_id: z.number().int().optional(),
-  country_id: z.number().int().optional(),
+  // geo.* PKs are UUID v7 now (db_scripts/02_tables_core.sql), not identity ints.
+  city_id: z.string().uuid().optional(),
+  state_id: z.string().uuid().optional(),
+  country_id: z.string().uuid().optional(),
   timezone: z.string().trim().optional(),
 });
 

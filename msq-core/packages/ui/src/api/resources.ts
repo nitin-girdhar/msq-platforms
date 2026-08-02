@@ -30,7 +30,7 @@ export const orgs = {
           .map(([k, v]) => [k, String(v)]),
       ),
     ).toString();
-    return request<{ success: true; data: Array<{ id: string; name: string; org_id: string; org_name?: string; city_id?: number | null; state_id?: number | null; country_id?: number | null; cityId?: number | null; stateId?: number | null; countryId?: number | null; geoLat?: number | null; geoLng?: number | null; timezone?: string }> }>(`/orgs${qs ? `?${qs}` : ''}`);
+    return request<{ success: true; data: Array<{ id: string; name: string; org_id: string; org_name?: string; city_id?: string | null; state_id?: string | null; country_id?: string | null; cityId?: string | null; stateId?: string | null; countryId?: string | null; geoLat?: number | null; geoLng?: number | null; timezone?: string }> }>(`/orgs${qs ? `?${qs}` : ''}`);
   },
 
   all: () => request<{ success: true; data: Array<{ id: string; name: string; org_id: string }> }>('/orgs/all'),

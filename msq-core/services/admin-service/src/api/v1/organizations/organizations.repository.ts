@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { withServiceTx } from '@platform/db';
 import {
   organizationsTable,
@@ -47,9 +47,13 @@ export async function list() {
       .from(organizationsTable)
       .leftJoin(tenantsTable, eq(organizationsTable.tenantId, tenantsTable.id))
       .leftJoin(orgTypesTable, eq(organizationsTable.orgTypeId, orgTypesTable.id))
-      .leftJoin(citiesTable, eq(organizationsTable.cityId, citiesTable.id))
-      .leftJoin(statesTable, eq(organizationsTable.stateId, statesTable.id))
-      .leftJoin(countriesTable, eq(organizationsTable.countryId, countriesTable.id))
+      // geo.* is tenant-scoped and withServiceTx bypasses RLS, so each geo
+      // join is qualified on tenant_id as well as id. The composite FKs on
+      // entity.organizations already make a cross-tenant place impossible;
+      // the predicate is what keeps that true if the FK is ever dropped.
+      .leftJoin(citiesTable, and(eq(organizationsTable.cityId, citiesTable.id), eq(citiesTable.tenantId, organizationsTable.tenantId)))
+      .leftJoin(statesTable, and(eq(organizationsTable.stateId, statesTable.id), eq(statesTable.tenantId, organizationsTable.tenantId)))
+      .leftJoin(countriesTable, and(eq(organizationsTable.countryId, countriesTable.id), eq(countriesTable.tenantId, organizationsTable.tenantId)))
       .orderBy(asc(organizationsTable.name)),
   );
 }

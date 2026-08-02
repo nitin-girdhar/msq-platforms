@@ -125,15 +125,19 @@ SELECT
   (ml.scheduled_at IS NOT NULL AND ml.scheduled_at < NOW()) AS is_followup_overdue
 FROM  lms.marketing_leads     ml
 JOIN  entity.organizations        o    ON o.id    = ml.org_id
-LEFT JOIN lms.lead_stage       ls   ON ls.id   = ml.stage_id
-LEFT JOIN lms.lead_stage_outcome lso ON lso.id = ml.outcome_id
+LEFT JOIN lms.lead_stage       ls   ON ls.id   = ml.stage_id AND ls.tenant_id  = o.tenant_id
+LEFT JOIN lms.lead_stage_outcome lso ON lso.id = ml.outcome_id AND lso.tenant_id = o.tenant_id
 LEFT JOIN marketing.ad_campaigns     ac   ON ac.id   = ml.campaign_id
-LEFT JOIN marketing.marketing_platforms mp ON mp.id  = ac.platform_id
+LEFT JOIN marketing.marketing_platforms mp ON mp.id  = ac.platform_id AND mp.tenant_id  = o.tenant_id
 LEFT JOIN iam.users            u    ON u.id    = ml.assigned_user_id
-LEFT JOIN lms.lead_sources     src  ON src.id  = ml.source_id
-LEFT JOIN geo.cities           ci   ON ci.id   = ml.city_id
-LEFT JOIN geo.states           st   ON st.id   = ml.state_id
-LEFT JOIN geo.countries        co   ON co.id   = ml.country_id;
+LEFT JOIN lms.lead_sources     src  ON src.id  = ml.source_id AND src.tenant_id = o.tenant_id
+-- geo.* is tenant-scoped, and a lead reaches its tenant only through its org,
+-- so every geo join is qualified on the org's tenant_id. Belt and braces
+-- alongside the trigger check in 04_functions_triggers.sql: a view is the
+-- one place a stray row would fan out to the whole dashboard.
+LEFT JOIN geo.cities           ci   ON ci.id   = ml.city_id    AND ci.tenant_id = o.tenant_id
+LEFT JOIN geo.states           st   ON st.id   = ml.state_id   AND st.tenant_id = o.tenant_id
+LEFT JOIN geo.countries        co   ON co.id   = ml.country_id AND co.tenant_id = o.tenant_id;
 
 -- Unified lead timeline: status changes + follow-ups + interactions + assignment changes.
 CREATE OR REPLACE VIEW lms.vw_lead_followup_timeline WITH (security_invoker = true) AS
@@ -154,11 +158,14 @@ SELECT
   NULL::timestamptz   AS completed_at,
   NULL::text          AS interaction_type
 FROM lms.lead_status_log lsl
+-- Each UNION branch joins organizations for its own tenant_id: the catalog
+-- tables below are tenant-scoped and this view is read under BYPASSRLS too.
+JOIN entity.organizations        o   ON o.id   = lsl.org_id
 LEFT JOIN iam.users              cb  ON cb.id  = lsl.changed_by_id
-LEFT JOIN lms.lead_stage         os  ON os.id  = lsl.old_stage_id
-JOIN  lms.lead_stage             ns  ON ns.id  = lsl.new_stage_id
-LEFT JOIN lms.lead_stage_outcome ofr ON ofr.id = lsl.old_outcome_id
-LEFT JOIN lms.lead_stage_outcome nfr ON nfr.id = lsl.new_outcome_id
+LEFT JOIN lms.lead_stage         os  ON os.id  = lsl.old_stage_id  AND os.tenant_id  = o.tenant_id
+JOIN  lms.lead_stage             ns  ON ns.id  = lsl.new_stage_id  AND ns.tenant_id  = o.tenant_id
+LEFT JOIN lms.lead_stage_outcome ofr ON ofr.id = lsl.old_outcome_id AND ofr.tenant_id = o.tenant_id
+LEFT JOIN lms.lead_stage_outcome nfr ON nfr.id = lsl.new_outcome_id AND nfr.tenant_id = o.tenant_id
 LEFT JOIN iam.users              au  ON au.id  = lsl.assigned_user_id
 
 UNION ALL
@@ -172,7 +179,8 @@ SELECT
   u.full_name, lf.notes,
   lf.id, fs.name, lf.scheduled_at, lf.completed_at, NULL
 FROM lms.lead_follow_ups lf
-JOIN lms.follow_up_statuses fs ON fs.id = lf.status_id
+JOIN entity.organizations o ON o.id = lf.org_id
+JOIN lms.follow_up_statuses fs ON fs.id = lf.status_id AND fs.tenant_id = o.tenant_id
 JOIN iam.users u ON u.id = lf.assigned_user_id
 WHERE NOT lf.is_deleted
 
@@ -187,7 +195,8 @@ SELECT
   NULL, li.notes,
   NULL, NULL, NULL, NULL, it.name
 FROM lms.lead_interactions li
-LEFT JOIN lms.interaction_types it ON it.id = li.interaction_type_id
+JOIN entity.organizations o ON o.id = li.org_id
+LEFT JOIN lms.interaction_types it ON it.id = li.interaction_type_id AND it.tenant_id = o.tenant_id
 JOIN iam.users u ON u.id = li.user_id
 WHERE NOT li.is_deleted
 
@@ -235,10 +244,12 @@ SELECT
   u.full_name AS assigned_rep_name, u.email AS assigned_rep_email,
   fs.name AS status, lf.scheduled_at, lf.completed_at, lf.notes
 FROM lms.lead_follow_ups lf
+-- organizations first: it carries the tenant_id the catalog joins below are
+-- qualified on, and a join can only reference aliases introduced before it.
+JOIN entity.organizations       o  ON o.id   = lf.org_id
 JOIN lms.marketing_leads     ml ON ml.id  = lf.lead_id
 JOIN iam.users               u  ON u.id   = lf.assigned_user_id
-JOIN lms.follow_up_statuses  fs ON fs.id  = lf.status_id
-JOIN entity.organizations       o  ON o.id   = lf.org_id
+JOIN lms.follow_up_statuses  fs ON fs.id  = lf.status_id AND fs.tenant_id = o.tenant_id
 WHERE fs.name IN ('pending','missed');
 
 -- Enriched follow-up pipeline with overdue flag + last interaction.
@@ -256,11 +267,12 @@ SELECT
   last_ix.occurred_at AS last_interaction_at,
   last_ix.type_name   AS last_interaction_type
 FROM lms.lead_follow_ups lf
-JOIN lms.marketing_leads     ml ON ml.id  = lf.lead_id
-JOIN lms.lead_stage          ls ON ls.id  = ml.stage_id
-JOIN lms.follow_up_statuses  fs ON fs.id  = lf.status_id
-JOIN iam.users               u  ON u.id   = lf.assigned_user_id
+-- organizations first: see lms.vw_sales_follow_up_pipeline above.
 JOIN entity.organizations       o  ON o.id   = lf.org_id
+JOIN lms.marketing_leads     ml ON ml.id  = lf.lead_id
+JOIN lms.lead_stage          ls ON ls.id  = ml.stage_id AND ls.tenant_id = o.tenant_id
+JOIN lms.follow_up_statuses  fs ON fs.id  = lf.status_id AND fs.tenant_id = o.tenant_id
+JOIN iam.users               u  ON u.id   = lf.assigned_user_id
 LEFT JOIN LATERAL (
   SELECT li.occurred_at, it.name AS type_name
   FROM lms.lead_interactions li
@@ -373,8 +385,8 @@ SELECT
 FROM entity.organizations o
 JOIN entity.tenants t ON t.id = o.tenant_id
 LEFT JOIN entity.org_types ot ON ot.id = o.org_type_id
-LEFT JOIN geo.cities    ci ON ci.id = o.city_id
-LEFT JOIN geo.states    st ON st.id = o.state_id
+LEFT JOIN geo.cities    ci ON ci.id = o.city_id  AND ci.tenant_id = o.tenant_id
+LEFT JOIN geo.states    st ON st.id = o.state_id AND st.tenant_id = o.tenant_id
 LEFT JOIN org_leads ol ON ol.org_id = o.id
 LEFT JOIN org_follow_ups ofu ON ofu.org_id = o.id
 LEFT JOIN org_platform   op  ON op.org_id  = o.id
@@ -403,7 +415,11 @@ FROM iam.user_org_mapping uom
 JOIN iam.users          u  ON u.id  = uom.user_id  AND NOT u.is_deleted
 JOIN entity.organizations  o  ON o.id  = uom.org_id   AND NOT o.is_deleted
 JOIN entity.tenants        t  ON t.id  = o.tenant_id   AND NOT t.is_deleted
+-- super_admin is the ONE role that is deliberately global (tenant_id IS NULL,
+-- see 10_tenant_provisioning.sql), so a strict equality would drop every
+-- super_admin's access row. Verified: it did, 26 -> 25.
 JOIN iam.user_roles     ur ON ur.id = uom.role_id
+                          AND (ur.tenant_id = o.tenant_id OR ur.tenant_id IS NULL)
 WHERE uom.is_active;
 
 -- Ad campaigns with resolved platform and status names (for dropdowns).
@@ -423,8 +439,8 @@ SELECT
   ac.created_at
 FROM marketing.ad_campaigns      ac
 JOIN entity.organizations     o  ON o.id  = ac.org_id      AND NOT o.is_deleted
-JOIN marketing.marketing_platforms mp ON mp.id = ac.platform_id
-JOIN marketing.campaign_statuses cs ON cs.id  = ac.status_id
+JOIN marketing.marketing_platforms mp ON mp.id = ac.platform_id AND mp.tenant_id = o.tenant_id
+JOIN marketing.campaign_statuses cs ON cs.id  = ac.status_id AND cs.tenant_id = o.tenant_id
 WHERE NOT ac.is_deleted;
 
 -- Per-rep lead counts by stage (org-scoped, for analytics / leaderboard).
@@ -449,10 +465,12 @@ SELECT
        )
   END                   AS conversion_rate_pct
 FROM lms.marketing_leads ml
+-- organizations first: see lms.vw_sales_follow_up_pipeline above.
+JOIN entity.organizations  o  ON o.id  = ml.org_id
 JOIN iam.users          u  ON u.id  = ml.assigned_user_id AND NOT u.is_deleted
 JOIN iam.user_roles     ur ON ur.id = u.role_id
-JOIN entity.organizations  o  ON o.id  = ml.org_id
-JOIN lms.lead_stage     ls ON ls.id = ml.stage_id
+                          AND (ur.tenant_id = o.tenant_id OR ur.tenant_id IS NULL)  -- global super_admin
+JOIN lms.lead_stage     ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
 WHERE NOT ml.is_deleted
 GROUP BY ml.org_id, o.name, u.id, u.full_name, u.email, ur.name;
 
@@ -522,7 +540,7 @@ WITH counters AS (
   JOIN entity.organizations o ON o.id = ml.org_id
   -- LEFT, not INNER: stage_id is nullable, and an inner join would silently drop
   -- stage-less leads from total_leads and new_leads_today.
-  LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id
+  LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
   WHERE NOT ml.is_deleted AND ml.is_active
   GROUP BY ml.org_id
 )
@@ -586,7 +604,7 @@ SELECT
   CLOCK_TIMESTAMP()                        AS snapshot_at
 FROM lms.marketing_leads ml
 JOIN entity.organizations o ON o.id = ml.org_id AND NOT o.is_deleted
-LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id
+LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
 LEFT JOIN iam.users      u  ON u.id  = ml.assigned_user_id AND NOT u.is_deleted
 WHERE NOT ml.is_deleted AND ml.is_active
 GROUP BY o.tenant_id, ml.org_id, o.name, o.timezone,
@@ -616,8 +634,8 @@ SELECT
   END AS conversion_rate
 FROM marketing.ad_campaigns ac
 JOIN entity.organizations o ON o.id = ac.org_id
-JOIN marketing.marketing_platforms mp ON mp.id = ac.platform_id
-JOIN marketing.campaign_statuses cs ON cs.id = ac.status_id
+JOIN marketing.marketing_platforms mp ON mp.id = ac.platform_id AND mp.tenant_id = o.tenant_id
+JOIN marketing.campaign_statuses cs ON cs.id = ac.status_id AND cs.tenant_id = o.tenant_id
 LEFT JOIN cls ON cls.campaign_id = ac.id
 WHERE NOT ac.is_deleted;
 
@@ -639,9 +657,18 @@ FROM ext.meta_capi_event_types
 WHERE is_active = TRUE
 ORDER BY sort_order, label;
 
-CREATE OR REPLACE VIEW ext.vw_lead_stage_capi_event_map AS
+-- security_invoker: without it this view runs as its OWNER, which would hand
+-- every tenant's stage->event wiring to any caller and quietly defeat the RLS
+-- on ext.lead_stage_capi_event_map. The join to lms.lead_stage is qualified on
+-- tenant_id as well as id for the same reason the geo joins are — the
+-- composite FK already guarantees it, and the predicate keeps it true if the
+-- FK is ever dropped.
+CREATE OR REPLACE VIEW ext.vw_lead_stage_capi_event_map
+  WITH (security_invoker = true)
+AS
 SELECT
   m.id,
+  m.tenant_id,
   m.stage_id,
   ls.name  AS stage_code,
   ls.label AS stage_label,
@@ -651,7 +678,7 @@ SELECT
   m.created_at,
   m.updated_at
 FROM ext.lead_stage_capi_event_map m
-JOIN lms.lead_stage ls            ON ls.id = m.stage_id
+JOIN lms.lead_stage ls            ON ls.id = m.stage_id AND ls.tenant_id IS NOT DISTINCT FROM m.tenant_id
 JOIN ext.meta_capi_event_types et ON et.id = m.capi_event_type_id;
 
 -- ── VIEW: complete meta leads joined to lms.marketing_leads + address/professional/demographics ─
@@ -694,7 +721,10 @@ SELECT
   lt.label        AS leave_type_label,
   SUM(ll.amount)  AS balance
 FROM hr.leave_ledger ll
-JOIN hr.leave_types  lt ON lt.id = ll.leave_type_id
+-- Catalog joins are qualified on tenant_id: these views are read under
+-- BYPASSRLS service roles too, where RLS does not filter for us.
+JOIN entity.organizations o ON o.id = ll.org_id
+JOIN hr.leave_types  lt ON lt.id = ll.leave_type_id AND lt.tenant_id = o.tenant_id
 GROUP BY ll.user_id, ll.org_id, ll.leave_type_id, lt.name, lt.label;
 
 -- Requests joined with requester name, type/status labels, and latest approval.
@@ -727,8 +757,11 @@ SELECT
   lr.updated_at
 FROM hr.leave_requests lr
 JOIN iam.users                    u   ON u.id   = lr.user_id
-JOIN hr.leave_types               lt  ON lt.id  = lr.leave_type_id
-JOIN hr.leave_request_statuses    lrs ON lrs.id = lr.status_id
+-- Catalog joins are qualified on tenant_id: these views are read under
+-- BYPASSRLS service roles too, where RLS does not filter for us.
+JOIN entity.organizations         o   ON o.id  = lr.org_id
+JOIN hr.leave_types               lt  ON lt.id  = lr.leave_type_id AND lt.tenant_id  = o.tenant_id
+JOIN hr.leave_request_statuses    lrs ON lrs.id = lr.status_id     AND lrs.tenant_id = o.tenant_id
 LEFT JOIN LATERAL (
   SELECT level, approver_id, action, acted_at
   FROM hr.leave_request_approvals a
@@ -755,8 +788,11 @@ SELECT
   lr.days_count
 FROM hr.leave_requests lr
 JOIN iam.users               u   ON u.id   = lr.user_id
-JOIN hr.leave_types          lt  ON lt.id  = lr.leave_type_id
-JOIN hr.leave_request_statuses lrs ON lrs.id = lr.status_id
+-- Catalog joins are qualified on tenant_id: these views are read under
+-- BYPASSRLS service roles too, where RLS does not filter for us.
+JOIN entity.organizations    o   ON o.id  = lr.org_id
+JOIN hr.leave_types          lt  ON lt.id  = lr.leave_type_id AND lt.tenant_id  = o.tenant_id
+JOIN hr.leave_request_statuses lrs ON lrs.id = lr.status_id   AND lrs.tenant_id = o.tenant_id
 WHERE lrs.name = 'approved'
   AND NOT lr.is_deleted;
 
@@ -786,7 +822,10 @@ SELECT
   AVG(ad.worked_minutes)::numeric(10,2)                  AS avg_worked_minutes
 FROM hr.attendance_days ad
 JOIN iam.users               u  ON u.id  = ad.user_id
-JOIN hr.attendance_statuses  st ON st.id = ad.status_id
+-- Catalog joins are qualified on tenant_id: these views are read under
+-- BYPASSRLS service roles too, where RLS does not filter for us.
+JOIN entity.organizations    o  ON o.id  = ad.org_id
+JOIN hr.attendance_statuses  st ON st.id = ad.status_id AND st.tenant_id = o.tenant_id
 GROUP BY ad.org_id, ad.user_id, u.full_name, u.email, to_char(ad.work_date, 'YYYY-MM');
 
 -- Today's org attendance: active employees LEFT JOINed to their attendance_days
@@ -811,7 +850,7 @@ FROM hr.employee_profiles ep
 JOIN iam.users u ON u.id = ep.user_id
 LEFT JOIN hr.attendance_days ad
        ON ad.user_id = ep.user_id AND ad.work_date = CURRENT_DATE
-LEFT JOIN hr.attendance_statuses st ON st.id = ad.status_id
+LEFT JOIN hr.attendance_statuses st ON st.id = ad.status_id AND st.tenant_id = ep.tenant_id
 WHERE ep.is_active AND NOT ep.is_deleted;
 
 
@@ -858,8 +897,11 @@ SELECT
   t.updated_at
 FROM task.tasks t
 LEFT JOIN task.task_lists      tl ON tl.id = t.list_id
-LEFT JOIN task.task_priorities tp ON tp.id = t.priority_id
-JOIN      task.task_statuses   ts ON ts.id = t.status_id
+-- Catalog joins are qualified on tenant_id: these views are read under
+-- BYPASSRLS service roles too, where RLS does not filter for us.
+JOIN      entity.organizations o  ON o.id  = t.org_id
+LEFT JOIN task.task_priorities tp ON tp.id = t.priority_id AND tp.tenant_id = o.tenant_id
+JOIN      task.task_statuses   ts ON ts.id = t.status_id   AND ts.tenant_id = o.tenant_id
 LEFT JOIN iam.users            ua ON ua.id = t.assignee_id
 LEFT JOIN iam.users            uc ON uc.id = t.created_by
 WHERE NOT t.is_deleted;
@@ -889,7 +931,7 @@ SELECT
 FROM lms.member_roles mr
 JOIN      iam.users            u ON u.id = mr.user_id
 JOIN      entity.organizations o ON o.id = mr.org_id
-JOIN      lms.roles            r ON r.id = mr.role_id;
+JOIN      lms.roles            r ON r.id = mr.role_id AND r.tenant_id = mr.tenant_id;
 
 CREATE OR REPLACE VIEW hr.vw_member_roles WITH (security_invoker = true) AS
 SELECT
@@ -910,7 +952,7 @@ SELECT
 FROM hr.member_roles mr
 JOIN      iam.users            u ON u.id = mr.user_id
 JOIN      entity.organizations o ON o.id = mr.org_id
-JOIN      hr.roles             r ON r.id = mr.role_id;
+JOIN      hr.roles             r ON r.id = mr.role_id AND r.tenant_id = mr.tenant_id;
 
 CREATE OR REPLACE VIEW task.vw_member_roles WITH (security_invoker = true) AS
 SELECT
@@ -931,6 +973,6 @@ SELECT
 FROM task.member_roles mr
 JOIN      iam.users            u ON u.id = mr.user_id
 JOIN      entity.organizations o ON o.id = mr.org_id
-JOIN      task.roles           r ON r.id = mr.role_id;
+JOIN      task.roles           r ON r.id = mr.role_id AND r.tenant_id = mr.tenant_id;
 
 COMMIT;

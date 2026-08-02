@@ -10,4 +10,10 @@ export async function publicReadRouter(app: FastifyInstance) {
 
   app.get('/public/branches', { preHandler: [requireInternalSecret] }, ctrl.getBranches);
   app.get('/public/users',    { preHandler: [requireInternalSecret] }, ctrl.getUsers);
+
+  // Tenant presence drill-down. Backed by the tenant-scoped geo catalog
+  // (db_scripts/02_tables_core.sql), gated at the gateway on 'locations:read'.
+  app.get('/public/locations/countries', { preHandler: [requireInternalSecret] }, ctrl.getCountries);
+  app.get('/public/locations/states',    { preHandler: [requireInternalSecret] }, ctrl.getStates);
+  app.get('/public/locations/cities',    { preHandler: [requireInternalSecret] }, ctrl.getCities);
 }

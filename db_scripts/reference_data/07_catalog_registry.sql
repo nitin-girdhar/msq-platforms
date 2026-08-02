@@ -61,6 +61,18 @@ INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label,
   ('hr.employment_types', 'leave', 1, 'intern',    'Intern',    4)
 ON CONFLICT (catalog_key, version, name) DO NOTHING;
 
+-- hr.leave_request_statuses (module: leave)
+-- These `name` values are a MACHINE vocabulary — hr.check_leave_request_completion()
+-- and the approval flow key on them. A tenant may relabel; renaming breaks leave.
+INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label, sort_order) VALUES
+  ('hr.leave_request_statuses', 'leave', 1, 'draft',     'Draft',     1),
+  ('hr.leave_request_statuses', 'leave', 1, 'pending',   'Pending',   2),
+  ('hr.leave_request_statuses', 'leave', 1, 'approved',  'Approved',  3),
+  ('hr.leave_request_statuses', 'leave', 1, 'rejected',  'Rejected',  4),
+  ('hr.leave_request_statuses', 'leave', 1, 'cancelled', 'Cancelled', 5),
+  ('hr.leave_request_statuses', 'leave', 1, 'withdrawn', 'Withdrawn', 6)
+ON CONFLICT (catalog_key, version, name) DO NOTHING;
+
 -- hr.attendance_statuses (module: attendance)
 INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label, sort_order) VALUES
   ('hr.attendance_statuses', 'attendance', 1, 'present',    'Present',         1),
@@ -105,6 +117,7 @@ INSERT INTO entity.catalog_versions (catalog_key, product, modules, current_vers
   ('task.roles',             'tasks',      ARRAY['tasks'],               1),
   ('hr.leave_types',         'leave',      ARRAY['leave'],               1),
   ('hr.attendance_statuses', 'attendance', ARRAY['attendance'],          1),
+  ('hr.leave_request_statuses','leave',     ARRAY['leave'],               1),
   ('hr.employment_types',    'leave',      ARRAY['leave','attendance'],  1),
   ('hr.roles',               'leave',      ARRAY['leave','attendance'],  1),
   ('lms.roles',              'lms',        ARRAY['lms'],                 1)

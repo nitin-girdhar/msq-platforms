@@ -312,7 +312,12 @@ CREATE TRIGGER trg_00_lead_follow_ups_set_org_id
 DROP TRIGGER IF EXISTS trg_01_lead_follow_ups_set_created_by ON lms.lead_follow_ups;
 CREATE TRIGGER trg_01_lead_follow_ups_set_created_by
   BEFORE INSERT ON lms.lead_follow_ups FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
-DROP FUNCTION IF EXISTS audit.fn_detect_password_spray(INT, INT);
+-- CASCADE, like the other DROP FUNCTIONs in this file: audit.vw_password_spray_alerts
+-- depends on this one, so without it a re-run against a populated database fails
+-- (fresh installs never noticed — nothing existed to depend on it yet). The view
+-- is recreated by 05_views.sql, which runs immediately after this file in both
+-- db_deploy.ps1 and migrations/migrate.ps1.
+DROP FUNCTION IF EXISTS audit.fn_detect_password_spray(INT, INT) CASCADE;
 
 CREATE OR REPLACE FUNCTION audit.fn_detect_password_spray(
   p_window_minutes        INT DEFAULT 15,
@@ -468,12 +473,49 @@ BEGIN
         NEW.assigned_user_id, NEW.org_id;
     END IF;
   END IF;
+
+  -- geo.* is tenant-scoped (02_tables_core.sql). entity.organizations gets a
+  -- composite (tenant_id, x_id) FK for this; a lead carries only org_id, so
+  -- its tenant has to be resolved here and the three geo references checked
+  -- against it. Without this a lead could point at another tenant's city.
+  IF NEW.city_id IS NOT NULL OR NEW.state_id IS NOT NULL OR NEW.country_id IS NOT NULL THEN
+    DECLARE v_tenant_id UUID;
+    BEGIN
+      SELECT tenant_id INTO v_tenant_id FROM entity.organizations WHERE id = NEW.org_id;
+
+      IF NEW.country_id IS NOT NULL THEN
+        PERFORM 1 FROM geo.countries WHERE id = NEW.country_id AND tenant_id = v_tenant_id;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'country_id % does not belong to tenant % (org %).',
+            NEW.country_id, v_tenant_id, NEW.org_id;
+        END IF;
+      END IF;
+
+      IF NEW.state_id IS NOT NULL THEN
+        PERFORM 1 FROM geo.states WHERE id = NEW.state_id AND tenant_id = v_tenant_id;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'state_id % does not belong to tenant % (org %).',
+            NEW.state_id, v_tenant_id, NEW.org_id;
+        END IF;
+      END IF;
+
+      IF NEW.city_id IS NOT NULL THEN
+        PERFORM 1 FROM geo.cities WHERE id = NEW.city_id AND tenant_id = v_tenant_id;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'city_id % does not belong to tenant % (org %).',
+            NEW.city_id, v_tenant_id, NEW.org_id;
+        END IF;
+      END IF;
+    END;
+  END IF;
+
   RETURN NEW;
 END; $$;
 
 DROP TRIGGER IF EXISTS trg_marketing_leads_fk_scope ON lms.marketing_leads;
 CREATE TRIGGER trg_marketing_leads_fk_scope
-  BEFORE INSERT OR UPDATE OF org_id, campaign_id, assigned_user_id ON lms.marketing_leads
+  BEFORE INSERT OR UPDATE OF org_id, campaign_id, assigned_user_id, city_id, state_id, country_id
+  ON lms.marketing_leads
   FOR EACH ROW EXECUTE FUNCTION lms.check_lead_fk_org_scope();
 
 CREATE OR REPLACE FUNCTION lms.check_interaction_fk_org_scope()
@@ -1729,6 +1771,15 @@ BEGIN
 
   ELSIF p_catalog_key = 'hr.employment_types' THEN
     INSERT INTO hr.employment_types (tenant_id, name, label, description, is_active)
+    SELECT p_tenant_id, d.name, d.label, d.description, d.is_active
+    FROM entity.catalog_defaults d
+    WHERE d.catalog_key = p_catalog_key AND d.version = p_version
+    ON CONFLICT (tenant_id, name) DO UPDATE
+      SET label = EXCLUDED.label, description = EXCLUDED.description, is_active = EXCLUDED.is_active
+      WHERE p_reset;
+
+  ELSIF p_catalog_key = 'hr.leave_request_statuses' THEN
+    INSERT INTO hr.leave_request_statuses (tenant_id, name, label, description, is_active)
     SELECT p_tenant_id, d.name, d.label, d.description, d.is_active
     FROM entity.catalog_defaults d
     WHERE d.catalog_key = p_catalog_key AND d.version = p_version

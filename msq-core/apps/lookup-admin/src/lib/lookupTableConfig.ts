@@ -92,6 +92,55 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
     module: 'platform',
     fields: [...NAME_LABEL_FIELDS, DESCRIPTION_FIELD],
   },
+  // ── Geography ─────────────────────────────────────────────────────────────
+  // Each tenant curates the places it actually operates in. The rows start as
+  // a clone of the platform template (entity.seed_tenant_geo) and the tenant
+  // adds/deactivates from there — which is why these are tenantScoped and why
+  // there is no delete: removing a place is is_active = false, since branches
+  // and leads reference it ON DELETE RESTRICT.
+  //
+  // The country -> state -> city cascade uses the same fk endpoints the
+  // organizations form below does.
+  'geo-countries': {
+    slug: 'geo-countries',
+    title: 'Countries',
+    description: 'Countries this tenant operates in.',
+    module: 'platform',
+    tenantScoped: true,
+    fields: [
+      { key: 'name', label: 'Name', type: 'text', required: true },
+      { key: 'iso_code', label: 'ISO Code', type: 'text', required: true },
+      DESCRIPTION_FIELD,
+    ],
+  },
+  'geo-states': {
+    slug: 'geo-states',
+    title: 'States',
+    description: 'States/regions this tenant operates in.',
+    module: 'platform',
+    tenantScoped: true,
+    fields: [
+      { key: 'country_id', label: 'Country', type: 'fk', required: true, fk: { endpoint: 'geo-countries' } },
+      { key: 'name', label: 'Name', type: 'text', required: true },
+      { key: 'code', label: 'Code', type: 'text' },
+      DESCRIPTION_FIELD,
+    ],
+  },
+  'geo-cities': {
+    slug: 'geo-cities',
+    title: 'Cities',
+    description: 'Cities this tenant operates in. Individual branches live under Organizations.',
+    module: 'platform',
+    tenantScoped: true,
+    // No country step here: a tenant has a handful of states, so the state
+    // list is short enough to pick from directly, and adding a country_id
+    // field would put a key on the form that geo.cities has no column for.
+    fields: [
+      { key: 'state_id', label: 'State', type: 'fk', required: true, fk: { endpoint: 'geo-states' } },
+      { key: 'name', label: 'Name', type: 'text', required: true },
+      DESCRIPTION_FIELD,
+    ],
+  },
   'tenant-plan-types': {
     slug: 'tenant-plan-types',
     title: 'Tenant Plan Types',

@@ -1,4 +1,4 @@
-import { uuid, text, boolean, timestamp, jsonb, integer, smallint } from 'drizzle-orm/pg-core';
+import { uuid, text, boolean, timestamp, jsonb } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { lmsSchema } from '../pg-schemas';
 import { organizationsTable } from './organizations.table';
@@ -27,9 +27,13 @@ export const marketingLeadsTable = lmsSchema.table('marketing_leads', {
   landmark:        text('landmark'),
   pincode:         text('pincode'),
   city:            text('city'),
-  cityId:          integer('city_id').references(() => citiesTable.id, { onDelete: 'restrict' }),
-  stateId:         smallint('state_id').references(() => statesTable.id, { onDelete: 'restrict' }),
-  countryId:       smallint('country_id').references(() => countriesTable.id, { onDelete: 'restrict' }),
+  // geo.* is tenant-scoped, but a lead reaches its tenant only through its org,
+  // so these stay plain single-column FKs. Same-tenant-ness is enforced by
+  // lms.check_lead_fk_org_scope() (db_scripts/04_functions_triggers.sql), and
+  // every read joins geo on tenant_id as well as id.
+  cityId:          uuid('city_id').references(() => citiesTable.id, { onDelete: 'restrict' }),
+  stateId:         uuid('state_id').references(() => statesTable.id, { onDelete: 'restrict' }),
+  countryId:       uuid('country_id').references(() => countriesTable.id, { onDelete: 'restrict' }),
   stageId:         uuid('stage_id').references(() => leadStageTable.id, { onDelete: 'restrict' }),
   outcomeId:       uuid('outcome_id').references(() => leadStageOutcomeTable.id, { onDelete: 'restrict' }),
   outcomeComment:  text('outcome_comment'),

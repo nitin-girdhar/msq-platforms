@@ -5,6 +5,10 @@
 export const API_SCOPES = [
   'leads:write',
   'branches:read',
+  // Where a tenant operates: the country/state/city drill-down behind
+  // /public/v1/locations/*. Separate from branches:read so a partner can be
+  // given the presence map without the branch list.
+  'locations:read',
   'users:read',
   'comms:send',
   // Additive: unlocks free-form (non-template) message bodies. Granted only to

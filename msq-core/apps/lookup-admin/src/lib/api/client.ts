@@ -51,22 +51,31 @@ export const lookupAdmin = {
       },
     ),
 
-  // Cascading geo lookups backing the 'geo-select' field type
-  // (country -> state -> city), used by tenants/organizations forms.
+  // Cascading geo lookups backing the country -> state -> city fk chain on the
+  // organizations form, and the three geo lookup tables themselves.
+  //
+  // These hit admin-service's tenant-scoped /lookups/geo-* routes rather than
+  // leads-service's /locations. leads-service derives the tenant from the
+  // CALLER's org, which is wrong here: a super_admin editing tenant B's branch
+  // would have been offered tenant A's cities. The tenant is passed explicitly.
+  //
+  // Filtering to is_active happens client-side (below) rather than in the API,
+  // because these same rows have to stay listable — including the inactive
+  // ones — on the geo lookup tables' own admin pages.
   geo: {
-    countries: () =>
-      request<{ success: true; data: Array<{ id: string | number; name: string }> }>(
-        '/locations?level=geo.countries',
+    countries: (tenantId: string) =>
+      request<{ success: true; data: Array<{ id: string; name: string; is_active?: boolean }> }>(
+        `/lookups/geo-countries?tenant_id=${tenantId}`,
       ),
 
-    states: (countryId: string | number) =>
-      request<{ success: true; data: Array<{ id: string | number; name: string }> }>(
-        `/locations?level=geo.states&countryIds=${countryId}`,
+    states: (tenantId: string) =>
+      request<{ success: true; data: Array<{ id: string; name: string; country_id: string; is_active?: boolean }> }>(
+        `/lookups/geo-states?tenant_id=${tenantId}`,
       ),
 
-    cities: (stateId: string | number) =>
-      request<{ success: true; data: Array<{ id: string | number; name: string }> }>(
-        `/lookups/cities?state_id=${stateId}`,
+    cities: (tenantId: string) =>
+      request<{ success: true; data: Array<{ id: string; name: string; state_id: string; is_active?: boolean }> }>(
+        `/lookups/geo-cities?tenant_id=${tenantId}`,
       ),
   },
 };

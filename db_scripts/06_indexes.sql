@@ -12,6 +12,44 @@
 
 BEGIN;
 
+-- ── geo.* (tenant-scoped, 02_tables_core.sql) ─────────────────────────────
+-- Name uniqueness has to be a PAIR of partial indexes per rule, not one
+-- constraint: NULLs are distinct in a unique index, so a single
+-- UNIQUE (tenant_id, name) would let the platform templates
+-- (tenant_id IS NULL) duplicate freely. Same shape as iam.user_roles above.
+-- (PG 15's UNIQUE NULLS NOT DISTINCT would collapse each pair, but the
+-- platform targets PG 14+.)
+CREATE UNIQUE INDEX IF NOT EXISTS uix_geo_countries_template_name
+  ON geo.countries (name)                WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_geo_countries_template_iso
+  ON geo.countries (iso_code)            WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_geo_countries_tenant_name
+  ON geo.countries (tenant_id, name)     WHERE tenant_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_geo_countries_tenant_iso
+  ON geo.countries (tenant_id, iso_code) WHERE tenant_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uix_geo_states_template_name
+  ON geo.states (country_id, name)            WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_geo_states_tenant_name
+  ON geo.states (tenant_id, country_id, name) WHERE tenant_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uix_geo_cities_template_name
+  ON geo.cities (state_id, name)            WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_geo_cities_tenant_name
+  ON geo.cities (tenant_id, state_id, name) WHERE tenant_id IS NOT NULL;
+
+-- Cascade lookups: every dropdown query filters (tenant_id, parent_id) and
+-- most add is_active. The FK columns had no index of their own before.
+CREATE INDEX IF NOT EXISTS idx_geo_states_tenant_country
+  ON geo.states (tenant_id, country_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_geo_cities_tenant_state
+  ON geo.cities (tenant_id, state_id)   WHERE is_active;
+
+-- Reverse lookups from a place to the branches in it (public presence API).
+CREATE INDEX IF NOT EXISTS idx_organizations_city    ON entity.organizations (city_id)    WHERE city_id    IS NOT NULL AND NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_organizations_state   ON entity.organizations (state_id)   WHERE state_id   IS NOT NULL AND NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_organizations_country ON entity.organizations (country_id) WHERE country_id IS NOT NULL AND NOT is_deleted;
+
 -- One department name per (tenant, org-or-tenantwide); the zero-UUID collapses a
 -- NULL org_id so tenant-wide names collide correctly.
 CREATE UNIQUE INDEX IF NOT EXISTS uix_iam_departments_scope_name
@@ -261,6 +299,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_capi_logs_lead_event_success
 
 CREATE INDEX IF NOT EXISTS idx_lead_stage_capi_event_map_event_type
   ON ext.lead_stage_capi_event_map (capi_event_type_id);
+-- Tenant-scoped as of 1.25.0; every RLS-filtered read starts from tenant_id.
+CREATE INDEX IF NOT EXISTS idx_lead_stage_capi_event_map_tenant
+  ON ext.lead_stage_capi_event_map (tenant_id);
 
 CREATE INDEX IF NOT EXISTS idx_meta_lead_addresses_org ON ext.meta_lead_addresses (org_id);
 
@@ -482,5 +523,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_follow_up_statuses_global_name
   ON lms.follow_up_statuses (name) WHERE tenant_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uix_lead_sources_global_name
   ON lms.lead_sources (name) WHERE tenant_id IS NULL;
+-- The two marketing catalogs belong in this set too. They were missing it
+-- because until 1.26.0 they carried a plain global UNIQUE (name), which both
+-- served as the template guard and made per-tenant cloning impossible.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_marketing_platforms_global_name
+  ON marketing.marketing_platforms (name) WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_campaign_statuses_global_name
+  ON marketing.campaign_statuses (name) WHERE tenant_id IS NULL;
 
 COMMIT;

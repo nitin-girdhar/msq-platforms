@@ -96,13 +96,30 @@ BEGIN
   ON CONFLICT (tenant_id, name) DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
 
+  -- The two marketing catalogs. These were tenant-scoped and RLS'd with the
+  -- five above (08_rls.sql seeds all seven from one loop) but were never
+  -- added here — so every tenant had a policy filtering rows that had never
+  -- been cloned to them, and the platform/status dropdowns came back empty.
+  INSERT INTO marketing.marketing_platforms (tenant_id, name, label, description, is_active)
+  SELECT p_tenant_id, t.name, t.label, t.description, t.is_active
+  FROM marketing.marketing_platforms t WHERE t.tenant_id IS NULL
+  ON CONFLICT (tenant_id, name) DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
+
+  INSERT INTO marketing.campaign_statuses (tenant_id, name, label, description, is_active)
+  SELECT p_tenant_id, t.name, t.label, t.description, t.is_active
+  FROM marketing.campaign_statuses t WHERE t.tenant_id IS NULL
+  ON CONFLICT (tenant_id, name) DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
+
   -- Meta CAPI mapping: one row per tenant stage, copied from the mapping on
   -- the template stage of the same name. capi_event_types stay global.
-  INSERT INTO ext.lead_stage_capi_event_map (stage_id, capi_event_type_id)
-  SELECT ts.id, m.capi_event_type_id
+  INSERT INTO ext.lead_stage_capi_event_map (tenant_id, stage_id, capi_event_type_id)
+  SELECT p_tenant_id, ts.id, m.capi_event_type_id
   FROM ext.lead_stage_capi_event_map m
   JOIN lms.lead_stage gs ON gs.id = m.stage_id AND gs.tenant_id IS NULL
   JOIN lms.lead_stage ts ON ts.tenant_id = p_tenant_id AND ts.name = gs.name
+  WHERE m.tenant_id IS NULL
   ON CONFLICT (stage_id) DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
 
@@ -187,6 +204,60 @@ END; $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════
+-- 3b. entity.seed_tenant_geo — countries, states and cities
+--
+--    geo.* used to be global. It is now a tenant catalog (a tenant curates
+--    the places it actually operates in, and can add its own), so the
+--    template rows seeded by reference_data/01_geo.sql have to be cloned
+--    per tenant like the LMS catalogs above.
+--
+--    Order matters and the children are rejoined by NAME, not by id: the
+--    tenant's copy of a country gets a fresh uuid, so a state cloned from
+--    the template can only find its new parent through the template
+--    country's name. Same shape as seed_tenant_lms_catalogs.
+--
+--    Idempotent: every INSERT is ON CONFLICT DO NOTHING against the partial
+--    unique indexes in 06_indexes.sql, so re-running adds only what is
+--    missing and never overwrites a tenant's edits or reactivates a place
+--    the tenant has deactivated.
+-- ═══════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION entity.seed_tenant_geo(p_tenant_id UUID)
+RETURNS INT
+LANGUAGE plpgsql AS $$
+DECLARE v_rows INT := 0; v_n INT;
+BEGIN
+  INSERT INTO geo.countries (tenant_id, name, iso_code, description, is_active)
+  SELECT p_tenant_id, c.name, c.iso_code, c.description, c.is_active
+  FROM geo.countries c
+  WHERE c.tenant_id IS NULL
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
+
+  INSERT INTO geo.states (tenant_id, country_id, name, code, description, is_active)
+  SELECT p_tenant_id, tc.id, s.name, s.code, s.description, s.is_active
+  FROM geo.states s
+  JOIN geo.countries gc ON gc.id = s.country_id AND gc.tenant_id IS NULL
+  JOIN geo.countries tc ON tc.tenant_id = p_tenant_id AND tc.name = gc.name
+  WHERE s.tenant_id IS NULL
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
+
+  INSERT INTO geo.cities (tenant_id, state_id, name, description, is_active)
+  SELECT p_tenant_id, ts.id, ct.name, ct.description, ct.is_active
+  FROM geo.cities ct
+  JOIN geo.states gs ON gs.id = ct.state_id AND gs.tenant_id IS NULL
+  JOIN geo.countries gc ON gc.id = gs.country_id AND gc.tenant_id IS NULL
+  JOIN geo.countries tc ON tc.tenant_id = p_tenant_id AND tc.name = gc.name
+  JOIN geo.states ts ON ts.tenant_id = p_tenant_id AND ts.country_id = tc.id AND ts.name = gs.name
+  WHERE ct.tenant_id IS NULL
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
+
+  RETURN v_rows;
+END; $$;
+
+
+-- ═══════════════════════════════════════════════════════════════════
 -- 4. entity.provision_tenant — the single entry point
 --
 --    Entitlements first: entity.seed_tenant_defaults() only seeds catalogs
@@ -206,6 +277,7 @@ CREATE OR REPLACE FUNCTION entity.provision_tenant(
 LANGUAGE plpgsql AS $$
 DECLARE
   v_catalogs INT := 0;
+  v_geo      INT;
   v_lms      INT;
   v_rbac     INT;
   v_comms    INT;
@@ -226,12 +298,14 @@ BEGIN
   SELECT COALESCE(SUM(rows_inserted), 0) INTO v_catalogs
   FROM entity.seed_tenant_defaults(p_tenant_id);
 
+  -- Geography before everything else that could reference a place.
+  v_geo   := entity.seed_tenant_geo(p_tenant_id);
   v_lms   := entity.seed_tenant_lms_catalogs(p_tenant_id);
   v_rbac  := entity.seed_tenant_rbac(p_tenant_id);
   v_comms := entity.seed_tenant_comms_templates(p_tenant_id);
 
-  RETURN format('tenant %s provisioned: %s catalog rows, %s lms rows, %s rbac rows, %s comms templates',
-                p_tenant_id, v_catalogs, v_lms, v_rbac, v_comms);
+  RETURN format('tenant %s provisioned: %s catalog rows, %s geo rows, %s lms rows, %s rbac rows, %s comms templates',
+                p_tenant_id, v_catalogs, v_geo, v_lms, v_rbac, v_comms);
 END; $$;
 
 
@@ -240,11 +314,13 @@ END; $$;
 --    Provisioning writes across iam/lms/comms/entity, so it is a
 --    root_service operation. app_user must not be able to mint roles.
 -- ═══════════════════════════════════════════════════════════════════
+REVOKE ALL ON FUNCTION entity.seed_tenant_geo(UUID)             FROM PUBLIC;
 REVOKE ALL ON FUNCTION entity.seed_tenant_lms_catalogs(UUID)    FROM PUBLIC;
 REVOKE ALL ON FUNCTION entity.seed_tenant_rbac(UUID)            FROM PUBLIC;
 REVOKE ALL ON FUNCTION entity.seed_tenant_comms_templates(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION entity.provision_tenant(UUID, TEXT[])    FROM PUBLIC;
 
+GRANT EXECUTE ON FUNCTION entity.seed_tenant_geo(UUID)             TO root_service;
 GRANT EXECUTE ON FUNCTION entity.seed_tenant_lms_catalogs(UUID)    TO root_service;
 GRANT EXECUTE ON FUNCTION entity.seed_tenant_rbac(UUID)            TO root_service;
 GRANT EXECUTE ON FUNCTION entity.seed_tenant_comms_templates(UUID) TO root_service;

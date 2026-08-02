@@ -23,6 +23,8 @@ out/
 .env.development
 .env.production
 .env.staging
+# one-off remote DB backup credentials (see db_scripts/tools/) — never commit
+.env.remote-backup
 # keep the example committed
 !.env.example
 
@@ -109,3 +111,5 @@ DB_Migration/sql/70_fanout_triggers_on.sql
 DB_Migration/sql/75_post_fanout.sql
 DB_Migration/sql/90_verify.sql
 DB_Migration/sql/99_drop_staging.sql
+db_scripts/migrations/*
+db_backups/*

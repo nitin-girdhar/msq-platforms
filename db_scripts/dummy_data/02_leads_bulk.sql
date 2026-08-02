@@ -1,7 +1,7 @@
 
 -- ===================================================================
 -- CRM Monorepo — Bulk Demo Seed: STEP 3
--- 500 Leads per org (5,000 total across 10 orgs)
+-- 500 Leads per org (13,500 total across 27 orgs)
 --
 -- Run AFTER: init-db.sql, init-seed.sql, seed-02-entity.tenants-orgs-iam.users.sql
 -- Run BEFORE: seed-04-interactions-followups.sql
@@ -40,27 +40,30 @@ LANGUAGE sql IMMUTABLE AS $$
 $$;
 
 -- ============================================================
--- Org reference table for this script (org_seq 1-10, all orgs).
--- org_seq 1-2 use the literal UUIDs from init-seed.sql.
--- org_seq 3-10 use the _seed_uuid(seq, 0) pattern from script 2.
+-- Org reference table for this script (org_seq 1-27, all orgs).
+-- org_seq 1-2 use the literal UUIDs from script 1.
+-- org_seq 3-27 use the _seed_uuid(seq, 0) pattern from script 1.
+-- tenant_uuid is carried because geo.* is tenant-scoped: a lead's city has
+-- to come from its own tenant's catalog.
 -- ============================================================
 CREATE TEMP TABLE _lead_org_ref (
   org_seq      INT PRIMARY KEY,
   org_uuid     UUID NOT NULL,
+  tenant_uuid  UUID NOT NULL,
   tenant_label TEXT NOT NULL  -- 'fitclass' or 'msq'
 ) ON COMMIT DROP;
 
-INSERT INTO _lead_org_ref (org_seq, org_uuid, tenant_label) VALUES
-  (1,  'b1000000-0000-0000-0000-000000000001', 'fitclass'),
-  (2,  'b1000000-0000-0000-0000-000000000002', 'fitclass'),
-  (3,  _seed_uuid(3,0),  'fitclass'),
-  (4,  _seed_uuid(4,0),  'fitclass'),
-  (5,  _seed_uuid(5,0),  'fitclass'),
-  (6,  _seed_uuid(6,0),  'msq'),
-  (7,  _seed_uuid(7,0),  'msq'),
-  (8,  _seed_uuid(8,0),  'msq'),
-  (9,  _seed_uuid(9,0),  'msq'),
-  (10, _seed_uuid(10,0), 'msq');
+INSERT INTO _lead_org_ref (org_seq, org_uuid, tenant_uuid, tenant_label)
+SELECT s.org_seq,
+       CASE s.org_seq
+         WHEN 1 THEN 'b1000000-0000-0000-0000-000000000001'::UUID
+         WHEN 2 THEN 'b1000000-0000-0000-0000-000000000002'::UUID
+         ELSE _seed_uuid(s.org_seq, 0)
+       END,
+       CASE WHEN s.org_seq <= 22 THEN 'a1000000-0000-0000-0000-000000000001'::UUID
+            ELSE                      'a3000000-0000-0000-0000-000000000001'::UUID END,
+       CASE WHEN s.org_seq <= 22 THEN 'fitclass' ELSE 'msq' END
+FROM generate_series(1, 27) AS s(org_seq);
 
 -- ============================================================
 -- Reference data pools
@@ -80,13 +83,29 @@ SELECT (row_number() OVER ()) - 1, fn, ln FROM (VALUES
   ('Rohit','Sinha'),('Sanya','Kaur'),('Tushar','Oberoi'),('Urvashi','Chauhan'),('Vivaan','Kapadia')
 ) AS t(fn, ln);
 
-CREATE TEMP TABLE _city_pool (idx INT PRIMARY KEY, city_name TEXT, state_name TEXT) ON COMMIT DROP;
-INSERT INTO _city_pool (idx, city_name, state_name)
-SELECT (row_number() OVER ()) - 1, c, s FROM (VALUES
-  ('New Delhi','Delhi'),('Dwarka','Delhi'),('Rohini','Delhi'),('Lajpat Nagar','Delhi'),
-  ('Connaught Place','Delhi'),('Saket','Delhi'),('Janakpuri','Delhi'),('Noida','Uttar Pradesh'),
-  ('Gurgaon','Haryana'),('Faridabad','Haryana')
-) AS t(c, s);
+-- The place pool is read from the DB per tenant rather than hardcoded: geo.*
+-- is tenant-scoped, so a FitClass lead must land in a FitClass city and an
+-- MSquare lead in an MSquare one. Resolving ids here also means the loop
+-- below never has to look a place up by name — the old
+-- `WHERE name = v_city_name` would now match one row per tenant.
+-- Only active places, and idx restarts at 0 within each tenant.
+CREATE TEMP TABLE _city_pool (
+  tenant_uuid UUID NOT NULL,
+  idx         INT  NOT NULL,
+  city_id     UUID NOT NULL,
+  state_id    UUID NOT NULL,
+  country_id  UUID NOT NULL,
+  PRIMARY KEY (tenant_uuid, idx)
+) ON COMMIT DROP;
+
+INSERT INTO _city_pool (tenant_uuid, idx, city_id, state_id, country_id)
+SELECT c.tenant_id,
+       (row_number() OVER (PARTITION BY c.tenant_id ORDER BY c.name)) - 1,
+       c.id, s.id, co.id
+FROM geo.cities c
+JOIN geo.states    s  ON s.id  = c.state_id   AND s.tenant_id  = c.tenant_id
+JOIN geo.countries co ON co.id = s.country_id AND co.tenant_id = s.tenant_id
+WHERE c.tenant_id IS NOT NULL AND c.is_active AND s.is_active AND co.is_active;
 
 -- ============================================================
 -- MAIN LEAD GENERATOR
@@ -111,8 +130,6 @@ DECLARE
   v_first_name      TEXT;
   v_last_name       TEXT;
   v_city_idx        INT;
-  v_city_name       TEXT;
-  v_state_name      TEXT;
   v_created_at      TIMESTAMPTZ;
   v_phone           TEXT;
   v_email           TEXT;
@@ -123,17 +140,19 @@ DECLARE
   v_has_address     BOOLEAN;
   v_name_pool_sz    INT;
   v_city_pool_sz    INT;
-  v_lead_city_id    INTEGER;
-  v_lead_state_id   SMALLINT;
-  v_lead_country_id SMALLINT;
+  v_lead_city_id    UUID;
+  v_lead_state_id   UUID;
+  v_lead_country_id UUID;
 BEGIN
   SELECT COUNT(*) INTO v_name_pool_sz FROM _name_pool;
-  SELECT COUNT(*) INTO v_city_pool_sz FROM _city_pool;
 
   FOR v_org IN SELECT * FROM _lead_org_ref ORDER BY org_seq LOOP
 
     PERFORM set_config('app.current_org_id',  v_org.org_uuid::TEXT, TRUE);
     PERFORM set_config('app.current_user_id', _seed_uuid(v_org.org_seq, 1)::TEXT, TRUE);
+
+    -- Pool size is per tenant: FitClass has 5 active cities, MSquare 1.
+    SELECT COUNT(*) INTO v_city_pool_sz FROM _city_pool WHERE tenant_uuid = v_org.tenant_uuid;
 
     FOR v_i IN 1..500 LOOP
 
@@ -146,15 +165,14 @@ BEGIN
 
       -- ── Address (only ~30% of leads have a structured address,
       --     mirroring the sparse pattern in the original seed) ──
-      v_has_address := random() < 0.30;
-      v_city_idx := floor(random() * v_city_pool_sz)::INT;
-      SELECT city_name, state_name INTO v_city_name, v_state_name
-      FROM _city_pool WHERE idx = v_city_idx;
+      v_has_address := random() < 0.30 AND v_city_pool_sz > 0;
 
       IF v_has_address THEN
-        SELECT id INTO v_lead_city_id    FROM geo.cities    WHERE name = v_city_name  LIMIT 1;
-        SELECT id INTO v_lead_state_id   FROM geo.states    WHERE name = v_state_name LIMIT 1;
-        SELECT id INTO v_lead_country_id FROM geo.countries WHERE iso_code = 'IN';
+        v_city_idx := floor(random() * v_city_pool_sz)::INT;
+        SELECT city_id, state_id, country_id
+          INTO v_lead_city_id, v_lead_state_id, v_lead_country_id
+        FROM _city_pool
+        WHERE tenant_uuid = v_org.tenant_uuid AND idx = v_city_idx;
       ELSE
         v_lead_city_id    := NULL;
         v_lead_state_id   := NULL;

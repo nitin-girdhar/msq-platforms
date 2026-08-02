@@ -1,9 +1,22 @@
 import { z } from 'zod';
 
+// geo.* PKs are UUID v7 now (db_scripts/02_tables_core.sql), so these are
+// comma-separated uuids rather than ints. Non-uuid entries are dropped rather
+// than rejected, matching the previous filter(Boolean) behaviour — and it
+// matters here because the repository interpolates the result into a ::uuid[].
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const uuidCsv = z
+  .string()
+  .optional()
+  .transform((v: string | undefined) =>
+    v ? v.split(',').map((s) => s.trim()).filter((s) => UUID_RE.test(s)) : [],
+  );
+
 export const getOrgsQuerySchema = z.object({
-  cityIds:    z.string().optional().transform((v: string | undefined) => v ? v.split(',').map(Number).filter(Boolean) : []),
-  stateIds:   z.string().optional().transform((v: string | undefined) => v ? v.split(',').map(Number).filter(Boolean) : []),
-  countryIds: z.string().optional().transform((v: string | undefined) => v ? v.split(',').map(Number).filter(Boolean) : []),
+  cityIds:    uuidCsv,
+  stateIds:   uuidCsv,
+  countryIds: uuidCsv,
 });
 
 export type GetOrgsQuery = z.infer<typeof getOrgsQuerySchema>;

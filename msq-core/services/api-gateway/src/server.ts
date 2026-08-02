@@ -185,6 +185,23 @@ app.get('/public/v1/users', { preHandler: [publicApiKeyAuth('users:read')] }, as
   return proxyTo(config.identityServiceUrl, '/api/v1/public/users', req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
 });
 
+// Tenant presence: which countries/states/cities this tenant operates in.
+// Drill-down, every parameter optional at every level — /states with no
+// country_id returns all of the tenant's states. The tenant comes from the
+// verified API key, never from the request, so there is no tenant_id param.
+app.get('/public/v1/locations/countries', { preHandler: [publicApiKeyAuth('locations:read')] }, async (req, reply) => {
+  const client = req.publicClient!;
+  return proxyTo(config.identityServiceUrl, '/api/v1/public/locations/countries', req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
+});
+app.get('/public/v1/locations/states', { preHandler: [publicApiKeyAuth('locations:read')] }, async (req, reply) => {
+  const client = req.publicClient!;
+  return proxyTo(config.identityServiceUrl, '/api/v1/public/locations/states', req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
+});
+app.get('/public/v1/locations/cities', { preHandler: [publicApiKeyAuth('locations:read')] }, async (req, reply) => {
+  const client = req.publicClient!;
+  return proxyTo(config.identityServiceUrl, '/api/v1/public/locations/cities', req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
+});
+
 // Communications send. Guard enforces scope-based content gating + tenant
 // recipient allowlisting before the message is dispatched.
 app.post('/public/v1/communications/send', { preHandler: [publicApiKeyAuth('comms:send'), publicCommsGuard] }, async (req, reply) => {
@@ -373,6 +390,23 @@ app.patch('/lookups/user-roles/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.adminServiceUrl, `/api/v1/lookups/user-roles/${id}`, req, reply, req.userCtx);
 });
+
+// geo.* is a tenant catalog now (db_scripts/02_tables_core.sql), curated from
+// lookup-admin. It stays in admin-service because geo sits in the shared
+// schema set alongside entity/iam, not in a product schema.
+// No DELETE — removing a place is PATCH { is_active: false }.
+for (const level of ['geo-countries', 'geo-states', 'geo-cities'] as const) {
+  app.get(`/lookups/${level}`, { ...withAuth }, async (req, reply) => {
+    return proxyTo(config.adminServiceUrl, `/api/v1/lookups/${level}`, req, reply, req.userCtx);
+  });
+  app.post(`/lookups/${level}`, { ...withAuth }, async (req, reply) => {
+    return proxyTo(config.adminServiceUrl, `/api/v1/lookups/${level}`, req, reply, req.userCtx);
+  });
+  app.patch(`/lookups/${level}/:id`, { ...withAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return proxyTo(config.adminServiceUrl, `/api/v1/lookups/${level}/${id}`, req, reply, req.userCtx);
+  });
+}
 
 // The 7 LMS marketing lookups (lead-stage, lead-stage-outcome, interaction-types,
 // follow-up-statuses, lead-sources, marketing-platforms, campaign-statuses) are

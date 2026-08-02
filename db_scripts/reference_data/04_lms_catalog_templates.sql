@@ -114,8 +114,10 @@ ON CONFLICT (code) DO UPDATE SET
 -- comparison at request time — this join is one-time seed wiring only).
 -- Stages not listed here ('new', 'unqualified') get no row, so no CAPI
 -- event fires when a lead transitions into them.
-INSERT INTO ext.lead_stage_capi_event_map (stage_id, capi_event_type_id)
-SELECT ls.id, et.id
+-- Template rows only (tenant_id IS NULL, against the template stages) —
+-- entity.seed_tenant_lms_catalogs() clones them into each tenant.
+INSERT INTO ext.lead_stage_capi_event_map (tenant_id, stage_id, capi_event_type_id)
+SELECT NULL, ls.id, et.id
 FROM (VALUES
   ('contacting',      'Other'),
   ('on_hold',         'Other'),
@@ -123,7 +125,7 @@ FROM (VALUES
   ('converted',       'ConvertedLead'),
   ('transferred_out', 'Other')
 ) AS m(stage_name, event_code)
-JOIN lms.lead_stage ls            ON ls.name = m.stage_name
+JOIN lms.lead_stage ls            ON ls.name = m.stage_name AND ls.tenant_id IS NULL
 JOIN ext.meta_capi_event_types et ON et.code = m.event_code
 ON CONFLICT (stage_id) DO UPDATE SET
   capi_event_type_id = EXCLUDED.capi_event_type_id;

@@ -4,14 +4,14 @@ import { config } from './config/index.js';
 import { v1Router } from './api/v1/index.js';
 import { AppError } from './lib/errors.js';
 import { assertInternalServiceSecret } from '@platform/service-auth';
+import { createLoggerOptions } from '@platform/logger';
 
 const app = Fastify({
-  logger: {
-    level: config.nodeEnv === 'production' ? 'info' : 'debug',
-    ...(config.nodeEnv !== 'production'
-      ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
-      : {}),
-  },
+  logger: createLoggerOptions({
+    service: 'communication-service',
+    nodeEnv: config.nodeEnv,
+    level: config.logLevel,
+  }),
 });
 
 app.setErrorHandler((error, request, reply) => {

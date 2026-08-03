@@ -15,6 +15,7 @@ import { createRateLimiter } from './lib/rate-limit.js';
 import { publicApiKeyAuth, publicUserContext, publicScopeHeaders } from './lib/public-auth.js';
 import { publicCommsGuard } from './lib/public-comms.js';
 import { getJwks } from './lib/jwks.js';
+import { createLoggerOptions } from '@platform/logger';
 
 const app = Fastify({
   // Attendance punch photos travel as base64 in the JSON body (≤2 MB binary ≈
@@ -24,10 +25,7 @@ const app = Fastify({
   // address for every request — collapsing the per-IP rate limiters into a
   // single shared bucket. See TRUST_PROXY_HOPS in config.ts.
   ...(config.trustProxyHops > 0 ? { trustProxy: config.trustProxyHops } : {}),
-  logger: {
-    level: config.nodeEnv === 'production' ? 'info' : 'debug',
-    ...(config.nodeEnv !== 'production' ? { transport: { target: 'pino-pretty', options: { colorize: true } } } : {}),
-  },
+  logger: createLoggerOptions({ service: 'api-gateway', nodeEnv: config.nodeEnv }),
 });
 
 // Capture raw body alongside parsed JSON so proxyToRaw can forward

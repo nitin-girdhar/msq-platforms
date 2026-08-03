@@ -5,14 +5,14 @@ import { config } from './config/index.js';
 import { v1Router } from './api/v1/index.js';
 import { AppError } from './lib/errors.js';
 import { closeAllPools, startCapabilityCache } from '@platform/db';
+import { createLoggerOptions } from '@platform/logger';
 
 const app = Fastify({
-  logger: {
+  logger: createLoggerOptions({
+    service: 'identity-service',
+    nodeEnv: config.nodeEnv,
     level: config.logLevel,
-    ...(config.nodeEnv !== 'production'
-      ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
-      : {}),
-  },
+  }),
 });
 
 app.register(cookie);

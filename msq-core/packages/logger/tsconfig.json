@@ -1,0 +1,11 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  // This package EMITS to dist, so tests must be excluded or they ship inside
+  // the build output.
+  "exclude": ["src/**/*.test.ts"]
+}

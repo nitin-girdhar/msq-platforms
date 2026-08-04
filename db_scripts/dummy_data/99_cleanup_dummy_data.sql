@@ -147,7 +147,10 @@ DELETE FROM hr.attendance_events           WHERE org_id IN (SELECT id FROM _o);
 DELETE FROM hr.shift_assignments           WHERE org_id IN (SELECT id FROM _o);
 DELETE FROM hr.shift_segments              WHERE shift_id IN (SELECT id FROM hr.shifts WHERE org_id IN (SELECT id FROM _o));
 DELETE FROM hr.shifts                      WHERE org_id IN (SELECT id FROM _o);
-DELETE FROM hr.attendance_rules            WHERE org_id IN (SELECT id FROM _o);
+-- By tenant, not by org: a tenant-wide rules row has org_id NULL, so an
+-- org_id predicate would leave it behind (same reason leave_policies and
+-- hr_settings below key on tenant_id).
+DELETE FROM hr.attendance_rules            WHERE tenant_id IN (SELECT id FROM _t);
 DELETE FROM hr.leave_request_approvals     WHERE leave_request_id IN (SELECT id FROM hr.leave_requests WHERE org_id IN (SELECT id FROM _o));
 DELETE FROM hr.leave_request_status_log    WHERE request_id IN (SELECT id FROM hr.leave_requests WHERE org_id IN (SELECT id FROM _o));
 DELETE FROM hr.leave_ledger                WHERE org_id IN (SELECT id FROM _o);
@@ -156,7 +159,7 @@ DELETE FROM hr.leave_policies              WHERE tenant_id IN (SELECT id FROM _t
 DELETE FROM hr.holidays                    WHERE org_id IN (SELECT id FROM _o);
 DELETE FROM hr.holiday_calendars           WHERE org_id IN (SELECT id FROM _o);
 DELETE FROM hr.hr_settings                 WHERE tenant_id IN (SELECT id FROM _t);
-DELETE FROM hr.reporting_lines             WHERE tenant_id IN (SELECT id FROM _t);
+DELETE FROM iam.reporting_lines            WHERE tenant_id IN (SELECT id FROM _t);
 DELETE FROM hr.employee_profiles           WHERE tenant_id IN (SELECT id FROM _t);
 
 -- ============================================================

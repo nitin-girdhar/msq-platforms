@@ -123,6 +123,16 @@ export async function createUser(ctx: RoleTxContext, actorRank: number, data: Cr
     throw new ForbiddenError('You cannot grant a role higher than your own');
   }
 
+  // A manager must be an active member of the org the new user is joining.
+  // iam.check_reporting_line_membership() enforces this anyway, but catching it
+  // here turns a raw trigger exception into an answerable 400. Sharing a manager
+  // across branches is done by granting them a mapping in each branch.
+  if (data.manager_id && !(await repo.isActiveOrgMember(ctx, data.manager_id, ctx.org_id))) {
+    throw new BadRequestError(
+      'Selected manager is not an active member of this organisation. Add them to this branch first.',
+    );
+  }
+
   const temporaryPassword = generateTemporaryPassword();
   const passwordHash = await bcrypt.hash(temporaryPassword, config.bcryptRounds);
 
@@ -195,6 +205,19 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
     fields.password_changed_at = new Date();
   }
 
+  // Same membership rule as on create, checked against the org the target user
+  // actually sits in rather than the actor's current one.
+  if (data.manager_id) {
+    if (data.manager_id === targetUserId) {
+      throw new BadRequestError('A user cannot report to themselves');
+    }
+    if (!(await repo.isActiveOrgMember(targetCtx, data.manager_id, targetOrgId))) {
+      throw new BadRequestError(
+        'Selected manager is not an active member of this organisation. Add them to this branch first.',
+      );
+    }
+  }
+
   // fields may legitimately be empty (e.g. an org-only branch move below) — don't
   // treat "nothing to SET" as "user not found"; only call the generic UPDATE when
   // there's something for it to do.
@@ -204,7 +227,7 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
     // a raw 500.
     let result;
     try {
-      result = await repo.updateUser(targetCtx, targetUserId, fields);
+      result = await repo.updateUser(targetCtx, targetUserId, fields, targetOrgId);
     } catch (err) {
       throw asDuplicateUserConflict(err);
     }

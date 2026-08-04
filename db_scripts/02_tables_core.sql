@@ -502,6 +502,60 @@ CREATE TABLE IF NOT EXISTS iam.user_org_mapping (
   PRIMARY KEY (user_id, org_id)
 );
 
+-- ── iam.reporting_lines ───────────────────────────────────────────
+-- THE reporting hierarchy for the whole platform. One row = "user_id reports to
+-- manager_id, in org_id, for [effective_from, effective_to)". effective_to NULL
+-- = the currently-open line. At most one active line per user per org at any
+-- instant (exclusion constraint). A NULL manager_id is not stored — absence of a
+-- line means "no reporting line", and the leave approver resolver falls back to
+-- a deterministic org_admin/hr_admin.
+--
+-- Lives in iam, not hr: 07_grants.sql REVOKEs schema hr from lms_svc/task_svc,
+-- so a tree owned by a product schema is unreadable by the other products. LMS
+-- lead assignment, HR leave/attendance approval and Tasks team scope all resolve
+-- authority from this one table, via iam.fn_is_in_subtree (04_) and the
+-- iam.vw_user_team_members / vw_user_org_chart views (05_).
+--
+-- Effective-dated on purpose: every authority question is answerable "as of" any
+-- date, so a re-org does not rewrite history and past decisions stay auditable.
+-- Acting is checked as of today; historical reads pass the record's own date.
+--
+-- Cross-org managers are expressed through iam.user_org_mapping and nothing
+-- else: iam.check_reporting_line_membership() (04_) requires BOTH parties to
+-- hold an active mapping in org_id, so a manager shared across branches has one
+-- mapping and one line per branch, and no chain ever crosses an org boundary.
+-- iam.users.manager_id is a trigger-maintained display mirror of this table,
+-- never an authority source, and is scheduled for removal.
+CREATE TABLE IF NOT EXISTS iam.reporting_lines (
+  id             UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id      UUID    NOT NULL REFERENCES entity.tenants(id)        ON DELETE CASCADE,
+  org_id         UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE CASCADE,
+  user_id        UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE CASCADE,
+  manager_id     UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  effective_from DATE    NOT NULL DEFAULT CURRENT_DATE,
+  effective_to   DATE,
+  is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted     BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at     TIMESTAMPTZ,
+  deleted_by     UUID,
+  created_by     UUID,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_reporting_lines_active_deleted CHECK (NOT (is_active AND is_deleted)),
+  CONSTRAINT chk_reporting_lines_not_self       CHECK (user_id <> manager_id),
+  CONSTRAINT chk_reporting_lines_range          CHECK (effective_to IS NULL OR effective_to > effective_from),
+  -- No two overlapping active lines for the same user in the same org. The
+  -- half-open daterange [from, to) lets a new line start on the exact day the
+  -- previous one ends without tripping the constraint. Soft-deleted rows are
+  -- excluded so a re-org can supersede history. (btree_gist, created in 00_,
+  -- is what allows mixing the equality columns with the range overlap.)
+  CONSTRAINT excl_reporting_lines_overlap EXCLUDE USING gist (
+    org_id  WITH =,
+    user_id WITH =,
+    daterange(effective_from, effective_to, '[)') WITH &&
+  ) WHERE (NOT is_deleted)
+);
+
 -- ── AD_CAMPAIGNS ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS marketing.ad_campaigns (
   id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),

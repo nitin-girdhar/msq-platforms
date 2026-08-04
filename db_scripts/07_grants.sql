@@ -79,6 +79,22 @@ TO app_user;
 
 GRANT EXECUTE ON FUNCTION iam.can_assign_to(UUID,UUID,UUID) TO app_user;
 
+-- ── iam.reporting_lines (the platform hierarchy) ──────────────────
+-- Reads are open to every subject role (RLS narrows them to the current org).
+-- Writes are org_admin+/tenant_admin acts, gated by RLS rather than by GRANT,
+-- so identity-service can re-org on the user's behalf under their own identity.
+GRANT SELECT, INSERT, UPDATE ON iam.reporting_lines TO app_user;
+REVOKE DELETE                ON iam.reporting_lines FROM app_user;
+GRANT SELECT, INSERT, UPDATE ON iam.reporting_lines TO tenant_admin;
+REVOKE DELETE                ON iam.reporting_lines FROM tenant_admin;
+GRANT ALL PRIVILEGES         ON iam.reporting_lines TO root_service;
+
+-- The three hierarchy functions are the single authority primitive for all
+-- three products, so every login that answers "is X under me?" can call them.
+GRANT EXECUTE ON FUNCTION iam.fn_is_in_subtree(UUID,UUID,DATE)  TO app_user, tenant_admin;
+GRANT EXECUTE ON FUNCTION iam.fn_subtree_members(UUID,DATE)     TO app_user, tenant_admin;
+GRANT EXECUTE ON FUNCTION iam.fn_manager_chain(UUID,DATE)       TO app_user, tenant_admin;
+
 -- tenant_admin: cross-org DML
 GRANT SELECT, INSERT, UPDATE ON TABLE
   iam.users, marketing.ad_campaigns, lms.marketing_leads, lms.lead_interactions, lms.lead_follow_ups TO tenant_admin;
@@ -323,6 +339,11 @@ GRANT SELECT, INSERT, UPDATE ON hr.leave_request_approvals TO tenant_admin;
 REVOKE DELETE                ON hr.leave_request_approvals FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON hr.leave_request_approvals TO root_service;
 
+GRANT SELECT, INSERT, UPDATE ON hr.attendance_regularization_approvals TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.attendance_regularization_approvals TO tenant_admin;
+REVOKE DELETE                ON hr.attendance_regularization_approvals FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.attendance_regularization_approvals TO root_service;
+
 GRANT EXECUTE ON FUNCTION hr.can_approve_leave(UUID,UUID,UUID) TO app_user, tenant_admin;
 
 GRANT SELECT ON hr.vw_leave_balances, hr.vw_leave_requests_enriched, hr.vw_team_leave_calendar
@@ -367,15 +388,6 @@ GRANT EXECUTE ON FUNCTION hr.can_approve(UUID,UUID,UUID) TO app_user, tenant_adm
 
 GRANT SELECT ON hr.vw_attendance_monthly_summary, hr.vw_org_attendance_today
   TO app_user, tenant_admin, root_service;
-
-GRANT SELECT                 ON hr.reporting_lines TO app_user;
-REVOKE INSERT, UPDATE, DELETE ON hr.reporting_lines FROM app_user;
-GRANT SELECT, INSERT, UPDATE ON hr.reporting_lines TO tenant_admin;
-REVOKE DELETE                ON hr.reporting_lines FROM tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.reporting_lines TO root_service;
--- hr_svc (the HR product login) reads the tree to resolve approvers and writes
--- it when HR admins re-org. It connects under RLS, so isolation still holds.
-GRANT SELECT, INSERT, UPDATE ON hr.reporting_lines TO hr_svc;
 
 -- ── Lookup grants ──────────────────────────────────────────────────
 GRANT SELECT         ON task.task_statuses, task.task_priorities TO app_user;
@@ -492,6 +504,16 @@ GRANT SELECT ON ALL TABLES IN SCHEMA comms       TO lms_svc, hr_svc, task_svc;
 GRANT SELECT, INSERT, UPDATE ON TABLE iam.users, iam.user_org_mapping
   TO lms_svc, hr_svc, task_svc;
 
+-- iam.reporting_lines is a third exception to the read-only rule: hr-service
+-- writes it when HR admins re-org. All three logins read it (the blanket iam
+-- SELECT above already covers that) because all three resolve authority from it.
+-- They connect under RLS, so the org_admin+ write policy still applies.
+GRANT SELECT, INSERT, UPDATE ON TABLE iam.reporting_lines TO hr_svc;
+
+GRANT EXECUTE ON FUNCTION iam.fn_is_in_subtree(UUID,UUID,DATE)  TO lms_svc, hr_svc, task_svc;
+GRANT EXECUTE ON FUNCTION iam.fn_subtree_members(UUID,DATE)     TO lms_svc, hr_svc, task_svc;
+GRANT EXECUTE ON FUNCTION iam.fn_manager_chain(UUID,DATE)       TO lms_svc, hr_svc, task_svc;
+
 ALTER DEFAULT PRIVILEGES IN SCHEMA geo    GRANT SELECT ON TABLES TO lms_svc, hr_svc, task_svc;
 ALTER DEFAULT PRIVILEGES IN SCHEMA entity GRANT SELECT ON TABLES TO lms_svc, hr_svc, task_svc;
 ALTER DEFAULT PRIVILEGES IN SCHEMA iam    GRANT SELECT ON TABLES TO lms_svc, hr_svc, task_svc;
@@ -543,7 +565,8 @@ GRANT SELECT         ON TABLE hr.employment_types, hr.leave_types, hr.leave_requ
 GRANT SELECT, INSERT, UPDATE ON TABLE hr.designations, hr.employee_profiles TO hr_svc;
 GRANT SELECT, INSERT, UPDATE ON TABLE hr.holiday_calendars, hr.holidays TO hr_svc;
 GRANT SELECT                 ON TABLE hr.leave_policies, hr.hr_settings TO hr_svc;
-GRANT SELECT, INSERT, UPDATE ON TABLE hr.leave_requests, hr.leave_request_approvals TO hr_svc;
+GRANT SELECT, INSERT, UPDATE ON TABLE hr.leave_requests, hr.leave_request_approvals,
+  hr.attendance_regularization_approvals TO hr_svc;
 GRANT SELECT                 ON TABLE hr.leave_request_status_log, hr.leave_ledger TO hr_svc;
 -- hr.shift_segments must be named explicitly, exactly like hr.shifts: the
 -- ALTER DEFAULT PRIVILEGES below only affects tables created AFTER it runs, and

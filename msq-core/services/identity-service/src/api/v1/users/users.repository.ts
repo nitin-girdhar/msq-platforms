@@ -1,6 +1,6 @@
 import { sql, eq, and, desc } from 'drizzle-orm';
 import { withRoleTx, withServiceTx } from '@platform/db';
-import type { RoleTxContext } from '@platform/db';
+import type { RoleTxContext, DrizzleTx } from '@platform/db';
 import {
   usersTable,
   userRolesTable,
@@ -263,6 +263,87 @@ export async function resolveRoleByName(roleName: string, orgId: string) {
   });
 }
 
+// Supersede a user's reporting line in one org, effective today.
+//
+// iam.users.manager_id is only a display mirror now (a DB trigger keeps it in
+// step), so setting a manager means opening a row in iam.reporting_lines and
+// closing whatever was open before. Closing rather than overwriting is the whole
+// point of the table: "who did this person report to in March" stays answerable
+// after a re-org, which is what iam.fn_is_in_subtree(mgr, member, as_of) reads.
+//
+// Must run in the same transaction as the caller so the close and the open are
+// never visible apart — excl_reporting_lines_overlap would reject the new row if
+// the old one were still open, and a crash between them would leave the user
+// with no manager at all.
+//
+// Two changes on the same day would produce a zero-width [d, d) range, which
+// chk_reporting_lines_range rejects; a line opened today is therefore superseded
+// in place (soft-deleted) rather than closed. The day's earlier manager is not
+// preserved — same-day churn is correction, not history.
+//
+// The caller must have already ensured both parties hold an active
+// iam.user_org_mapping row in orgId; iam.check_reporting_line_membership()
+// enforces it regardless, but a service-layer check gives a better error.
+async function setReportingLine(
+  tx: DrizzleTx,
+  opts: { userId: string; orgId: string; managerId: string | null; actorId?: string | undefined },
+): Promise<void> {
+  const { userId, orgId, managerId, actorId } = opts;
+
+  await tx.execute(sql`
+    UPDATE iam.reporting_lines
+       SET is_deleted = TRUE, is_active = FALSE,
+           deleted_at = CLOCK_TIMESTAMP(),
+           deleted_by = ${actorId ?? null}
+     WHERE user_id = ${userId}::uuid AND org_id = ${orgId}::uuid
+       AND NOT is_deleted AND effective_to IS NULL
+       AND effective_from >= CURRENT_DATE
+  `);
+
+  await tx.execute(sql`
+    UPDATE iam.reporting_lines
+       SET effective_to = CURRENT_DATE
+     WHERE user_id = ${userId}::uuid AND org_id = ${orgId}::uuid
+       AND NOT is_deleted AND effective_to IS NULL
+       AND effective_from < CURRENT_DATE
+  `);
+
+  if (!managerId) return;
+
+  // tenant_id is derived rather than passed: the org already knows its tenant,
+  // and deriving it here means a caller cannot open a line into the wrong one.
+  await tx.execute(sql`
+    INSERT INTO iam.reporting_lines (tenant_id, org_id, user_id, manager_id, effective_from)
+    SELECT o.tenant_id, ${orgId}::uuid, ${userId}::uuid, ${managerId}::uuid, CURRENT_DATE
+    FROM entity.organizations o
+    WHERE o.id = ${orgId}::uuid
+  `);
+}
+
+// True when the user is an active member of the org — the precondition
+// iam.check_reporting_line_membership() enforces at the DB level. Checked in the
+// service layer too so the API can answer with a clean 400 rather than leaking a
+// trigger exception.
+export async function isActiveOrgMember(
+  ctx: RoleTxContext,
+  userId: string,
+  orgId: string,
+): Promise<boolean> {
+  return withRoleTx(ctx, async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT 1
+      FROM iam.user_org_mapping uom
+      JOIN iam.users u ON u.id = uom.user_id
+      WHERE uom.user_id = ${userId}::uuid
+        AND uom.org_id  = ${orgId}::uuid
+        AND uom.is_active
+        AND u.is_active AND NOT u.is_deleted
+      LIMIT 1
+    `)) as Array<unknown>;
+    return rows.length > 0;
+  });
+}
+
 export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
   return withRoleTx(ctx, async (tx) => {
     const [roleRow] = await roleIdByNameForOrg(tx, data.role_name, ctx.org_id);
@@ -300,7 +381,9 @@ export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
         ${data.email},
         ${data.mobile ?? null},
         ${roleId}::uuid,
-        ${data.manager_id ? sql`${data.manager_id}::uuid` : sql`NULL`},
+        -- manager_id is left NULL here on purpose: the reporting line written
+        -- below is the real record, and its trigger mirrors the value back.
+        NULL,
         ${data.password_hash},
         CLOCK_TIMESTAMP(),
         TRUE,
@@ -321,6 +404,17 @@ export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
         target: [userOrgMappingTable.userId, userOrgMappingTable.orgId],
         set: { roleId, isActive: true, updatedAt: new Date() },
       });
+
+    // After the mapping, never before: iam.check_reporting_line_membership()
+    // requires the new user to be an active member of the org.
+    if (data.manager_id) {
+      await setReportingLine(tx, {
+        userId:    created.id,
+        orgId:     ctx.org_id,
+        managerId: data.manager_id,
+        actorId:   ctx.user_id,
+      });
+    }
 
     return created;
   });
@@ -345,6 +439,10 @@ export async function updateUser(
   ctx: RoleTxContext,
   targetUserId: string,
   fields: UpdateUserFields,
+  // The org whose reporting line a manager change applies to. A user can report
+  // to different managers in different orgs, so "set their manager" is only
+  // meaningful against a specific one; the service passes the target user's org.
+  reportingOrgId?: string,
 ) {
   return withRoleTx(ctx, async (tx) => {
     const chunks: ReturnType<typeof sql>[] = [];
@@ -356,12 +454,29 @@ export async function updateUser(
     if (fields.mobile !== undefined)              chunks.push(sql`mobile = ${fields.mobile}`);
     if (fields.is_active !== undefined)           chunks.push(sql`is_active = ${fields.is_active}`);
     if (fields.force_password_change !== undefined) chunks.push(sql`force_password_change = ${fields.force_password_change}`);
-    if (fields.manager_id !== undefined)          chunks.push(sql`manager_id = ${fields.manager_id}`);
     if (fields.role_id !== undefined)             chunks.push(sql`role_id = ${fields.role_id}::uuid`);
     if (fields.password_hash !== undefined)       chunks.push(sql`password_hash = ${fields.password_hash}`);
     if (fields.password_changed_at !== undefined) chunks.push(sql`password_changed_at = ${fields.password_changed_at.toISOString()}::timestamptz`);
 
-    if (chunks.length === 0) return null;
+    // manager_id is deliberately NOT in the SET list: it is a mirror of
+    // iam.reporting_lines, and writing it directly would put the two out of step
+    // until the next line change. Supersede the line instead and let the trigger
+    // update the column.
+    if (fields.manager_id !== undefined && reportingOrgId) {
+      await setReportingLine(tx, {
+        userId:    targetUserId,
+        orgId:     reportingOrgId,
+        managerId: fields.manager_id,
+        actorId:   ctx.user_id,
+      });
+    }
+
+    if (chunks.length === 0) {
+      // A manager-only change still succeeded — report the user as updated
+      // rather than the "nothing to do" null the caller treats as a 404.
+      if (fields.manager_id !== undefined && reportingOrgId) return { id: targetUserId };
+      return null;
+    }
 
     const setClause = sql.join(chunks, sql`, `);
     // super_admin manages users across every org/tenant, so it runs on the

@@ -30,6 +30,12 @@ export const usersTable = iamSchema.table('users', {
   photoUploadedAt:     timestamp('photo_uploaded_at', { withTimezone: true }),
   photoUploadedBy:     uuid('photo_uploaded_by'),
   photoConsentAt:      timestamp('photo_consent_at', { withTimezone: true }),
+  // DEPRECATED display mirror of iam.reporting_lines, maintained by the
+  // iam.sync_user_manager_mirror trigger — home-org line first, then the most
+  // recently effective one. NEVER read this for authority: a user may report to
+  // different managers in different orgs and this column can only hold one of
+  // them. Use iam.fn_is_in_subtree / the vw_user_team_members view instead.
+  // Scheduled for removal once the UI stops displaying it.
   managerId:           uuid('manager_id').references((): any => usersTable.id, { onDelete: 'set null' }),
   isActive:            boolean('is_active').notNull().default(true),
   isDeleted:           boolean('is_deleted').notNull().default(false),

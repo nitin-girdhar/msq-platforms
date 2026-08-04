@@ -142,7 +142,7 @@
 | `marketing` | Ad campaigns, platforms, statuses                |
 | `audit`     | Audit logs, lead history, activity log           |
 | `ext`       | External integrations (Meta Lead Ads / CAPI)     |
-| `hr`        | Employee profiles, leave, attendance, effective-dated reporting lines (`reporting_lines`) |
+| `hr`        | Employee profiles, leave, attendance |
 | `task`      | To-do lists, tasks, comments                     |
 
 ---
@@ -433,7 +433,7 @@ User accounts. `full_name` is a GENERATED STORED column.
 | password_hash         | TEXT        | NOT NULL                                   |
 | role_id               | UUID        | NOT NULL, FK → iam.user_roles(id)          |
 | platform_role         | TEXT        | CHECK IN (`super_admin`,`tenant_admin`,`org_admin`,`member`); nullable until Phase E (P1.1). Coarse cross-product role that survives in the shrunk JWT; drives PG-role selection + platform-wide capability only. |
-| manager_id            | UUID        | FK → iam.users(id), self-referential       |
+| manager_id            | UUID        | DEPRECATED display mirror of iam.reporting_lines — never an authority source |
 | is_active             | BOOLEAN     | NOT NULL, DEFAULT TRUE                     |
 | is_deleted            | BOOLEAN     | NOT NULL, DEFAULT FALSE                    |
 | deleted_at            | TIMESTAMPTZ |                                            |
@@ -472,16 +472,24 @@ Multi-org access control. Source of truth for which orgs a user can access.
 
 ---
 
-### hr.reporting_lines
+### iam.reporting_lines
 
-Effective-dated HR managerial hierarchy (P2.1, `21_init-reporting-lines.sql`) — the **sole**
-source of truth for the leave/attendance approval chain
-(`resolveApprovers`/`buildApproverChain` in `services/hr-service/.../resolve-approvers.ts`).
-Deliberately **decoupled** from the LMS assignment hierarchy: `iam.users.manager_id` /
-`iam.vw_user_team_members` drive lead auto-assignment and the LMS "Assigned To" subtree
-(`can_assign_to`), and are never read on the HR approval path. `manager_id` only backfills the
-initial `reporting_lines` rows once, then is an optional default — re-orging HR reporting or
-reassigning LMS leads cannot affect the other tree. See P2.2 tests proving this independence.
+Effective-dated managerial hierarchy — the **single** source of truth for the whole platform
+(P4, `1.27.0`). LMS lead assignment (`iam.can_assign_to`), HR leave/attendance approval
+(`hr.can_approve_leave`, `resolveApprovers`/`buildApproverChain`) and Tasks team scope
+(`isManagerOf`) all resolve from this one table, so "who is on my team" has one answer in every
+product.
+
+Was `hr.reporting_lines` until `1.27.0`, and only HR could read it — `07_grants.sql` REVOKEs each
+product schema from the other products' logins, so a hierarchy owned by `hr` is unreadable by LMS
+and Tasks by construction. It moved to `iam` (the shared tier) and absorbed the second tree,
+`iam.users.manager_id`, which is now only a display mirror of this table.
+
+Query it through the three functions rather than directly — each takes an **as-of date**, so any
+authority question is answerable for any past date:
+`iam.fn_is_in_subtree(manager, member, as_of)` (the authority primitive),
+`iam.fn_subtree_members(manager, as_of)`, `iam.fn_manager_chain(user, as_of)`.
+`iam.vw_user_team_members` / `iam.vw_user_org_chart` are `as_of = CURRENT_DATE` wrappers over them.
 
 | Column         | Type        | Constraints                                                    |
 | -------------- | ----------- | --------------------------------------------------------------- |
@@ -496,9 +504,24 @@ reassigning LMS leads cannot affect the other tree. See P2.2 tests proving this 
 | is_deleted     | BOOLEAN     | NOT NULL, DEFAULT FALSE                                          |
 
 **Constraints:** `user_id <> manager_id`; `EXCLUDE USING gist (org_id WITH =, user_id WITH =, daterange(effective_from, effective_to, '[)') WITH &&) WHERE (NOT is_deleted)` — at most one active line per user per org at any instant.  
-**RLS:** `app_user` reads (SELECT-only) rows in `app.current_org_id`; `tenant_admin` reads/writes (no delete) within `app.current_tenant_id`; `hr_svc` reads/writes under RLS; `root_service` full access.  
-**Triggers:** `set_updated_at`, `soft_delete_row`, `set_org_id`, `set_created_by`, audit on UPDATE/DELETE  
-**Backfill:** one open-ended row per user with a non-null `manager_id`, idempotent (`NOT EXISTS` guard). Users without a line resolve via the approver resolver's deterministic `org_admin`/`hr_admin` fallback, not an inferred manager.
+**RLS:** `app_user` reads (SELECT-only) rows in `app.current_org_id` and writes at rank ≥ 980 (mirrors `org_admin_manage_policy` on `iam.user_org_mapping`); `tenant_admin` reads/writes (no delete) within `app.current_tenant_id`; `hr_svc` reads/writes under RLS; `root_service` full access.  
+**Triggers:** `set_org_id`, `set_created_by`, `check_reporting_line_membership`, `check_reporting_line_no_cycle`, `set_updated_at`, `soft_delete_row`, `sync_user_manager_mirror`, audit on UPDATE/DELETE. Plus `trg_user_org_mapping_close_lines` on `iam.user_org_mapping`.
+
+**Cross-org managers** are granted through `iam.user_org_mapping` and nothing else.
+`iam.check_reporting_line_membership()` requires **both** parties to hold an active mapping in the
+line's `org_id`, so a manager shared across branches has one mapping and one line *per branch* and
+no chain ever crosses an org boundary — which is what keeps the org-scoped RLS policy from
+truncating a chain halfway. The guard skips closed and soft-deleted rows so that history stays
+writable and revoking a mapping cannot deadlock against it.
+
+**Revoking a mapping** closes every open line in that org where the departing user is manager or
+report (`iam.close_reporting_lines_on_mapping_revoke()`). Orphaned reports are left line-less —
+falling back to the deterministic `org_admin`/`hr_admin` approver — rather than silently
+reparented onto the departing manager's own manager.
+
+**`iam.users.manager_id`** is a deprecated single-valued display mirror of this table, maintained
+by `sync_user_manager_mirror` (home-org line first, then most recently effective). Never read it
+for authority.
 
 ---
 
@@ -1283,8 +1306,8 @@ Schema migration tracking.
 | `lms.vw_org_performance_snapshot`            | lms       | yes              | Per-org KPIs for analytics                                 |
 | `lms.vw_tenant_full_dashboard`               | lms       | yes              | Cross-org tenant KPIs by stage                             |
 | `lms.vw_rep_performance`                     | lms       | yes              | Per-rep lead counts by stage (leaderboard)                 |
-| `iam.vw_user_org_chart`                      | iam       | yes              | Recursive org chart with depth + breadcrumb path           |
-| `iam.vw_user_team_members`                   | iam       | yes              | Recursive subtree membership for hierarchy authority       |
+| `iam.vw_user_org_chart`                      | iam       | yes              | Recursive org chart with depth + breadcrumb path, as of today (over iam.reporting_lines) |
+| `iam.vw_user_team_members`                   | iam       | yes              | Recursive subtree membership as of today; wraps iam.fn_subtree_members |
 | `iam.vw_user_org_access`                     | iam       | yes              | Active org-user mappings with role context                 |
 | `marketing.vw_campaign_lookup`               | marketing | yes              | Campaigns with resolved platform/status                    |
 | `marketing.vw_tenant_campaign_summary`       | marketing | yes              | Campaign performance by tenant                             |
@@ -1304,8 +1327,12 @@ Schema migration tracking.
 | `trg_lead_assignment_log`        | lms.marketing_leads       | AFTER UPDATE             | Logs assignment changes to lms.lead_assignment_log                 |
 | `trg_lead_stage_log`             | lms.marketing_leads       | AFTER INSERT/UPDATE      | Logs stage transitions to lms.lead_status_log                      |
 | `trg_marketing_leads_audit`      | lms.marketing_leads       | AFTER UPDATE/DELETE      | Field-level diff → audit.marketing_leads_history                   |
-| `trg_user_hierarchy_no_cycle`    | iam.users                 | INSERT/UPDATE            | Prevents circular manager chains (LMS/org tree — independent of hr.reporting_lines) |
-| `excl_reporting_lines_overlap`   | hr.reporting_lines        | INSERT/UPDATE (exclusion)| Prevents overlapping active reporting lines for the same user/org  |
+| `trg_user_hierarchy_no_cycle`    | iam.users                 | INSERT/UPDATE            | Prevents circular chains in the deprecated manager_id mirror |
+| `excl_reporting_lines_overlap`   | iam.reporting_lines       | INSERT/UPDATE (exclusion)| Prevents overlapping active reporting lines for the same user/org  |
+| `trg_02_reporting_lines_membership` | iam.reporting_lines    | INSERT/UPDATE            | Both parties must hold an active iam.user_org_mapping row in the line's org |
+| `trg_03_reporting_lines_no_cycle`   | iam.reporting_lines    | INSERT/UPDATE            | Rejects a cycle at write time rather than truncating every read |
+| `trg_reporting_lines_mirror`        | iam.reporting_lines    | INSERT/UPDATE            | Syncs the deprecated iam.users.manager_id display mirror |
+| `trg_user_org_mapping_close_lines`  | iam.user_org_mapping   | UPDATE OF is_active / DELETE | Closes that org's open reporting lines when a mapping is revoked |
 | `trg_follow_ups_default_status`  | lms.lead_follow_ups       | BEFORE INSERT            | Sets status to 'pending' when not supplied                         |
 | `trg_follow_ups_sync_status`     | lms.lead_follow_ups       | BEFORE UPDATE            | Auto-transitions status when completed_at is set/cleared           |
 | `trg_auto_grant_*`              | entity.organizations / iam.user_org_mapping | AFTER INSERT | Auto-grants tenant_admin access to all orgs in tenant |
@@ -1322,6 +1349,9 @@ Schema migration tracking.
 | `public.set_created_by()`                | public | Trigger: auto-populates `created_by` from session GUC  |
 | `public.set_org_id()`                    | public | Trigger: auto-populates `org_id` from session GUC      |
 | `iam.can_assign_to(UUID,UUID,UUID)`      | iam    | Checks if acting user has authority to assign to target |
+| `iam.fn_is_in_subtree(UUID,UUID,DATE)`   | iam    | THE authority primitive — is member under manager, as of a date |
+| `iam.fn_subtree_members(UUID,DATE)`      | iam    | Everyone below a manager at any depth, as of a date     |
+| `iam.fn_manager_chain(UUID,DATE)`        | iam    | Everyone above a user, nearest first, as of a date      |
 | `iam.fn_user_active_orgs(UUID)`          | iam    | Returns array of org UUIDs a user has active access to  |
 | `iam.fn_org_active_users(UUID)`          | iam    | Returns array of user UUIDs with active access to org   |
 | `iam.fn_user_org_rank(UUID,UUID)`        | iam    | Returns user's role rank in a specific org              |

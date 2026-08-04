@@ -301,18 +301,38 @@ platform tiers. Rank is resolved **from the DB per request** (see JWT & auth abo
 
 Cross-org / tenant-wide capabilities (e.g. Leads History "tenant"/"all" scope, moving a user's branch, tenant leave-admin) are **platform** concerns keyed on `platform_role` (`tenant_admin`/`super_admin`), not a product rank — a product rank tops out per-org at its admin tier (80) and cannot express "sees every org in the tenant".
 
-`can_assign_to(org_id, acting_user_id, target_user_id)` is a PostgreSQL function (3-param, SECURITY DEFINER). Managers and senior roles may assign within their subtree via `vw_user_team_members`; admins and tenant_admins may assign within/across their org/tenant.
+`can_assign_to(org_id, acting_user_id, target_user_id)` is a PostgreSQL function (3-param, SECURITY DEFINER). Admins and tenant_admins may assign within/across their org/tenant; everyone else may assign within their own subtree, resolved by `iam.fn_is_in_subtree` (see below).
 
-## Hierarchy decoupling (P2.1/P2.2)
+## The single reporting hierarchy (P4, `1.27.0`)
 
-The LMS assignment tree and the HR approval tree are two independent hierarchies, each with its own source of truth:
+**`iam.reporting_lines` is the one hierarchy.** LMS lead assignment, HR leave/attendance approval and Tasks team scope all resolve authority from the same table, so "who is on my team" has one answer everywhere. It replaced two trees that disagreed: `iam.users.manager_id` (LMS + Tasks) and `hr.reporting_lines` (HR approvals only).
 
-| Hierarchy | Source of truth | Drives | Never reads |
-|---|---|---|---|
-| LMS assignment | `iam.users.manager_id` / `iam.vw_user_team_members` | Lead auto-assignment, `can_assign_to`, the "Assigned To" subtree picker | `hr.reporting_lines` |
-| HR approval | `hr.reporting_lines` (effective-dated, tenant/org-scoped, RLS) | Leave/attendance approver chains (`resolveApprovers`/`buildApproverChain` in `services/hr-service/.../resolve-approvers.ts`) | `iam.users.manager_id`, `iam.vw_user_team_members` |
+It lives in `iam` rather than a product schema because `07_grants.sql` REVOKEs each product schema from the other products' logins — a tree owned by `hr` is unreadable by LMS and Tasks by construction.
 
-`hr.reporting_lines` was seeded once from `iam.users.manager_id` (backfill in `db_scripts/21_init-reporting-lines.sql`); after that, re-orging one tree has no effect on the other. A rep's LMS lead/manager and their HR approval chain can legitimately diverge. `resolveApprovers` falls back to a deterministic `org_admin`/`hr_admin` when a requester has no HR reporting line, rather than inferring anything from the LMS tree. See `services/hr-service/src/lib/leave/__tests__/resolve-approvers.integration.test.ts` for tests proving the independence, and `docs/DB_model.md#hrreporting_lines` for the table shape.
+**Three functions are the whole API.** All `STABLE SECURITY DEFINER`, all taking an as-of date:
+
+| Function | Answers |
+|---|---|
+| `iam.fn_is_in_subtree(manager, member, as_of)` | *the* authority primitive — is this person under me? |
+| `iam.fn_subtree_members(manager, as_of)` | everyone below me, at any depth |
+| `iam.fn_manager_chain(user, as_of)` | everyone above me, nearest first (leave approver chains) |
+
+`iam.vw_user_team_members` and `iam.vw_user_org_chart` are thin `as_of = CURRENT_DATE` wrappers over these, keeping their original names and columns so existing queries did not change. A view cannot be parameterized — for any other date, call the functions.
+
+**Rules:**
+
+- **Unlimited depth.** A manager reaches every level below them, for leads, leave and tasks alike.
+- **Effective-dated.** Every row is `[effective_from, effective_to)`, one open line per user per org (GiST exclusion). Re-orging supersedes rather than overwrites, so "who did this person report to in March" stays answerable.
+- **Acting is checked as of today; history is queried as of the record's date.** A leave's approver chain is materialized into `hr.leave_request_approvals` at apply time, so a re-org cannot strand an in-flight request.
+- **Cross-org managers go through `iam.user_org_mapping` and nothing else.** `iam.check_reporting_line_membership()` requires both parties to hold an active mapping in the line's org, so a manager shared across branches has one mapping and one line **per branch**, and no chain ever crosses an org boundary. That is what lets the org-scoped RLS policy stay correct — it can never truncate a chain halfway.
+- **Revoking a mapping closes the lines.** `iam.close_reporting_lines_on_mapping_revoke()` closes every open line in that org where the departing user is manager or report. Orphaned reports are left line-less (falling back to the `org_admin`/`hr_admin` approver) rather than silently reparented.
+- **Reads stay org-pinned to the session.** A shared manager sees Org A's team in Org A context and switches branch (`/auth/switch-org`) for Org B. Approvals are unaffected — they key on the record's org, not the session's.
+
+**Capabilities vs. hierarchy.** These answer different questions and both still apply: a capability (`lms.leads.edit.team`, `tasks.view.team`, `hr.leave.approve`) says *whether* you may act on a team at all; the hierarchy says *who is in it*. Admin tiers short-circuit before the hierarchy is consulted — `hr_admin`/rank ≥ 980/`tenant_admin` for HR, `org_admin`/`tenant_admin`/`super_admin` for LMS, `tasks.edit.any` for Tasks.
+
+**`iam.users.manager_id` is a deprecated display mirror**, maintained by the `iam.sync_user_manager_mirror` trigger (home-org line first, then most recently effective). It exists so list screens, the manager dropdown and the auth session payload kept working; it is single-valued and so cannot represent a user who reports to different managers in different orgs. Never read it for authority. Scheduled for removal.
+
+See `docs/DB_model.md#iamreporting_lines` for the table shape and `msq-hrms/services/hr-service/src/lib/leave/__tests__/resolve-approvers.integration.test.ts` for the tests pinning the convergence.
 
 ## Product entitlements (D6)
 

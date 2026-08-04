@@ -31,53 +31,83 @@ COMMENT ON VIEW audit.vw_password_spray_alerts IS
 -- VIEWS
 -- ===================================================================
 
+-- ── The two hierarchy views ────────────────────────────────────────
+-- Both are now thin "as of today" wrappers over iam.reporting_lines (the single
+-- platform hierarchy, see 02_tables_core.sql). Their names and columns are
+-- unchanged from when they read iam.users.manager_id, which is what carries
+-- every existing consumer — iam.can_assign_to, hr.can_approve_leave,
+-- leads-service leads-history scope=team, tasks-service team scope, hr-service
+-- leave/attendance subtree reads — onto the single tree with no query changes.
+--
+-- For any date other than today, call iam.fn_subtree_members(mgr, as_of) /
+-- iam.fn_manager_chain(user, as_of) directly; a view cannot be parameterized.
+
 -- Recursive org chart (depth + breadcrumb path).
+-- Anchor note: reporting_lines.manager_id is NOT NULL and absence of a row means
+-- "no manager", so top-of-tree is "an org member with no effective line" rather
+-- than the old "manager_id IS NULL". Anchored on iam.user_org_mapping, which
+-- also means a user shared across orgs is rooted once per org they belong to.
 CREATE OR REPLACE VIEW iam.vw_user_org_chart WITH (security_invoker = true) AS
 WITH RECURSIVE tree AS (
-  SELECT u.id, u.org_id, u.first_name, u.middle_name, u.last_name, u.full_name, u.email,
-         ur.name AS role_name, u.manager_id,
-         NULL::UUID AS manager_id_resolved, NULL::TEXT AS manager_full_name,
+  SELECT u.id, uom.org_id, u.first_name, u.middle_name, u.last_name, u.full_name, u.email,
+         ur.name AS role_name, NULL::UUID AS manager_id,
+         NULL::TEXT AS manager_full_name,
          0 AS hierarchy_level,
          ARRAY[u.id] AS ancestor_ids,
          ARRAY[u.full_name]::TEXT[] AS path_names
-  FROM iam.users u JOIN iam.user_roles ur ON ur.id = u.role_id
-  WHERE u.manager_id IS NULL AND NOT u.is_deleted
+  FROM iam.user_org_mapping uom
+  JOIN iam.users      u  ON u.id  = uom.user_id
+  JOIN iam.user_roles ur ON ur.id = uom.role_id
+  WHERE uom.is_active AND NOT u.is_deleted
+    AND NOT EXISTS (
+      SELECT 1 FROM iam.reporting_lines rl
+      WHERE rl.user_id = u.id AND rl.org_id = uom.org_id
+        AND NOT rl.is_deleted
+        AND rl.effective_from <= CURRENT_DATE
+        AND (rl.effective_to IS NULL OR rl.effective_to > CURRENT_DATE)
+    )
   UNION ALL
-  SELECT u.id, u.org_id, u.first_name, u.middle_name, u.last_name, u.full_name, u.email,
-         ur.name AS role_name, u.manager_id,
-         t.id AS manager_id_resolved, t.full_name AS manager_full_name,
+  SELECT u.id, rl.org_id, u.first_name, u.middle_name, u.last_name, u.full_name, u.email,
+         ur.name AS role_name, rl.manager_id,
+         t.full_name AS manager_full_name,
          t.hierarchy_level + 1,
          t.ancestor_ids || u.id,
          t.path_names   || u.full_name
-  FROM iam.users u JOIN iam.user_roles ur ON ur.id = u.role_id
-  JOIN tree t ON t.id = u.manager_id
-  WHERE NOT u.is_deleted AND NOT (u.id = ANY(t.ancestor_ids))
+  FROM iam.reporting_lines rl
+  JOIN tree t         ON t.id  = rl.manager_id AND t.org_id = rl.org_id
+  JOIN iam.users u    ON u.id  = rl.user_id
+  JOIN iam.user_org_mapping uom ON uom.user_id = u.id AND uom.org_id = rl.org_id AND uom.is_active
+  JOIN iam.user_roles ur        ON ur.id = uom.role_id
+  WHERE NOT u.is_deleted
+    AND NOT rl.is_deleted
+    AND rl.effective_from <= CURRENT_DATE
+    AND (rl.effective_to IS NULL OR rl.effective_to > CURRENT_DATE)
+    AND NOT (u.id = ANY(t.ancestor_ids))
 )
 SELECT id AS user_id, org_id, first_name, middle_name, last_name, full_name, email,
        role_name, manager_id, manager_full_name, hierarchy_level,
        array_to_string(path_names, ' > ') AS reporting_path, ancestor_ids
 FROM tree;
 
--- Recursive subtree membership — used by iam.can_assign_to for hierarchy authority.
+-- Recursive subtree membership — the "who is in my team" half of every
+-- product's authority check. Rows are (manager, member) pairs at any depth;
+-- depth >= 1 always, since a manager is not their own team member.
 CREATE OR REPLACE VIEW iam.vw_user_team_members WITH (security_invoker = true) AS
-WITH RECURSIVE subtree AS (
-  SELECT u.id AS manager_id, u.org_id, u.id AS member_id,
-         u.full_name AS member_full_name, u.email AS member_email,
-         ur.name AS member_role, u.manager_id AS direct_manager_id,
-         0 AS depth, u.is_active, ARRAY[u.id] AS visited
-  FROM iam.users u JOIN iam.user_roles ur ON ur.id = u.role_id WHERE NOT u.is_deleted
-  UNION ALL
-  SELECT s.manager_id, u.org_id, u.id AS member_id,
-         u.full_name, u.email, ur.name AS member_role,
-         u.manager_id AS direct_manager_id, s.depth + 1, u.is_active,
-         s.visited || u.id
-  FROM iam.users u JOIN iam.user_roles ur ON ur.id = u.role_id
-  JOIN subtree s ON s.member_id = u.manager_id
-  WHERE NOT u.is_deleted AND NOT (u.id = ANY(s.visited))
-)
-SELECT manager_id, org_id, member_id, member_full_name, member_email,
-       member_role, direct_manager_id, depth, is_active
-FROM subtree WHERE depth > 0;
+SELECT m.id                AS manager_id,
+       s.org_id,
+       s.member_id,
+       u.full_name         AS member_full_name,
+       u.email             AS member_email,
+       ur.name             AS member_role,
+       s.direct_manager_id,
+       s.depth,
+       u.is_active
+FROM iam.users m
+CROSS JOIN LATERAL iam.fn_subtree_members(m.id, CURRENT_DATE) s
+JOIN iam.users u              ON u.id  = s.member_id AND NOT u.is_deleted
+JOIN iam.user_org_mapping uom ON uom.user_id = u.id AND uom.org_id = s.org_id AND uom.is_active
+JOIN iam.user_roles ur        ON ur.id = uom.role_id
+WHERE NOT m.is_deleted;
 
 -- Primary lead listing.
 -- city = ml.city (free-text, always populated); city_name = from geographic FK (when available).

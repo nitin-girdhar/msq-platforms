@@ -231,6 +231,24 @@ CREATE INDEX IF NOT EXISTS idx_users_org_email
   ON iam.users (org_id, email) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_users_email_trgm
   ON iam.users USING GIN (email gin_trgm_ops) WHERE NOT is_deleted;
+-- ── iam.reporting_lines (the platform hierarchy) ──────────────────
+-- The two recursive walks are (user_id -> manager_id) upward and
+-- (manager_id -> user_id) downward, both filtered by org and effective date.
+-- The _current partial indexes serve the hot path — iam.fn_is_in_subtree runs on
+-- every lead edit, leave action and task write, and always at CURRENT_DATE.
+CREATE INDEX IF NOT EXISTS idx_reporting_lines_org_user
+  ON iam.reporting_lines (org_id, user_id) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_reporting_lines_org_manager
+  ON iam.reporting_lines (org_id, manager_id) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_reporting_lines_user_current
+  ON iam.reporting_lines (user_id) WHERE effective_to IS NULL AND NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_reporting_lines_manager_current
+  ON iam.reporting_lines (manager_id) WHERE effective_to IS NULL AND NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_reporting_lines_tenant
+  ON iam.reporting_lines (tenant_id) WHERE NOT is_deleted;
+
+-- Serves the deprecated iam.users.manager_id display mirror; drop this with the
+-- column once nothing reads it.
 CREATE INDEX IF NOT EXISTS idx_users_manager_id
   ON iam.users (org_id, manager_id) WHERE manager_id IS NOT NULL AND NOT is_deleted;
 
@@ -393,6 +411,13 @@ CREATE INDEX IF NOT EXISTS idx_leave_request_approvals_approver
 CREATE INDEX IF NOT EXISTS idx_leave_request_approvals_org
   ON hr.leave_request_approvals (org_id);
 
+CREATE INDEX IF NOT EXISTS idx_reg_approvals_request
+  ON hr.attendance_regularization_approvals (regularization_id, level);
+CREATE INDEX IF NOT EXISTS idx_reg_approvals_approver
+  ON hr.attendance_regularization_approvals (approver_id, action);
+CREATE INDEX IF NOT EXISTS idx_reg_approvals_org
+  ON hr.attendance_regularization_approvals (org_id);
+
 
 -- ===================================================================
 -- CRM Monorepo — Leave ledger accrual idempotency (Phase 1)
@@ -409,9 +434,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_leave_ledger_accrual_period
   ON hr.leave_ledger (user_id, leave_type_id, entry_type, period)
   WHERE entry_type IN ('accrual', 'carry_forward');
 
--- One active rules row per org.
-CREATE UNIQUE INDEX IF NOT EXISTS uix_attendance_rules_org
-  ON hr.attendance_rules (org_id) WHERE NOT is_deleted;
+-- One active rules row per scope: the tenant-wide default (org_id NULL) and at
+-- most one override per org. COALESCE to the zero UUID is what lets a single
+-- unique index cover the NULL row (NULLs are never equal to each other), and it
+-- is the conflict target hr-service's upsertRules names — the same idiom
+-- hr.hr_settings uses (uix_hr_settings_scope).
+DROP INDEX IF EXISTS hr.uix_attendance_rules_org;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_attendance_rules_scope
+  ON hr.attendance_rules (tenant_id, COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid))
+  WHERE NOT is_deleted;
 
 CREATE INDEX IF NOT EXISTS idx_shifts_org
   ON hr.shifts (org_id) WHERE NOT is_deleted;
@@ -452,13 +483,6 @@ CREATE INDEX IF NOT EXISTS idx_attendance_regularizations_org_status
 CREATE UNIQUE INDEX IF NOT EXISTS uix_attendance_regularizations_open
   ON hr.attendance_regularizations (user_id, work_date)
   WHERE status = 'pending' AND NOT is_deleted;
-
-CREATE INDEX IF NOT EXISTS idx_reporting_lines_org_user
-  ON hr.reporting_lines (org_id, user_id) WHERE NOT is_deleted;
-CREATE INDEX IF NOT EXISTS idx_reporting_lines_org_manager
-  ON hr.reporting_lines (org_id, manager_id) WHERE NOT is_deleted;
-CREATE INDEX IF NOT EXISTS idx_reporting_lines_tenant
-  ON hr.reporting_lines (tenant_id) WHERE NOT is_deleted;
 
 CREATE INDEX IF NOT EXISTS idx_task_lists_org
   ON task.task_lists (org_id) WHERE NOT is_deleted;

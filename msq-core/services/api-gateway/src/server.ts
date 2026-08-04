@@ -900,6 +900,17 @@ app.post('/hr/attendance/regularizations', { ...withAuth }, async (req, reply) =
 app.get('/hr/attendance/regularizations', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/regularizations', req, reply, req.userCtx);
 });
+// Requester-side edit and withdraw of a still-pending request. hr-service has
+// always exposed these; the gateway did not, so hr-web's edit and cancel
+// buttons 404'd.
+app.patch('/hr/attendance/regularizations/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/regularizations/${id}`, req, reply, req.userCtx);
+});
+app.post('/hr/attendance/regularizations/:id/cancel', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/regularizations/${id}/cancel`, req, reply, req.userCtx);
+});
 app.post('/hr/attendance/regularizations/:id/approve', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/attendance/regularizations/${id}/approve`, req, reply, req.userCtx);

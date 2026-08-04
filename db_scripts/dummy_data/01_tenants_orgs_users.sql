@@ -287,7 +287,7 @@ BEGIN
       v_admin_id, v_org.org_uuid, v_first_names[v_fn_idx], v_last_names[v_ln_idx],
       '+9198110' || LPAD(v_org.org_seq::TEXT,2,'0') || '001',
       'admin@' || v_org.email_domain,
-      (SELECT id FROM iam.user_roles WHERE name = 'org_admin'), NULL,
+      (SELECT id FROM iam.user_roles WHERE name = 'org_admin' AND tenant_id = v_org.tenant_uuid), NULL,
       v_password_hash, TRUE, FALSE
     )
     ON CONFLICT (email) DO UPDATE SET mobile = EXCLUDED.mobile, manager_id = EXCLUDED.manager_id, password_hash = EXCLUDED.password_hash;
@@ -300,7 +300,7 @@ BEGIN
       v_srmgr_id, v_org.org_uuid, v_first_names[v_fn_idx], v_last_names[v_ln_idx],
       '+9198110' || LPAD(v_org.org_seq::TEXT,2,'0') || '004',
       'srmanager@' || v_org.email_domain,
-      (SELECT id FROM iam.user_roles WHERE name = 'org_sr_manager'), v_admin_id,
+      (SELECT id FROM iam.user_roles WHERE name = 'org_sr_manager' AND tenant_id = v_org.tenant_uuid), v_admin_id,
       v_password_hash, TRUE, FALSE
     )
     ON CONFLICT (email) DO UPDATE SET mobile = EXCLUDED.mobile, manager_id = EXCLUDED.manager_id, password_hash = EXCLUDED.password_hash;
@@ -313,7 +313,7 @@ BEGIN
       v_mgr_id, v_org.org_uuid, v_first_names[v_fn_idx], v_last_names[v_ln_idx],
       '+9198110' || LPAD(v_org.org_seq::TEXT,2,'0') || '005',
       'manager@' || v_org.email_domain,
-      (SELECT id FROM iam.user_roles WHERE name = 'org_manager'), v_srmgr_id,
+      (SELECT id FROM iam.user_roles WHERE name = 'org_manager' AND tenant_id = v_org.tenant_uuid), v_srmgr_id,
       v_password_hash, TRUE, FALSE
     )
     ON CONFLICT (email) DO UPDATE SET mobile = EXCLUDED.mobile, manager_id = EXCLUDED.manager_id, password_hash = EXCLUDED.password_hash;
@@ -326,7 +326,7 @@ BEGIN
       v_sse_id, v_org.org_uuid, v_first_names[v_fn_idx], v_last_names[v_ln_idx],
       '+9198110' || LPAD(v_org.org_seq::TEXT,2,'0') || '006',
       'senior.exec@' || v_org.email_domain,
-      (SELECT id FROM iam.user_roles WHERE name = 'senior_sales_executive'), v_mgr_id,
+      (SELECT id FROM iam.user_roles WHERE name = 'senior_sales_executive' AND tenant_id = v_org.tenant_uuid), v_mgr_id,
       v_password_hash, TRUE, FALSE
     )
     ON CONFLICT (email) DO UPDATE SET mobile = EXCLUDED.mobile, manager_id = EXCLUDED.manager_id, password_hash = EXCLUDED.password_hash;
@@ -337,7 +337,7 @@ BEGIN
     INSERT INTO iam.users (id, org_id, first_name, last_name, mobile, email, role_id, manager_id, password_hash, is_active, force_password_change)
     VALUES (_seed_uuid(v_org.org_seq, 5), v_org.org_uuid, v_first_names[v_fn_idx], v_last_names[v_ln_idx],
       '+9198110' || LPAD(v_org.org_seq::TEXT,2,'0') || '002', 'rep1@' || v_org.email_domain,
-      (SELECT id FROM iam.user_roles WHERE name = 'sales_representative'), v_sse_id, v_password_hash, TRUE, FALSE)
+      (SELECT id FROM iam.user_roles WHERE name = 'sales_representative' AND tenant_id = v_org.tenant_uuid), v_sse_id, v_password_hash, TRUE, FALSE)
     ON CONFLICT (email) DO UPDATE SET mobile = EXCLUDED.mobile, manager_id = EXCLUDED.manager_id, password_hash = EXCLUDED.password_hash;
 
     v_fn_idx := 1 + ((v_org.org_seq * 7 + 5) % array_length(v_first_names,1));
@@ -345,7 +345,7 @@ BEGIN
     INSERT INTO iam.users (id, org_id, first_name, last_name, mobile, email, role_id, manager_id, password_hash, is_active, force_password_change)
     VALUES (_seed_uuid(v_org.org_seq, 6), v_org.org_uuid, v_first_names[v_fn_idx], v_last_names[v_ln_idx],
       '+9198110' || LPAD(v_org.org_seq::TEXT,2,'0') || '003', 'rep2@' || v_org.email_domain,
-      (SELECT id FROM iam.user_roles WHERE name = 'sales_representative'), v_sse_id, v_password_hash, TRUE, FALSE)
+      (SELECT id FROM iam.user_roles WHERE name = 'sales_representative' AND tenant_id = v_org.tenant_uuid), v_sse_id, v_password_hash, TRUE, FALSE)
     ON CONFLICT (email) DO UPDATE SET mobile = EXCLUDED.mobile, manager_id = EXCLUDED.manager_id, password_hash = EXCLUDED.password_hash;
 
     v_fn_idx := 1 + ((v_org.org_seq * 7 + 6) % array_length(v_first_names,1));
@@ -353,7 +353,7 @@ BEGIN
     INSERT INTO iam.users (id, org_id, first_name, last_name, mobile, email, role_id, manager_id, password_hash, is_active, force_password_change)
     VALUES (_seed_uuid(v_org.org_seq, 7), v_org.org_uuid, v_first_names[v_fn_idx], v_last_names[v_ln_idx],
       '+9198110' || LPAD(v_org.org_seq::TEXT,2,'0') || '009', 'rep3@' || v_org.email_domain,
-      (SELECT id FROM iam.user_roles WHERE name = 'sales_representative'), v_sse_id, v_password_hash, TRUE, FALSE)
+      (SELECT id FROM iam.user_roles WHERE name = 'sales_representative' AND tenant_id = v_org.tenant_uuid), v_sse_id, v_password_hash, TRUE, FALSE)
     ON CONFLICT (email) DO UPDATE SET mobile = EXCLUDED.mobile, manager_id = EXCLUDED.manager_id, password_hash = EXCLUDED.password_hash;
 
     -- read_only (slot 8)
@@ -362,7 +362,7 @@ BEGIN
     INSERT INTO iam.users (id, org_id, first_name, last_name, mobile, email, role_id, manager_id, password_hash, is_active, force_password_change)
     VALUES (_seed_uuid(v_org.org_seq, 8), v_org.org_uuid, v_first_names[v_fn_idx], v_last_names[v_ln_idx],
       '+9198110' || LPAD(v_org.org_seq::TEXT,2,'0') || '007', 'viewer@' || v_org.email_domain,
-      (SELECT id FROM iam.user_roles WHERE name = 'read_only'), NULL, v_password_hash, TRUE, FALSE)
+      (SELECT id FROM iam.user_roles WHERE name = 'read_only' AND tenant_id = v_org.tenant_uuid), NULL, v_password_hash, TRUE, FALSE)
     ON CONFLICT (email) DO UPDATE SET mobile = EXCLUDED.mobile, manager_id = EXCLUDED.manager_id, password_hash = EXCLUDED.password_hash;
 
     -- Seed iam.user_org_mapping so the lms.check_lead_fk_org_scope trigger and RLS work.
@@ -398,8 +398,8 @@ BEGIN
       (
         _seed_uuid(v_org.org_seq, 101), v_org.org_uuid,
         v_org.org_name || ' - FB Lead Gen',
-        (SELECT id FROM marketing.marketing_platforms WHERE name = 'facebook'),
-        (SELECT id FROM marketing.campaign_statuses WHERE name = v_statuses[1 + (v_org.org_seq % 4)]),
+        (SELECT id FROM marketing.marketing_platforms WHERE name = 'facebook' AND tenant_id = v_org.tenant_uuid),
+        (SELECT id FROM marketing.campaign_statuses WHERE name = v_statuses[1 + (v_org.org_seq % 4)] AND tenant_id = v_org.tenant_uuid),
         15000.00 + (v_org.org_seq * 2500),
         (CURRENT_DATE - ((400 - v_org.org_seq * 10) || ' days')::INTERVAL),
         NULL
@@ -407,8 +407,8 @@ BEGIN
       (
         _seed_uuid(v_org.org_seq, 102), v_org.org_uuid,
         v_org.org_name || ' - Google Search',
-        (SELECT id FROM marketing.marketing_platforms WHERE name = 'google'),
-        (SELECT id FROM marketing.campaign_statuses WHERE name = v_statuses[1 + ((v_org.org_seq + 1) % 4)]),
+        (SELECT id FROM marketing.marketing_platforms WHERE name = 'google' AND tenant_id = v_org.tenant_uuid),
+        (SELECT id FROM marketing.campaign_statuses WHERE name = v_statuses[1 + ((v_org.org_seq + 1) % 4)] AND tenant_id = v_org.tenant_uuid),
         12000.00 + (v_org.org_seq * 1800),
         (CURRENT_DATE - ((350 - v_org.org_seq * 8) || ' days')::INTERVAL),
         NULL
@@ -546,6 +546,87 @@ COMMENT ON TABLE public._dummy_data_tenants IS
 
 INSERT INTO public._dummy_data_tenants (tenant_id)
 SELECT id FROM entity.tenants ON CONFLICT DO NOTHING;
+
+
+-- ============================================================
+-- Reporting lines — the real hierarchy (iam.reporting_lines)
+--
+-- The manager_id values set above are only the DISPLAY mirror; authority for
+-- leads, leave and tasks all resolves from iam.reporting_lines. Deriving the
+-- lines from them here means local dev exercises the same path production
+-- does, instead of a tree that only exists in the deprecated column.
+-- ============================================================
+INSERT INTO iam.reporting_lines (tenant_id, org_id, user_id, manager_id, effective_from)
+SELECT o.tenant_id, uom.org_id, u.id, u.manager_id, CURRENT_DATE - 90
+FROM iam.users u
+JOIN iam.user_org_mapping uom ON uom.user_id = u.id AND uom.is_active
+JOIN entity.organizations o   ON o.id = uom.org_id
+WHERE u.manager_id IS NOT NULL
+  AND u.manager_id <> u.id
+  AND NOT u.is_deleted
+  -- the membership rule: a manager must belong to the org the line sits in
+  AND EXISTS (SELECT 1 FROM iam.user_org_mapping m
+               WHERE m.user_id = u.manager_id AND m.org_id = uom.org_id AND m.is_active)
+  AND NOT EXISTS (SELECT 1 FROM iam.reporting_lines rl
+                   WHERE rl.user_id = u.id AND rl.org_id = uom.org_id
+                     AND rl.effective_to IS NULL AND NOT rl.is_deleted);
+
+-- ── A manager shared across two branches (the Fitclass shape) ──
+-- One person, mapped into a second org, managing people in both. This is the
+-- ONLY supported way to span orgs, and it is seeded here so the case gets
+-- exercised locally rather than first appearing in production. Picks the two
+-- oldest orgs of the first tenant that has two, and the first org_admin in the
+-- first of them.
+WITH ranked AS (
+  SELECT id, tenant_id, ROW_NUMBER() OVER (PARTITION BY tenant_id ORDER BY id) AS rn
+  FROM entity.organizations WHERE NOT is_deleted
+),
+pair AS (
+  SELECT a.id AS org_a, b.id AS org_b
+  FROM ranked a
+  JOIN ranked b ON b.tenant_id = a.tenant_id AND b.rn = 2
+  WHERE a.rn = 1
+  ORDER BY a.tenant_id
+  LIMIT 1
+),
+mgr AS (
+  SELECT p.org_b, uom.user_id, uom.role_id
+  FROM pair p
+  JOIN iam.user_org_mapping uom ON uom.org_id = p.org_a AND uom.is_active
+  JOIN iam.user_roles ur ON ur.id = uom.role_id AND ur.name = 'org_admin'
+  ORDER BY uom.user_id
+  LIMIT 1
+)
+INSERT INTO iam.user_org_mapping (user_id, org_id, role_id)
+SELECT user_id, org_b, role_id FROM mgr
+ON CONFLICT (user_id, org_id) DO UPDATE SET is_active = TRUE;
+
+-- Now give one line-less user in that second org a line to the shared manager.
+WITH shared AS (
+  SELECT uom.user_id AS manager_id, uom.org_id, o.tenant_id
+  FROM iam.user_org_mapping uom
+  JOIN entity.organizations o ON o.id = uom.org_id
+  JOIN iam.user_roles ur ON ur.id = uom.role_id AND ur.name = 'org_admin'
+  WHERE uom.is_active
+    AND (SELECT count(*) FROM iam.user_org_mapping x
+          WHERE x.user_id = uom.user_id AND x.is_active) > 1
+  ORDER BY uom.user_id, uom.org_id DESC
+  LIMIT 1
+)
+INSERT INTO iam.reporting_lines (tenant_id, org_id, user_id, manager_id, effective_from)
+SELECT s.tenant_id, s.org_id, u.user_id, s.manager_id, CURRENT_DATE - 30
+FROM shared s
+JOIN LATERAL (
+  SELECT uom.user_id
+  FROM iam.user_org_mapping uom
+  JOIN iam.users usr ON usr.id = uom.user_id AND usr.is_active AND NOT usr.is_deleted
+  WHERE uom.org_id = s.org_id AND uom.is_active AND uom.user_id <> s.manager_id
+    AND NOT EXISTS (SELECT 1 FROM iam.reporting_lines rl
+                     WHERE rl.user_id = uom.user_id AND rl.org_id = s.org_id
+                       AND rl.effective_to IS NULL AND NOT rl.is_deleted)
+  ORDER BY uom.user_id
+  LIMIT 1
+) u ON TRUE;
 
 
 COMMIT;

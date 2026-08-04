@@ -384,6 +384,48 @@ CREATE POLICY tenant_isolation_policy ON iam.user_org_mapping AS PERMISSIVE FOR 
     )
   );
 
+-- ── RLS: iam.reporting_lines (the platform hierarchy) ─────────────
+-- Org-scoped for app_user, exactly like the mapping table above. This is safe
+-- precisely BECAUSE iam.check_reporting_line_membership (04_) requires both
+-- parties to be members of the line's org: no chain crosses an org boundary, so
+-- an org-scoped policy never truncates a chain halfway. A manager shared across
+-- branches reads their Org A subtree in Org A context and their Org B subtree
+-- after switching branch — never a half-resolved mix of the two.
+--
+-- Writes mirror org_admin_manage_policy on iam.user_org_mapping: re-orging is an
+-- org_admin+ act, and identity-service performs it on the user's behalf.
+ALTER TABLE iam.reporting_lines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE iam.reporting_lines FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON iam.reporting_lines;
+DROP POLICY IF EXISTS org_admin_manage_policy ON iam.reporting_lines;
+DROP POLICY IF EXISTS tenant_isolation_policy ON iam.reporting_lines;
+
+CREATE POLICY org_isolation_policy ON iam.reporting_lines AS PERMISSIVE FOR SELECT TO app_user
+  USING (
+    NOT is_deleted
+    AND org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
+  );
+
+CREATE POLICY org_admin_manage_policy ON iam.reporting_lines AS PERMISSIVE FOR ALL TO app_user
+  USING (
+    org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
+    AND iam.fn_user_org_rank(
+      NULLIF(current_setting('app.current_user_id', true), '')::uuid,
+      NULLIF(current_setting('app.current_org_id',  true), '')::uuid
+    ) >= 980
+  )
+  WITH CHECK (
+    org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
+    AND iam.fn_user_org_rank(
+      NULLIF(current_setting('app.current_user_id', true), '')::uuid,
+      NULLIF(current_setting('app.current_org_id',  true), '')::uuid
+    ) >= 980
+  );
+
+CREATE POLICY tenant_isolation_policy ON iam.reporting_lines AS PERMISSIVE FOR ALL TO tenant_admin
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid AND NOT is_deleted)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid AND NOT is_deleted);
+
 -- ── ACTIVITIES RLS (issue #15) ────────────────────────────────────
 ALTER TABLE audit.activities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit.activities FORCE ROW LEVEL SECURITY;
@@ -867,13 +909,36 @@ CREATE POLICY approver_policy ON hr.leave_request_approvals AS PERMISSIVE FOR AL
 ALTER TABLE hr.attendance_rules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.attendance_rules FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON hr.attendance_rules;
+DROP POLICY IF EXISTS org_read_policy         ON hr.attendance_rules;
+DROP POLICY IF EXISTS org_write_policy        ON hr.attendance_rules;
 DROP POLICY IF EXISTS tenant_isolation_policy ON hr.attendance_rules;
-CREATE POLICY org_isolation_policy ON hr.attendance_rules AS PERMISSIVE FOR ALL TO app_user
-  USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted)
+
+-- READ is tenant-wide, not org-wide: the row that applies to a member may be the
+-- tenant-wide default (org_id NULL), which an `org_id = current_org` predicate
+-- would hide — leaving every org that never created an override falling back to
+-- the service's hardcoded defaults. Same shape as hr.hr_settings above.
+CREATE POLICY org_read_policy ON hr.attendance_rules AS PERMISSIVE FOR SELECT TO app_user
+  USING (
+    tenant_id = (
+      SELECT tenant_id FROM entity.organizations
+      WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
+    )
+    AND NOT is_deleted
+  );
+
+-- WRITE stays org-scoped for app_user: an hr_admin/org_admin may only create or
+-- edit their OWN org's override. Writing the tenant-wide default requires the
+-- tenant_admin role below, which is what hr-service's scope='tenant' path uses.
+CREATE POLICY org_write_policy ON hr.attendance_rules AS PERMISSIVE FOR ALL TO app_user
+  USING      (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted)
   WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
+
+-- tenant_admin: both scopes within their tenant. tenant_id is on the row now, so
+-- this no longer needs the organizations subquery (which could not have matched
+-- a tenant-wide row anyway, its org_id being NULL).
 CREATE POLICY tenant_isolation_policy ON hr.attendance_rules AS PERMISSIVE FOR ALL TO tenant_admin
-  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
-  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted);
 
 ALTER TABLE hr.shifts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.shifts FORCE ROW LEVEL SECURITY;
@@ -966,24 +1031,25 @@ CREATE POLICY self_policy ON hr.attendance_regularizations AS PERMISSIVE FOR ALL
   USING      (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted)
   WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
 
--- ── RLS (mirror hr.leave_policies) ─────────────────────────────────
--- app_user: SELECT-only, scoped to the caller's current org. Writes are
--- performed by the service (root_service / hr_svc) or a tenant_admin; app-layer
--- authorization gates who may edit a reporting line.
-ALTER TABLE hr.reporting_lines ENABLE ROW LEVEL SECURITY;
-ALTER TABLE hr.reporting_lines FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS org_isolation_policy    ON hr.reporting_lines;
-DROP POLICY IF EXISTS tenant_isolation_policy ON hr.reporting_lines;
+-- ── hr.attendance_regularization_approvals — mirrors hr.leave_request_approvals ──
+ALTER TABLE hr.attendance_regularization_approvals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.attendance_regularization_approvals FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.attendance_regularization_approvals;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.attendance_regularization_approvals;
+DROP POLICY IF EXISTS approver_policy         ON hr.attendance_regularization_approvals;
 
-CREATE POLICY org_isolation_policy ON hr.reporting_lines AS PERMISSIVE FOR SELECT TO app_user
-  USING (
-    NOT is_deleted
-    AND org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
-  );
+CREATE POLICY org_isolation_policy ON hr.attendance_regularization_approvals AS PERMISSIVE FOR ALL TO app_user
+  USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid)
+  WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid);
+CREATE POLICY tenant_isolation_policy ON hr.attendance_regularization_approvals AS PERMISSIVE FOR ALL TO tenant_admin
+  USING     (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted))
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted));
 
-CREATE POLICY tenant_isolation_policy ON hr.reporting_lines AS PERMISSIVE FOR ALL TO tenant_admin
-  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid AND NOT is_deleted)
-  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid AND NOT is_deleted);
+-- Approver: may read and act on rows assigned to them even when the row's org is
+-- not the one currently in context (same rule as leave approvals).
+CREATE POLICY approver_policy ON hr.attendance_regularization_approvals AS PERMISSIVE FOR ALL TO app_user
+  USING      (approver_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid)
+  WITH CHECK (approver_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid);
 
 ALTER TABLE task.task_statuses ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON task.task_statuses;

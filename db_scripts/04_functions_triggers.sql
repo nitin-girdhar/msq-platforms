@@ -622,6 +622,317 @@ CREATE TRIGGER trg_user_hierarchy_no_cycle
   BEFORE INSERT OR UPDATE OF manager_id ON iam.users
   FOR EACH ROW EXECUTE FUNCTION iam.check_user_hierarchy_no_cycle();
 
+-- ===================================================================
+-- iam.reporting_lines — THE platform reporting hierarchy
+--
+-- Integrity triggers, then the three functions every product resolves
+-- authority through. See the table comment in 02_tables_core.sql.
+-- ===================================================================
+
+-- Cross-org managers exist ONLY via iam.user_org_mapping. Requiring both parties
+-- to hold an active mapping in the line's org is what keeps every chain inside a
+-- single org: a manager shared across branches gets one mapping and one line per
+-- branch. Without this, a line could name any user id at all and silently grant
+-- them approval/assignment authority in an org they are not a member of.
+CREATE OR REPLACE FUNCTION iam.check_reporting_line_membership()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE v_org_tenant UUID;
+BEGIN
+  -- Only OPEN lines are policed. Closing a line or soft-deleting it must always
+  -- succeed — otherwise revoking someone's org mapping would deadlock against
+  -- this guard (the revocation trigger closes their lines, and by then the
+  -- mapping it would be checking is already gone). Historical rows likewise stay
+  -- writable after a person leaves, so the past remains auditable.
+  IF NEW.is_deleted OR (NEW.effective_to IS NOT NULL AND NEW.effective_to <= CURRENT_DATE) THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT tenant_id INTO v_org_tenant
+  FROM entity.organizations WHERE id = NEW.org_id AND NOT is_deleted;
+
+  IF v_org_tenant IS NULL THEN
+    RAISE EXCEPTION 'Reporting line references a missing or deleted org %', NEW.org_id
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  IF v_org_tenant <> NEW.tenant_id THEN
+    RAISE EXCEPTION 'Reporting line tenant % does not own org % (org belongs to tenant %)',
+      NEW.tenant_id, NEW.org_id, v_org_tenant
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM iam.user_org_mapping uom
+    JOIN iam.users u ON u.id = uom.user_id
+    WHERE uom.user_id = NEW.manager_id AND uom.org_id = NEW.org_id AND uom.is_active
+      AND u.is_active AND NOT u.is_deleted
+  ) THEN
+    RAISE EXCEPTION
+      'Manager % is not an active member of org % — grant the org mapping first (a manager shared across branches needs one iam.user_org_mapping row per branch)',
+      NEW.manager_id, NEW.org_id
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM iam.user_org_mapping uom
+    JOIN iam.users u ON u.id = uom.user_id
+    WHERE uom.user_id = NEW.user_id AND uom.org_id = NEW.org_id AND uom.is_active
+      AND u.is_active AND NOT u.is_deleted
+  ) THEN
+    RAISE EXCEPTION 'User % is not an active member of org %', NEW.user_id, NEW.org_id
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN NEW;
+END; $$;
+
+-- Reject cycles at write time. The recursive CTEs below are cycle-guarded too,
+-- but a guard that silently truncates a read is a much worse failure than a
+-- rejected write, so the tree is kept acyclic at the source.
+CREATE OR REPLACE FUNCTION iam.check_reporting_line_no_cycle()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+  v_cursor  UUID := NEW.manager_id;
+  v_visited UUID[] := ARRAY[NEW.user_id];
+BEGIN
+  -- Only an open/current line can create a live cycle; closed history cannot.
+  IF NEW.is_deleted OR (NEW.effective_to IS NOT NULL AND NEW.effective_to <= CURRENT_DATE) THEN
+    RETURN NEW;
+  END IF;
+
+  LOOP
+    IF v_cursor = ANY(v_visited) THEN
+      RAISE EXCEPTION
+        'Circular reporting chain: making % report to % in org % would create a cycle. Chain visited: %',
+        NEW.user_id, NEW.manager_id, NEW.org_id, v_visited
+        USING ERRCODE = 'check_violation';
+    END IF;
+    v_visited := v_visited || v_cursor;
+
+    SELECT rl.manager_id INTO v_cursor
+    FROM iam.reporting_lines rl
+    WHERE rl.user_id = v_cursor
+      AND rl.org_id  = NEW.org_id
+      AND rl.id     <> NEW.id
+      AND NOT rl.is_deleted
+      AND rl.effective_from <= CURRENT_DATE
+      AND (rl.effective_to IS NULL OR rl.effective_to > CURRENT_DATE);
+
+    EXIT WHEN v_cursor IS NULL;
+  END LOOP;
+  RETURN NEW;
+END; $$;
+
+-- Keep iam.users.manager_id mirrored from the effective line. The column is a
+-- DISPLAY convenience (list screens, the manager dropdown, the auth session
+-- payload) and is scheduled for removal — never read it for authority.
+--
+-- Home org wins, then latest: a user with lines in several orgs is shown their
+-- home-branch manager, falling back to the most recently effective line when the
+-- home org has none. One-directional by design — there is deliberately NO
+-- trigger writing back from iam.users into iam.reporting_lines.
+CREATE OR REPLACE FUNCTION iam.sync_user_manager_mirror()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_user    UUID := COALESCE(NEW.user_id, OLD.user_id);
+  v_manager UUID;
+  v_current UUID;
+BEGIN
+  SELECT rl.manager_id INTO v_manager
+  FROM iam.reporting_lines rl
+  JOIN iam.users u ON u.id = rl.user_id
+  WHERE rl.user_id = v_user
+    AND NOT rl.is_deleted
+    AND rl.effective_from <= CURRENT_DATE
+    AND (rl.effective_to IS NULL OR rl.effective_to > CURRENT_DATE)
+  ORDER BY (rl.org_id = u.org_id) DESC, rl.effective_from DESC, rl.created_at DESC
+  LIMIT 1;
+
+  SELECT manager_id INTO v_current FROM iam.users WHERE id = v_user;
+
+  -- Skip the no-op write: it would fire trg_user_hierarchy_no_cycle for nothing.
+  IF v_manager IS DISTINCT FROM v_current THEN
+    UPDATE iam.users SET manager_id = v_manager WHERE id = v_user;
+  END IF;
+
+  RETURN NULL;
+END; $$;
+
+-- Revoking someone's membership in an org must not leave their lines standing —
+-- the membership guard only fires on writes to reporting_lines, so without this
+-- a deactivated mapping would leave the tree (and its authority) fully intact.
+-- Closes lines where the departing user is EITHER the manager or the report.
+-- Orphaned reports are deliberately left line-less rather than reparented: they
+-- fall back to the org_admin/hr_admin approver and show up in the "users without
+-- a reporting line" report. Silent reparenting would move authority unannounced.
+CREATE OR REPLACE FUNCTION iam.close_reporting_lines_on_mapping_revoke()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.is_active THEN RETURN NULL; END IF;
+
+  UPDATE iam.reporting_lines
+     SET effective_to = CURRENT_DATE
+   WHERE org_id = OLD.org_id
+     AND (user_id = OLD.user_id OR manager_id = OLD.user_id)
+     AND NOT is_deleted
+     AND effective_to IS NULL
+     -- A line opened today would become a zero-width [d, d) range, which
+     -- chk_reporting_lines_range rejects. Soft-delete those instead.
+     AND effective_from < CURRENT_DATE;
+
+  UPDATE iam.reporting_lines
+     SET is_deleted = TRUE, is_active = FALSE, deleted_at = CLOCK_TIMESTAMP()
+   WHERE org_id = OLD.org_id
+     AND (user_id = OLD.user_id OR manager_id = OLD.user_id)
+     AND NOT is_deleted
+     AND effective_to IS NULL
+     AND effective_from >= CURRENT_DATE;
+
+  RETURN NULL;
+END; $$;
+
+-- Order matters: set_org_id (trg_00) and set_created_by (trg_01) must populate
+-- the row before the guards inspect it; triggers of the same timing fire in
+-- name order.
+DROP TRIGGER IF EXISTS trg_00_reporting_lines_set_org_id     ON iam.reporting_lines;
+CREATE TRIGGER trg_00_reporting_lines_set_org_id
+  BEFORE INSERT ON iam.reporting_lines FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_reporting_lines_set_created_by ON iam.reporting_lines;
+CREATE TRIGGER trg_01_reporting_lines_set_created_by
+  BEFORE INSERT ON iam.reporting_lines FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_02_reporting_lines_membership     ON iam.reporting_lines;
+CREATE TRIGGER trg_02_reporting_lines_membership
+  BEFORE INSERT OR UPDATE ON iam.reporting_lines
+  FOR EACH ROW EXECUTE FUNCTION iam.check_reporting_line_membership();
+
+DROP TRIGGER IF EXISTS trg_03_reporting_lines_no_cycle       ON iam.reporting_lines;
+CREATE TRIGGER trg_03_reporting_lines_no_cycle
+  BEFORE INSERT OR UPDATE ON iam.reporting_lines
+  FOR EACH ROW EXECUTE FUNCTION iam.check_reporting_line_no_cycle();
+
+DROP TRIGGER IF EXISTS trg_reporting_lines_updated_at        ON iam.reporting_lines;
+CREATE TRIGGER trg_reporting_lines_updated_at
+  BEFORE UPDATE ON iam.reporting_lines FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_reporting_lines_soft_delete       ON iam.reporting_lines;
+CREATE TRIGGER trg_reporting_lines_soft_delete
+  BEFORE DELETE ON iam.reporting_lines FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+-- AFTER, so the mirror reads committed state. soft_delete_row turns a DELETE
+-- into an UPDATE, so the UPDATE arm covers soft deletion too.
+DROP TRIGGER IF EXISTS trg_reporting_lines_mirror            ON iam.reporting_lines;
+CREATE TRIGGER trg_reporting_lines_mirror
+  AFTER INSERT OR UPDATE ON iam.reporting_lines
+  FOR EACH ROW EXECUTE FUNCTION iam.sync_user_manager_mirror();
+
+-- trg_reporting_lines_audit is attached further down, next to the iam.users
+-- audit trigger — audit.audit_row_changes() is not defined until then.
+
+DROP TRIGGER IF EXISTS trg_user_org_mapping_close_lines      ON iam.user_org_mapping;
+CREATE TRIGGER trg_user_org_mapping_close_lines
+  AFTER UPDATE OF is_active OR DELETE ON iam.user_org_mapping
+  FOR EACH ROW EXECUTE FUNCTION iam.close_reporting_lines_on_mapping_revoke();
+
+
+-- ── The three hierarchy functions ──────────────────────────────────
+-- Every "is X under me?" question in the platform resolves here, so the rule is
+-- defined exactly once. All three take an as-of date: acting is checked as of
+-- today, historical reads pass the record's own date, and the answer for a past
+-- date is the hierarchy as it actually stood then.
+--
+-- SECURITY DEFINER (owner = the deploying superuser) so the answer never depends
+-- on the caller's session org or RLS context. Chains are intra-org by the
+-- membership guard, so this widens nothing: it only stops an authority check
+-- from returning a different answer depending on which branch you are viewing.
+
+-- Everyone below p_manager_id, at any depth. depth 1 = direct reports.
+CREATE OR REPLACE FUNCTION iam.fn_subtree_members(
+  p_manager_id UUID,
+  p_as_of      DATE DEFAULT CURRENT_DATE
+) RETURNS TABLE (member_id UUID, org_id UUID, direct_manager_id UUID, depth INT)
+LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  WITH RECURSIVE subtree AS (
+    SELECT rl.user_id AS member_id, rl.org_id, rl.manager_id AS direct_manager_id,
+           1 AS depth, ARRAY[rl.manager_id, rl.user_id] AS visited
+    FROM iam.reporting_lines rl
+    WHERE rl.manager_id = p_manager_id
+      AND NOT rl.is_deleted
+      AND rl.effective_from <= p_as_of
+      AND (rl.effective_to IS NULL OR rl.effective_to > p_as_of)
+    UNION ALL
+    SELECT rl.user_id, rl.org_id, rl.manager_id,
+           s.depth + 1, s.visited || rl.user_id
+    FROM iam.reporting_lines rl
+    JOIN subtree s ON s.member_id = rl.manager_id
+    WHERE NOT rl.is_deleted
+      AND rl.effective_from <= p_as_of
+      AND (rl.effective_to IS NULL OR rl.effective_to > p_as_of)
+      AND NOT (rl.user_id = ANY(s.visited))
+  )
+  SELECT member_id, org_id, direct_manager_id, depth FROM subtree;
+$$;
+
+-- Everyone above p_user_id, nearest first. Used to build leave approver chains.
+CREATE OR REPLACE FUNCTION iam.fn_manager_chain(
+  p_user_id UUID,
+  p_as_of   DATE DEFAULT CURRENT_DATE
+) RETURNS TABLE (manager_id UUID, org_id UUID, depth INT)
+LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  WITH RECURSIVE chain AS (
+    SELECT rl.manager_id, rl.org_id, 1 AS depth,
+           ARRAY[rl.user_id, rl.manager_id] AS visited
+    FROM iam.reporting_lines rl
+    WHERE rl.user_id = p_user_id
+      AND NOT rl.is_deleted
+      AND rl.effective_from <= p_as_of
+      AND (rl.effective_to IS NULL OR rl.effective_to > p_as_of)
+    UNION ALL
+    SELECT rl.manager_id, rl.org_id, c.depth + 1, c.visited || rl.manager_id
+    FROM iam.reporting_lines rl
+    JOIN chain c ON c.manager_id = rl.user_id
+    WHERE NOT rl.is_deleted
+      AND rl.effective_from <= p_as_of
+      AND (rl.effective_to IS NULL OR rl.effective_to > p_as_of)
+      AND NOT (rl.manager_id = ANY(c.visited))
+  )
+  SELECT manager_id, org_id, depth FROM chain ORDER BY depth;
+$$;
+
+-- THE authority primitive. Called on every lead edit, leave action and task
+-- write, so it stops as soon as the member is found rather than materializing
+-- the whole subtree.
+CREATE OR REPLACE FUNCTION iam.fn_is_in_subtree(
+  p_manager_id UUID,
+  p_member_id  UUID,
+  p_as_of      DATE DEFAULT CURRENT_DATE
+) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT p_manager_id IS NOT NULL
+     AND p_member_id  IS NOT NULL
+     AND p_manager_id <> p_member_id
+     AND EXISTS (
+       WITH RECURSIVE chain AS (
+         SELECT rl.manager_id, ARRAY[rl.user_id, rl.manager_id] AS visited
+         FROM iam.reporting_lines rl
+         WHERE rl.user_id = p_member_id
+           AND NOT rl.is_deleted
+           AND rl.effective_from <= p_as_of
+           AND (rl.effective_to IS NULL OR rl.effective_to > p_as_of)
+         UNION ALL
+         SELECT rl.manager_id, c.visited || rl.manager_id
+         FROM iam.reporting_lines rl
+         JOIN chain c ON c.manager_id = rl.user_id
+         WHERE c.manager_id <> p_manager_id      -- found: stop climbing
+           AND NOT rl.is_deleted
+           AND rl.effective_from <= p_as_of
+           AND (rl.effective_to IS NULL OR rl.effective_to > p_as_of)
+           AND NOT (rl.manager_id = ANY(c.visited))
+       )
+       SELECT 1 FROM chain WHERE manager_id = p_manager_id
+     );
+$$;
+
 -- Write to lms.lead_assignment_log whenever assigned_user_id changes.
 -- SECURITY DEFINER: app_user has only SELECT on lms.lead_assignment_log.
 CREATE OR REPLACE FUNCTION lms.log_lead_assignment()
@@ -652,17 +963,18 @@ CREATE TRIGGER trg_lead_assignment_log
   AFTER UPDATE OF assigned_user_id ON lms.marketing_leads
   FOR EACH ROW EXECUTE FUNCTION lms.log_lead_assignment();
 
--- ── UPDATED iam.can_assign_to ─────────────────────────────────────────
+-- ── iam.can_assign_to ─────────────────────────────────────────────────
 -- Looks up role via iam.user_org_mapping instead of iam.users.org_id so that
 -- multi-org iam.users are evaluated for the org they are currently working in.
+-- The subtree half resolves from iam.reporting_lines via iam.fn_is_in_subtree —
+-- the same single hierarchy HR approvals and Tasks use.
 CREATE OR REPLACE FUNCTION iam.can_assign_to(
   p_org_id         UUID,
   p_acting_user_id UUID,
   p_target_user_id UUID
 ) RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
 DECLARE
-  v_role     TEXT;
-  v_in_scope BOOLEAN;
+  v_role TEXT;
 BEGIN
   IF p_acting_user_id = p_target_user_id THEN RETURN TRUE; END IF;
 
@@ -678,16 +990,14 @@ BEGIN
   IF v_role IS NULL THEN RETURN FALSE; END IF;
   IF v_role IN ('super_admin','tenant_admin','org_admin') THEN RETURN TRUE; END IF;
 
-  IF v_role IN ('org_manager','org_sr_manager','senior_sales_executive') THEN
-    SELECT COUNT(*) > 0 INTO v_in_scope
-    FROM iam.vw_user_team_members
-    WHERE manager_id = p_acting_user_id
-      AND member_id  = p_target_user_id
-      AND org_id     = p_org_id;
-    RETURN COALESCE(v_in_scope, FALSE);
-  END IF;
-
-  RETURN FALSE;
+  -- Everyone else may assign within their own subtree, resolved from
+  -- iam.reporting_lines as of today — the same tree hr.can_approve_leave and
+  -- tasks-service use. The role list that used to gate this branch
+  -- ('org_manager','org_sr_manager','senior_sales_executive') was removed: the
+  -- capability lms.leads.assign.reports already decides WHETHER a role may hand
+  -- work down, and the hierarchy decides to WHOM. Hardcoding names here meant
+  -- any new or renamed role was silently denied.
+  RETURN iam.fn_is_in_subtree(p_acting_user_id, p_target_user_id);
 END; $$;
 
 -- Audit trigger for lms.marketing_leads (field-level diff on UPDATE, snapshot on DELETE).
@@ -780,6 +1090,12 @@ END; $$;
 DROP TRIGGER IF EXISTS trg_users_audit           ON iam.users;
 CREATE TRIGGER trg_users_audit
   AFTER UPDATE OR DELETE ON iam.users FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+-- Re-orgs are audited: the rest of iam.reporting_lines' triggers are declared
+-- with the table above, but this one has to wait for audit.audit_row_changes().
+DROP TRIGGER IF EXISTS trg_reporting_lines_audit ON iam.reporting_lines;
+CREATE TRIGGER trg_reporting_lines_audit
+  AFTER UPDATE OR DELETE ON iam.reporting_lines FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
 DROP TRIGGER IF EXISTS trg_ad_campaigns_audit    ON marketing.ad_campaigns;
 CREATE TRIGGER trg_ad_campaigns_audit
@@ -1293,6 +1609,14 @@ DROP TRIGGER IF EXISTS trg_leave_request_approvals_audit        ON hr.leave_requ
 CREATE TRIGGER trg_leave_request_approvals_audit
   AFTER UPDATE OR DELETE ON hr.leave_request_approvals FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
+DROP TRIGGER IF EXISTS trg_00_reg_approvals_set_org_id ON hr.attendance_regularization_approvals;
+CREATE TRIGGER trg_00_reg_approvals_set_org_id
+  BEFORE INSERT ON hr.attendance_regularization_approvals FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_reg_approvals_audit        ON hr.attendance_regularization_approvals;
+CREATE TRIGGER trg_reg_approvals_audit
+  AFTER UPDATE OR DELETE ON hr.attendance_regularization_approvals FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
 
 -- ===================================================================
 -- 6. hr.can_approve_leave — approval authority (modeled on iam.can_assign_to)
@@ -1314,12 +1638,13 @@ DECLARE
 BEGIN
   IF p_approver_id = p_requester_id THEN RETURN FALSE; END IF;
 
-  -- 1) Approver is in the requester's management subtree (walks manager_id up).
-  SELECT COUNT(*) > 0 INTO v_in_scope
-  FROM iam.vw_user_team_members
-  WHERE manager_id = p_approver_id
-    AND member_id  = p_requester_id
-    AND org_id     = p_org_id;
+  -- 1) Approver is in the requester's management chain, resolved from
+  --    iam.reporting_lines as of today — the same tree that drives lead
+  --    assignment and task team scope. Acting is always "as of now"; the
+  --    request's own approver chain was materialized into
+  --    hr.leave_request_approvals at apply time, so a re-org mid-request
+  --    cannot strand it.
+  v_in_scope := iam.fn_is_in_subtree(p_approver_id, p_requester_id);
   IF COALESCE(v_in_scope, FALSE) THEN RETURN TRUE; END IF;
 
   -- 2) Approver's role/rank in this org (org_admin+ => rank 980; hr_admin => 75).
@@ -1359,9 +1684,36 @@ DROP TRIGGER IF EXISTS trg_attendance_rules_soft_delete       ON hr.attendance_r
 CREATE TRIGGER trg_attendance_rules_soft_delete
   BEFORE DELETE ON hr.attendance_rules FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
 
+-- Keep tenant_id consistent with the row's scope, and NEVER let the generic
+-- public.set_org_id() run here: it fills a NULL org_id from the GUC, which would
+-- silently turn every tenant-wide default row into an org row. org_id is passed
+-- explicitly by hr-service (the org id, or NULL for the tenant default), so the
+-- only thing left to derive is the tenant.
+CREATE OR REPLACE FUNCTION hr.set_attendance_rules_tenant_id()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE v_tenant UUID;
+BEGIN
+  IF NEW.org_id IS NOT NULL THEN
+    SELECT tenant_id INTO v_tenant FROM entity.organizations WHERE id = NEW.org_id;
+    IF v_tenant IS NULL THEN
+      RAISE EXCEPTION 'attendance_rules: cannot resolve tenant_id for org_id %', NEW.org_id;
+    END IF;
+  ELSE
+    v_tenant := NULLIF(current_setting('app.current_tenant_id', true), '')::uuid;
+    IF v_tenant IS NULL THEN
+      RAISE EXCEPTION 'attendance_rules: tenant-wide row needs the app.current_tenant_id GUC';
+    END IF;
+  END IF;
+  NEW.tenant_id := v_tenant;
+  RETURN NEW;
+END; $$;
+
 DROP TRIGGER IF EXISTS trg_00_attendance_rules_set_org_id     ON hr.attendance_rules;
-CREATE TRIGGER trg_00_attendance_rules_set_org_id
-  BEFORE INSERT ON hr.attendance_rules FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_00_attendance_rules_set_tenant_id  ON hr.attendance_rules;
+CREATE TRIGGER trg_00_attendance_rules_set_tenant_id
+  BEFORE INSERT OR UPDATE ON hr.attendance_rules
+  FOR EACH ROW EXECUTE FUNCTION hr.set_attendance_rules_tenant_id();
 
 DROP TRIGGER IF EXISTS trg_01_attendance_rules_set_created_by ON hr.attendance_rules;
 CREATE TRIGGER trg_01_attendance_rules_set_created_by
@@ -1473,26 +1825,6 @@ CREATE OR REPLACE FUNCTION hr.can_approve(
 ) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER AS $$
   SELECT hr.can_approve_leave(p_org_id, p_approver_id, p_requester_id);
 $$;
-
-DROP TRIGGER IF EXISTS trg_reporting_lines_updated_at        ON hr.reporting_lines;
-CREATE TRIGGER trg_reporting_lines_updated_at
-  BEFORE UPDATE ON hr.reporting_lines FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
-DROP TRIGGER IF EXISTS trg_reporting_lines_soft_delete       ON hr.reporting_lines;
-CREATE TRIGGER trg_reporting_lines_soft_delete
-  BEFORE DELETE ON hr.reporting_lines FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
-
-DROP TRIGGER IF EXISTS trg_00_reporting_lines_set_org_id     ON hr.reporting_lines;
-CREATE TRIGGER trg_00_reporting_lines_set_org_id
-  BEFORE INSERT ON hr.reporting_lines FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
-
-DROP TRIGGER IF EXISTS trg_01_reporting_lines_set_created_by ON hr.reporting_lines;
-CREATE TRIGGER trg_01_reporting_lines_set_created_by
-  BEFORE INSERT ON hr.reporting_lines FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
-
-DROP TRIGGER IF EXISTS trg_reporting_lines_audit             ON hr.reporting_lines;
-CREATE TRIGGER trg_reporting_lines_audit
-  AFTER UPDATE OR DELETE ON hr.reporting_lines FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
 DROP TRIGGER IF EXISTS trg_task_lists_updated_at        ON task.task_lists;
 CREATE TRIGGER trg_task_lists_updated_at

@@ -373,17 +373,25 @@ CREATE TABLE IF NOT EXISTS hr.leave_request_approvals (
 
 
 -- ===================================================================
--- 1. hr.attendance_rules — org-level capture rules (§4.3)
---    One row per org (UNIQUE (org_id) among non-deleted). Standard operational
---    recipe + org/tenant RLS. Readable by every app_user in the org (they need
---    the rules before punching); writes are gated to hr_admin/org_admin at the
---    app layer (same FOR ALL app_user pattern as hr.holidays).
+-- 1. hr.attendance_rules — attendance capture rules (§4.3)
+--    Tenant-wide default (org_id NULL), org row overrides — the same scoping
+--    hr.hr_settings and hr.leave_policies use, so a tenant can configure every
+--    org at once and any org can still diverge. UNIQUE on
+--    (tenant_id, COALESCE(org_id, 0-uuid)) among non-deleted, so there is at
+--    most one row per scope. Standard operational recipe + org/tenant RLS.
+--    Readable by every app_user in the tenant (they need the rules before
+--    punching, and the row that applies to them may be the tenant default);
+--    writes are gated to hr_admin/org_admin at the app layer (same FOR ALL
+--    app_user pattern as hr.holidays), with tenant-scope writes additionally
+--    requiring a tenant_admin platform role.
 --    Face-verification columns are created now but stay DORMANT (no enforcement
 --    logic in this increment).
 -- ===================================================================
 CREATE TABLE IF NOT EXISTS hr.attendance_rules (
   id                       UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  org_id                   UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  tenant_id                UUID    NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  -- NULL = the tenant-wide default, applying to every org without its own row.
+  org_id                   UUID    REFERENCES entity.organizations(id) ON DELETE RESTRICT,
   geofence_enabled         BOOLEAN NOT NULL DEFAULT TRUE,
   geofence_radius_meters   INT     NOT NULL DEFAULT 200 CHECK (geofence_radius_meters > 0),
   require_photo            BOOLEAN NOT NULL DEFAULT TRUE,
@@ -405,6 +413,20 @@ CREATE TABLE IF NOT EXISTS hr.attendance_rules (
   -- the service's DEFAULT_THRESHOLDS constant is the last resort.
   min_half_day_minutes     SMALLINT NOT NULL DEFAULT 240 CONSTRAINT chk_attendance_rules_half_day_range CHECK (min_half_day_minutes BETWEEN 0 AND 1440),
   min_full_day_minutes     SMALLINT NOT NULL DEFAULT 480 CONSTRAINT chk_attendance_rules_full_day_range CHECK (min_full_day_minutes BETWEEN 0 AND 1440),
+  -- How many levels of the reporting chain must approve a regularization, the
+  -- same knob hr.leave_policies.approval_levels is for leave. The chain itself
+  -- is resolved from iam.reporting_lines by the same resolveApprovers used for
+  -- leave, so a correction request escalates up exactly the hierarchy a leave
+  -- request would. Defaults to 1 (direct manager only).
+  regularization_approval_levels SMALLINT NOT NULL DEFAULT 1
+                             CONSTRAINT chk_attendance_rules_reg_levels CHECK (regularization_approval_levels >= 1),
+  -- How many days back a member may file a regularization, counted in the ORG's
+  -- timezone (entity.organizations.timezone), not UTC. 0 = today only. Enforced
+  -- in hr-service's createRegularization, which also rejects any future date —
+  -- correcting a day that has not happened yet is meaningless, and a work_date
+  -- far in the past resolves an approver chain that may not have existed then.
+  regularization_max_backdate_days SMALLINT NOT NULL DEFAULT 30
+                             CONSTRAINT chk_attendance_rules_reg_backdate CHECK (regularization_max_backdate_days BETWEEN 0 AND 365),
   -- ── standard soft-delete / audit ──
   is_active   BOOLEAN NOT NULL DEFAULT TRUE,
   is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
@@ -617,43 +639,38 @@ CREATE TABLE IF NOT EXISTS hr.attendance_regularizations (
   CONSTRAINT chk_attendance_regularizations_active_deleted CHECK (NOT (is_active AND is_deleted))
 );
 
--- ===================================================================
--- hr.reporting_lines — effective-dated managerial hierarchy (tenant/org scoped)
---   One row = "user_id reports to manager_id, in org_id, for [effective_from,
---   effective_to)". effective_to NULL = the currently-open line. A user has at
---   most one active line per org at any instant (exclusion constraint). A NULL
---   manager_id is not stored — absence of a line means "no reporting line", and
---   the approver resolver falls back to a deterministic org_admin/hr_admin.
--- ===================================================================
-CREATE TABLE IF NOT EXISTS hr.reporting_lines (
-  id             UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
-  tenant_id      UUID    NOT NULL REFERENCES entity.tenants(id)        ON DELETE CASCADE,
-  org_id         UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE CASCADE,
-  user_id        UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE CASCADE,
-  manager_id     UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
-  effective_from DATE    NOT NULL DEFAULT CURRENT_DATE,
-  effective_to   DATE,
-  is_active      BOOLEAN NOT NULL DEFAULT TRUE,
-  is_deleted     BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at     TIMESTAMPTZ,
-  deleted_by     UUID,
-  created_by     UUID,
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
-  updated_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
-  CONSTRAINT chk_reporting_lines_active_deleted CHECK (NOT (is_active AND is_deleted)),
-  CONSTRAINT chk_reporting_lines_not_self       CHECK (user_id <> manager_id),
-  CONSTRAINT chk_reporting_lines_range          CHECK (effective_to IS NULL OR effective_to > effective_from),
-  -- No two overlapping active lines for the same user in the same org. The
-  -- half-open daterange [from, to) lets a new line start on the exact day the
-  -- previous one ends without tripping the constraint. Soft-deleted rows are
-  -- excluded so a re-org can supersede history. (btree_gist, created in 00_,
-  -- is what allows mixing the equality columns with the range overlap.)
-  CONSTRAINT excl_reporting_lines_overlap EXCLUDE USING gist (
-    org_id  WITH =,
-    user_id WITH =,
-    daterange(effective_from, effective_to, '[)') WITH &&
-  ) WHERE (NOT is_deleted)
+-- ── hr.attendance_regularization_approvals ────────────────────────
+-- One row per approval level, exactly like hr.leave_request_approvals. Written
+-- when the request is submitted, from the chain resolveApprovers walks up
+-- iam.reporting_lines — so a correction request escalates up the same hierarchy
+-- a leave request does, for however many levels
+-- hr.attendance_rules.regularization_approval_levels says.
+--
+-- The approver acts on their own row (see the approver_policy in 08_rls.sql);
+-- hr_admin / org_admin / tenant_admin can act at any level without being
+-- assigned one, via hr.can_approve.
+--
+-- attendance_regularizations.approver_id / acted_at / approver_comment remain as
+-- a denormalized record of the FINAL decision, so existing list screens and the
+-- payload shape did not change.
+CREATE TABLE IF NOT EXISTS hr.attendance_regularization_approvals (
+  id                UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  regularization_id UUID    NOT NULL REFERENCES hr.attendance_regularizations(id) ON DELETE CASCADE,
+  org_id            UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE RESTRICT,
+  level             SMALLINT NOT NULL,
+  approver_id       UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  action            TEXT    NOT NULL DEFAULT 'pending'
+                              CHECK (action IN ('pending','approved','rejected')),
+  acted_at          TIMESTAMPTZ,
+  comment           TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT uq_reg_approvals_request_level UNIQUE (regularization_id, level)
 );
+
+-- NOTE: the reporting hierarchy used to live here as hr.reporting_lines. It is
+-- now iam.reporting_lines (02_tables_core.sql) — a platform-wide concern shared
+-- by LMS lead assignment, HR approvals and Tasks team scope, and therefore not
+-- ownable by a product schema that 07_grants.sql walls off from the others.
 
 
 -- ===================================================================

@@ -280,8 +280,11 @@ Bidirectional integration with Meta (Facebook) Lead Ads:
 10. Any remaining unmapped form fields stored in `ext.meta_lead_custom_fields`
 
 ### Outbound flow (CRM → Meta CAPI)
-- **Auto-trigger**: When a lead's stage changes, leads-service fires a fire-and-forget HTTP call to meta-conversion-api. The service checks if the new stage is in `ext.meta_tenant_config.capi_trigger_stages` and sends a CAPI event if so. Credentials are resolved by the lead's tenant_id, falling back to the shared-app row if the tenant has no dedicated app.
+- **Auto-trigger**: When a lead's stage actually changes *and* the lead's source is a Meta one (`lms.lead_sources.name` in `facebook`/`instagram`), leads-service fires a fire-and-forget HTTP call to meta-conversion-api. Both conditions are checked before the call, so a website/walk-in/referral lead never reaches the CAPI service at all.
+- **Eligibility, re-checked server-side** (`capi-trigger.service.ts`, in order): lead exists → source is Meta (`SOURCE_NOT_META`) → a linked `ext.meta_leads` row supplies `meta_lead_id`/`form_id` (`NOT_META_ORIGIN`) → tenant has an active integration → the new stage maps to an event via `ext.vw_lead_stage_capi_event_map` → no prior `SUCCESS` for this (lead, event). The source check is what protects the manual path, which can name any lead id; it is also why an intake email-dedup merge (a Meta lead folded into an existing website lead) no longer causes that website lead to report to Meta. Credentials are resolved by the lead's tenant_id, falling back to the shared-app row if the tenant has no dedicated app.
 - **Manual trigger**: `POST /meta/crm-event` (protected, JWT-authenticated) allows users to manually send conversion events.
+- `ext.meta_tenant_config.capi_trigger_stages` is stored and PATCHable but **not** evaluated — stage gating is `ext.lead_stage_capi_event_map` alone.
+- Skips are not persisted: `ext.meta_capi_outbound_logs` records only real send attempts, so the `reason_code` on the `capi.trigger` log line is the only durable signal for a skip.
 - PII is SHA256-hashed before transmission. Deterministic `event_id` ensures Meta deduplication.
 - Partial unique index on `ext.meta_capi_outbound_logs(marketing_lead_id, event_name) WHERE delivery_status = 'SUCCESS'` prevents duplicate events.
 

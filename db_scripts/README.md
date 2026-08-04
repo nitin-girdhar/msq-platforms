@@ -44,14 +44,38 @@ The order is not cosmetic; each file sits where a dependency pins it.
 
 ## Changing the schema
 
-Edit the `CREATE` statement and redeploy. That is the whole workflow.
+Edit the `CREATE` statement and redeploy. That is the whole workflow, and the
+`CREATE` is always the single source of truth.
 
-There is **no in-place upgrade path** and no `_migrations/` folder. Previously
+There is no `_migrations/` folder and no numbered migration files. Previously
 each file ended with an `IN-PLACE UPGRADES` section of
 `ALTER ... ADD COLUMN IF NOT EXISTS` that had to be kept in lock-step by hand
 with the `CREATE TABLE` above it, and the two drifted: `hr.attendance_rules`
 ended up with four CHECK constraints declared twice under different names on
-every fresh install.
+every fresh install. A later `migrations/` folder was tried and retired for the
+same reason — the files are archived under `db_backups/`.
+
+Record every change in `09_schema_version.sql`. The scripts show only the
+current shape; the version description is the only record of *why*.
+
+### Getting a change onto a server that has data
+
+`db_deploy.ps1` DROPs and recreates, so it is for local development only.
+For UAT and production:
+
+```powershell
+.\apply_schema.ps1 -DbHost <server> -Backup
+```
+
+That re-runs `04`–`08` and `10` in place — functions, views, indexes, grants
+and policies are all idempotent, so the live objects end up matching this
+folder exactly.
+
+It deliberately does **not** re-run `02`/`03`: they are `CREATE TABLE IF NOT
+EXISTS` and would be silent no-ops on a populated database. A new column or a
+changed type therefore needs a hand-written `ALTER` against the server, run
+once. Do that first, edit the `CREATE TABLE` to match, then run
+`apply_schema.ps1` so everything referencing the new shape is rebuilt.
 
 ## Reference data vs dummy data
 

@@ -316,7 +316,7 @@ CREATE TRIGGER trg_01_lead_follow_ups_set_created_by
 -- depends on this one, so without it a re-run against a populated database fails
 -- (fresh installs never noticed — nothing existed to depend on it yet). The view
 -- is recreated by 05_views.sql, which runs immediately after this file in both
--- db_deploy.ps1 and migrations/migrate.ps1.
+-- db_deploy.ps1 and apply_schema.ps1.
 DROP FUNCTION IF EXISTS audit.fn_detect_password_spray(INT, INT) CASCADE;
 
 CREATE OR REPLACE FUNCTION audit.fn_detect_password_spray(

@@ -24,7 +24,8 @@
 #   CRON_SCHEDULE        cron expression (default: 30 7 * * *)
 #   LEAD_REPORT_LOG_FILE log path (default: /var/log/lead-report.log)
 #   COMPOSE_DIR          dir with docker-compose.yml + .env
-#                        (default: <repo>/msq-deploy/artifacts)
+#                        (default: one directory up from send-lead-report.sh —
+#                        see that script's own header)
 #   RUN_MODE             run | exec (default: run)
 #   DOCKER_BIN_DIR       dir containing docker, prepended to cron's PATH
 #
@@ -52,7 +53,7 @@ chmod +x "$JOB"
 
 # Forward only non-secret configuration, and only what is actually set.
 ENV_PREFIX=""
-for var in COMPOSE_DIR COMPOSE_FILE LEADS_SERVICE RUN_MODE MSQ_REPO_DIR; do
+for var in COMPOSE_DIR COMPOSE_FILE LEADS_SERVICE RUN_MODE; do
   val="${!var:-}"
   [[ -n "$val" ]] && ENV_PREFIX+="$var='$val' "
 done

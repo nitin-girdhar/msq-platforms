@@ -22,7 +22,10 @@
 #
 # Reads:
 #   COMPOSE_DIR    dir holding docker-compose.yml + .env
-#                  (default: <repo>/msq-deploy/artifacts)
+#                  (default: one directory up from this script — i.e. this
+#                  reports/ folder is expected to sit directly inside the
+#                  deployment root deploy.sh installed, alongside
+#                  docker-compose.yml/.env/db_scripts/)
 #   COMPOSE_FILE   compose file name (default: docker-compose.yml)
 #   LEADS_SERVICE  compose service name (default: leads-service)
 #   RUN_MODE       "run" (default, fresh one-off container) or "exec"
@@ -37,8 +40,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="${MSQ_REPO_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-COMPOSE_DIR="${COMPOSE_DIR:-$REPO_DIR/msq-deploy/artifacts}"
+# build-deploy.ps1 never ships a `msq-deploy/` subfolder to the server — it
+# flattens docker-compose.yml/.env/db_scripts straight into deploy.sh's
+# $INSTALL_DIR, and this reports/ folder is dropped in by hand as a sibling of
+# that docker-compose.yml. So the compose dir is always just one level up from
+# wherever this script itself lives, not two levels up plus a path that only
+# exists in a full monorepo checkout.
+COMPOSE_DIR="${COMPOSE_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 LEADS_SERVICE="${LEADS_SERVICE:-leads-service}"
 RUN_MODE="${RUN_MODE:-run}"
@@ -59,12 +67,12 @@ COMPOSE=(docker compose -f "$COMPOSE_FILE")
 # reads like a crash rather than "your image is stale". Name it plainly.
 if ! "${COMPOSE[@]}" run --rm --no-deps --entrypoint sh "$LEADS_SERVICE" \
       -c "[ -f $JOB_ENTRY ]" >/dev/null 2>&1; then
-  # Build context is the MONOREPO ROOT, not msq-lms: the Dockerfile's
-  # `COPY . .` + `pnpm install` needs the root pnpm-workspace.yaml and the
-  # @platform/* packages under msq-core.
-  die "$JOB_ENTRY is missing from the $LEADS_SERVICE image. Rebuild it from a commit that includes src/jobs/send-lead-report.ts:
-     (cd $REPO_DIR && docker build -f msq-lms/services/leads-service/Dockerfile -t msq-leads-service .)
-     then: (cd $COMPOSE_DIR && docker compose -f $COMPOSE_FILE up -d $LEADS_SERVICE)"
+  # There is no monorepo checkout on a deployed server to rebuild from — the
+  # image has to be rebuilt on the BUILD machine (via msq-deploy/build-deploy.ps1,
+  # which bundles it into msq-images.tar) and this deployment redeployed.
+  die "$JOB_ENTRY is missing from the $LEADS_SERVICE image. Rebuild it on the build machine from a commit that includes src/jobs/send-lead-report.ts:
+     .\\msq-deploy\\build-deploy.ps1
+     then ship the new artifacts/ bundle here and: (cd $COMPOSE_DIR && sudo bash deploy.sh --redeploy)"
 fi
 
 log "Running daily lead report in-container (mode=$RUN_MODE, service=$LEADS_SERVICE, args=${*:-none})"

@@ -56,6 +56,25 @@ CREATE POLICY tenant_isolation_policy ON lms.lead_links
     )
   );
 
+-- RLS
+-- Only guards incidental access from authenticated app sessions — the public
+-- report page and the cron job both read/write this table via root_service
+-- (withServiceTx), which bypasses RLS entirely. Without these policies the
+-- default per-schema grants (above) would leave the table plainly SELECTable
+-- by app_user/tenant_admin.
+ALTER TABLE lms.lead_report_snapshot ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS org_isolation_policy    ON lms.lead_report_snapshot;
+DROP POLICY IF EXISTS tenant_isolation_policy ON lms.lead_report_snapshot;
+
+CREATE POLICY org_isolation_policy ON lms.lead_report_snapshot
+  AS PERMISSIVE FOR SELECT TO app_user
+  USING (org_id = (NULLIF(current_setting('app.current_org_id', true), ''))::uuid);
+
+CREATE POLICY tenant_isolation_policy ON lms.lead_report_snapshot
+  AS PERMISSIVE FOR SELECT TO tenant_admin
+  USING (tenant_id = (NULLIF(current_setting('app.current_tenant_id', true), ''))::uuid);
+
 ALTER TABLE iam.api_clients ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS tenant_isolation_policy ON iam.api_clients;

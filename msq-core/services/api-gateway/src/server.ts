@@ -207,6 +207,15 @@ app.post('/public/v1/communications/send', { preHandler: [publicApiKeyAuth('comm
   return proxyTo(config.communicationServiceUrl, '/api/v1/communications/public-send', req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
 });
 
+// Daily lead report page. Meant to be opened directly in a browser via a
+// shared link (?key=...), not fetched by a script — see extractKey's query
+// fallback in public-auth.ts. Returns HTML, not JSON; proxyTo forwards
+// whatever content-type leads-service sends.
+app.get('/public/v1/lead-report', { preHandler: [publicApiKeyAuth('lead-report:read')] }, async (req, reply) => {
+  const client = req.publicClient!;
+  return proxyTo(config.leadsServiceUrl, '/api/v1/public/lead-report', req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
+});
+
 // ── Protected routes ────────────────────────────────────────────────────────
 // Every protected route runs authPreHandler (JWT → req.userCtx) then productGuard
 // (D6 entitlement choke point: 403 if the tenant hasn't licensed the route's

@@ -10,6 +10,10 @@ export const API_SCOPES = [
   // given the presence map without the branch list.
   'locations:read',
   'users:read',
+  // Read-only access to the daily lead report page (/public/v1/lead-report).
+  // A key with this scope and scope_all_orgs is a tenant-wide report link; a
+  // key bound to one org_id narrows the same link to a single branch.
+  'lead-report:read',
   'comms:send',
   // Additive: unlocks free-form (non-template) message bodies. Granted only to
   // vetted clients. Without it, comms:send is restricted to approved templates.

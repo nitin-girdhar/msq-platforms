@@ -99,6 +99,12 @@ CREATE INDEX IF NOT EXISTS idx_api_clients_key_hash ON iam.api_clients (key_hash
 
 CREATE INDEX IF NOT EXISTS idx_api_client_orgs_org ON iam.api_client_orgs (org_id);
 
+-- The UNIQUE constraint on lms.lead_report_snapshot is (tenant_id, org_id,
+-- assigned_user_id, report_date) — not usable for the read path's
+-- `WHERE tenant_id = ? AND report_date = ?` (org_id/assigned_user_id sit
+-- between them), hence this separate index.
+CREATE INDEX IF NOT EXISTS idx_lead_report_snapshot_tenant_date ON lms.lead_report_snapshot (tenant_id, report_date);
+
 -- ── PASSWORD-SPRAY DETECTION ──────────────────────────────────────
 -- Detects password SPRAYING, which the per-account lockout on iam.users
 -- (failed_login_attempts / locked_until) deliberately does not catch.

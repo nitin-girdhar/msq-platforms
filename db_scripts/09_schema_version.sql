@@ -197,4 +197,8 @@ INSERT INTO public.schema_versions (version, description) VALUES
   ('1.31.0', 'ext.meta_page_form_org_map.form_id made nullable for page-level Meta lead routing: a row with form_id NULL subscribes to every leadgen form on that Page, routing them all to the row''s org; an explicit form_id row still wins over the page-level fallback for pages shared across multiple orgs. New partial unique index uq_meta_page_form_org_map_page_level enforces at most one active page-level row per page.')
   ON CONFLICT (version) DO NOTHING;
 
+INSERT INTO public.schema_versions (version, description) VALUES
+  ('1.32.0', 'Public daily lead report page: lms.lead_report_snapshot (one row per branch+assignee per day, RLS-guarded, written by the existing send-lead-report cron job) so day-over-day comparison has history to read; branch/tenant rollups are derived via GROUPING SETS at read time rather than stored. New auth-constants scope lead-report:read on the existing iam.api_clients credential system — no new token table or issuance endpoint.')
+  ON CONFLICT (version) DO NOTHING;
+
 COMMIT;

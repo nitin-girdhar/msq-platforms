@@ -717,6 +717,48 @@ CREATE TABLE IF NOT EXISTS iam.api_client_orgs (
   CONSTRAINT pk_api_client_orgs PRIMARY KEY (api_client_id, org_id)
 );
 
+-- ── LEAD_REPORT_SNAPSHOT ────────────────────────────────────────────
+-- Daily history for the lead report (email + public page), which the live
+-- views (lms.vw_lead_report_branch/_user, 05_views.sql) cannot provide on
+-- their own since they only ever compute NOW(). Written once per tenant per
+-- day by the send-lead-report cron job.
+--
+-- One row per (branch, assignee) bucket, same shape as vw_lead_report_user,
+-- PLUS one synthetic all-zero row per branch that had no leads that day
+-- (assigned_user_id NULL, is_unassigned TRUE) — the write path guarantees
+-- this so a quiet branch still appears in history, matching the live branch
+-- view's "zero row, not a missing row" guarantee that the per-user view alone
+-- does not provide.
+--
+-- Deliberately ONE table, not a branch table plus a user table: branch- and
+-- tenant-level rollups are derived at read time via
+-- `SUM(...) GROUP BY GROUPING SETS ((org_id), ())`, the same technique
+-- tenantBranchReportQuery uses over live data — a stored branch total could
+-- never disagree with the rows it was summed from, and the row counts here
+-- (branches x staff, per tenant per day) are far too small for the extra
+-- aggregation to matter.
+CREATE TABLE IF NOT EXISTS lms.lead_report_snapshot (
+  tenant_id          UUID        NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  org_id             UUID        NOT NULL REFERENCES entity.organizations(id) ON DELETE CASCADE,
+  org_name           TEXT        NOT NULL,
+  -- NULL = the Unassigned bucket for this branch, or the zero-lead placeholder.
+  assigned_user_id   UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
+  assignee           TEXT        NOT NULL,
+  is_unassigned      BOOLEAN     NOT NULL DEFAULT FALSE,
+  -- Branch-local calendar date, same semantics as report_date in the views.
+  report_date        DATE        NOT NULL,
+  total_leads        INT         NOT NULL,
+  new_count          INT         NOT NULL,
+  new_leads_today    INT         NOT NULL,
+  unassigned_count   INT         NOT NULL,
+  followup_scheduled INT         NOT NULL,
+  followup_overdue   INT         NOT NULL,
+  converted_count    INT         NOT NULL,
+  unqualified_count  INT         NOT NULL,
+  captured_at        TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT uq_lead_report_snapshot UNIQUE NULLS NOT DISTINCT (tenant_id, org_id, assigned_user_id, report_date)
+);
+
 -- ── LEAD_INTERACTIONS ─────────────────────────────────────────────
 -- Append-only log — no updated_at, no update trigger.
 CREATE TABLE IF NOT EXISTS lms.lead_interactions (

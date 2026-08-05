@@ -14,7 +14,12 @@ function extractKey(request: FastifyRequest): string | undefined {
   const auth = request.headers.authorization;
   if (auth?.startsWith('Bearer ')) return auth.slice(7).trim();
   const apiKey = request.headers['x-api-key'];
-  return typeof apiKey === 'string' ? apiKey.trim() : undefined;
+  if (typeof apiKey === 'string' && apiKey.trim()) return apiKey.trim();
+  // Fallback for routes opened directly in a browser (e.g. the public lead
+  // report page), which cannot set a custom header. Header auth still takes
+  // priority for machine callers; this is additive, not a replacement.
+  const queryKey = (request.query as { key?: unknown } | undefined)?.key;
+  return typeof queryKey === 'string' && queryKey.trim() ? queryKey.trim() : undefined;
 }
 
 // ── Per-key fixed-window rate limiter ────────────────────────────────────────

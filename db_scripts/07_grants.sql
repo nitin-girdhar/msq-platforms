@@ -16,6 +16,14 @@ GRANT SELECT, INSERT, UPDATE ON lms.lead_links TO app_user;
 GRANT SELECT, INSERT, UPDATE ON lms.lead_links TO tenant_admin;
 GRANT ALL PRIVILEGES          ON lms.lead_links TO root_service;
 
+-- Read-only for app sessions: rows are only ever written by the cron job as
+-- root_service (withServiceTx). app_user/tenant_admin access is for a future
+-- in-app history view, not required by the public report page itself, which
+-- reads via root_service like the job does.
+GRANT SELECT        ON lms.lead_report_snapshot TO app_user;
+GRANT SELECT        ON lms.lead_report_snapshot TO tenant_admin;
+GRANT ALL PRIVILEGES ON lms.lead_report_snapshot TO root_service;
+
 GRANT SELECT, INSERT, UPDATE ON iam.api_clients TO tenant_admin;
 GRANT SELECT, INSERT, UPDATE ON iam.api_clients TO app_user;
 GRANT ALL PRIVILEGES          ON iam.api_clients TO root_service;

@@ -369,6 +369,11 @@ GRANT SELECT, INSERT, UPDATE ON hr.shift_assignments TO tenant_admin;
 REVOKE DELETE                ON hr.shift_assignments FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON hr.shift_assignments TO root_service;
 
+GRANT SELECT, INSERT, UPDATE ON hr.attendance_geo_exceptions TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.attendance_geo_exceptions TO tenant_admin;
+REVOKE DELETE                ON hr.attendance_geo_exceptions FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.attendance_geo_exceptions TO root_service;
+
 GRANT SELECT, INSERT          ON hr.attendance_events TO app_user;
 GRANT SELECT                  ON hr.attendance_events TO tenant_admin;
 REVOKE UPDATE, DELETE         ON hr.attendance_events FROM app_user, tenant_admin;
@@ -575,7 +580,7 @@ GRANT SELECT                 ON TABLE hr.leave_request_status_log, hr.leave_ledg
 -- place from a prior deploy, so a table added later inherits it) while a fresh
 -- install ends up with zero hr_svc privilege on the table -- create-shift then
 -- fails on the segment INSERT with "permission denied".
-GRANT SELECT, INSERT, UPDATE ON TABLE hr.attendance_rules, hr.shifts, hr.shift_segments, hr.shift_assignments, hr.attendance_regularizations TO hr_svc;
+GRANT SELECT, INSERT, UPDATE ON TABLE hr.attendance_rules, hr.shifts, hr.shift_segments, hr.shift_assignments, hr.attendance_geo_exceptions, hr.attendance_regularizations TO hr_svc;
 GRANT SELECT, INSERT         ON TABLE hr.attendance_events TO hr_svc;
 GRANT SELECT                 ON TABLE hr.attendance_days TO hr_svc;
 GRANT SELECT ON TABLE

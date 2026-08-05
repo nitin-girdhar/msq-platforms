@@ -1783,6 +1783,28 @@ DROP TRIGGER IF EXISTS trg_shift_assignments_audit             ON hr.shift_assig
 CREATE TRIGGER trg_shift_assignments_audit
   AFTER UPDATE OR DELETE ON hr.shift_assignments FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
+DROP TRIGGER IF EXISTS trg_geo_exceptions_updated_at        ON hr.attendance_geo_exceptions;
+CREATE TRIGGER trg_geo_exceptions_updated_at
+  BEFORE UPDATE ON hr.attendance_geo_exceptions FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_geo_exceptions_soft_delete       ON hr.attendance_geo_exceptions;
+CREATE TRIGGER trg_geo_exceptions_soft_delete
+  BEFORE DELETE ON hr.attendance_geo_exceptions FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_geo_exceptions_set_org_id     ON hr.attendance_geo_exceptions;
+CREATE TRIGGER trg_00_geo_exceptions_set_org_id
+  BEFORE INSERT ON hr.attendance_geo_exceptions FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_geo_exceptions_set_created_by ON hr.attendance_geo_exceptions;
+CREATE TRIGGER trg_01_geo_exceptions_set_created_by
+  BEFORE INSERT ON hr.attendance_geo_exceptions FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+-- Who was exempted from the geofence, by whom, and when it was ended early is
+-- exactly the kind of change an attendance audit asks about.
+DROP TRIGGER IF EXISTS trg_geo_exceptions_audit             ON hr.attendance_geo_exceptions;
+CREATE TRIGGER trg_geo_exceptions_audit
+  AFTER UPDATE OR DELETE ON hr.attendance_geo_exceptions FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
 DROP TRIGGER IF EXISTS trg_attendance_days_updated_at ON hr.attendance_days;
 CREATE TRIGGER trg_attendance_days_updated_at
   BEFORE UPDATE ON hr.attendance_days FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();

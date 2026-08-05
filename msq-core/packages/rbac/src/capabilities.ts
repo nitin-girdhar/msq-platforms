@@ -35,8 +35,9 @@ export const CAPABILITY = {
   LMS_USERS:            'lms.users',
   TASKS_LISTS:          'tasks.lists',
 
-  // ── Tabs (8) ──
-  HR_ATTENDANCE_ADMIN_ASSIGNMENTS:  'hr.attendance.admin.assignments',
+  // ── Tabs (9) ──
+  HR_ATTENDANCE_ADMIN_ASSIGNMENTS:     'hr.attendance.admin.assignments',
+  HR_ATTENDANCE_ADMIN_GEO_EXCEPTIONS:  'hr.attendance.admin.geo_exceptions',
   HR_ATTENDANCE_ADMIN_REPORTS:      'hr.attendance.admin.reports',
   HR_ATTENDANCE_ADMIN_RULES:        'hr.attendance.admin.rules',
   HR_ATTENDANCE_ADMIN_SHIFTS:       'hr.attendance.admin.shifts',
@@ -45,11 +46,13 @@ export const CAPABILITY = {
   HR_LEAVE_ADMIN_HOLIDAYS:          'hr.leave.admin.holidays',
   HR_LEAVE_ADMIN_POLICIES:          'hr.leave.admin.policies',
 
-  // ── Operations (66) ──
+  // ── Operations (68) ──
   ADMIN_LOOKUPS_MANAGE:                    'admin.lookups.manage',
   ADMIN_ROLES_MANAGE:                      'admin.roles.manage',
   HR_ATTENDANCE_ADMIN_ASSIGNMENTS_MANAGE:  'hr.attendance.admin.assignments.manage',
   HR_ATTENDANCE_ADMIN_ASSIGNMENTS_VIEW:    'hr.attendance.admin.assignments.view',
+  HR_ATTENDANCE_ADMIN_GEO_EXCEPTIONS_MANAGE: 'hr.attendance.admin.geo_exceptions.manage',
+  HR_ATTENDANCE_ADMIN_GEO_EXCEPTIONS_VIEW:   'hr.attendance.admin.geo_exceptions.view',
   HR_ATTENDANCE_ADMIN_REPORTS_VIEW:        'hr.attendance.admin.reports.view',
   HR_ATTENDANCE_ADMIN_RULES_UPDATE:        'hr.attendance.admin.rules.update',
   HR_ATTENDANCE_ADMIN_RULES_VIEW:          'hr.attendance.admin.rules.view',

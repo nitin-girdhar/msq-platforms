@@ -197,6 +197,12 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Put people on shifts and move them.', 2),
 ('hr.attendance.admin.reports', 'tab', 'hr.attendance.admin', 'Reports',
  'Attendance summaries across the branch.', 4),
+('hr.attendance.admin.geo_exceptions', 'tab', 'hr.attendance.admin', 'Geofence exceptions',
+ 'People allowed to check in from outside the office radius.', 5),
+('hr.attendance.admin.geo_exceptions.view',   'operation', 'hr.attendance.admin.geo_exceptions', 'View exceptions',
+ 'Read who may check in remotely, and until when.', 1),
+('hr.attendance.admin.geo_exceptions.manage', 'operation', 'hr.attendance.admin.geo_exceptions', 'Manage exceptions',
+ 'Let a named person check in from anywhere — a rotating field role, or an approved work-from-home stretch.', 2),
 ('hr.attendance.admin.reports.view', 'operation', 'hr.attendance.admin.reports', 'View reports',
  'Read branch-wide attendance summaries.', 1),
 

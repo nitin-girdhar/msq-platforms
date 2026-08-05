@@ -463,6 +463,13 @@ CREATE INDEX IF NOT EXISTS idx_shift_assignments_org
 CREATE INDEX IF NOT EXISTS idx_shift_assignments_shift
   ON hr.shift_assignments (shift_id) WHERE NOT is_deleted;
 
+-- Read on EVERY punch (the "is this employee exempt today" lookup), so the
+-- user-scoped index is the hot one; the org index serves the admin list.
+CREATE INDEX IF NOT EXISTS idx_geo_exceptions_user
+  ON hr.attendance_geo_exceptions (user_id, effective_from DESC) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_geo_exceptions_org
+  ON hr.attendance_geo_exceptions (org_id) WHERE NOT is_deleted;
+
 CREATE INDEX IF NOT EXISTS idx_attendance_events_user_occurred
   ON hr.attendance_events (user_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_attendance_events_org

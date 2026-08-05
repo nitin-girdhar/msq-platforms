@@ -536,6 +536,54 @@ CREATE TABLE IF NOT EXISTS hr.shift_assignments (
 
 
 -- ===================================================================
+-- 3b. hr.attendance_geo_exceptions — per-employee geofence exemptions (§4.3)
+--     The geofence is a single point (entity.organizations.geo_lat/lng) plus a
+--     radius, which two real situations do not fit: someone whose role rotates
+--     across locations, and someone approved to work from home for a stretch.
+--     The only prior escape hatch was attendance_rules.allow_wfh_checkin, which
+--     is org-wide AND self-declared -- switching it on for three field staff
+--     hands the whole org a bypass checkbox. This table names the people
+--     instead, with dates and a reason.
+--     Same effective-dated shape as hr.shift_assignments, including the gist
+--     no-overlap exclusion; org/tenant RLS + a self-read policy (a user must be
+--     able to see their own exemption before punching).
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.attendance_geo_exceptions (
+  id              UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  user_id         UUID    NOT NULL REFERENCES iam.users(id)            ON DELETE RESTRICT,
+  org_id          UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  -- remote_role: rotating/field role, tied to no location (usually open-ended).
+  -- wfh:         an approved work-from-home stretch (usually date-bounded).
+  -- Both skip the fence identically; the type is what the UI and reports read,
+  -- so field work never gets counted as working from home.
+  exception_type  TEXT    NOT NULL CHECK (exception_type IN ('remote_role','wfh')),
+  effective_from  DATE    NOT NULL,
+  effective_to    DATE,
+  reason          TEXT    NOT NULL,
+  is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted      BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at      TIMESTAMPTZ,
+  deleted_by      UUID,
+  created_by      UUID,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_geo_exceptions_active_deleted CHECK (NOT (is_active AND is_deleted)),
+  CONSTRAINT chk_geo_exceptions_date_order     CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  CONSTRAINT chk_geo_exceptions_reason         CHECK (length(btrim(reason)) >= 3),
+  -- Scoped by type, unlike shift_assignments: a field employee may ALSO be given
+  -- a work-from-home stretch without the two rows colliding. Two overlapping
+  -- rows of the SAME type are always a data-entry mistake.
+  CONSTRAINT excl_geo_exceptions_no_overlap
+    EXCLUDE USING gist (
+      user_id WITH =,
+      org_id WITH =,
+      exception_type WITH =,
+      daterange(effective_from, COALESCE(effective_to, 'infinity'), '[]') WITH &&
+    ) WHERE (NOT is_deleted)
+);
+
+
+-- ===================================================================
 -- 4. hr.attendance_events — append-only raw punches (§4.3)
 --    Lockdown mirrors hr.leave_ledger: app_user SELECT + INSERT own rows only,
 --    tenant_admin SELECT tenant scope, NO UPDATE/DELETE for non-service. Manager
@@ -555,6 +603,12 @@ CREATE TABLE IF NOT EXISTS hr.attendance_events (
   distance_from_org_m  NUMERIC(10,2),
   is_within_geofence   BOOLEAN,
   is_wfh               BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Which hr.attendance_geo_exceptions row let this punch through the fence.
+  -- NULL = none: either an ordinary in-fence punch, or the org-wide
+  -- self-declared WFH bypass. Kept separate from is_wfh, which stays the plain
+  -- fact "this punch was from home" -- a 'remote_role' punch is out of the fence
+  -- but is NOT working from home, and reports must not conflate the two.
+  geo_exception_type   TEXT    CHECK (geo_exception_type IN ('remote_role','wfh')),
   photo_url            TEXT,
   -- ── Face-verification results (DORMANT until the face-verification increment) ──
   face_match_score     NUMERIC(5,2),

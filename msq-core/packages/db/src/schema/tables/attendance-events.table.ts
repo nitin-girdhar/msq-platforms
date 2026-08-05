@@ -19,6 +19,10 @@ export const attendanceEventsTable = hrSchema.table('attendance_events', {
   distanceFromOrgM:   numeric('distance_from_org_m', { precision: 10, scale: 2 }),
   isWithinGeofence:   boolean('is_within_geofence'),
   isWfh:              boolean('is_wfh').notNull().default(false),
+  // Which hr.attendance_geo_exceptions row let this punch through the fence
+  // ('remote_role' | 'wfh'), or NULL for an ordinary in-fence punch. Separate
+  // from isWfh: a remote_role punch is out of the fence but is not from home.
+  geoExceptionType:   text('geo_exception_type'),
   photoUrl:           text('photo_url'),
   faceMatchScore:     numeric('face_match_score', { precision: 5, scale: 2 }),
   faceMatchPassed:    boolean('face_match_passed'),

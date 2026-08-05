@@ -189,4 +189,8 @@ INSERT INTO public.schema_versions (version, description) VALUES
   ('1.29.0', 'hr.attendance_rules becomes tenant-scoped with an org override (tenant_id + nullable org_id, hr_settings-style precedence) and gains regularization_max_backdate_days — the admin-set window, in days, for how far back an attendance regularization may be filed; future-dated requests are always rejected')
   ON CONFLICT (version) DO NOTHING;
 
+INSERT INTO public.schema_versions (version, description) VALUES
+  ('1.30.0', 'Per-employee geofence exemptions: hr.attendance_geo_exceptions (effective-dated, gist no-overlap scoped by type) names the people allowed to punch outside the fence — exception_type ''remote_role'' for rotating/field roles, ''wfh'' for an approved work-from-home stretch — replacing the all-or-nothing, self-declared attendance_rules.allow_wfh_checkin as the way to handle the few. hr.attendance_events.geo_exception_type records which kind let a punch through, so field work is never counted as working from home; a ''wfh'' exemption also sets is_wfh server-side, with no checkbox for the employee to forget or misuse.')
+  ON CONFLICT (version) DO NOTHING;
+
 COMMIT;

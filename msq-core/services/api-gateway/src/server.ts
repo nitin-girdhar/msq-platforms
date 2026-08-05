@@ -943,6 +943,18 @@ app.patch('/hr/shift-assignments/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/shift-assignments/${id}`, req, reply, req.userCtx);
 });
+// Geofence exceptions — the named people who may punch from outside the office
+// radius (a rotating field role, or an approved work-from-home stretch).
+app.get('/hr/geo-exceptions', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/geo-exceptions', req, reply, req.userCtx);
+});
+app.post('/hr/geo-exceptions', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/geo-exceptions', req, reply, req.userCtx);
+});
+app.patch('/hr/geo-exceptions/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/geo-exceptions/${id}`, req, reply, req.userCtx);
+});
 // Tail of the shift-assignment workflow: re-resolve days that were already
 // resolved. The nightly job only fills days with no row yet, so this is the only
 // way a newly-assigned shift reaches days the employee has already punched.

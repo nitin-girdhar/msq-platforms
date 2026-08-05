@@ -984,6 +984,23 @@ CREATE POLICY tenant_isolation_policy ON hr.shift_assignments AS PERMISSIVE FOR 
 CREATE POLICY self_policy ON hr.shift_assignments AS PERMISSIVE FOR SELECT TO app_user
   USING (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
 
+ALTER TABLE hr.attendance_geo_exceptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.attendance_geo_exceptions FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.attendance_geo_exceptions;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.attendance_geo_exceptions;
+DROP POLICY IF EXISTS self_policy             ON hr.attendance_geo_exceptions;
+CREATE POLICY org_isolation_policy ON hr.attendance_geo_exceptions AS PERMISSIVE FOR ALL TO app_user
+  USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted)
+  WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
+CREATE POLICY tenant_isolation_policy ON hr.attendance_geo_exceptions AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+-- Self policy, same reason as shift_assignments: the punch path resolves the
+-- exemption before writing the event, and the dashboard tells the employee they
+-- are covered. Both must work regardless of the org currently in context.
+CREATE POLICY self_policy ON hr.attendance_geo_exceptions AS PERMISSIVE FOR SELECT TO app_user
+  USING (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
+
 ALTER TABLE hr.attendance_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.attendance_events FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON hr.attendance_events;

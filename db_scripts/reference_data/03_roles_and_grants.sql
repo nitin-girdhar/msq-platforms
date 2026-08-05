@@ -199,6 +199,7 @@ FROM (VALUES
   'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
   'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
+  'hr.attendance.admin.geo_exceptions.view','hr.attendance.admin.geo_exceptions.manage',
   'hr.attendance.admin.reports.view',
   'hr.leave','hr.leave.view',
   'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org',
@@ -240,6 +241,7 @@ FROM (VALUES
   'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
   'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
+  'hr.attendance.admin.geo_exceptions.view','hr.attendance.admin.geo_exceptions.manage',
   'hr.attendance.admin.reports.view',
   'hr.leave','hr.leave.view',
   'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org',
@@ -285,6 +287,7 @@ FROM (VALUES
   'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
   'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
+  'hr.attendance.admin.geo_exceptions.view','hr.attendance.admin.geo_exceptions.manage',
   'hr.attendance.admin.reports.view',
   'hr.leave','hr.leave.view',
   'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org','hr.leave.view.tenant',
@@ -422,6 +425,44 @@ CROSS JOIN iam.capabilities tgt
 WHERE tgt.key = 'lms.leads.whatsapp.send'
   AND rc.is_granted
   AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = TRUE;
+
+-- ── Back-fill: geofence exceptions (schema 1.30.0) ──────────────────
+-- Same trap as the WhatsApp back-fill above. hr_admin is one copy PER TENANT
+-- since _migrations/19, and every grant block in this file joins
+-- `r.tenant_id IS NULL` — so the two capabilities added for this feature would
+-- reach the anchors only, and the HR admins it was built for would never see the
+-- tab in their own tenant.
+--
+-- Pinned to the shift-assignment pair, which has exactly the same audience:
+-- whoever already decides which person works which shift is who decides which
+-- person is not held to the office radius.
+WITH pin(src_key, tgt_key) AS (
+  VALUES ('hr.attendance.admin.assignments.view',   'hr.attendance.admin.geo_exceptions.view'),
+         ('hr.attendance.admin.assignments.manage', 'hr.attendance.admin.geo_exceptions.manage')
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM pin
+JOIN iam.capabilities src ON src.key = pin.src_key
+JOIN iam.capabilities tgt ON tgt.key = pin.tgt_key
+JOIN iam.role_capabilities rc ON rc.capability_id = src.id AND rc.is_granted
+WHERE rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO UPDATE SET is_granted = TRUE;
+
+WITH pin(src_key, tgt_key) AS (
+  VALUES ('hr.attendance.admin.assignments.view',   'hr.attendance.admin.geo_exceptions.view'),
+         ('hr.attendance.admin.assignments.manage', 'hr.attendance.admin.geo_exceptions.manage')
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM pin
+JOIN iam.capabilities src ON src.key = pin.src_key
+JOIN iam.capabilities tgt ON tgt.key = pin.tgt_key
+JOIN iam.role_capabilities rc ON rc.capability_id = src.id AND rc.is_granted
+WHERE rc.tenant_id IS NOT NULL
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO UPDATE SET is_granted = TRUE;
 

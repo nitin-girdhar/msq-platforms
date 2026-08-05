@@ -31,6 +31,7 @@ export const vwDashboardLeads = lmsSchema.view('vw_dashboard_leads', {
   campaignName:     text('campaign_name'),
   platform:         text('platform'),
   source:           text('source'),
+  sourceLabel:      text('source_label'),
   assignedRepName:  text('assigned_rep_name'),
   assignedRepEmail: text('assigned_rep_email'),
   assignedUserId:   uuid('assigned_user_id'),

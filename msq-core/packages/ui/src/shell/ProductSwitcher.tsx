@@ -1,18 +1,18 @@
-import type { ProductKey } from '@platform/types';
-import type { CapabilityHolder } from '@platform/rbac';
-import { PRODUCT_LANDING, usableProducts } from './products';
+import type { ProductKey } from "@platform/types";
+import type { CapabilityHolder } from "@platform/rbac";
+import { PRODUCT_LANDING, usableProducts } from "./products";
 
 const PRODUCT_LABELS: Record<ProductKey, string> = {
-  lms: 'CRM',
-  hr: 'HR',
-  task: 'Tasks',
+  lms: "LMS",
+  hr: "HRMS",
+  task: "Tasks",
 };
 
 interface Props {
   // What the TENANT has licensed. Necessary but not sufficient — see `actor`.
   licensedProducts: ProductKey[];
   // The acting user, for the capability half of the decision. Without it an
-  // HR-only user in an LMS+HR tenant would still get a CRM chip leading to an
+  // HR-only user in an LMS+HR tenant would still get an LMS chip leading to an
   // empty, 403-ing screen.
   actor: CapabilityHolder;
   // Absolute origin per product (from productOrigins()). A product with no
@@ -50,16 +50,18 @@ export default function ProductSwitcher({
     >
       {products.map((p) => {
         const active = p === activeProduct;
-        const href = active ? PRODUCT_LANDING[p] : `${origins[p]}${PRODUCT_LANDING[p]}`;
+        const href = active
+          ? PRODUCT_LANDING[p]
+          : `${origins[p]}${PRODUCT_LANDING[p]}`;
         return (
           <a
             key={p}
             href={href}
-            aria-current={active ? 'page' : undefined}
+            aria-current={active ? "page" : undefined}
             className={
               active
-                ? 'rounded-md bg-white px-3 py-1 text-xs font-semibold text-[#0b6cbf] shadow-sm'
-                : 'rounded-md px-3 py-1 text-xs font-medium text-[#475569] transition-colors hover:text-[#0F172A]'
+                ? "rounded-md bg-white px-3 py-1 text-xs font-semibold text-[#0b6cbf] shadow-sm"
+                : "rounded-md px-3 py-1 text-xs font-medium text-[#475569] transition-colors hover:text-[#0F172A]"
             }
           >
             {PRODUCT_LABELS[p]}

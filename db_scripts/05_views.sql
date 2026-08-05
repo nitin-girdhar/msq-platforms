@@ -152,7 +152,12 @@ SELECT
   ml.created_at,
   ml.updated_at,
   ml.scheduled_at,
-  (ml.scheduled_at IS NOT NULL AND ml.scheduled_at < NOW()) AS is_followup_overdue
+  (ml.scheduled_at IS NOT NULL AND ml.scheduled_at < NOW()) AS is_followup_overdue,
+  -- Display label for `source` above, the same name/label pairing stage and
+  -- outcome get. Appended last rather than sitting next to `source` because
+  -- CREATE OR REPLACE VIEW can only add columns at the end — re-asserting this
+  -- file against a live database would fail on a mid-list insert.
+  src.label            AS source_label
 FROM  lms.marketing_leads     ml
 JOIN  entity.organizations        o    ON o.id    = ml.org_id
 LEFT JOIN lms.lead_stage       ls   ON ls.id   = ml.stage_id AND ls.tenant_id  = o.tenant_id

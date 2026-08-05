@@ -988,15 +988,19 @@ CREATE TABLE IF NOT EXISTS ext.meta_tenant_config (
 -- A Meta lead form always belongs to exactly one Page, but a single Page can
 -- run many forms across different campaigns/purposes, and those forms are not
 -- guaranteed to belong to the same org (e.g. a shared/corporate Page running
--- location-specific forms). form_id is therefore the authoritative routing
--- key (globally unique in Meta's system); page_id is retained for reference,
--- validation, and to auto-attribute newly created forms on a known Page.
+-- location-specific forms). form_id, when set, is the authoritative routing
+-- key (globally unique in Meta's system) and narrows routing to that one
+-- form. form_id may be NULL for a page-level subscription: every leadgen
+-- form discovered under that Page routes to the row's org, unless a more
+-- specific form_id row exists for that same page (exact form_id match always
+-- wins over the page-level fallback — see common/mappings.py::resolve() and
+-- page-org-map.service.ts::resolveOrgId).
 CREATE TABLE IF NOT EXISTS ext.meta_page_form_org_map (
   id          UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
   tenant_id   UUID        NOT NULL REFERENCES entity.tenants(id),
   org_id      UUID        NOT NULL REFERENCES entity.organizations(id),
   page_id     BIGINT      NOT NULL,
-  form_id     BIGINT      NOT NULL,
+  form_id     BIGINT,
   platform    TEXT        NOT NULL CHECK (platform IN ('fb', 'ig')),
   is_active   BOOLEAN     NOT NULL DEFAULT true,
   -- Recorded by sync_leads.py after each pull run against a form, for
@@ -1009,6 +1013,13 @@ CREATE TABLE IF NOT EXISTS ext.meta_page_form_org_map (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_meta_page_form_org_map UNIQUE (page_id, form_id)
 );
+
+-- Postgres treats NULL as distinct in a UNIQUE constraint, so the constraint
+-- above alone would allow multiple page-level (form_id IS NULL) rows for the
+-- same page. At most one active page-level subscription per page is allowed.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_meta_page_form_org_map_page_level
+  ON ext.meta_page_form_org_map (page_id)
+  WHERE form_id IS NULL AND is_active = true;
 
 -- ── META_FORMS: cache of discovered Lead Ads forms per tenant/page ─────
 -- Populated by sync_forms.py. Lets an admin see which forms exist on Meta

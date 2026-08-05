@@ -61,7 +61,7 @@ DECLARE
   v_deny_keys TEXT[] := ARRAY[
     'lms.users',
     'lms.analytics',
-    'lms.apiclients'
+    'platform.api_tokens'
   ];
   -- ── END EDIT ──────────────────────────────────────────────────────
 

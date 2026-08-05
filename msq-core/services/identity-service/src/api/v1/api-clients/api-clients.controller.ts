@@ -15,15 +15,15 @@ function requireApiClientAdmin(rank: number): void {
   }
 }
 
-// The rank gate above is the floor; the `lms.apiclients` capability is the tenant's
+// The rank gate above is the floor; the `platform.api_tokens` capability is the tenant's
 // per-role switch for this feature. Enforce it here so revoking the capability
 // actually blocks the API — not just the nav (see openissues.md Issue #2). Denying
-// the `lms.apiclients` page node cascades to deny both view/manage in the matrix,
+// the `platform.api_tokens` page node cascades to deny both view/manage in the matrix,
 // so checking the operation-level key is sufficient and precise.
 //
 // These endpoints mint/rotate/delete integration credentials, so we resolve the
 // capability FRESH (hasCapabilityFresh) rather than through the ≤5-minute TTL
-// capability cache: a tenant that revokes `lms.apiclients` must lose API-token
+// capability cache: a tenant that revokes `platform.api_tokens` must lose API-token
 // management immediately, not after the cache backstop expires (Issue #2). The
 // per-call DB round trip is acceptable on this low-traffic, high-sensitivity path.
 //
@@ -50,7 +50,7 @@ async function requireApiClientCapability(
 export class ApiClientsController {
   create = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.PLATFORM_API_TOKENS_MANAGE);
     const data = request.body as CreateApiClientInput;
     const isOrgAdmin = rank < RANKS.TENANT_ADMIN;
     const result = await service.createApiClient({ org_id, user_id, role, tenant_id }, data, isOrgAdmin);
@@ -59,14 +59,14 @@ export class ApiClientsController {
 
   list = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.LMS_APICLIENTS_VIEW);
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.PLATFORM_API_TOKENS_VIEW);
     const clients = await service.listApiClients({ org_id, user_id, role, tenant_id });
     return reply.send({ success: true, data: clients });
   };
 
   update = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.PLATFORM_API_TOKENS_MANAGE);
     const { id } = request.params as { id: string };
     const data = request.body as UpdateApiClientInput;
     const isOrgAdmin = rank < RANKS.TENANT_ADMIN;
@@ -76,7 +76,7 @@ export class ApiClientsController {
 
   rotate = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.PLATFORM_API_TOKENS_MANAGE);
     const { id } = request.params as { id: string };
     const result = await service.rotateApiClient({ org_id, user_id, role, tenant_id }, id);
     return reply.header('Cache-Control', 'no-store').send({ success: true, data: result });
@@ -84,7 +84,7 @@ export class ApiClientsController {
 
   revoke = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.LMS_APICLIENTS_MANAGE);
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.PLATFORM_API_TOKENS_MANAGE);
     const { id } = request.params as { id: string };
     await service.revokeApiClient({ org_id, user_id, role, tenant_id }, id);
     return reply.status(204).send();

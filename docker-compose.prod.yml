@@ -73,3 +73,8 @@ services:
     environment:
       NODE_ENV: production
     ports: !override []
+
+  admin-web:
+    environment:
+      NODE_ENV: production
+    ports: !override []

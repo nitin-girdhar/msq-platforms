@@ -25,7 +25,6 @@ export const CAPABILITY = {
   HR_ATTENDANCE_ADMIN:  'hr.attendance.admin',
   HR_LEAVE_ADMIN:       'hr.leave.admin',
   LMS_ANALYTICS:        'lms.analytics',
-  LMS_APICLIENTS:       'lms.apiclients',
   LMS_ASSIGNMENTS:      'lms.assignments',
   LMS_CAMPAIGNS:        'lms.campaigns',
   LMS_DASHBOARD:        'lms.dashboard',
@@ -33,6 +32,7 @@ export const CAPABILITY = {
   LMS_HISTORY:          'lms.history',
   LMS_LEADS:            'lms.leads',
   LMS_USERS:            'lms.users',
+  PLATFORM_API_TOKENS:  'platform.api_tokens',
   TASKS_LISTS:          'tasks.lists',
 
   // ── Tabs (9) ──
@@ -80,8 +80,6 @@ export const CAPABILITY = {
   HR_LEAVE_VIEW:                           'hr.leave.view',
   LMS_ANALYTICS_ORG_VIEW:                  'lms.analytics.org.view',
   LMS_ANALYTICS_VIEW:                      'lms.analytics.view',
-  LMS_APICLIENTS_MANAGE:                   'lms.apiclients.manage',
-  LMS_APICLIENTS_VIEW:                     'lms.apiclients.view',
   LMS_ASSIGNMENTS_DELETE:                  'lms.assignments.delete',
   LMS_ASSIGNMENTS_EDIT:                    'lms.assignments.edit',
   LMS_ASSIGNMENTS_VIEW:                    'lms.assignments.view',
@@ -105,6 +103,8 @@ export const CAPABILITY = {
   LMS_LEADS_WHATSAPP_SEND:                 'lms.leads.whatsapp.send',
   LMS_USERS_MANAGE:                        'lms.users.manage',
   LMS_USERS_VIEW:                          'lms.users.view',
+  PLATFORM_API_TOKENS_MANAGE:              'platform.api_tokens.manage',
+  PLATFORM_API_TOKENS_VIEW:                'platform.api_tokens.view',
   PLATFORM_WRITE:                          'platform.write',
   TASKS_ASSIGN:                            'tasks.assign',
   TASKS_COMMENT:                           'tasks.comment',

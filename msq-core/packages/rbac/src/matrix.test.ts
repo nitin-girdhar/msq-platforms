@@ -176,7 +176,7 @@ describe('isPlatformAdminCapability', () => {
       'tasks.lists',
       'tasks.lists.manage',
       'lms',
-      'lms.apiclients.manage',
+      'platform.api_tokens.manage',
     ]) {
       expect(isPlatformAdminCapability(key)).toBe(false);
     }

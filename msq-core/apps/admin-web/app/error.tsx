@@ -1,0 +1,9 @@
+'use client';
+
+import { AppErrorBoundary } from '@platform/ui-kit';
+
+// Route-level error boundary. Catches a throw from anywhere in this app's tree
+// and renders the shared surface instead of Next's stock error screen.
+export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  return <AppErrorBoundary error={error} reset={reset} homeHref="/dashboard" homeLabel="Back to dashboard" />;
+}

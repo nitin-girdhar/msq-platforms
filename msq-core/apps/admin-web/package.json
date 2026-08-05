@@ -1,0 +1,40 @@
+{
+  "name": "@crm/admin-web",
+  "version": "0.0.1",
+  "private": true,
+  "files": [
+    ".next",
+    "public",
+    "next.config.js"
+  ],
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --port 3004",
+    "start": "next start --port 3004",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint",
+    "clean": "rimraf .next"
+  },
+  "dependencies": {
+    "@hr/web": "workspace:*",
+    "@platform/auth-constants": "workspace:*",
+    "@platform/authz": "workspace:*",
+    "@platform/rbac": "workspace:*",
+    "@platform/types": "workspace:*",
+    "@platform/ui-kit": "workspace:*",
+    "next": "^15.2.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "swr": "^2.3.3",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^22.10.10",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "rimraf": "^6.0.1",
+    "tailwindcss": "^4",
+    "typescript": "^5.7.3"
+  }
+}

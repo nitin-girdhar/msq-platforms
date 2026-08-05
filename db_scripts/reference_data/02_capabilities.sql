@@ -36,6 +36,20 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
 ('platform.write', 'operation', 'platform', 'Write anything',
  'Without this the account is read-only everywhere, enforced at the database.', 1),
 
+-- Was lms.apiclients* — API credentials aren't LMS-specific (comms/tasks routes
+-- use the same clients), so this moved out from under the CRM tool. Renamed,
+-- not just reparented: the old key stays gone rather than kept as an alias, so
+-- there is exactly one name for this capability going forward. See
+-- tools/rename_apiclients_capability.sql for the one-time UPDATE that migrates
+-- existing grants on an already-provisioned database — this INSERT alone only
+-- covers a fresh deploy.
+('platform.api_tokens',        'page',      'platform',           'API tokens',
+ 'Machine credentials for the public integration API.', 2),
+('platform.api_tokens.view',   'operation', 'platform.api_tokens', 'View API tokens',
+ 'Read the client list. Secrets are never shown.', 1),
+('platform.api_tokens.manage', 'operation', 'platform.api_tokens', 'Manage API tokens',
+ 'Create clients and rotate their secrets.', 2),
+
 -- ── CRM ─────────────────────────────────────────────────────────────
 ('lms', 'tool', NULL, 'CRM',
  'The CRM product. Denying it blocks every screen and call below.', 1),
@@ -145,13 +159,6 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Everyone in the branch.', 2),
 ('lms.users.manage', 'operation', 'lms.users', 'Manage users',
  'Add people, change roles, deactivate accounts.', 2),
-
-('lms.apiclients', 'page', 'lms', 'API clients',
- 'Machine credentials for the public lead intake API.', 9),
-('lms.apiclients.view',   'operation', 'lms.apiclients', 'View API clients',
- 'Read the client list. Secrets are never shown.', 1),
-('lms.apiclients.manage', 'operation', 'lms.apiclients', 'Manage API clients',
- 'Create clients and rotate their secrets.', 2),
 
 -- ── ATTENDANCE ──────────────────────────────────────────────────────
 ('hr.attendance', 'tool', NULL, 'Attendance',

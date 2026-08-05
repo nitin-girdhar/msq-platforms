@@ -48,6 +48,15 @@ export function adminOrigin(): string {
   return originFromEnv('ADMIN_URL');
 }
 
+// The admin-web origin (org_admin/tenant_admin console: Team, API Tokens,
+// Leave/Attendance admin), e.g. https://admin-web.app.com. Distinct from
+// adminOrigin() (lookup-admin, super_admin-only platform tooling) — same
+// reasoning applies: not a licensed product, never in the product switcher,
+// never a sessionDestination() landing target, only a permitted RETURN target.
+export function adminWebOrigin(): string {
+  return originFromEnv('ADMIN_WEB_URL');
+}
+
 // Per-product origin map (empty string when unset). Drives the product switcher
 // links and the auth callback allowlist.
 export function productOrigins(): Record<ProductKey, string> {
@@ -63,7 +72,10 @@ export function productOrigins(): Record<ProductKey, string> {
 // honored only if its origin is in this set (open-redirect guard); anything
 // else falls back to a safe default.
 export function allowedRedirectOrigins(): string[] {
-  return [authOrigin(), adminOrigin(), ...Object.values(productOrigins())].filter(
-    (o) => o.length > 0,
-  );
+  return [
+    authOrigin(),
+    adminOrigin(),
+    adminWebOrigin(),
+    ...Object.values(productOrigins()),
+  ].filter((o) => o.length > 0);
 }

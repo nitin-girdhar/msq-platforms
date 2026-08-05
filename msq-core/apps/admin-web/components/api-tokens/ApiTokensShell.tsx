@@ -1,0 +1,68 @@
+'use client';
+
+import { useState } from 'react';
+import type { ApiTokenRow } from '@/src/lib/api/client';
+import ApiTokensTable from './ApiTokensTable';
+import CreateApiTokenModal from './CreateApiTokenModal';
+import RotateSecretModal from './RotateSecretModal';
+import RevokeConfirmModal from './RevokeConfirmModal';
+
+interface Props {
+  tokens: ApiTokenRow[];
+  canManage: boolean;
+}
+
+export default function ApiTokensShell({ tokens, canManage }: Props) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [rotateTarget, setRotateTarget] = useState<ApiTokenRow | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<ApiTokenRow | null>(null);
+
+  return (
+    <div className="space-y-4 p-4 sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-[#0F172A]">API Tokens</h1>
+          <p className="mt-1 text-xs text-[#64748B]">{tokens.length} total · machine credentials for integrations</p>
+        </div>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#095699]"
+          >
+            New token
+          </button>
+        )}
+      </div>
+
+      <ApiTokensTable
+        tokens={tokens}
+        canManage={canManage}
+        onRotate={setRotateTarget}
+        onRevoke={setRevokeTarget}
+      />
+
+      {canManage && (
+        <CreateApiTokenModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      )}
+
+      {rotateTarget && (
+        <RotateSecretModal
+          open={rotateTarget !== null}
+          onClose={() => setRotateTarget(null)}
+          tokenId={rotateTarget.id}
+          name={rotateTarget.name}
+        />
+      )}
+
+      {revokeTarget && (
+        <RevokeConfirmModal
+          open={revokeTarget !== null}
+          onClose={() => setRevokeTarget(null)}
+          tokenId={revokeTarget.id}
+          name={revokeTarget.name}
+        />
+      )}
+    </div>
+  );
+}

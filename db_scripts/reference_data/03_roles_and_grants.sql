@@ -232,7 +232,7 @@ FROM (VALUES
   'lms.analytics.view',
   'lms.campaigns.view','lms.campaigns.manage',
   'lms.users.view','lms.users.view.team','lms.users.view.org','lms.users.manage',
-  'lms.apiclients.view','lms.apiclients.manage',
+  'platform.api_tokens.view','platform.api_tokens.manage',
   'hr.attendance','hr.attendance.view',
   'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
   'hr.attendance.punch','hr.attendance.photo.view',
@@ -278,7 +278,7 @@ FROM (VALUES
   'lms.analytics.view','lms.analytics.org.view',
   'lms.campaigns.view','lms.campaigns.manage',
   'lms.users.view','lms.users.view.team','lms.users.view.org','lms.users.manage',
-  'lms.apiclients.view','lms.apiclients.manage',
+  'platform.api_tokens.view','platform.api_tokens.manage',
   'hr.attendance','hr.attendance.view',
   'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
   'hr.attendance.punch','hr.attendance.photo.view',
@@ -377,11 +377,11 @@ END $seedcheck$;
 INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
 SELECT NULL, r.id, c.id, FALSE
 FROM (VALUES
-  ('read_only',              ARRAY['lms.analytics','lms.campaigns','lms.users','lms.apiclients','hr.attendance.admin','hr.leave.admin','tasks.lists']),
-  ('sales_representative',   ARRAY['lms.analytics','lms.campaigns','lms.users','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
-  ('senior_sales_executive', ARRAY['lms.analytics','lms.campaigns','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
-  ('org_manager',            ARRAY['lms.analytics','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
-  ('org_sr_manager',         ARRAY['lms.analytics','lms.apiclients','hr.attendance.admin','hr.leave.admin']),
+  ('read_only',              ARRAY['lms.analytics','lms.campaigns','lms.users','platform.api_tokens','hr.attendance.admin','hr.leave.admin','tasks.lists']),
+  ('sales_representative',   ARRAY['lms.analytics','lms.campaigns','lms.users','platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  ('senior_sales_executive', ARRAY['lms.analytics','lms.campaigns','platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  ('org_manager',            ARRAY['lms.analytics','platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  ('org_sr_manager',         ARRAY['lms.analytics','platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
   ('org_admin',              ARRAY['admin.lookups'])
 ) AS d(role_name, cap_keys)
 JOIN iam.user_roles   r ON r.name = d.role_name AND r.tenant_id IS NULL

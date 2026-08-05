@@ -6,7 +6,7 @@ import { authOrigin } from './auth/sso';
 // Re-exported so an app's middleware.ts can resolve its own public origin for
 // `selfOrigin` without importing the package root (React chrome) into the Edge
 // bundle.
-export { authOrigin, adminOrigin, productOrigins } from './auth/sso';
+export { authOrigin, adminOrigin, adminWebOrigin, productOrigins } from './auth/sso';
 
 // Reusable auth gate for a product web app (lms/hr/todo). Each app's
 // `middleware.ts` is a one-liner over this factory. Behavior mirrors the

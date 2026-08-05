@@ -191,6 +191,27 @@ services:
     depends_on:
       - api-gateway
 
+  admin-web:
+    build:
+      context: .
+      dockerfile: msq-core/apps/admin-web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
+        API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Same port inside and out — see lookup-admin's note above for why a
+      # mismatch here leaks the container's listening port into the post-login
+      # callback URL instead of this app's real origin.
+      PORT: "3004"
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
+      API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+    ports:
+      - "3004:3004"
+    depends_on:
+      - api-gateway
+
   # Optional reverse proxy simulating the *.app.com SSO topology. Depends on
   # product web apps (lms-web/hr-web/todo-web) that live in the product repos
   # — only meaningful when run from the parent workspace with all repos

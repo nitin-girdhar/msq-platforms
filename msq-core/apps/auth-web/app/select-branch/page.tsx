@@ -30,8 +30,8 @@ export default async function SelectBranchPage({ searchParams }: SelectBranchPag
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center overflow-y-auto bg-[#F8FAFC] px-6 py-12">
-      <div className="w-full max-w-md">
-        <div className="mb-8 flex justify-center">
+      <div className="w-full max-w-3xl">
+        <div className="mb-6 flex justify-center">
           <div className="rounded-2xl bg-[#0b1f3a] px-6 py-4">
             <Image
               src="/fitclass-logo-white.webp"
@@ -44,7 +44,7 @@ export default async function SelectBranchPage({ searchParams }: SelectBranchPag
           </div>
         </div>
 
-        <header className="mb-6 text-center">
+        <header className="mb-5 text-center">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Select your branch</h1>
           <p className="mt-2 text-sm text-slate-500">
             You have access to multiple branches. Choose one to continue — you can

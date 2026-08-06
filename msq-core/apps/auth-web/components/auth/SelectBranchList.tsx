@@ -71,38 +71,42 @@ export default function SelectBranchList({ callbackUrl }: Props) {
         </div>
       )}
 
-      {orgs.map((org) => {
-        const busy = switching === org.org_id;
-        return (
-          <button
-            key={org.org_id}
-            type="button"
-            onClick={() => handleSelect(org)}
-            disabled={!!switching}
-            aria-busy={busy}
-            className="flex w-full items-center justify-between gap-3 rounded-xl border border-[#E2E8F0] bg-white px-5 py-4 text-left shadow-sm transition-all hover:border-[#0b6cbf] hover:shadow disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-          >
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-semibold text-[#0F172A]">{org.org_name}</span>
-              <span className="mt-0.5 block truncate text-xs text-[#64748B]">
-                {org.role_label}
-                {org.is_home ? ' · Default branch' : ''}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+        {orgs.map((org) => {
+          const busy = switching === org.org_id;
+          return (
+            <button
+              key={org.org_id}
+              type="button"
+              onClick={() => handleSelect(org)}
+              disabled={!!switching}
+              aria-busy={busy}
+              className="flex h-full w-full flex-col items-start gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 py-3 text-left shadow-sm transition-all hover:border-[#0b6cbf] hover:shadow disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+            >
+              <span className="min-w-0 w-full">
+                <span className="block truncate text-sm font-semibold text-[#0F172A]">{org.org_name}</span>
+                <span className="mt-0.5 block truncate text-xs text-[#64748B]">
+                  {org.role_label}
+                  {org.is_home ? ' · Default' : ''}
+                </span>
               </span>
-            </span>
-            {busy ? (
-              <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />
-            ) : (
-              <svg className="h-4 w-4 shrink-0 text-[#94A3B8]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
-                <path
-                  fillRule="evenodd"
-                  d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            )}
-          </button>
-        );
-      })}
+              <span className="mt-auto flex w-full items-center justify-end">
+                {busy ? (
+                  <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />
+                ) : (
+                  <svg className="h-4 w-4 shrink-0 text-[#94A3B8]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                    <path
+                      fillRule="evenodd"
+                      d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

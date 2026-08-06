@@ -52,15 +52,28 @@ export default function AppNavbar({
           {title}
         </span>
         <div className="flex-1" />
+        {/* Inline on sm+; on mobile the switcher drops to its own full-width row
+            below so it doesn't get squeezed out by the rest of the bar. */}
+        <div className="hidden sm:block">
+          <ProductSwitcher
+            licensedProducts={licensedProducts}
+            actor={user}
+            origins={productOrigins}
+            activeProduct={activeProduct}
+          />
+        </div>
+        <BranchSwitcher user={user} homeHref={homeHref} />
+        {notificationSlot}
+        <UserMenu user={user} loginUrl={buildLoginUrl()} />
+      </div>
+      {/* Collapses to zero height when ProductSwitcher renders null (single product). */}
+      <div className="sm:hidden has-[nav]:border-t has-[nav]:border-[#E2E8F0] has-[nav]:px-2 has-[nav]:py-1.5">
         <ProductSwitcher
           licensedProducts={licensedProducts}
           actor={user}
           origins={productOrigins}
           activeProduct={activeProduct}
         />
-        <BranchSwitcher user={user} homeHref={homeHref} />
-        {notificationSlot}
-        <UserMenu user={user} loginUrl={buildLoginUrl()} />
       </div>
     </header>
   );

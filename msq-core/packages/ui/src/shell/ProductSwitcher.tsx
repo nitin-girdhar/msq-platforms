@@ -43,31 +43,38 @@ export default function ProductSwitcher({
   // Nothing to switch between when the tenant only has one (reachable) product.
   if (products.length <= 1) return null;
 
+  // Capped at 4 columns — the widest we expect PRODUCT_LABELS to grow to.
+  // Fewer products still get one column each (no empty cells) via the inline
+  // template, and the grid collapses to an inline row once sm: kicks in.
+  const columns = Math.min(products.length, 4);
+
   return (
-    <nav
-      aria-label="Products"
-      className="hidden items-center gap-1 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-1 sm:flex"
-    >
-      {products.map((p) => {
-        const active = p === activeProduct;
-        const href = active
-          ? PRODUCT_LANDING[p]
-          : `${origins[p]}${PRODUCT_LANDING[p]}`;
-        return (
-          <a
-            key={p}
-            href={href}
-            aria-current={active ? "page" : undefined}
-            className={
-              active
-                ? "rounded-md bg-white px-3 py-1 text-xs font-semibold text-[#0b6cbf] shadow-sm"
-                : "rounded-md px-3 py-1 text-xs font-medium text-[#475569] transition-colors hover:text-[#0F172A]"
-            }
-          >
-            {PRODUCT_LABELS[p]}
-          </a>
-        );
-      })}
+    <nav aria-label="Products" className="w-full sm:w-auto">
+      <div
+        className="grid gap-1 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-1 sm:inline-flex sm:items-center"
+        style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+      >
+        {products.map((p) => {
+          const active = p === activeProduct;
+          const href = active
+            ? PRODUCT_LANDING[p]
+            : `${origins[p]}${PRODUCT_LANDING[p]}`;
+          return (
+            <a
+              key={p}
+              href={href}
+              aria-current={active ? "page" : undefined}
+              className={
+                active
+                  ? "rounded-md bg-white px-2 py-1.5 text-center text-xs font-semibold text-[#0b6cbf] shadow-sm sm:px-3 sm:py-1"
+                  : "rounded-md px-2 py-1.5 text-center text-xs font-medium text-[#475569] transition-colors hover:text-[#0F172A] sm:px-3 sm:py-1"
+              }
+            >
+              {PRODUCT_LABELS[p]}
+            </a>
+          );
+        })}
+      </div>
     </nav>
   );
 }

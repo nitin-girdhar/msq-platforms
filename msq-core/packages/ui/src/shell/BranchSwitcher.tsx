@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { SessionUser, UserOrgOption } from '@platform/types';
 import { RANKS } from '@platform/authz';
 import { auth } from '../api/resources';
+import { useDropdown } from '../hooks/useDropdown';
 
 interface Props {
   user: SessionUser;
@@ -18,11 +19,10 @@ interface Props {
 // that re-mints the session for the selected branch via /auth/switch-org.
 // Hidden for tenant admins and above — their session already spans all branches.
 export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
-  const [open, setOpen] = useState(false);
+  const { open, setOpen, search, setSearch, rootRef, searchInputRef } = useDropdown();
   const [orgs, setOrgs] = useState<UserOrgOption[] | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
 
   // Org-scoped actors pick a branch; tenant-wide roles already span all of them.
   const isOrgScoped = user.rank < RANKS.TENANT_ADMIN;
@@ -43,14 +43,13 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
     };
   }, [isOrgScoped]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
+  const filteredOrgs = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return orgs ?? [];
+    return (orgs ?? []).filter(
+      (org) => org.org_name.toLowerCase().includes(q) || org.role_label.toLowerCase().includes(q),
+    );
+  }, [orgs, search]);
 
   if (!isOrgScoped) return null;
 
@@ -98,7 +97,7 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
   }
 
   return (
-    <div ref={ref} className="relative shrink-0">
+    <div ref={rootRef} className="relative shrink-0">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -132,39 +131,58 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
               {error}
             </p>
           )}
-          {(orgs ?? []).map((org) => {
-            const active = org.org_id === user.org_id;
-            const busy = switching === org.org_id;
-            return (
-              <button
-                key={org.org_id}
-                type="button"
-                role="option"
-                aria-selected={active}
-                onClick={() => handleSwitch(org)}
-                disabled={!!switching}
-                className={`flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                  active ? 'bg-[#F0F7FF]' : 'hover:bg-[#F8FAFC] cursor-pointer'
-                }`}
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-[#0F172A]">{org.org_name}</span>
-                  <span className="block truncate text-xs text-[#64748B]">{org.role_label}</span>
-                </span>
-                {busy ? (
-                  <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />
-                ) : active ? (
-                  <svg className="h-4 w-4 shrink-0 text-[#0b6cbf]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
-                    <path
-                      fillRule="evenodd"
-                      d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                ) : null}
-              </button>
-            );
-          })}
+          {(orgs?.length ?? 0) > 6 && (
+            <div className="border-b border-[#F1F5F9] p-2">
+              <input
+                ref={searchInputRef}
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search branch…"
+                className="w-full rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs text-[#0F172A] focus:border-[#0b6cbf] focus:outline-none"
+              />
+            </div>
+          )}
+          <div className="max-h-72 overflow-y-auto">
+            {filteredOrgs.length === 0 && (
+              <p className="px-4 py-4 text-center text-xs text-[#64748B]">
+                {search ? `No branches match "${search}"` : 'No branches available'}
+              </p>
+            )}
+            {filteredOrgs.map((org) => {
+              const active = org.org_id === user.org_id;
+              const busy = switching === org.org_id;
+              return (
+                <button
+                  key={org.org_id}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  onClick={() => handleSwitch(org)}
+                  disabled={!!switching}
+                  className={`flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    active ? 'bg-[#F0F7FF]' : 'hover:bg-[#F8FAFC] cursor-pointer'
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-[#0F172A]">{org.org_name}</span>
+                    <span className="block truncate text-xs text-[#64748B]">{org.role_label}</span>
+                  </span>
+                  {busy ? (
+                    <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />
+                  ) : active ? (
+                    <svg className="h-4 w-4 shrink-0 text-[#0b6cbf]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                      <path
+                        fillRule="evenodd"
+                        d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { SessionUser, UserOrgOption } from '@platform/types';
-import { RANKS } from '@platform/authz';
+import { RANKS, isTenantWideRole } from '@platform/authz';
 import { auth } from '../api/resources';
 import { useDropdown } from '../hooks/useDropdown';
 
@@ -14,21 +14,23 @@ interface Props {
   homeHref?: string;
 }
 
-// Navbar chip showing the branch the session is scoped to. When the user is
-// mapped to more than one branch (iam.user_org_mapping) it becomes a dropdown
-// that re-mints the session for the selected branch via /auth/switch-org.
-// Hidden for tenant admins and above — their session already spans all branches.
+// Navbar chip showing the branch the session is scoped to. When the user has
+// more than one branch available it becomes a dropdown that re-mints the
+// session for the selected branch via /auth/switch-org. Org-scoped actors get
+// the branches they're mapped to (iam.user_org_mapping); tenant-wide actors
+// (tenant_admin/super_admin) get every branch in their tenant, since they
+// aren't individually mapped to each one -- /auth/my-orgs resolves which list
+// applies server-side.
 export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
   const { open, setOpen, search, setSearch, rootRef, searchInputRef } = useDropdown();
   const [orgs, setOrgs] = useState<UserOrgOption[] | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Org-scoped actors pick a branch; tenant-wide roles already span all of them.
-  const isOrgScoped = user.rank < RANKS.TENANT_ADMIN;
+  const canSwitchBranch = user.rank < RANKS.TENANT_ADMIN || isTenantWideRole(user.role);
 
   useEffect(() => {
-    if (!isOrgScoped) return;
+    if (!canSwitchBranch) return;
     let cancelled = false;
     auth
       .myOrgs()
@@ -41,17 +43,19 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [isOrgScoped]);
+  }, [canSwitchBranch]);
 
   const filteredOrgs = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return orgs ?? [];
-    return (orgs ?? []).filter(
+    const list = orgs ?? [];
+    const sorted = [...list].sort((a, b) => Number(b.is_home) - Number(a.is_home));
+    if (!q) return sorted;
+    return sorted.filter(
       (org) => org.org_name.toLowerCase().includes(q) || org.role_label.toLowerCase().includes(q),
     );
   }, [orgs, search]);
 
-  if (!isOrgScoped) return null;
+  if (!canSwitchBranch) return null;
 
   const multiBranch = (orgs?.length ?? 0) > 1;
 
@@ -166,7 +170,9 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium text-[#0F172A]">{org.org_name}</span>
-                    <span className="block truncate text-xs text-[#64748B]">{org.role_label}</span>
+                    <span className="block truncate text-xs text-[#64748B]">
+                      {org.is_home ? 'Home branch' : org.role_label}
+                    </span>
                   </span>
                   {busy ? (
                     <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />

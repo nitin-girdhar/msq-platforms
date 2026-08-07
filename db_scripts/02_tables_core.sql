@@ -723,28 +723,40 @@ CREATE TABLE IF NOT EXISTS iam.api_client_orgs (
 -- their own since they only ever compute NOW(). Written once per tenant per
 -- day by the send-lead-report cron job.
 --
--- One row per (branch, assignee) bucket, same shape as vw_lead_report_user,
--- PLUS one synthetic all-zero row per branch that had no leads that day
--- (assigned_user_id NULL, is_unassigned TRUE) — the write path guarantees
--- this so a quiet branch still appears in history, matching the live branch
--- view's "zero row, not a missing row" guarantee that the per-user view alone
--- does not provide.
+-- One row per (branch, assignee, source) bucket, same shape as
+-- vw_lead_report_user plus the lead's source, PLUS one synthetic all-zero row
+-- per (branch, source) combination that had no leads that day (assigned_user_id
+-- NULL, is_unassigned TRUE) — the write path guarantees this so a quiet
+-- branch/source still appears in history, matching the live per-source
+-- branch grid's "zero row, not a missing row" guarantee.
 --
--- Deliberately ONE table, not a branch table plus a user table: branch- and
--- tenant-level rollups are derived at read time via
--- `SUM(...) GROUP BY GROUPING SETS ((org_id), ())`, the same technique
--- tenantBranchReportQuery uses over live data — a stored branch total could
--- never disagree with the rows it was summed from, and the row counts here
--- (branches x staff, per tenant per day) are far too small for the extra
--- aggregation to matter.
+-- source_id NULL = the "Unknown" bucket (no source recorded on the lead),
+-- same convention as the live getTenantSourceReport queries in
+-- analytics.repository.ts. The PLAIN (non-source) branch/assignee compare
+-- (getSnapshotForDate) sums across every source_id for a given
+-- (org_id, assigned_user_id) to recover the combined-across-sources total —
+-- see that function's header comment.
+--
+-- Deliberately ONE table, not a branch table plus a user table: branch-,
+-- source- and tenant-level rollups are all derived at read time via
+-- `SUM(...) GROUP BY GROUPING SETS (...)`, the same technique
+-- tenantBranchReportQuery uses over live data — a stored total could never
+-- disagree with the rows it was summed from, and the row counts here
+-- (branches x staff x sources, per tenant per day) are far too small for the
+-- extra aggregation to matter.
 CREATE TABLE IF NOT EXISTS lms.lead_report_snapshot (
   tenant_id          UUID        NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
   org_id             UUID        NOT NULL REFERENCES entity.organizations(id) ON DELETE CASCADE,
   org_name           TEXT        NOT NULL,
-  -- NULL = the Unassigned bucket for this branch, or the zero-lead placeholder.
+  -- NULL = the Unassigned bucket for this branch/source, or the zero-lead placeholder.
   assigned_user_id   UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
   assignee           TEXT        NOT NULL,
   is_unassigned      BOOLEAN     NOT NULL DEFAULT FALSE,
+  -- NULL = "Unknown" (no source_id on the lead). Never dropped on the
+  -- referenced lead_sources row's deletion — a historical snapshot must keep
+  -- its own label even if the tenant later renames/deactivates the source.
+  source_id          UUID        REFERENCES lms.lead_sources(id) ON DELETE SET NULL,
+  source_label       TEXT        NOT NULL DEFAULT 'Unknown',
   -- Branch-local calendar date, same semantics as report_date in the views.
   report_date        DATE        NOT NULL,
   total_leads        INT         NOT NULL,
@@ -756,7 +768,7 @@ CREATE TABLE IF NOT EXISTS lms.lead_report_snapshot (
   converted_count    INT         NOT NULL,
   unqualified_count  INT         NOT NULL,
   captured_at        TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
-  CONSTRAINT uq_lead_report_snapshot UNIQUE NULLS NOT DISTINCT (tenant_id, org_id, assigned_user_id, report_date)
+  CONSTRAINT uq_lead_report_snapshot UNIQUE NULLS NOT DISTINCT (tenant_id, org_id, assigned_user_id, source_id, report_date)
 );
 
 -- ── LEAD_INTERACTIONS ─────────────────────────────────────────────
@@ -1043,7 +1055,7 @@ CREATE TABLE IF NOT EXISTS ext.meta_page_form_org_map (
   org_id      UUID        NOT NULL REFERENCES entity.organizations(id),
   page_id     BIGINT      NOT NULL,
   form_id     BIGINT,
-  platform    TEXT        NOT NULL CHECK (platform IN ('fb', 'ig')),
+  platform    TEXT        NOT NULL CHECK (platform IN ('fb', 'ig', 'wa')),
   is_active   BOOLEAN     NOT NULL DEFAULT true,
   -- Recorded by sync_leads.py after each pull run against a form, for
   -- observability/reporting (Meta's /{form-id}/leads edge does not
@@ -1092,7 +1104,7 @@ CREATE TABLE IF NOT EXISTS ext.meta_leads (
   campaign_id        BIGINT,
   adset_id           BIGINT,
   ad_id              BIGINT,
-  platform           TEXT        CHECK (platform IN ('fb', 'ig')),
+  platform           TEXT        CHECK (platform IN ('fb', 'ig', 'wa')),
   lead_created_at    TIMESTAMPTZ NOT NULL,
   full_name          TEXT,
   first_name         TEXT,

@@ -1,6 +1,7 @@
 import { sql, type SQL } from 'drizzle-orm';
 import { withServiceTx } from '@platform/db';
 import type { DatabaseUser } from '@platform/types';
+import { isTenantWideRole } from '@platform/authz';
 
 /**
  * Resolves one live user by an arbitrary predicate, in one of two shapes.
@@ -16,10 +17,17 @@ import type { DatabaseUser } from '@platform/types';
  * iam.user_org_mapping row, falling back to the user's default role for their
  * home org. Returns null when the user has no access to the target org --
  * callers treat that as a denied branch switch / stale session.
+ *
+ * `actor_platform_role`, when tenant-wide (tenant_admin/super_admin), widens
+ * the access check to any org in the actor's own tenant -- those roles aren't
+ * individually mapped to every branch via iam.user_org_mapping (that mapping
+ * is for actors scoped to specific branches), so without this they could
+ * never switch into an unmapped branch despite holding tenant-wide authority.
  */
-async function findUser(predicate: SQL, org_id?: string): Promise<DatabaseUser | null> {
+async function findUser(predicate: SQL, org_id?: string, actor_platform_role?: string): Promise<DatabaseUser | null> {
   return withServiceTx(async (tx) => {
     if (org_id) {
+      const tenantWideActor = actor_platform_role ? isTenantWideRole(actor_platform_role) : false;
       const rows = (await tx.execute(sql`
         SELECT
           u.id,
@@ -49,7 +57,11 @@ async function findUser(predicate: SQL, org_id?: string): Promise<DatabaseUser |
                                         AND uom.is_active
         LEFT JOIN iam.user_roles       uom_r ON uom_r.id = uom.role_id
         WHERE ${predicate} AND NOT u.is_deleted
-          AND (u.org_id = ${org_id}::uuid OR uom.user_id IS NOT NULL)
+          AND (
+            u.org_id = ${org_id}::uuid
+            OR uom.user_id IS NOT NULL
+            ${tenantWideActor ? sql`OR tgt.tenant_id = home.tenant_id` : sql``}
+          )
         LIMIT 1
       `)) as Array<Record<string, unknown>>;
       return (rows[0] as DatabaseUser | undefined) ?? null;
@@ -101,8 +113,12 @@ export async function getUserByMobile(
   return findUser(sql`u.mobile = ${mobile}`, org_id);
 }
 
-export async function getUserById(id: string, org_id?: string): Promise<DatabaseUser | null> {
-  return findUser(sql`u.id = ${id}::uuid`, org_id);
+export async function getUserById(
+  id: string,
+  org_id?: string,
+  actor_platform_role?: string,
+): Promise<DatabaseUser | null> {
+  return findUser(sql`u.id = ${id}::uuid`, org_id, actor_platform_role);
 }
 
 export async function updateLastLogin(user_id: string): Promise<void> {
@@ -206,6 +222,37 @@ export interface UserOrgRow {
   role_label: string;
   rank: number;
   is_home: boolean;
+}
+
+// Every branch in the actor's tenant, for tenant-wide roles (tenant_admin /
+// super_admin) -- they aren't individually mapped via iam.user_org_mapping to
+// every branch, so getUserOrgs would only surface their home org. role_name /
+// role_label / rank are the actor's own (they act with their own authority in
+// every branch, never demoted to a branch-local role -- mirrors the
+// COALESCE(uom_r.*, ur.*) fallback in findUser for the same reason).
+export async function getTenantOrgs(
+  tenant_id: string,
+  home_org_id: string,
+  role_name: string,
+  role_label: string,
+  rank: number,
+): Promise<UserOrgRow[]> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT id AS org_id, name AS org_name
+      FROM entity.organizations
+      WHERE tenant_id = ${tenant_id}::uuid AND NOT is_deleted
+      ORDER BY name
+    `)) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      org_id: String(r['org_id']),
+      org_name: String(r['org_name']),
+      role_name,
+      role_label,
+      rank,
+      is_home: String(r['org_id']) === home_org_id,
+    }));
+  });
 }
 
 // Every branch the user can act in: one row per active iam.user_org_mapping

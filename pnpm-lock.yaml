@@ -47,6 +47,12 @@ importers:
       '@platform/ui-kit':
         specifier: workspace:*
         version: link:../../packages/ui
+      ag-grid-community:
+        specifier: ^35.3.0
+        version: 35.3.1
+      ag-grid-react:
+        specifier: ^35.3.0
+        version: 35.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       next:
         specifier: ^15.2.4
         version: 15.5.20(react-dom@19.2.7(react@19.2.7))(react@19.2.7)

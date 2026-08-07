@@ -201,4 +201,12 @@ INSERT INTO public.schema_versions (version, description) VALUES
   ('1.32.0', 'Public daily lead report page: lms.lead_report_snapshot (one row per branch+assignee per day, RLS-guarded, written by the existing send-lead-report cron job) so day-over-day comparison has history to read; branch/tenant rollups are derived via GROUPING SETS at read time rather than stored. New auth-constants scope lead-report:read on the existing iam.api_clients credential system — no new token table or issuance endpoint.')
   ON CONFLICT (version) DO NOTHING;
 
+INSERT INTO public.schema_versions (version, description) VALUES
+  ('1.33.0', 'Meta lead platform now sourced per-lead from Meta''s Graph API response (webhook + backfill scripts) instead of only the static ext.meta_page_form_org_map.platform config value, which had been defaulting nearly every Page/Form mapping to fb regardless of true placement. platform CHECK widened fb/ig -> fb/ig/wa on ext.meta_page_form_org_map and ext.meta_leads to support WhatsApp-sourced Lead Ads leads; lms.lead_sources.whatsapp (already seeded) is now reachable from ingestion.')
+  ON CONFLICT (version) DO NOTHING;
+
+INSERT INTO public.schema_versions (version, description) VALUES
+  ('1.34.0', 'lms.lead_report_snapshot gains source_id/source_label so the public lead report''s per-source grids can compare against a prior day, not just live data. Unique key widened to (tenant_id, org_id, assigned_user_id, source_id, report_date); existing rows backfilled to source_id NULL / source_label ''Unknown''. send-lead-report.ts now writes one row per (branch, assignee, source) plus zero-fill placeholders per (branch, source), sourced from the same getTenantSourceReport() query the live page uses.')
+  ON CONFLICT (version) DO NOTHING;
+
 COMMIT;

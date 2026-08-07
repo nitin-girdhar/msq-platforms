@@ -49,7 +49,7 @@ export { NotificationProvider, useNotifications, type AppNotification } from './
 
 // SSO origin helpers — client-safe (no jose, no next/headers). Server Components
 // call productOrigins()/authOrigin() and pass results down to client chrome.
-export { authOrigin, buildLoginUrl, productOrigins, allowedRedirectOrigins } from './auth/sso';
+export { authOrigin, adminWebOrigin, buildLoginUrl, productOrigins, allowedRedirectOrigins } from './auth/sso';
 
 // Product entitlement resolution — tenant license INTERSECT user capability, plus
 // the landing target derived from it. Pure and env-free (no React, no jose), so

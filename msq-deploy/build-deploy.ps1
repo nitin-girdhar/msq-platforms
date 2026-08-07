@@ -35,6 +35,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$BuildStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+trap {
+    $elapsed = $BuildStopwatch.Elapsed
+    Write-Host ("`nBuild failed after {0}m {1}s" -f [int]$elapsed.TotalMinutes, $elapsed.Seconds) -ForegroundColor Red
+    break
+}
+
 # -- Paths --------------------------------------------------------------------
 $ProjectRoot  = Split-Path -Parent $PSScriptRoot
 $ArtifactsDir = Join-Path $PSScriptRoot 'artifacts'
@@ -193,11 +200,21 @@ for ($i = 1; $i -le 10; $i++) {
 }
 if (-not $ready) { Write-Error 'Docker engine not reachable. Start Rancher Desktop / Docker Desktop and retry.' }
 
-# Serialise compose's per-service image lookups. Parallel lookups are what
-# trips the Rancher Desktop npipe->WSL bridge (see Invoke-NativeWithRetry);
-# the pull is a handful of small third-party images, so losing the parallelism
-# costs seconds and buys a build that does not fall over 400s in.
-$env:COMPOSE_PARALLEL_LIMIT = '1'
+# BuildKit gives layer-cache reuse across builds (and parallel stage builds
+# within one image) that the legacy builder doesn't - the single biggest lever
+# on repeat-build time. Modern Docker Desktop/Rancher defaults to this already,
+# but set it explicitly since compose reads these env vars, not a daemon flag.
+$env:DOCKER_BUILDKIT = '1'
+$env:COMPOSE_DOCKER_CLI_BUILD = '1'
+
+# NOTE: COMPOSE_PARALLEL_LIMIT is intentionally NOT set here. It used to be
+# set globally at this point, which also serialised `docker compose build`
+# below - forcing every service in every repo to build one at a time instead
+# of in parallel, which was the single biggest cost in this script. It is now
+# set narrowly around just the third-party `pull` call further down, where the
+# Rancher Desktop npipe->WSL bridge actually needs it (see
+# Invoke-NativeWithRetry) - that pull is a handful of small images, so losing
+# parallelism there only costs seconds.
 
 # -- Step 1: Build every repo -------------------------------------------------
 if ($SkipBuild) {
@@ -218,10 +235,19 @@ if ($SkipBuild) {
             # file back in restores the build contexts, leaving only third-party
             # images (postgres, caddy, ...) to actually pull.
             Write-Host "  pulling third-party images for $name"
-            Invoke-NativeWithRetry {
-                docker compose -f docker-compose.yml -f docker-compose-linux.yml `
-                    --env-file .env.example pull --ignore-buildable
-            } "docker compose pull failed in $name."
+            # --policy missing skips the registry entirely for any tag already present
+            # locally (postgres, caddy, exadel/compreface*, ...) - on repeat builds
+            # that's every image, so this also sidesteps the Hyper-V bridge flakiness
+            # below since there is nothing left to pull.
+            $env:COMPOSE_PARALLEL_LIMIT = '1'
+            try {
+                Invoke-NativeWithRetry {
+                    docker compose -f docker-compose.yml -f docker-compose-linux.yml `
+                        --env-file .env.example pull --ignore-buildable --policy missing
+                } "docker compose pull failed in $name."
+            } finally {
+                Remove-Item Env:\COMPOSE_PARALLEL_LIMIT -ErrorAction SilentlyContinue
+            }
         } finally {
             Pop-Location
         }
@@ -684,3 +710,7 @@ Next steps:
   3. Run:  sudo bash deploy.sh             # first time
            sudo bash deploy.sh --redeploy  # update
 "@ -ForegroundColor Yellow
+
+$BuildStopwatch.Stop()
+$elapsed = $BuildStopwatch.Elapsed
+Write-Host ("`nTotal build time: {0}m {1}s" -f [int]$elapsed.TotalMinutes, $elapsed.Seconds) -ForegroundColor Cyan

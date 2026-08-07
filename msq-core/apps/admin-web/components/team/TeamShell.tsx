@@ -10,9 +10,10 @@ import EditUserModal from './EditUserModal';
 interface Props {
   users: SessionUser[];
   actor: SessionUser;
+  total: number;
 }
 
-export default function TeamShell({ users, actor }: Props) {
+export default function TeamShell({ users, actor, total }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SessionUser | null>(null);
 
@@ -26,7 +27,7 @@ export default function TeamShell({ users, actor }: Props) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-[#0F172A]">Team</h1>
-          <p className="mt-1 text-xs text-[#64748B]">{users.length} total</p>
+          <p className="mt-1 text-xs text-[#64748B]">{total} total</p>
         </div>
         {canCreate && (
           <button
@@ -39,7 +40,7 @@ export default function TeamShell({ users, actor }: Props) {
         )}
       </div>
 
-      <TeamTable users={users} currentUserId={actor.id} onEdit={setEditTarget} />
+      <TeamTable users={users} currentUserId={actor.id} actorRank={actor.rank} onEdit={setEditTarget} />
 
       {canCreate && (
         <CreateUserModal

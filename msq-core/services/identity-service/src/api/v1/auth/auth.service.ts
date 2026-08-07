@@ -1,7 +1,7 @@
 import { UnauthorizedError, BadRequestError, ForbiddenError } from '../../../lib/errors.js';
 import type { JwtPayload, UserOrgOption, PlatformRole, ProductKey } from '@platform/types';
 import { getActiveTenantModulesByTenantId } from '@platform/db';
-import { modulesToProducts } from '@platform/authz';
+import { modulesToProducts, isTenantWideRole } from '@platform/authz';
 import { normalizeMobile, isMobileLike } from '@platform/validation';
 import { comparePassword, hashPassword } from '../../../lib/password.js';
 import { signJwt, verifyJwt, revokeJti, isJtiRevoked, revokeAllUserSessions, decodeJwtUnchecked } from '../../../lib/jwt.js';
@@ -201,7 +201,7 @@ async function resolveSession(
     throw new UnauthorizedError('Session has been revoked. Please log in again.');
   }
 
-  const db_user = await repo.getUserById(result.payload.sub, result.payload.org_id);
+  const db_user = await repo.getUserById(result.payload.sub, result.payload.org_id, result.payload.platform_role);
   if (!db_user || !db_user.is_active) {
     throw new UnauthorizedError('User not found or inactive');
   }
@@ -225,8 +225,14 @@ export async function getSession(
 }
 
 export async function getMyOrgs(token: string | undefined): Promise<UserOrgOption[]> {
-  const { payload } = await resolveSession(token);
-  const rows = await repo.getUserOrgs(payload.sub);
+  const { payload, db_user } = await resolveSession(token);
+  // Tenant-wide roles aren't individually mapped to every branch via
+  // iam.user_org_mapping (that mapping is for actors scoped to specific
+  // branches) -- getUserOrgs would only surface their home org, so list every
+  // org in the tenant instead. Every other role keeps today's mapped-orgs list.
+  const rows = isTenantWideRole(payload.platform_role)
+    ? await repo.getTenantOrgs(db_user.tenant_id, db_user.org_id, db_user.role_name, db_user.role_label, db_user.rank)
+    : await repo.getUserOrgs(payload.sub);
   return rows.map((r) => ({
     org_id: r.org_id,
     org_name: r.org_name,
@@ -247,7 +253,7 @@ export async function switchOrg(
 ): Promise<LoginResult> {
   const { payload } = await resolveSession(token);
 
-  const db_user = await repo.getUserById(payload.sub, org_id);
+  const db_user = await repo.getUserById(payload.sub, org_id, payload.platform_role);
   if (!db_user) {
     void logActivity({
       action_type: 'org_switch_denied',

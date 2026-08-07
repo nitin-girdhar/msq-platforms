@@ -14,7 +14,10 @@ export default async function TeamPage() {
 
   // No org_id param: identity-service scopes /users to the caller's own
   // org/tenant from the gateway-verified session (see users.service.ts).
-  const res = await fetch(`${GATEWAY_URL}/users`, {
+  // page_size=500 is the schema's max (users.schema.ts) — the grid does its
+  // own client-side paging/sorting/filtering below, so the whole roster is
+  // fetched in one request rather than driving page/page_size from the UI.
+  const res = await fetch(`${GATEWAY_URL}/users?page_size=500`, {
     headers: { cookie: cookieHeader },
     cache: 'no-store',
   });
@@ -24,8 +27,9 @@ export default async function TeamPage() {
     return <LoadError title="Team" status={res.status} />;
   }
 
-  const body = await res.json() as { data?: Record<string, unknown>[] };
+  const body = await res.json() as { data?: Record<string, unknown>[]; total?: number };
   const raw = Array.isArray(body.data) ? body.data : [];
+  const total = typeof body.total === 'number' ? body.total : raw.length;
   const users: SessionUser[] = raw.map((u) => ({
     ...u,
     name: (u.full_name ?? u.name ?? '') as string,
@@ -39,5 +43,5 @@ export default async function TeamPage() {
     manager_name: (u.manager_name ?? null) as string | null,
   })) as SessionUser[];
 
-  return <TeamShell users={users} actor={session} />;
+  return <TeamShell users={users} actor={session} total={total} />;
 }

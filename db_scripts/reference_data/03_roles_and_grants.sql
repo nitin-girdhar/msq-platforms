@@ -73,7 +73,7 @@ FROM (VALUES
   'lms.assignments.view',
   'hr.attendance','hr.attendance.view','hr.attendance.view.own',
   'hr.leave','hr.leave.view','hr.leave.view.own',
-  'tasks','tasks.view','tasks.view.own','tasks.lists.view'
+  'tasks','tasks.view','tasks.view.own','tasks.lists','tasks.lists.view'
 ]),
 
 -- ── sales_representative (20) ───────────────────────────────────────
@@ -140,6 +140,7 @@ FROM (VALUES
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.users.view','lms.users.view.team','lms.users.view.org',
   'lms.campaigns.view',
+  'lms.analytics','lms.analytics.view',
   'hr.attendance','hr.attendance.view','hr.attendance.view.own','hr.attendance.view.team',
   'hr.attendance.punch','hr.attendance.photo.view',
   'hr.attendance.regularization.request',
@@ -171,6 +172,7 @@ FROM (VALUES
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.users.view','lms.users.view.team','lms.users.view.org',
   'lms.campaigns.view',
+  'lms.analytics','lms.analytics.view',
   'hr.attendance','hr.attendance.view','hr.attendance.view.own','hr.attendance.view.team',
   'hr.attendance.punch','hr.attendance.photo.view',
   'hr.attendance.regularization.request',
@@ -380,8 +382,8 @@ FROM (VALUES
   ('read_only',              ARRAY['lms.analytics','lms.campaigns','lms.users','platform.api_tokens','hr.attendance.admin','hr.leave.admin','tasks.lists']),
   ('sales_representative',   ARRAY['lms.analytics','lms.campaigns','lms.users','platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
   ('senior_sales_executive', ARRAY['lms.analytics','lms.campaigns','platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
-  ('org_manager',            ARRAY['lms.analytics','platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
-  ('org_sr_manager',         ARRAY['lms.analytics','platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  ('org_manager',            ARRAY['platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  ('org_sr_manager',         ARRAY['platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
   ('org_admin',              ARRAY['admin.lookups'])
 ) AS d(role_name, cap_keys)
 JOIN iam.user_roles   r ON r.name = d.role_name AND r.tenant_id IS NULL

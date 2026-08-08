@@ -1,11 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../../middleware/auth.middleware.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { createUserSchema, updateUserSchema, createResetPasswordSchema, updateAssignmentWeightsSchema, addOrgMappingSchema } from '@platform/validation';
+import { createUserSchema, updateUserSchema, resetPasswordSchema, updateAssignmentWeightsSchema, addOrgMappingSchema } from '@platform/validation';
 import { listUsersQuerySchema, getAssignableQuerySchema, uploadPhotoSchema } from './users.schema.js';
 import { UsersController } from './users.controller.js';
 import { PhotosController } from './photos.controller.js';
-import { config } from '../../../config/index.js';
 
 // Base64 photo payloads (~2.9M chars) exceed Fastify's 1 MiB default body limit.
 const PHOTO_BODY_LIMIT = 4 * 1024 * 1024;
@@ -13,7 +12,6 @@ const PHOTO_BODY_LIMIT = 4 * 1024 * 1024;
 export async function usersRouter(app: FastifyInstance) {
   const ctrl = new UsersController();
   const photos = new PhotosController();
-  const resetPasswordSchema = createResetPasswordSchema(config.passwordMinLength);
 
   app.get('/users',            { preHandler: [authenticate, validate({ query: listUsersQuerySchema })] }, ctrl.list);
   app.get('/users/assignable', { preHandler: [authenticate, validate({ query: getAssignableQuerySchema })] }, ctrl.getAssignable);

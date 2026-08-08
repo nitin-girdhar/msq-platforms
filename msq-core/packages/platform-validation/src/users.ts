@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { strongPassword, createStrongPasswordSchema, DEFAULT_PASSWORD_MIN_LENGTH } from './auth.js';
 import { mobileInputSchema } from './phone.js';
 
 export const createUserSchema = z.object({
@@ -27,14 +26,12 @@ export const updateUserSchema = z.object({
   reassign_leads_to: z.string().uuid().optional(),
 });
 
-export function createResetPasswordSchema(minLength: number = DEFAULT_PASSWORD_MIN_LENGTH) {
-  return z.object({
-    new_password: createStrongPasswordSchema(minLength).optional(),
-  });
-}
-
+// Only shape/length-bounds are enforced here — the real strength policy (and
+// the tenant-wide-role override of it) is enforced in the service, which
+// knows the actor's role and the override_policy flag.
 export const resetPasswordSchema = z.object({
-  new_password: strongPassword.optional(),
+  new_password: z.string().min(1).max(128).optional(),
+  override_policy: z.boolean().optional(),
 });
 
 export const updateAssignmentWeightsSchema = z.object({

@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { ANCHOR_RANK } from '@platform/rbac';
-import { buildLoginUrl } from '@platform/ui-kit';
-import { AppSidebar, MobileSidebar, HamburgerButton, UserMenu } from '@platform/ui-kit/shell';
+import { buildLoginUrl, buildChangePasswordUrl, productOrigins } from '@platform/ui-kit';
+import { AppSidebar, MobileSidebar, HamburgerButton, ProductSwitcher, UserMenu } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { ADMIN_NAV } from '@/src/config/navigation';
 import LogoutButton from '@/components/auth/LogoutButton';
@@ -12,7 +12,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const result = await getServerSession();
   if (!result) redirect('/login');
 
-  const { session } = result;
+  const { session, licensedProducts } = result;
 
   // Rank floor for this whole console: org_admin and above. Unlike
   // lookup-admin (super_admin-only, gated on ADMIN_LOOKUPS_MANAGE + rank),
@@ -47,7 +47,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <HamburgerButton />
         <span className="text-base font-bold tracking-tight text-[#0F172A]">Admin</span>
         <div className="ml-auto flex items-center gap-3">
-          <UserMenu user={session} loginUrl={buildLoginUrl()} />
+          {/* No activeProduct: admin-web isn't a licensed product itself, so
+              every LMS/HR/Task link here is cross-origin back out. The Admin
+              pill itself is passed as an active extraLink instead, so it gets
+              the same "current page" highlight LMS/HR/Task get on their own
+              headers. */}
+          <ProductSwitcher
+            licensedProducts={licensedProducts}
+            actor={session}
+            origins={productOrigins()}
+            extraLinks={[{ key: 'admin', href: '/dashboard', label: 'Admin', active: true }]}
+          />
+          <UserMenu user={session} loginUrl={buildLoginUrl()} changePasswordUrl={buildChangePasswordUrl()} />
         </div>
       </header>
       <MobileSidebar actor={session} items={ADMIN_NAV} />

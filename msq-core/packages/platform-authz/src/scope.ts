@@ -26,3 +26,10 @@ export function canSeeOrgFilter(role: string): boolean {
 export function checkMoveUserBranchAccess(role: string): boolean {
   return isTenantWideRole(role);
 }
+
+// Setting a password that doesn't meet the strength policy is a deliberate
+// exception, not a rank privilege — reserved for the same tenant-wide roles
+// that can already cross org boundaries (see checkMoveUserBranchAccess).
+export function canOverridePasswordPolicy(role: string): boolean {
+  return isTenantWideRole(role);
+}

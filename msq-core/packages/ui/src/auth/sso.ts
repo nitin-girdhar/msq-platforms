@@ -38,6 +38,14 @@ export function buildLoginUrl(callbackUrl?: string): string {
   return callbackUrl ? `${base}?callbackUrl=${encodeURIComponent(callbackUrl)}` : base;
 }
 
+// Base self-service change-password URL, without a callback target. Callers
+// that know the page the user should return to (e.g. UserMenu, which appends
+// the current page client-side) build on top of this; the same page also
+// serves the forced-change redirect from createProductMiddleware.
+export function buildChangePasswordUrl(): string {
+  return `${authOrigin()}/change-password`;
+}
+
 // The lookup-admin origin (platform staff tooling), e.g. https://admin.app.com.
 //
 // Deliberately NOT part of productOrigins(): lookup-admin is not a licensed

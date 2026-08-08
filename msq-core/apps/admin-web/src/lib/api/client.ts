@@ -40,7 +40,8 @@ export const users = {
 
   update: (id: string, body: Record<string, unknown>) => usersResource.update(id, body),
 
-  resetPassword: (id: string, new_password?: string) => usersResource.resetPassword(id, new_password),
+  resetPassword: (id: string, new_password?: string, override_policy?: boolean) =>
+    usersResource.resetPassword(id, new_password, override_policy),
 };
 
 // ── API Tokens ───────────────────────────────────────────────────────────────

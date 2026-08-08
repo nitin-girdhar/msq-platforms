@@ -20,10 +20,11 @@ interface Props {
   user: SessionUser;
   currentUserId: string;
   actorRank: number;
+  actorRole: string;
   users: SessionUser[];
 }
 
-export default function EditUserModal({ open, onClose, user, currentUserId, actorRank, users }: Props) {
+export default function EditUserModal({ open, onClose, user, currentUserId, actorRank, actorRole, users }: Props) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(user.first_name ?? '');
   const [middleName, setMiddleName] = useState(user.middle_name ?? '');
@@ -242,6 +243,7 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
           onClose={() => setResetOpen(false)}
           userId={user.id}
           email={user.email}
+          actorRole={actorRole}
         />
       )}
     </>

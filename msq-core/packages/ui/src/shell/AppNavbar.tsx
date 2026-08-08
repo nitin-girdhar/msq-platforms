@@ -2,7 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import type { SessionUser, ProductKey } from '@platform/types';
 import { ANCHOR_RANK } from '@platform/rbac';
-import { buildLoginUrl } from '../auth/sso';
+import { buildLoginUrl, buildChangePasswordUrl } from '../auth/sso';
 import UserMenu from './UserMenu';
 import BranchSwitcher from './BranchSwitcher';
 import HamburgerButton from './HamburgerButton';
@@ -78,7 +78,7 @@ export default function AppNavbar({
         </div>
         <BranchSwitcher user={user} homeHref={homeHref} />
         {notificationSlot}
-        <UserMenu user={user} loginUrl={buildLoginUrl()} />
+        <UserMenu user={user} loginUrl={buildLoginUrl()} changePasswordUrl={buildChangePasswordUrl()} />
       </div>
       {/* Collapses to zero height when nothing renders (single product, no admin link). */}
       <div className="flex items-center gap-2 sm:hidden has-[nav]:border-t has-[nav]:border-[#E2E8F0] has-[nav]:px-2 has-[nav]:py-1.5">

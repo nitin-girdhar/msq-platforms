@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { users as usersApi } from '@/src/lib/api/client';
+import { canOverridePasswordPolicy } from '@platform/authz';
 import { Modal, Button } from '@platform/ui-kit';
 import TemporaryPasswordPanel from './TemporaryPasswordPanel';
 
@@ -10,7 +11,10 @@ interface Props {
   onClose: () => void;
   userId: string;
   email: string;
+  actorRole: string;
 }
+
+const OVERRIDE_MIN_LENGTH = 5;
 
 interface Rule {
   label: string;
@@ -32,20 +36,24 @@ type Mode = 'generate' | 'specific';
 // the HTML `form` attribute is what still wires it to this form.
 const FORM_ID = 'reset-password-form';
 
-export default function ResetPasswordModal({ open, onClose, userId, email }: Props) {
+export default function ResetPasswordModal({ open, onClose, userId, email, actorRole }: Props) {
   const [mode, setMode] = useState<Mode>('generate');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [show, setShow] = useState(false);
+  const [overridePolicy, setOverridePolicy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
+
+  const canOverride = canOverridePasswordPolicy(actorRole);
 
   const reset = () => {
     setMode('generate');
     setPassword('');
     setConfirm('');
     setShow(false);
+    setOverridePolicy(false);
     setError(null);
     setResult(null);
   };
@@ -56,7 +64,10 @@ export default function ResetPasswordModal({ open, onClose, userId, email }: Pro
     onClose();
   };
 
-  const allRulesPass = RULES.every((r) => r.test(password));
+  const useOverrideFloor = canOverride && overridePolicy;
+  const allRulesPass = useOverrideFloor
+    ? password.length >= OVERRIDE_MIN_LENGTH
+    : RULES.every((r) => r.test(password));
   const matches = password.length > 0 && password === confirm;
   const canSubmit = mode === 'generate' || (allRulesPass && matches);
 
@@ -66,7 +77,11 @@ export default function ResetPasswordModal({ open, onClose, userId, email }: Pro
     if (!canSubmit || submitting) return;
     setSubmitting(true);
     try {
-      const data = await usersApi.resetPassword(userId, mode === 'specific' ? password : undefined);
+      const data = await usersApi.resetPassword(
+        userId,
+        mode === 'specific' ? password : undefined,
+        mode === 'specific' ? useOverrideFloor : undefined,
+      );
       setPassword('');
       setConfirm('');
       setResult(data.data.temporary_password);
@@ -196,18 +211,40 @@ export default function ResetPasswordModal({ open, onClose, userId, email }: Pro
                 )}
               </div>
 
-              <ul className="flex flex-col gap-1">
-                {RULES.map((r) => {
-                  const ok = r.test(password);
-                  return (
-                    <li key={r.label} className={`flex items-center gap-1.5 text-[11px] ${ok ? 'text-emerald-600' : 'text-[#94A3B8]'}`}>
-                      <span aria-hidden>{ok ? '✓' : '○'}</span>
-                      {r.label}
-                    </li>
-                  );
-                })}
-                <li className="text-[11px] text-[#94A3B8]">Special characters allowed (optional)</li>
-              </ul>
+              {canOverride && (
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+                  <input
+                    type="checkbox"
+                    checked={overridePolicy}
+                    onChange={(e) => setOverridePolicy(e.target.checked)}
+                    disabled={submitting}
+                    className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                  />
+                  <span>Override password policy (allow a weaker password, min {OVERRIDE_MIN_LENGTH} characters)</span>
+                </label>
+              )}
+
+              {useOverrideFloor ? (
+                <ul className="flex flex-col gap-1">
+                  <li className={`flex items-center gap-1.5 text-[11px] ${password.length >= OVERRIDE_MIN_LENGTH ? 'text-emerald-600' : 'text-[#94A3B8]'}`}>
+                    <span aria-hidden>{password.length >= OVERRIDE_MIN_LENGTH ? '✓' : '○'}</span>
+                    At least {OVERRIDE_MIN_LENGTH} characters
+                  </li>
+                </ul>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {RULES.map((r) => {
+                    const ok = r.test(password);
+                    return (
+                      <li key={r.label} className={`flex items-center gap-1.5 text-[11px] ${ok ? 'text-emerald-600' : 'text-[#94A3B8]'}`}>
+                        <span aria-hidden>{ok ? '✓' : '○'}</span>
+                        {r.label}
+                      </li>
+                    );
+                  })}
+                  <li className="text-[11px] text-[#94A3B8]">Special characters allowed (optional)</li>
+                </ul>
+              )}
             </>
           )}
 

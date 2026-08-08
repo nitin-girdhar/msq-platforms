@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
+import { z } from 'zod';
 import type { RoleTxContext } from '@platform/db';
 import { toApiRow, toApiRows } from '@platform/db';
 import { ROLE_RANK } from '@platform/auth-constants';
 import type { UserRole } from '@platform/auth-constants';
-import { canGrantRole, canManageUser, canSeeOrgFilter, checkMoveUserBranchAccess } from '@platform/authz';
+import { canGrantRole, canManageUser, canOverridePasswordPolicy, canSeeOrgFilter, checkMoveUserBranchAccess } from '@platform/authz';
+import { createStrongPasswordSchema } from '@platform/validation';
 import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, AddOrgMappingInput } from '@platform/validation';
 import { NotFoundError, ConflictError, ForbiddenError, BadRequestError } from '../../../lib/errors.js';
 import { logActivity } from '@platform/audit-log';
@@ -17,6 +19,11 @@ import type { UpdateUserFields } from './users.repository.js';
 function generateTemporaryPassword(): string {
   return randomBytes(16).toString('base64url');
 }
+
+// Absolute floor for a tenant-wide admin's policy override — still a real
+// minimum, just far below the default strength policy, so an override can
+// never be used to set an effectively empty password.
+const passwordOverrideFloorSchema = z.string().min(5, 'Password must be at least 5 characters').max(128, 'Password must be at most 128 characters');
 
 /**
  * Turns a unique-violation from iam.users into a 409 naming the field that
@@ -47,15 +54,22 @@ function rankForRole(roleName: string): number {
 }
 
 // Blocks acting on a user who currently outranks the actor (RLS only isolates by
-// org/tenant, not by rank, so this guard is required).
-async function assertCanManageTarget(actorRank: number, targetUserId: string): Promise<number> {
+// org/tenant, not by rank, so this guard is required). Also returns the target's
+// own org_id so callers can scope subsequent writes to it rather than the
+// actor's org — the actor and target may sit in different orgs under the same
+// tenant (see updateUser's targetCtx for the original instance of this pattern).
+async function assertCanManageTarget(
+  actorRank: number,
+  targetUserId: string,
+): Promise<{ targetRank: number; targetOrgId: string }> {
   const target = await repo.getUserByIdAsService(targetUserId);
   if (!target) throw new NotFoundError('User not found');
   const targetRank = Number((target as Record<string, unknown>)['rank'] ?? 0);
   if (!canManageUser(actorRank, targetRank)) {
     throw new ForbiddenError('You cannot manage a user with a higher role');
   }
-  return targetRank;
+  const targetOrgId = (target as Record<string, unknown>)['org_id'] as string;
+  return { targetRank, targetOrgId };
 }
 
 export async function listUsers(
@@ -321,11 +335,28 @@ export async function resetPassword(
   targetUserId: string,
   data: ResetPasswordInput,
 ) {
-  await assertCanManageTarget(actorRank, targetUserId);
+  const { targetOrgId } = await assertCanManageTarget(actorRank, targetUserId);
+  const targetCtx: RoleTxContext = { ...ctx, org_id: targetOrgId };
+
+  // A policy override is only honored for tenant-wide roles, and only when
+  // explicitly requested — everyone else always gets the full strength
+  // policy, regardless of what override_policy says.
+  const useOverrideFloor = data.override_policy === true && canOverridePasswordPolicy(ctx.role);
+  if (data.new_password !== undefined) {
+    const schema = useOverrideFloor
+      ? passwordOverrideFloorSchema
+      : createStrongPasswordSchema(config.passwordMinLength);
+    const parsed = schema.safeParse(data.new_password);
+    if (!parsed.success) throw new BadRequestError(parsed.error.issues[0]!.message);
+  }
+
   const temporaryPassword = data.new_password ?? generateTemporaryPassword();
   const passwordHash = await bcrypt.hash(temporaryPassword, config.bcryptRounds);
 
-  const result = await repo.adminResetPassword(ctx, targetUserId, passwordHash);
+  // Written with targetCtx (target's own org), not the actor's ctx — the actor
+  // may be a tenant-wide role managing a user in a different org, and scoping
+  // the UPDATE to the actor's org would silently match zero rows there.
+  const result = await repo.adminResetPassword(targetCtx, targetUserId, passwordHash);
   if (!result) throw new NotFoundError('User not found');
 
   // An admin reset is also the unlock path for a user locked out by failed
@@ -345,6 +376,7 @@ export async function resetPassword(
     performed_by: ctx.user_id,
     subject_user_id: targetUserId,
     org_id: ctx.org_id,
+    ...(useOverrideFloor ? { new_value: { policy_override: true } } : {}),
   });
 
   return { temporary_password: temporaryPassword };

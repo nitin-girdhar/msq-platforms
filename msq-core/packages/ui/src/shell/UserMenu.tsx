@@ -15,6 +15,11 @@ interface Props {
   // bundle at build time — freezing the auth origin into the image, so a
   // deployment could not be repointed by editing .env on the server.
   loginUrl: string;
+  // Same reasoning as loginUrl: resolved server-side via buildChangePasswordUrl().
+  // The per-click return target (the page the user is on right now) is appended
+  // client-side in handleChangePassword, since window.location.href is always
+  // accurate at click time and needs no server round-trip.
+  changePasswordUrl: string;
 }
 
 // Best-effort HR cooldown pre-check. Returns a gate only for HR employees who
@@ -42,7 +47,7 @@ async function fetchPhotoGate(): Promise<PhotoUploadGate | null> {
   }
 }
 
-export default function UserMenu({ user, loginUrl }: Props) {
+export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
@@ -73,6 +78,15 @@ export default function UserMenu({ user, loginUrl }: Props) {
       // clearing the .app.com cookie ends the session for every product.
       window.location.assign(loginUrl);
     }
+  };
+
+  const handleChangePassword = () => {
+    setOpen(false);
+    // Append the current page as the return target so auth's change-password
+    // page sends the user back here instead of the generic post-login landing.
+    const url = new URL(changePasswordUrl);
+    url.searchParams.set('callbackUrl', window.location.href);
+    window.location.assign(url.toString());
   };
 
   const label = user.name ?? user.email;
@@ -164,6 +178,21 @@ export default function UserMenu({ user, loginUrl }: Props) {
               />
             </svg>
             {hasPhoto ? 'Change photo' : 'Add photo'}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleChangePassword}
+            className="flex w-full items-center gap-2 border-b border-[#F1F5F9] px-4 py-2.5 text-left text-sm font-medium text-[#334155] transition-colors hover:bg-slate-50 cursor-pointer"
+          >
+            <svg className="h-4 w-4 text-[#64748B]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+              <path
+                fillRule="evenodd"
+                d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z"
+                clipRule="evenodd"
+              />
+            </svg>
+            Change password
           </button>
           <button
             type="button"

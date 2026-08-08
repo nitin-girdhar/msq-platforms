@@ -59,6 +59,7 @@ export default function TeamShell({ users, actor, total }: Props) {
           user={editTarget}
           currentUserId={actor.id}
           actorRank={actor.rank}
+          actorRole={actor.role}
           users={users}
         />
       )}

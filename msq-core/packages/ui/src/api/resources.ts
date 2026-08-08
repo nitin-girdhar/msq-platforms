@@ -69,10 +69,10 @@ export const users = {
   delete: (id: string) =>
     request<void>(`/users/${id}`, { method: 'DELETE' }),
 
-  resetPassword: (id: string, new_password?: string) =>
+  resetPassword: (id: string, new_password?: string, override_policy?: boolean) =>
     request<{ success: true; data: { temporary_password: string } }>(`/users/${id}/reset-password`, {
       method: 'POST',
-      body: JSON.stringify({ new_password }),
+      body: JSON.stringify({ new_password, override_policy }),
     }),
 
   assignable: (opts?: { orgId?: string; scope?: 'delegation' | 'collaboration'; maxRank?: number }) => {

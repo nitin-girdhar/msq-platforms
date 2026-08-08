@@ -12,6 +12,12 @@ interface ExtraLink {
   key: string;
   href: string;
   label: string;
+  // Renders this pill with the same "current page" treatment as an active
+  // product chip. For the Admin link shown on LMS/HR/Task, this is always
+  // false (Admin is never the app you're standing in there). admin-web's own
+  // header passes true for its own Admin pill instead — same current-page
+  // affordance, since activeProduct can't express it (Admin isn't a product).
+  active?: boolean;
 }
 
 interface Props {
@@ -25,8 +31,11 @@ interface Props {
   // configured origin is skipped — we can't link to it.
   origins: Record<ProductKey, string>;
   // Which product THIS app is, so its chip renders active. Each product image
-  // knows its own identity; no pathname sniffing across origins.
-  activeProduct: ProductKey;
+  // knows its own identity; no pathname sniffing across origins. Omitted from
+  // non-product shells (e.g. admin-web) that render the switcher purely to
+  // link back out — no chip is "current" there, so every product link is
+  // cross-origin.
+  activeProduct?: ProductKey;
   // Non-product links (e.g. the rank-gated "Admin" link) rendered as trailing
   // pills in this same unified group, purely for visual consistency. They are
   // NOT products: they never factor into usableProducts/PRODUCT_LANDING, so
@@ -92,7 +101,12 @@ export default function ProductSwitcher({
           <a
             key={link.key}
             href={link.href}
-            className="rounded-md px-2 py-1.5 text-center text-xs font-medium text-[#475569] transition-colors hover:text-[#0F172A] sm:px-3 sm:py-1"
+            aria-current={link.active ? "page" : undefined}
+            className={
+              link.active
+                ? "rounded-md bg-white px-2 py-1.5 text-center text-xs font-semibold text-[#0b6cbf] shadow-sm sm:px-3 sm:py-1"
+                : "rounded-md px-2 py-1.5 text-center text-xs font-medium text-[#475569] transition-colors hover:text-[#0F172A] sm:px-3 sm:py-1"
+            }
           >
             {link.label}
           </a>

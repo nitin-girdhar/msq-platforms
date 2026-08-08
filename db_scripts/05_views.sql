@@ -564,6 +564,8 @@ WITH counters AS (
     COUNT(*) FILTER (WHERE ls.name = 'new')                          AS new_count,
     COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
                          = (NOW()          AT TIME ZONE o.timezone)::date) AS new_leads_today,
+    COUNT(*) FILTER (WHERE date_trunc('month', ml.created_at AT TIME ZONE o.timezone)
+                         = date_trunc('month', NOW()          AT TIME ZONE o.timezone)) AS new_leads_this_month,
     COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)              AS unassigned_count,
     COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
                        AND ml.scheduled_at >= NOW())                 AS followup_scheduled,
@@ -593,7 +595,12 @@ SELECT
   COALESCE(c.followup_overdue,   0)::INT    AS followup_overdue,
   COALESCE(c.converted_count,    0)::INT    AS converted_count,
   COALESCE(c.unqualified_count,  0)::INT    AS unqualified_count,
-  CLOCK_TIMESTAMP()                        AS snapshot_at
+  CLOCK_TIMESTAMP()                        AS snapshot_at,
+  -- Appended after snapshot_at (not inserted earlier in the list): PostgreSQL's
+  -- CREATE OR REPLACE VIEW can only add columns at the end, never reposition
+  -- existing ones — see apply_schema.ps1's ON_ERROR_STOP failure this caused
+  -- the first time this was placed next to new_leads_today.
+  COALESCE(c.new_leads_this_month, 0)::INT  AS new_leads_this_month
 FROM entity.organizations o
 LEFT JOIN counters c ON c.org_id = o.id
 WHERE NOT o.is_deleted;
@@ -636,7 +643,12 @@ SELECT
                      AND ml.scheduled_at <  NOW())::INT             AS followup_overdue,
   COUNT(*) FILTER (WHERE ls.name = 'converted')::INT                AS converted_count,
   COUNT(*) FILTER (WHERE ls.name = 'unqualified')::INT              AS unqualified_count,
-  CLOCK_TIMESTAMP()                        AS snapshot_at
+  CLOCK_TIMESTAMP()                        AS snapshot_at,
+  -- Appended after snapshot_at, not next to new_leads_today — see the same
+  -- note on lms.vw_lead_report_branch above (CREATE OR REPLACE VIEW can only
+  -- add columns at the end).
+  COUNT(*) FILTER (WHERE date_trunc('month', ml.created_at AT TIME ZONE o.timezone)
+                       = date_trunc('month', NOW()          AT TIME ZONE o.timezone))::INT AS new_leads_this_month
 FROM lms.marketing_leads ml
 JOIN entity.organizations o ON o.id = ml.org_id AND NOT o.is_deleted
 LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id

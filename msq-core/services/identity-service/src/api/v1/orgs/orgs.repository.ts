@@ -1,4 +1,4 @@
-import { sql, asc } from 'drizzle-orm';
+import { sql, asc, and, eq } from 'drizzle-orm';
 import { withRoleTx, withServiceTx } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
 import { leadSourcesTable } from '@platform/db/schema';
@@ -86,11 +86,17 @@ export async function getAllOrgs(ctx: Pick<RoleTxContext, 'org_id'>) {
   });
 }
 
-export async function getLeadSources() {
-  return withServiceTx(async (tx) => {
+export async function getLeadSources(ctx: Pick<RoleTxContext, 'role' | 'org_id' | 'tenant_id' | 'user_id'>) {
+  return withRoleTx(ctx, async (tx) => {
     return tx
-      .select({ id: leadSourcesTable.id, name: leadSourcesTable.name })
+      .select({
+        id: leadSourcesTable.id,
+        name: leadSourcesTable.name,
+        label: leadSourcesTable.label,
+        is_active: leadSourcesTable.isActive,
+      })
       .from(leadSourcesTable)
+      .where(and(eq(leadSourcesTable.tenantId, ctx.tenant_id), eq(leadSourcesTable.isActive, true)))
       .orderBy(asc(leadSourcesTable.name));
   });
 }

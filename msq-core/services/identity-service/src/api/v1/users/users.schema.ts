@@ -16,6 +16,11 @@ export const getAssignableQuerySchema = z.object({
   // actor themselves — used by Tasks so a member can assign to same-rank peers
   // and to themselves.
   scope: z.enum(['delegation', 'collaboration']).default('delegation'),
+  // Overrides `scope` entirely when present: candidates at or below this
+  // absolute rank, regardless of the actor's own rank. Used where the ceiling
+  // is a fixed business rule rather than relative to the actor (e.g. bulk
+  // lead assignment, which only ever targets individual contributors).
+  max_rank: z.coerce.number().int().nonnegative().optional(),
 });
 
 export type GetAssignableQuery = z.infer<typeof getAssignableQuerySchema>;

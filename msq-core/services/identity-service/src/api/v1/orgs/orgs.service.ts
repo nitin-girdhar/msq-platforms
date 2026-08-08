@@ -23,6 +23,6 @@ export async function getAllOrgs(ctx: RoleTxContext) {
   return repo.getAllOrgs(ctx);
 }
 
-export async function getLeadSources() {
-  return repo.getLeadSources();
+export async function getLeadSources(ctx: RoleTxContext) {
+  return repo.getLeadSources(ctx);
 }

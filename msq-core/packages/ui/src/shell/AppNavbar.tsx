@@ -43,6 +43,9 @@ export default function AppNavbar({
   adminWebUrl,
 }: Props) {
   const showAdminLink = !!adminWebUrl && user.rank >= ANCHOR_RANK.ORG_ADMIN;
+  const extraLinks = showAdminLink
+    ? [{ key: 'admin', href: adminWebUrl!, label: 'Admin' }]
+    : [];
   return (
     <header className="sticky top-0 z-30 shrink-0 border-b border-[#E2E8F0] bg-white">
       <div className="flex h-14 items-center gap-2 px-2 sm:gap-4 sm:px-5">
@@ -70,36 +73,22 @@ export default function AppNavbar({
             actor={user}
             origins={productOrigins}
             activeProduct={activeProduct}
+            extraLinks={extraLinks}
           />
-          {showAdminLink && (
-            <a
-              href={adminWebUrl}
-              className="shrink-0 rounded-md border border-[#E2E8F0] px-2.5 py-1 text-xs font-semibold text-[#475569] transition-colors hover:border-[#0b6cbf] hover:text-[#0b6cbf]"
-            >
-              Admin
-            </a>
-          )}
         </div>
         <BranchSwitcher user={user} homeHref={homeHref} />
         {notificationSlot}
         <UserMenu user={user} loginUrl={buildLoginUrl()} />
       </div>
-      {/* Collapses to zero height when neither renders (single product, no admin link). */}
-      <div className="flex items-center gap-2 sm:hidden has-[a]:border-t has-[a]:border-[#E2E8F0] has-[a]:px-2 has-[a]:py-1.5 has-[nav]:border-t has-[nav]:border-[#E2E8F0] has-[nav]:px-2 has-[nav]:py-1.5">
+      {/* Collapses to zero height when nothing renders (single product, no admin link). */}
+      <div className="flex items-center gap-2 sm:hidden has-[nav]:border-t has-[nav]:border-[#E2E8F0] has-[nav]:px-2 has-[nav]:py-1.5">
         <ProductSwitcher
           licensedProducts={licensedProducts}
           actor={user}
           origins={productOrigins}
           activeProduct={activeProduct}
+          extraLinks={extraLinks}
         />
-        {showAdminLink && (
-          <a
-            href={adminWebUrl}
-            className="shrink-0 rounded-md border border-[#E2E8F0] px-2.5 py-1 text-xs font-semibold text-[#475569]"
-          >
-            Admin
-          </a>
-        )}
       </div>
     </header>
   );

@@ -75,10 +75,11 @@ export const users = {
       body: JSON.stringify({ new_password }),
     }),
 
-  assignable: (opts?: { orgId?: string; scope?: 'delegation' | 'collaboration' }) => {
+  assignable: (opts?: { orgId?: string; scope?: 'delegation' | 'collaboration'; maxRank?: number }) => {
     const params = new URLSearchParams();
     if (opts?.orgId) params.set('org_id', opts.orgId);
     if (opts?.scope) params.set('scope', opts.scope);
+    if (opts?.maxRank !== undefined) params.set('max_rank', String(opts.maxRank));
     const qs = params.toString();
     return request<{ success: true; data: unknown[] }>(`/users/assignable${qs ? `?${qs}` : ''}`);
   },

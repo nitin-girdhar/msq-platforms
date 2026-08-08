@@ -106,7 +106,7 @@ FROM (VALUES
   'lms.leads.unassigned.view',
   'lms.leads.create','lms.leads.edit','lms.leads.edit.own','lms.leads.edit.team',
   'lms.leads.transfer',
-  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers',
+  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
   'lms.history.view','lms.history.view.own','lms.history.view.team',
@@ -133,7 +133,7 @@ FROM (VALUES
   'lms.leads.unassigned.view',
   'lms.leads.create','lms.leads.edit','lms.leads.edit.own','lms.leads.edit.team',
   'lms.leads.delete','lms.leads.transfer',
-  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers',
+  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
@@ -165,7 +165,7 @@ FROM (VALUES
   'lms.leads.create','lms.leads.edit',
   'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
   'lms.leads.delete','lms.leads.transfer',
-  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers',
+  'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
@@ -465,6 +465,19 @@ JOIN iam.capabilities src ON src.key = pin.src_key
 JOIN iam.capabilities tgt ON tgt.key = pin.tgt_key
 JOIN iam.role_capabilities rc ON rc.capability_id = src.id AND rc.is_granted
 WHERE rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = TRUE;
+
+-- ── Back-fill: lms.analytics for org_manager / org_sr_manager ───────
+-- Same trap again: the deny block above only flips the tenant_id IS NULL
+-- template. org_manager/org_sr_manager are per-tenant copies since
+-- _migrations/19, so removing them from the deny list here left every
+-- existing tenant's copy still holding the old explicit deny row.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT r.tenant_id, r.id, c.id, TRUE
+FROM iam.user_roles r
+JOIN iam.capabilities c ON c.key IN ('lms.analytics','lms.analytics.view')
+WHERE r.name IN ('org_manager','org_sr_manager') AND r.tenant_id IS NOT NULL
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO UPDATE SET is_granted = TRUE;
 

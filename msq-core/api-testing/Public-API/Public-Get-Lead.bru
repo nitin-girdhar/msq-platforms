@@ -1,0 +1,27 @@
+meta {
+  name: Public Get Lead (Partner API)
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/public/v1/leads/:id
+  body: none
+  auth: none
+}
+
+params:path {
+  id: {{leadId}}
+}
+
+headers {
+  Authorization: Bearer {{apiClientKey}}
+}
+
+docs {
+  Requires a key with `leads:read`. Returns field-minimized lead details
+  (lead_id, first_name, last_name, phone, email, address_line1, address_line2,
+  landmark, pincode, city, lead_source, lead_source_label). 404s for a lead
+  outside the key's tenant/branch scope, indistinguishable from a lead that
+  doesn't exist.
+}

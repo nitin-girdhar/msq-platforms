@@ -4,6 +4,7 @@
 
 export const API_SCOPES = [
   'leads:write',
+  'leads:read',
   'branches:read',
   // Where a tenant operates: the country/state/city drill-down behind
   // /public/v1/locations/*. Separate from branches:read so a partner can be

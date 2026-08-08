@@ -8,6 +8,12 @@ const PRODUCT_LABELS: Record<ProductKey, string> = {
   task: "Tasks",
 };
 
+interface ExtraLink {
+  key: string;
+  href: string;
+  label: string;
+}
+
 interface Props {
   // What the TENANT has licensed. Necessary but not sufficient — see `actor`.
   licensedProducts: ProductKey[];
@@ -21,6 +27,12 @@ interface Props {
   // Which product THIS app is, so its chip renders active. Each product image
   // knows its own identity; no pathname sniffing across origins.
   activeProduct: ProductKey;
+  // Non-product links (e.g. the rank-gated "Admin" link) rendered as trailing
+  // pills in this same unified group, purely for visual consistency. They are
+  // NOT products: they never factor into usableProducts/PRODUCT_LANDING, so
+  // admin-web still can't be chosen as a landing target or compete for the
+  // active chip.
+  extraLinks?: ExtraLink[];
 }
 
 // Cross-origin product switcher. Unlike the pre-split version (same-app paths),
@@ -31,6 +43,7 @@ export default function ProductSwitcher({
   actor,
   origins,
   activeProduct,
+  extraLinks = [],
 }: Props) {
   // The origin exemption covers the ACTIVE product only: we're already here, so
   // a missing origin can't break the link. Capability is deliberately not
@@ -40,13 +53,14 @@ export default function ProductSwitcher({
     (p) => p === activeProduct || origins[p],
   );
 
-  // Nothing to switch between when the tenant only has one (reachable) product.
-  if (products.length <= 1) return null;
+  // Nothing to switch between when the tenant only has one (reachable)
+  // product and there are no extra links (e.g. Admin) to show either.
+  if (products.length <= 1 && extraLinks.length === 0) return null;
 
-  // Capped at 4 columns — the widest we expect PRODUCT_LABELS to grow to.
-  // Fewer products still get one column each (no empty cells) via the inline
+  // Capped at 5 columns — the widest we expect PRODUCT_LABELS + Admin to grow
+  // to. Fewer items still get one column each (no empty cells) via the inline
   // template, and the grid collapses to an inline row once sm: kicks in.
-  const columns = Math.min(products.length, 4);
+  const columns = Math.min(products.length + extraLinks.length, 5);
 
   return (
     <nav aria-label="Products" className="w-full sm:w-auto">
@@ -74,6 +88,15 @@ export default function ProductSwitcher({
             </a>
           );
         })}
+        {extraLinks.map((link) => (
+          <a
+            key={link.key}
+            href={link.href}
+            className="rounded-md px-2 py-1.5 text-center text-xs font-medium text-[#475569] transition-colors hover:text-[#0F172A] sm:px-3 sm:py-1"
+          >
+            {link.label}
+          </a>
+        ))}
       </div>
     </nav>
   );

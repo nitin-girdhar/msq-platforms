@@ -88,13 +88,14 @@ export async function getAssignableUsers(
   actorRank: number,
   orgId?: string,
   scope: 'delegation' | 'collaboration' = 'delegation',
+  maxRank?: number,
 ) {
   // Same threshold as listUsers' org filter — only actors who can already see
   // other branches may request assignable candidates for one of them (e.g. the
   // walk-in-lead form's org picker on the Assignments page).
   const canQueryOtherOrg = canSeeOrgFilter(ctx.role);
   const effectiveOrgId = orgId && canQueryOtherOrg ? orgId : undefined;
-  return repo.getAssignableUsers(ctx, actorRank, effectiveOrgId, scope);
+  return repo.getAssignableUsers(ctx, actorRank, effectiveOrgId, scope, maxRank);
 }
 
 export async function getAssignmentWeights(ctx: RoleTxContext) {

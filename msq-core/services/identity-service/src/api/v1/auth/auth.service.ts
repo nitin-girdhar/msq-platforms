@@ -231,7 +231,7 @@ export async function getMyOrgs(token: string | undefined): Promise<UserOrgOptio
   // branches) -- getUserOrgs would only surface their home org, so list every
   // org in the tenant instead. Every other role keeps today's mapped-orgs list.
   const rows = isTenantWideRole(payload.platform_role)
-    ? await repo.getTenantOrgs(db_user.tenant_id, db_user.org_id, db_user.role_name, db_user.role_label, db_user.rank)
+    ? await repo.getTenantOrgs(db_user.tenant_id, db_user.home_org_id, db_user.role_name, db_user.role_label, db_user.rank)
     : await repo.getUserOrgs(payload.sub);
   return rows.map((r) => ({
     org_id: r.org_id,

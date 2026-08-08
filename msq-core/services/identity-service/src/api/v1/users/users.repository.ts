@@ -164,15 +164,20 @@ export async function getAssignableUsers(
   actorRank: number,
   orgId?: string,
   scope: 'delegation' | 'collaboration' = 'delegation',
+  maxRank?: number,
 ) {
   const targetOrgId = orgId ?? ctx.org_id;
   // delegation: strictly below the actor (CRM lead hand-down).
   // collaboration: at or below the actor, so same-rank peers and the actor
   // themselves are assignable (Tasks). See getAssignableQuerySchema.
+  // maxRank, when given, overrides both: an absolute ceiling independent of
+  // the actor's own rank (e.g. bulk lead assignment).
   const rankFilter =
-    scope === 'collaboration'
-      ? sql`ur.rank <= ${actorRank}`
-      : sql`ur.rank < ${actorRank}`;
+    maxRank !== undefined
+      ? sql`ur.rank <= ${maxRank}`
+      : scope === 'collaboration'
+        ? sql`ur.rank <= ${actorRank}`
+        : sql`ur.rank < ${actorRank}`;
   return withRoleTx(ctx, async (tx) => {
     return (await tx.execute(sql`
       SELECT u.id, u.org_id, u.full_name, u.first_name, u.middle_name, u.last_name,

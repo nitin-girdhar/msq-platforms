@@ -20,8 +20,9 @@ export class OrgsController {
     return reply.send({ success: true, data: orgs });
   };
 
-  getLeadSources = async (_request: FastifyRequest, reply: FastifyReply) => {
-    const sources = await service.getLeadSources();
+  getLeadSources = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role, tenant_id } = request.auth;
+    const sources = await service.getLeadSources({ org_id, user_id, role, tenant_id });
     return reply.send({ success: true, data: sources });
   };
 

@@ -1346,16 +1346,27 @@ LANGUAGE sql STABLE SECURITY DEFINER AS $$
     WHERE rc.tenant_id IS NULL OR rc.tenant_id = p_tenant_id
     ORDER BY rc.role_id, rc.capability_id, (rc.tenant_id IS NOT NULL) DESC
   ),
+  -- Ladder roles (org_manager, sales_representative, ...) exist as BOTH a
+  -- template row (tenant_id NULL) and a per-tenant copy sharing the same
+  -- name since _migrations/19. Without this, the walk below runs from both
+  -- role_ids and reports them under the same role_name, so the tenant's own
+  -- copy — including anything it explicitly denies — gets unioned with
+  -- whatever the template still grants. One row per name, tenant copy wins.
+  roles_resolved AS (
+    SELECT DISTINCT ON (r.name) r.id, r.name
+    FROM iam.user_roles r
+    WHERE r.is_active AND (r.tenant_id IS NULL OR r.tenant_id = p_tenant_id)
+    ORDER BY r.name, (r.tenant_id IS NOT NULL) DESC
+  ),
   walk AS (
     -- Roots are the tools. A tool is on only if explicitly granted.
     SELECT r.id AS role_id, r.name::TEXT AS role_name, c.key, c.kind, c.parent_key, c.sort_order,
            COALESCE(g.is_granted, FALSE) AS granted,
            COALESCE(g.is_granted, FALSE) AS nav_inherited
-    FROM iam.user_roles r
+    FROM roles_resolved r
     CROSS JOIN iam.capabilities c
     LEFT JOIN grant_resolved g ON g.role_id = r.id AND g.capability_id = c.id
-    WHERE c.parent_key IS NULL AND c.is_active AND r.is_active
-      AND (r.tenant_id IS NULL OR r.tenant_id = p_tenant_id)
+    WHERE c.parent_key IS NULL AND c.is_active
 
     UNION ALL
 

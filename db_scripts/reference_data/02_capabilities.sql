@@ -99,6 +99,8 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Read a lead''s full activity and ownership history.', 9),
 ('lms.leads.whatsapp.send', 'operation', 'lms.leads', 'Send WhatsApp',
  'Message a lead on WhatsApp using an approved template. Separate from logging an interaction, because it contacts the customer directly.', 10),
+('lms.leads.assign.bulk', 'operation', 'lms.leads', 'Bulk assign leads',
+ 'Assign many leads to one person in a single action.', 11),
 
 ('lms.followups', 'page', 'lms', 'Follow-ups',
  'The follow-up queue across leads.', 3),

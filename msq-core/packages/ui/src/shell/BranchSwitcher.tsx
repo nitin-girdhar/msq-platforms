@@ -70,9 +70,11 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
       await auth.switchOrg(org.org_id);
       // Full navigation (not router.push): the layout is server-rendered from
       // the new cookie, so this rebuilds nav/sidebar for the role held in the
-      // selected branch. Land on the app home in case the current page isn't
-      // accessible to the new role.
-      window.location.assign(homeHref);
+      // selected branch. Reload the current page so the user stays where they
+      // were; homeHref is only a fallback for when that page doesn't exist
+      // (root path) rather than the default landing spot.
+      const current = window.location.pathname + window.location.search;
+      window.location.assign(current === '/' ? homeHref : current);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not switch branch');
       setSwitching(null);

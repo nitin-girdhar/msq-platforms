@@ -32,6 +32,7 @@ async function findUser(predicate: SQL, org_id?: string, actor_platform_role?: s
         SELECT
           u.id,
           ${org_id}::uuid                           AS org_id,
+          u.org_id                                  AS home_org_id,
           u.first_name, u.middle_name, u.last_name, u.full_name,
           u.email, u.mobile, u.password_hash, u.is_active, u.force_password_change,
           u.password_changed_at, u.last_login_at, u.locked_until, u.manager_id, u.created_at, u.updated_at,
@@ -68,7 +69,7 @@ async function findUser(predicate: SQL, org_id?: string, actor_platform_role?: s
     }
     const rows = (await tx.execute(sql`
       SELECT
-        u.id, u.org_id, u.first_name, u.middle_name, u.last_name, u.full_name,
+        u.id, u.org_id, u.org_id AS home_org_id, u.first_name, u.middle_name, u.last_name, u.full_name,
         u.email, u.mobile, u.password_hash, u.is_active, u.force_password_change,
         u.password_changed_at, u.last_login_at, u.locked_until, u.manager_id, u.created_at, u.updated_at,
         u.is_deleted,

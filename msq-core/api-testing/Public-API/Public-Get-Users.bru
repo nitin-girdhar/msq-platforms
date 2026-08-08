@@ -16,6 +16,7 @@ headers {
 
 docs {
   Requires a key with `users:read`. Returns field-minimized users for the tenant
-  (id, full_name, email, org_id, role_label, is_active) — never password hashes or
-  internal flags. Optional ?branch_id=<uuid> to filter to one branch.
+  (id, full_name, email, phone, org_id, role_label, is_active, manager_id,
+  manager_name) — never password hashes or internal flags. Optional
+  ?branch_id=<uuid> to filter to one branch.
 }

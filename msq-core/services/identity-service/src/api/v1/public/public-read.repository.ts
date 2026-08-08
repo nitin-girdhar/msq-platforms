@@ -125,18 +125,25 @@ export async function listCities(tenantId: string, opts: PresenceOptions = {}) {
   });
 }
 
+// Joins through iam.user_org_mapping (not the legacy iam.users.role_id
+// mirror) so role_label reflects the role held in the branch being queried —
+// the same source of truth users.repository.ts's internal listUsers uses.
 export async function listUsers(tenantId: string, orgId?: string) {
   return withServiceTx(async (tx) => {
     return (await tx.execute(sql`
-      SELECT u.id, u.full_name, u.email, u.org_id,
-             ur.label AS role_label, u.is_active
-      FROM iam.users u
-      JOIN entity.organizations o ON o.id = u.org_id
-      LEFT JOIN iam.user_roles ur ON ur.id = u.role_id
+      SELECT u.id, u.full_name, u.email, u.mobile AS phone, u.org_id,
+             ur.label AS role_label, u.is_active,
+             u.manager_id, m.full_name AS manager_name
+      FROM iam.user_org_mapping uom
+      JOIN iam.users u             ON u.id  = uom.user_id
+      JOIN iam.user_roles ur       ON ur.id = uom.role_id
+      JOIN entity.organizations o  ON o.id  = u.org_id
+      LEFT JOIN iam.users m        ON m.id  = u.manager_id
       WHERE o.tenant_id = ${tenantId}::uuid
         AND NOT o.is_deleted
         AND NOT u.is_deleted
-        ${orgId ? sql`AND u.org_id = ${orgId}::uuid` : sql``}
+        AND uom.is_active
+        ${orgId ? sql`AND uom.org_id = ${orgId}::uuid` : sql``}
       ORDER BY u.full_name
     `)) as Array<Record<string, unknown>>;
   });

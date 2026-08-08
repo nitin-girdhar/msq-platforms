@@ -1,6 +1,13 @@
 export interface DatabaseUser {
   id: string;
   org_id: string;
+  /** The user's persisted home org (iam.users.org_id), independent of which
+   *  org the current session/request is scoped to. `org_id` above tracks the
+   *  active context and gets overwritten by findUser() when resolving a user
+   *  inside a switched-to org, so callers that need the true home branch
+   *  (e.g. computing which branch is "home" in the switcher) must use this
+   *  field instead. */
+  home_org_id: string;
   first_name: string;
   middle_name: string | null;
   last_name: string;

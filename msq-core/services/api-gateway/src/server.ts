@@ -182,6 +182,11 @@ app.get('/public/v1/users', { preHandler: [publicApiKeyAuth('users:read')] }, as
   const client = req.publicClient!;
   return proxyTo(config.identityServiceUrl, '/api/v1/public/users', req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
 });
+app.get('/public/v1/leads/:id', { preHandler: [publicApiKeyAuth('leads:read')] }, async (req, reply) => {
+  const client = req.publicClient!;
+  const { id } = req.params as { id: string };
+  return proxyTo(config.leadsServiceUrl, `/api/v1/public/leads/${id}`, req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
+});
 
 // Tenant presence: which countries/states/cities this tenant operates in.
 // Drill-down, every parameter optional at every level — /states with no

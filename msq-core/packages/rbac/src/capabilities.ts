@@ -131,6 +131,7 @@ export const CAPABILITY = {
   LMS_HISTORY_VIEW_TEAM:     'lms.history.view.team',
   LMS_HISTORY_VIEW_TENANT:   'lms.history.view.tenant',
   LMS_LEADS_ASSIGN_ANY:      'lms.leads.assign.any',
+  LMS_LEADS_ASSIGN_BULK:     'lms.leads.assign.bulk',
   LMS_LEADS_ASSIGN_PEERS:    'lms.leads.assign.peers',
   LMS_LEADS_ASSIGN_REPORTS:  'lms.leads.assign.reports',
   LMS_LEADS_EDIT_ANY:        'lms.leads.edit.any',

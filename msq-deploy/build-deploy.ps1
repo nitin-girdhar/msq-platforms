@@ -94,15 +94,18 @@ function Invoke-Native([scriptblock]$block, [string]$failMessage) {
 # with "timed out dialing Hyper-V socket" on an arbitrary service. The daemon
 # itself is fine - a serial retry of the identical command succeeds - so retry
 # rather than abort a 400s build.
-function Invoke-NativeWithRetry([scriptblock]$block, [string]$failMessage, [int]$Attempts = 3) {
+function Invoke-NativeWithRetry([scriptblock]$block, [string]$failMessage, [int]$Attempts = 6) {
     for ($n = 1; $n -le $Attempts; $n++) {
         $savedEAP = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try { & $block } finally { $ErrorActionPreference = $savedEAP }
         if ($LASTEXITCODE -eq 0) { return }
         if ($n -lt $Attempts) {
-            Write-Host "  attempt $n/$Attempts failed, retrying in 5s..." -ForegroundColor Yellow
-            Start-Sleep -Seconds 5
+            # Backoff grows (5s, 10s, 15s, ...) because the bridge has been seen to
+            # need more than a few seconds to recover, not less.
+            $delay = 5 * $n
+            Write-Host "  attempt $n/$Attempts failed, retrying in ${delay}s..." -ForegroundColor Yellow
+            Start-Sleep -Seconds $delay
         }
     }
     Write-Error $failMessage
@@ -225,7 +228,13 @@ if ($SkipBuild) {
         Write-Step "Building images: $name"
         Push-Location $r
         try {
-            Invoke-Native { docker compose --env-file .env.example build } "docker compose build failed in $name."
+            # Building services in parallel (see COMPOSE_PARALLEL_LIMIT note above)
+            # hits the same flaky Rancher Desktop npipe->WSL bridge as the pull
+            # step below, but at BuildKit's "booting buildkit" handshake instead:
+            # "Error response from daemon: failed to connect to the backend: timed
+            # out dialing Hyper-V socket". The daemon is fine - a retry succeeds -
+            # so retry here too rather than serialising the whole build back down.
+            Invoke-NativeWithRetry { docker compose --env-file .env.example build } "docker compose build failed in $name."
 
             # `build` never fetches third-party images (postgres, exadel/compreface*).
             # --ignore-buildable pulls only the services that have no build context.

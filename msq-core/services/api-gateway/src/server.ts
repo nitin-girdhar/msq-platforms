@@ -665,6 +665,9 @@ app.get('/analytics/report/branches', { ...withAuth }, async (req, reply) => {
 app.get('/analytics/report/users', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/report/users', req, reply, req.userCtx);
 });
+app.get('/analytics/report/sources', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/report/sources', req, reply, req.userCtx);
+});
 app.post('/analytics/report/send', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/report/send', req, reply, req.userCtx);
 });

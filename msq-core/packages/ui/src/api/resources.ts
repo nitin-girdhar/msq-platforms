@@ -75,11 +75,16 @@ export const users = {
       body: JSON.stringify({ new_password, override_policy }),
     }),
 
-  assignable: (opts?: { orgId?: string; scope?: 'delegation' | 'collaboration'; maxRank?: number }) => {
+  // `product` is required: it gates candidates on that product's CAPABILITY
+  // node so the rank ladder (shared across every product, and freely
+  // extensible with custom tenant roles) doesn't leak unrelated staff into an
+  // assignee picker. Pass the product the picker actually belongs to.
+  assignable: (opts: { product: 'lms' | 'tasks'; orgId?: string; scope?: 'delegation' | 'collaboration'; maxRank?: number }) => {
     const params = new URLSearchParams();
-    if (opts?.orgId) params.set('org_id', opts.orgId);
-    if (opts?.scope) params.set('scope', opts.scope);
-    if (opts?.maxRank !== undefined) params.set('max_rank', String(opts.maxRank));
+    params.set('product', opts.product);
+    if (opts.orgId) params.set('org_id', opts.orgId);
+    if (opts.scope) params.set('scope', opts.scope);
+    if (opts.maxRank !== undefined) params.set('max_rank', String(opts.maxRank));
     const qs = params.toString();
     return request<{ success: true; data: unknown[] }>(`/users/assignable${qs ? `?${qs}` : ''}`);
   },

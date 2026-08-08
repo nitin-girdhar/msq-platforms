@@ -21,6 +21,7 @@ export function toSessionUser(row: DatabaseUser, capabilities: string[] = []): S
     role: row.role_name as UserRole,
     rank: row.rank,
     org_id: row.org_id,
+    home_org_id: row.home_org_id,
     org_name: row.org_name,
     tenant_id: row.tenant_id,
     tenant_name: row.tenant_name,

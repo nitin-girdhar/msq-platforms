@@ -100,6 +100,7 @@ export async function getUserById(ctx: RoleTxContext, targetUserId: string) {
 export async function getAssignableUsers(
   ctx: RoleTxContext,
   actorRank: number,
+  product: 'lms' | 'tasks',
   orgId?: string,
   scope: 'delegation' | 'collaboration' = 'delegation',
   maxRank?: number,
@@ -109,7 +110,7 @@ export async function getAssignableUsers(
   // walk-in-lead form's org picker on the Assignments page).
   const canQueryOtherOrg = canSeeOrgFilter(ctx.role);
   const effectiveOrgId = orgId && canQueryOtherOrg ? orgId : undefined;
-  return repo.getAssignableUsers(ctx, actorRank, effectiveOrgId, scope, maxRank);
+  return repo.getAssignableUsers(ctx, actorRank, product, effectiveOrgId, scope, maxRank);
 }
 
 export async function getAssignmentWeights(ctx: RoleTxContext) {

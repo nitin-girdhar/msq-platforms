@@ -21,6 +21,15 @@ export const getAssignableQuerySchema = z.object({
   // is a fixed business rule rather than relative to the actor (e.g. bulk
   // lead assignment, which only ever targets individual contributors).
   max_rank: z.coerce.number().int().nonnegative().optional(),
+  // Which product the candidates must actually have access to, gated on the
+  // matching CAPABILITY tool node (see @platform/rbac). The rank ladder in
+  // iam.user_roles is shared platform-wide and tenant admins can create
+  // arbitrary custom roles on it (e.g. "Fitness Trainer"), so rank alone does
+  // not mean "this user is provisioned for this product" — a caller must say
+  // which product it's asking for. Required, not defaulted: an endpoint that
+  // silently fell back to "no product filter" would reintroduce the exact bug
+  // this field exists to close.
+  product: z.enum(['lms', 'tasks']),
 });
 
 export type GetAssignableQuery = z.infer<typeof getAssignableQuerySchema>;

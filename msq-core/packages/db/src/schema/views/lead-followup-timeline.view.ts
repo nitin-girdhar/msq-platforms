@@ -21,7 +21,9 @@ export const vwLeadFollowupTimeline = lmsSchema.view('vw_lead_followup_timeline'
   note:             text('note'),
   followupId:       uuid('followup_id'),
   followupStatus:   text('followup_status'),
+  followupStatusLabel: text('followup_status_label'),
   scheduledAt:      timestamp('scheduled_at', { withTimezone: true }),
   completedAt:      timestamp('completed_at', { withTimezone: true }),
   interactionType:  text('interaction_type'),
+  interactionTypeLabel: text('interaction_type_label'),
 }).existing();

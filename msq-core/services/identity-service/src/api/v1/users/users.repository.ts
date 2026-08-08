@@ -1,6 +1,7 @@
 import { sql, eq, and, desc } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@platform/db';
+import { withRoleTx, withServiceTx, hasCapability } from '@platform/db';
 import type { RoleTxContext, DrizzleTx } from '@platform/db';
+import { CAPABILITY } from '@platform/rbac';
 import {
   usersTable,
   userRolesTable,
@@ -18,6 +19,28 @@ const RANK_ADMIN = 80;
 import type { AddOrgMappingInput } from '@platform/validation';
 import { BadRequestError } from '../../../lib/errors.js';
 import { reassignOrgLeadsViaLeadsService } from '../../../lib/leads-service-client.js';
+import type { CapabilityKey } from '@platform/rbac';
+
+// iam.user_roles is a single ladder shared by every product, and tenant admins
+// can create arbitrary custom roles on it (e.g. a "Fitness Trainer" role for
+// gym staff) — rank alone never tells you whether a role is actually
+// provisioned for a given product. This resolves each row's role against the
+// CAPABILITY tree (same fail-closed cache the product's own auth middleware
+// gates on) and drops any row whose role doesn't hold `key`. Distinct role
+// names are checked once each, not once per row.
+async function filterRowsByCapability<T extends Record<string, unknown>>(
+  tenantId: string,
+  rows: T[],
+  key: CapabilityKey,
+): Promise<T[]> {
+  const roleNames = [...new Set(rows.map((r) => r['role_name'] as string))];
+  const eligible = new Set(
+    (await Promise.all(roleNames.map(async (name) => [name, await hasCapability(tenantId, name, key)] as const)))
+      .filter(([, ok]) => ok)
+      .map(([name]) => name),
+  );
+  return rows.filter((r) => eligible.has(r['role_name'] as string));
+}
 
 export async function listUsers(
   ctx: RoleTxContext,
@@ -100,9 +123,13 @@ export async function getUserByIdAsService(userId: string) {
   });
 }
 
+// LMS-only (the Assignment Weights admin screen configures lead auto-assignment),
+// so the CAPABILITY.LMS filter below is hardcoded rather than parameterized like
+// getAssignableUsers' `product` — no other product manages weights through this
+// endpoint today.
 export async function getAssignmentWeights(ctx: RoleTxContext) {
   return withRoleTx(ctx, async (tx) => {
-    return (await tx.execute(sql`
+    const rows = (await tx.execute(sql`
       SELECT u.id AS user_id, u.full_name, u.email,
              ur.name AS role_name, ur.label AS role_label, ur.rank,
              uom.lead_assignment_weight AS weight
@@ -113,6 +140,7 @@ export async function getAssignmentWeights(ctx: RoleTxContext) {
         AND ur.rank > ${RANK_READ_ONLY} AND ur.rank < ${RANK_ADMIN}
       ORDER BY ur.rank DESC, u.full_name
     `)) as Array<Record<string, unknown>>;
+    return filterRowsByCapability(ctx.tenant_id, rows, CAPABILITY.LMS);
   });
 }
 
@@ -159,9 +187,15 @@ export async function updateAssignmentWeights(
   });
 }
 
+const PRODUCT_CAPABILITY: Record<'lms' | 'tasks', CapabilityKey> = {
+  lms: CAPABILITY.LMS,
+  tasks: CAPABILITY.TASKS,
+};
+
 export async function getAssignableUsers(
   ctx: RoleTxContext,
   actorRank: number,
+  product: 'lms' | 'tasks',
   orgId?: string,
   scope: 'delegation' | 'collaboration' = 'delegation',
   maxRank?: number,
@@ -179,7 +213,7 @@ export async function getAssignableUsers(
         ? sql`ur.rank <= ${actorRank}`
         : sql`ur.rank < ${actorRank}`;
   return withRoleTx(ctx, async (tx) => {
-    return (await tx.execute(sql`
+    const rows = (await tx.execute(sql`
       SELECT u.id, u.org_id, u.full_name, u.first_name, u.middle_name, u.last_name,
              u.email, u.is_active,
              ur.name AS role_name, ur.label AS role_label, ur.rank
@@ -190,6 +224,7 @@ export async function getAssignableUsers(
         AND ${rankFilter}
       ORDER BY ur.rank DESC, u.full_name
     `)) as Array<Record<string, unknown>>;
+    return filterRowsByCapability(ctx.tenant_id, rows, PRODUCT_CAPABILITY[product]);
   });
 }
 

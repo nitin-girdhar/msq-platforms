@@ -191,7 +191,9 @@ SELECT
   NULL::text          AS followup_status,
   NULL::timestamptz   AS scheduled_at,
   NULL::timestamptz   AS completed_at,
-  NULL::text          AS interaction_type
+  NULL::text          AS interaction_type,
+  NULL::text          AS followup_status_label,
+  NULL::text          AS interaction_type_label
 FROM lms.lead_status_log lsl
 -- Each UNION branch joins organizations for its own tenant_id: the catalog
 -- tables below are tenant-scoped and this view is read under BYPASSRLS too.
@@ -212,7 +214,7 @@ SELECT
   u.full_name, u.email,
   NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
   u.full_name, lf.notes,
-  lf.id, fs.name, lf.scheduled_at, lf.completed_at, NULL
+  lf.id, fs.name, lf.scheduled_at, lf.completed_at, NULL, fs.label, NULL
 FROM lms.lead_follow_ups lf
 JOIN entity.organizations o ON o.id = lf.org_id
 JOIN lms.follow_up_statuses fs ON fs.id = lf.status_id AND fs.tenant_id = o.tenant_id
@@ -228,7 +230,7 @@ SELECT
   u.full_name, u.email,
   NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
   NULL, li.notes,
-  NULL, NULL, NULL, NULL, it.name
+  NULL, NULL, NULL, NULL, it.name, NULL, it.label
 FROM lms.lead_interactions li
 JOIN entity.organizations o ON o.id = li.org_id
 LEFT JOIN lms.interaction_types it ON it.id = li.interaction_type_id AND it.tenant_id = o.tenant_id
@@ -249,7 +251,7 @@ SELECT
     WHEN new_u.full_name IS NULL THEN 'Unassigned from '|| old_u.full_name
     ELSE 'Reassigned from ' || old_u.full_name || ' to ' || COALESCE(new_u.full_name, 'unknown')
   END,
-  NULL, NULL, NULL, NULL, NULL
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL
 FROM lms.lead_assignment_log l
 LEFT JOIN iam.users cu    ON cu.id = l.assigned_by_id
 LEFT JOIN iam.users old_u ON old_u.id = l.previous_assignee_id

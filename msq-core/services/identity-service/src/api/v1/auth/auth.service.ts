@@ -317,8 +317,15 @@ export async function changePassword(
   const updated = await repo.changePassword(user_id, new_hash);
 
   // A user who just proved knowledge of their current password and rotated it
-  // should not stay locked out by failures that preceded the change.
-  await repo.clearLockout(user_id);
+  // should not stay locked out by failures that preceded the change. Best-effort:
+  // the password change itself already committed, so a hiccup here must not turn
+  // a successful change into a client-visible 500 (mirrors logout's revocation
+  // handling in auth.controller.ts).
+  try {
+    await repo.clearLockout(user_id);
+  } catch (err) {
+    console.error('[auth] clearLockout failed after password change:', (err as Error).message, user_id);
+  }
 
   const pca = updated?.password_changed_at;
   const pwd_iat = pca ? Math.floor(pca.getTime() / 1000) : Math.floor(Date.now() / 1000);
@@ -338,12 +345,19 @@ export async function changePassword(
   // stolen tokens) so the password change takes effect immediately across all
   // services — not just at /auth/me. Scope the revocation to the freshly issued
   // token's iat so the replacement session survives its own revocation.
+  // Best-effort for the same reason as clearLockout above — the password has
+  // already changed, so a failure here must not be reported as a failed
+  // password change.
   const newIat = decodeJwtUnchecked(new_token)?.iat ?? Math.floor(Date.now() / 1000);
-  await revokeAllUserSessions(user_id, {
-    revokedBy: user_id,
-    reason: 'password_changed_self',
-    revokedAt: new Date(newIat * 1000),
-  });
+  try {
+    await revokeAllUserSessions(user_id, {
+      revokedBy: user_id,
+      reason: 'password_changed_self',
+      revokedAt: new Date(newIat * 1000),
+    });
+  } catch (err) {
+    console.error('[auth] revokeAllUserSessions failed after password change:', (err as Error).message, user_id);
+  }
 
   await logActivity({ action_type: 'password_changed_self', performed_by: user_id, org_id: db_user.org_id });
 

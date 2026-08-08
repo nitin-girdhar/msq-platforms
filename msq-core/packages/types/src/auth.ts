@@ -17,6 +17,14 @@ export interface SessionUser {
   role: UserRole;
   rank: number;
   org_id: string;
+  /**
+   * The user's persisted home org (iam.users.org_id) — the branch they were
+   * created in, independent of `org_id` above which tracks whichever branch
+   * is currently active for this session (see POST /switch-org). Product UIs
+   * compare the two to tell whether the caller is acting on their home
+   * branch right now.
+   */
+  home_org_id: string;
   org_name: string;
   tenant_id: string;
   tenant_name: string;

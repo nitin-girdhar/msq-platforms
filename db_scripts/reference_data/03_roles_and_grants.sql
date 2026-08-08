@@ -191,12 +191,19 @@ FROM (VALUES
 -- Full HR authority and NO CRM tool at all. Before Tier C this was implicit —
 -- hr_admin had no row in lms.member_roles. Unifying the ladder made rank 75
 -- clear every LMS floor, so the exclusion is now stated rather than assumed.
+--
+-- Deliberately NO self-service punch/leave-apply: an HR admin views and
+-- decides on other people's attendance and leave, they don't clock themselves
+-- in or file their own requests through this role. (Also drops
+-- hr.attendance.punch's downstream face-enroll routes — consistent, since
+-- there is nothing to enroll a face for.) hr_admin is a per-tenant role since
+-- _migrations/19, so this list alone won't reach existing tenants' copies —
+-- see the backfill block below.
 ('hr_admin', ARRAY[
   'platform','platform.write',
   'hr.attendance','hr.attendance.view',
   'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
-  'hr.attendance.punch','hr.attendance.photo.view',
-  'hr.attendance.regularization.request',
+  'hr.attendance.photo.view',
   'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
   'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
@@ -205,7 +212,6 @@ FROM (VALUES
   'hr.attendance.admin.reports.view',
   'hr.leave','hr.leave.view',
   'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org',
-  'hr.leave.request.create','hr.leave.request.cancel',
   'hr.leave.approve','hr.leave.reject',
   'hr.leave.admin.policies.view','hr.leave.admin.policies.manage',
   'hr.leave.admin.holidays.view','hr.leave.admin.holidays.manage',
@@ -218,6 +224,9 @@ FROM (VALUES
 
 -- ── org_admin (980) ─────────────────────────────────────────────────
 -- Everything within one branch. Not lookup data, which is platform-wide.
+-- No self-service punch/leave-apply, same reasoning as hr_admin above: an
+-- org_admin views and decides on their branch's attendance and leave, they
+-- don't clock themselves in or file their own requests through this role.
 ('org_admin', ARRAY[
   'platform','platform.write',
   'lms','lms.dashboard.view',
@@ -237,8 +246,7 @@ FROM (VALUES
   'platform.api_tokens.view','platform.api_tokens.manage',
   'hr.attendance','hr.attendance.view',
   'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
-  'hr.attendance.punch','hr.attendance.photo.view',
-  'hr.attendance.regularization.request',
+  'hr.attendance.photo.view',
   'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
   'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
@@ -247,7 +255,6 @@ FROM (VALUES
   'hr.attendance.admin.reports.view',
   'hr.leave','hr.leave.view',
   'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org',
-  'hr.leave.request.create','hr.leave.request.cancel',
   'hr.leave.approve','hr.leave.reject',
   'hr.leave.admin.policies.view','hr.leave.admin.policies.manage',
   'hr.leave.admin.holidays.view','hr.leave.admin.holidays.manage',
@@ -263,6 +270,7 @@ FROM (VALUES
 
 -- ── tenant_admin (990) ──────────────────────────────────────────────
 -- Everything org_admin has, across every branch, plus role administration.
+-- No self-service punch/leave-apply, same reasoning as org_admin above.
 ('tenant_admin', ARRAY[
   'platform','platform.write',
   'lms','lms.dashboard.view',
@@ -283,8 +291,7 @@ FROM (VALUES
   'platform.api_tokens.view','platform.api_tokens.manage',
   'hr.attendance','hr.attendance.view',
   'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
-  'hr.attendance.punch','hr.attendance.photo.view',
-  'hr.attendance.regularization.request',
+  'hr.attendance.photo.view',
   'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
   'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
@@ -293,7 +300,6 @@ FROM (VALUES
   'hr.attendance.admin.reports.view',
   'hr.leave','hr.leave.view',
   'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org','hr.leave.view.tenant',
-  'hr.leave.request.create','hr.leave.request.cancel',
   'hr.leave.approve','hr.leave.reject',
   'hr.leave.admin.policies.view','hr.leave.admin.policies.manage',
   'hr.leave.admin.holidays.view','hr.leave.admin.holidays.manage',
@@ -467,6 +473,23 @@ JOIN iam.role_capabilities rc ON rc.capability_id = src.id AND rc.is_granted
 WHERE rc.tenant_id IS NOT NULL
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO UPDATE SET is_granted = TRUE;
+
+-- ── Back-fill: revoke hr_admin self-punch/leave-apply for existing tenants ──
+-- hr_admin is a per-tenant role since _migrations/19 (see the WhatsApp
+-- back-fill above for the mechanism). Removing punch/apply-leave from the
+-- global template list above (Tier C3 hr_admin block) only touches rows with
+-- tenant_id IS NULL, so every tenant's existing hr_admin copy still holds the
+-- old grants unless explicitly revoked here.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT r.tenant_id, r.id, c.id, FALSE
+FROM iam.user_roles r
+JOIN iam.capabilities c ON c.key IN (
+  'hr.attendance.punch', 'hr.attendance.regularization.request',
+  'hr.leave.request.create', 'hr.leave.request.cancel'
+)
+WHERE r.name = 'hr_admin' AND r.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = FALSE;
 
 -- ── Back-fill: lms.analytics for org_manager / org_sr_manager ───────
 -- Same trap again: the deny block above only flips the tenant_id IS NULL

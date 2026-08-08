@@ -7,6 +7,11 @@ import ApiTokensShell from '@/components/api-tokens/ApiTokensShell';
 
 export const dynamic = 'force-dynamic';
 
+interface OrgOption {
+  id: string;
+  name: string;
+}
+
 export default async function ApiTokensPage() {
   const result = await getServerSession();
   if (!result) redirect('/login');
@@ -19,18 +24,31 @@ export default async function ApiTokensPage() {
 
   // Server-side fetch — same pattern as app/dashboard/team/page.tsx. The
   // client-side `apiTokens` namespace in src/lib/api/client.ts (relative
-  // /api/... + browser cookies) is for the Create/Rotate/Revoke modals only.
-  const res = await fetch(`${GATEWAY_URL}/api-clients`, {
-    headers: { cookie: cookieHeader },
-    cache: 'no-store',
-  });
+  // /api/... + browser cookies) is for the Create/Edit/Rotate/Revoke modals only.
+  const [tokensRes, orgsRes] = await Promise.all([
+    fetch(`${GATEWAY_URL}/api-clients`, { headers: { cookie: cookieHeader }, cache: 'no-store' }),
+    fetch(`${GATEWAY_URL}/orgs/all`, { headers: { cookie: cookieHeader }, cache: 'no-store' }),
+  ]);
 
-  if (!res.ok) {
-    console.error(`[api-tokens] GET ${GATEWAY_URL}/api-clients failed: ${res.status} ${res.statusText}`);
-    return <LoadError title="API Tokens" status={res.status} />;
+  if (!tokensRes.ok) {
+    console.error(`[api-tokens] GET ${GATEWAY_URL}/api-clients failed: ${tokensRes.status} ${tokensRes.statusText}`);
+    return <LoadError title="API Tokens" status={tokensRes.status} />;
   }
 
-  const body = await res.json() as { data: ApiTokenRow[] };
+  const body = await tokensRes.json() as { data: ApiTokenRow[] };
 
-  return <ApiTokensShell tokens={body.data} canManage={can(session, CAPABILITY.PLATFORM_API_TOKENS_MANAGE)} />;
+  let orgs: OrgOption[] = [];
+  if (orgsRes.ok) {
+    const orgsBody = await orgsRes.json() as { data?: Array<{ id: string; name: string }> };
+    orgs = Array.isArray(orgsBody.data) ? orgsBody.data.map((o) => ({ id: o.id, name: o.name })) : [];
+  }
+
+  return (
+    <ApiTokensShell
+      tokens={body.data}
+      orgs={orgs}
+      actor={session}
+      canManage={can(session, CAPABILITY.PLATFORM_API_TOKENS_MANAGE)}
+    />
+  );
 }

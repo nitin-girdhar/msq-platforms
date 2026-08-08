@@ -9,9 +9,17 @@ import SecretRevealPanel from './SecretRevealPanel';
 
 const FORM_ID = 'create-api-token-form';
 
+interface OrgOption {
+  id: string;
+  name: string;
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
+  orgs: OrgOption[];
+  isOrgAdmin: boolean;
+  actorOrgId: string;
 }
 
 interface CreateSuccess {
@@ -19,10 +27,12 @@ interface CreateSuccess {
   apiKey: string;
 }
 
-export default function CreateApiTokenModal({ open, onClose }: Props) {
+export default function CreateApiTokenModal({ open, onClose, orgs, isOrgAdmin, actorOrgId }: Props) {
   const router = useRouter();
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<ApiScope[]>([]);
+  const [orgIds, setOrgIds] = useState<string[]>([]);
+  const [scopeAllOrgs, setScopeAllOrgs] = useState(false);
   const [rateLimit, setRateLimit] = useState('60');
   const [expiresAt, setExpiresAt] = useState('');
   const [pending, setPending] = useState(false);
@@ -32,6 +42,8 @@ export default function CreateApiTokenModal({ open, onClose }: Props) {
   const reset = () => {
     setName('');
     setScopes([]);
+    setOrgIds([]);
+    setScopeAllOrgs(false);
     setRateLimit('60');
     setExpiresAt('');
     setError(null);
@@ -49,6 +61,10 @@ export default function CreateApiTokenModal({ open, onClose }: Props) {
     setScopes((prev) => (prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope]));
   };
 
+  const toggleOrg = (id: string) => {
+    setOrgIds((prev) => (prev.includes(id) ? prev.filter((o) => o !== id) : [...prev, id]));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -60,11 +76,16 @@ export default function CreateApiTokenModal({ open, onClose }: Props) {
       setError('Select at least one scope.');
       return;
     }
+    if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
+      setError('Expiry must be in the future.');
+      return;
+    }
     setPending(true);
     try {
       const { data } = await apiTokens.create({
         name: name.trim(),
         scopes,
+        ...(!isOrgAdmin ? { scope_all_orgs: scopeAllOrgs, ...(scopeAllOrgs ? {} : { org_ids: orgIds }) } : {}),
         ...(rateLimit ? { rate_limit_per_min: Number(rateLimit) } : {}),
         ...(expiresAt ? { expires_at: new Date(expiresAt).toISOString() } : {}),
       });
@@ -132,6 +153,45 @@ export default function CreateApiTokenModal({ open, onClose }: Props) {
             </div>
           </div>
 
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold text-[#0F172A]">Branches</span>
+            {isOrgAdmin ? (
+              <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-xs text-[#475569]">
+                Scoped to your branch{orgs.find((o) => o.id === actorOrgId)?.name ? ` (${orgs.find((o) => o.id === actorOrgId)?.name})` : ''} only.
+              </p>
+            ) : (
+              <>
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+                  <input
+                    type="checkbox"
+                    checked={scopeAllOrgs}
+                    onChange={(e) => setScopeAllOrgs(e.target.checked)}
+                    disabled={pending}
+                    className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                  />
+                  <span>All branches (tenant-wide)</span>
+                </label>
+                {!scopeAllOrgs && (
+                  <div className="mt-1 flex max-h-40 flex-col gap-1.5 overflow-y-auto rounded-xl border border-[#E2E8F0] p-3">
+                    {orgs.length === 0 && <span className="text-xs text-[#94A3B8]">No branches found.</span>}
+                    {orgs.map((org) => (
+                      <label key={org.id} className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+                        <input
+                          type="checkbox"
+                          checked={orgIds.includes(org.id)}
+                          onChange={() => toggleOrg(org.id)}
+                          disabled={pending}
+                          className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                        />
+                        <span>{org.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <label htmlFor="at-rate-limit" className="text-xs font-semibold text-[#0F172A]">Rate limit / min</label>
@@ -154,13 +214,12 @@ export default function CreateApiTokenModal({ open, onClose }: Props) {
                 value={expiresAt}
                 onChange={(e) => setExpiresAt(e.target.value)}
                 disabled={pending}
+                min={new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)}
                 className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
               />
             </div>
           </div>
-          <p className="-mt-2 text-[11px] text-[#64748B]">
-            Bound to your own organization. Tenant admins can widen scope from the Edit screen later.
-          </p>
+          <p className="-mt-2 text-[11px] text-[#64748B]">Leave Expires blank for a token that never expires.</p>
         </form>
       )}
     </Modal>

@@ -27,20 +27,31 @@ const passwordOverrideFloorSchema = z.string().min(5, 'Password must be at least
 
 /**
  * Turns a unique-violation from iam.users into a 409 naming the field that
- * actually collided, and returns anything else untouched for the caller to
- * rethrow.
+ * actually collided, a row-level-security denial into a clean 403, and
+ * returns anything else untouched for the caller to rethrow.
  *
  * Both email and mobile are unique now (mobile via uix_users_mobile, since it
  * is a login credential), so a single "email already exists" message would send
  * an admin hunting for the wrong duplicate.
+ *
+ * drizzle-orm's DrizzleQueryError sets its own `message` to just "Failed
+ * query: ...params: ..." — the driver's actual Postgres error (unique
+ * violation, RLS denial, etc.) is only on `.cause.message`. Checking `err`'s
+ * own `.message` alone never matches, so every constraint/policy violation
+ * fell through as an unhandled 500 leaking the raw query/params to the
+ * client instead of a clean 409/403.
  */
 function asDuplicateUserConflict(err: unknown): unknown {
-  const msg = (err as Error)?.message ?? '';
+  const causeMsg = (err as { cause?: { message?: string } })?.cause?.message ?? '';
+  const msg = `${(err as Error)?.message ?? ''} ${causeMsg}`;
   if (msg.includes('uix_users_mobile')) {
     return new ConflictError('A user with this mobile number already exists.');
   }
   if (msg.includes('unique') || msg.includes('uq_users') || msg.includes('users_email_key')) {
     return new ConflictError('A user with this email already exists.');
+  }
+  if (msg.includes('row-level security policy')) {
+    return new ForbiddenError('You do not have permission to grant access in this organisation.');
   }
   return err;
 }

@@ -327,6 +327,35 @@ export async function resolveRoleByName(roleName: string, orgId: string) {
   });
 }
 
+// Resolves a tenant from an org rather than trusting a caller-supplied
+// tenant_id. super_admin is the one global, tenant-less role (see
+// packages/rbac/src/ranks.ts) so its session never carries a real tenant_id —
+// but it always carries a real org_id, and every org belongs to exactly one
+// tenant. Same pattern as orgs.repository.ts's getAllOrgs.
+export async function getTenantIdForOrg(orgId: string): Promise<string | null> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT tenant_id FROM entity.organizations WHERE id = ${orgId}::uuid
+    `)) as Array<{ tenant_id: string }>;
+    return rows[0]?.tenant_id ?? null;
+  });
+}
+
+// All non-deleted departments in a tenant, independent of whether any role
+// currently references them. getRoleCatalog used to derive this list from the
+// roles it returned, which hid any department with zero visible roles filed
+// under it (including every department on a freshly seeded tenant, since
+// entity.seed_tenant_rbac() clones roles with department_id = NULL).
+export async function getDepartmentsForTenant(tenantId: string) {
+  return withServiceTx(async (tx) => {
+    return (await tx.execute(sql`
+      SELECT id, label FROM iam.departments
+      WHERE tenant_id = ${tenantId}::uuid AND NOT is_deleted
+      ORDER BY label
+    `)) as Array<{ id: string; label: string }>;
+  });
+}
+
 // The assignable-role catalog for ONE tenant, capped at the actor's own rank.
 //
 // Applying the ceiling here rather than in the UI is the point: the caller can

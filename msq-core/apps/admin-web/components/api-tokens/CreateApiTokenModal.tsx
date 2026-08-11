@@ -211,6 +211,7 @@ export default function CreateApiTokenModal({ open, onClose, orgs, isOrgAdmin, a
               <input
                 id="at-expires"
                 type="date"
+                lang="en-GB"
                 value={expiresAt}
                 onChange={(e) => setExpiresAt(e.target.value)}
                 disabled={pending}

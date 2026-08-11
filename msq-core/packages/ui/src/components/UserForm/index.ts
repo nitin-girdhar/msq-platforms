@@ -1,4 +1,4 @@
-export { default as DepartmentRoleSelect, rolesForDepartment } from './DepartmentRoleSelect';
+export { default as DepartmentSelect, rolesForDepartment } from './DepartmentSelect';
 export { default as OrgAssignmentsField } from './OrgAssignmentsField';
 export { default as ManagerSelect } from './ManagerSelect';
 export { useRoleCatalog } from './useRoleCatalog';

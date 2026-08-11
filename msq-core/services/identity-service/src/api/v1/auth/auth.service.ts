@@ -359,7 +359,13 @@ export async function changePassword(
     console.error('[auth] revokeAllUserSessions failed after password change:', (err as Error).message, user_id);
   }
 
-  await logActivity({ action_type: 'password_changed_self', performed_by: user_id, org_id: db_user.org_id });
+  // Best-effort for the same reason as above: the password has already changed,
+  // so an audit-log failure must not fail the entire request.
+  try {
+    await logActivity({ action_type: 'password_changed_self', performed_by: user_id, org_id: db_user.org_id });
+  } catch (err) {
+    console.error('[auth] logActivity failed after password change:', (err as Error).message, user_id);
+  }
 
   return new_token;
 }

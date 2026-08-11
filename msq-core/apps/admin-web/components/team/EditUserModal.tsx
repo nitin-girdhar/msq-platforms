@@ -7,7 +7,7 @@ import { RANKS } from '@platform/authz';
 import {
   Modal,
   UserPicker,
-  DepartmentRoleSelect,
+  DepartmentSelect,
   OrgAssignmentsField,
   ManagerSelect,
   useRoleCatalog,
@@ -115,6 +115,9 @@ export default function EditUserModal({
 
   const homeMoved = a.homeOrgId !== user.org_id;
   const leavingHomeBranch = homeMoved && !a.assignments.some((x) => x.org_id === user.org_id);
+  const originalHomeRoleId = existing?.find((x) => x.org_id === user.org_id)?.role_id;
+  const currentHomeRoleId = a.assignments.find((x) => x.org_id === a.homeOrgId)?.role_id;
+  const roleChanged = Boolean(currentHomeRoleId) && currentHomeRoleId !== originalHomeRoleId;
   const [reassignLeadsTo, setReassignLeadsTo] = useState('');
 
   const managerCandidates = users.filter((u) => u.is_active && u.id !== user.id);
@@ -295,16 +298,13 @@ export default function EditUserModal({
 
           <hr className="border-0 border-t border-[#F1F5F9]" />
 
-          <DepartmentRoleSelect
+          <DepartmentSelect
             departmentId={a.departmentId}
             onDepartmentChange={a.setDepartmentId}
-            roleId={a.roleId}
-            onRoleChange={a.setRoleId}
             roles={roles}
             departments={departments}
             loading={rolesLoading}
             disabled={locked || isSelf}
-            roleLabel="Default role"
           />
           {isSelf && (
             <p className="-mt-2 text-[11px] text-[#64748B]">You can&apos;t change your own role.</p>
@@ -321,7 +321,6 @@ export default function EditUserModal({
               onHomeChange={a.setHomeOrgId}
               roles={roles}
               departmentId={a.departmentId}
-              defaultRoleId={a.roleId}
               canPickBranches={canPickBranches && !isSelf}
               disabled={locked}
               excludeUserId={user.id}
@@ -355,7 +354,7 @@ export default function EditUserModal({
             disabled={locked}
           />
 
-          {(homeMoved || a.roleId) && (
+          {(homeMoved || roleChanged) && (
             <p className="rounded-lg border border-[#FDE68A] bg-[#FFFBEB] px-2.5 py-1.5 text-[11.5px] leading-snug text-[#92400E]">
               Changing role or home branch signs this user out of all devices.
             </p>

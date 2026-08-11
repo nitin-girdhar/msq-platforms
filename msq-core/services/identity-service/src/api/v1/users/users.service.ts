@@ -93,10 +93,11 @@ async function resolveAssignments(
 ): Promise<repo.ResolvedAssignment[]> {
   const orgIds = assignments.map((a) => a.org_id);
   const roleIds = [...new Set(assignments.map((a) => a.role_id))];
+  const tenantId = await resolveTenantId(ctx);
 
   const [orgs, roles] = await Promise.all([
-    repo.getOrgsInTenant(orgIds, ctx.tenant_id),
-    repo.getRolesByIdsForTenant(roleIds, ctx.tenant_id),
+    repo.getOrgsInTenant(orgIds, tenantId),
+    repo.getRolesByIdsForTenant(roleIds, tenantId),
   ]);
 
   const knownOrgs = new Set(orgs.map((o) => o.id));
@@ -132,28 +133,37 @@ async function resolveAssignments(
   }));
 }
 
-export async function getRoleCatalog(ctx: RoleTxContext, actorRank: number) {
-  const roles = await repo.getRoleCatalog(ctx.tenant_id, actorRank);
+// super_admin is the one global, tenant-less role (packages/rbac/src/ranks.ts),
+// so its session never carries a real ctx.tenant_id — but it always carries a
+// real ctx.org_id, and every org belongs to exactly one tenant. Resolving
+// through org_id (same pattern as orgs.repository.ts's getAllOrgs) lets
+// tenant-scoped lookups work for org_admin/tenant_admin/super_admin alike,
+// instead of 500ing when the tenant_id header is empty.
+async function resolveTenantId(ctx: RoleTxContext): Promise<string> {
+  if (ctx.tenant_id) return ctx.tenant_id;
+  const tenantId = await repo.getTenantIdForOrg(ctx.org_id);
+  if (!tenantId) throw new BadRequestError('Could not resolve a tenant for this session');
+  return tenantId;
+}
 
-  // Departments are derived from the roles actually on offer rather than listed
-  // independently, so the filter can never present a department that would
-  // yield an empty role list.
-  const seen = new Map<string, string>();
-  for (const r of roles) {
-    const id = r['department_id'] as string | null;
-    if (id && !seen.has(id)) seen.set(id, (r['department_label'] as string) ?? id);
-  }
+export async function getRoleCatalog(ctx: RoleTxContext, actorRank: number) {
+  const tenantId = await resolveTenantId(ctx);
+  const [roles, departments] = await Promise.all([
+    repo.getRoleCatalog(tenantId, actorRank),
+    repo.getDepartmentsForTenant(tenantId),
+  ]);
 
   return {
     roles: toApiRows(roles),
-    departments: Array.from(seen, ([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label)),
+    departments,
   };
 }
 
 export async function getManagerCandidates(ctx: RoleTxContext, orgId: string) {
-  const [org] = await repo.getOrgsInTenant([orgId], ctx.tenant_id);
+  const tenantId = await resolveTenantId(ctx);
+  const [org] = await repo.getOrgsInTenant([orgId], tenantId);
   if (!org) throw new BadRequestError('Branch not found in this tenant');
-  return toApiRows(await repo.getManagerCandidates(ctx.tenant_id, orgId));
+  return toApiRows(await repo.getManagerCandidates(tenantId, orgId));
 }
 
 // Blocks acting on a user who currently outranks the actor (RLS only isolates by
@@ -224,7 +234,7 @@ export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
     if (!canSeeOrgFilter(ctx.role)) {
       throw new ForbiddenError('You cannot view lead assignment weights for another branch');
     }
-    const [org] = await repo.getOrgsInTenant([orgId], ctx.tenant_id);
+    const [org] = await repo.getOrgsInTenant([orgId], await resolveTenantId(ctx));
     if (!org) throw new BadRequestError('Branch not found in this tenant');
   }
   return repo.getAssignmentWeights(ctx, orgId);

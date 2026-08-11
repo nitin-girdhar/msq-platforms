@@ -26,7 +26,6 @@ export function useUserAssignments({
   fallbackOrgId, roles, rolesLoaded,
 }: Init) {
   const [departmentId, setDepartmentId] = useState<string>(ALL_DEPARTMENTS);
-  const [roleId, setRoleId] = useState('');
   const [assignments, setAssignments] = useState<OrgAssignment[]>(initialAssignments ?? []);
   const [homeOrgId, setHomeOrgId] = useState(initialHome ?? '');
   const [managerId, setManagerId] = useState(initialManager ?? '');
@@ -43,16 +42,15 @@ export function useUserAssignments({
     setSeeded(true);
   }, [seeded, initialAssignments, initialHome]);
 
-  // Seed the top-level department/role from what the user already holds in their
-  // home branch, so an edit form opens showing their actual role rather than a
-  // blank select the admin must re-pick to save anything.
+  // Seed the top-level department filter from what the user already holds in
+  // their home branch, so an edit form opens with the right roles in view
+  // rather than an unfiltered list the admin must narrow down themselves.
   useEffect(() => {
     if (!rolesLoaded || roles.length === 0) return;
     const homeRoleId = (initialAssignments ?? []).find((a) => a.org_id === initialHome)?.role_id;
     if (!homeRoleId) return;
     const role = roles.find((r) => r.id === homeRoleId);
     if (!role) return;
-    setRoleId(role.id);
     if (role.department_id) setDepartmentId(role.department_id);
   }, [rolesLoaded, roles, initialAssignments, initialHome]);
 
@@ -67,14 +65,6 @@ export function useUserAssignments({
       setHomeOrgId(fallbackOrgId);
     }
   }, [fallbackOrgId, assignments.length, initialAssignments]);
-
-  // Picking a role at the top applies it to any branch row still unset — the
-  // common case is one role everywhere, and making that require a second pick
-  // per row would be busywork. Rows already given a role are left alone.
-  const applyRole = useCallback((next: string) => {
-    setRoleId(next);
-    setAssignments((prev) => prev.map((a) => (a.role_id ? a : { ...a, role_id: next })));
-  }, []);
 
   const isComplete = useMemo(
     () => assignments.length > 0
@@ -101,7 +91,6 @@ export function useUserAssignments({
 
   const reset = useCallback(() => {
     setDepartmentId(ALL_DEPARTMENTS);
-    setRoleId('');
     setAssignments(fallbackOrgId ? [{ org_id: fallbackOrgId, role_id: '', lead_assignment_weight: 0 }] : []);
     setHomeOrgId(fallbackOrgId);
     setManagerId('');
@@ -109,7 +98,6 @@ export function useUserAssignments({
 
   return {
     departmentId, setDepartmentId,
-    roleId, setRoleId: applyRole,
     assignments, setAssignments,
     homeOrgId, setHomeOrgId,
     managerId, setManagerId,

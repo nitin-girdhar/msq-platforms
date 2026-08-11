@@ -19,7 +19,7 @@ export { PhotoUploadModal, PhotoAvatar, type PhotoUploadGate } from './component
 // its own copy, and the branch/role/weight model is too easy to get subtly
 // wrong in two places.
 export {
-  DepartmentRoleSelect,
+  DepartmentSelect,
   OrgAssignmentsField,
   ManagerSelect,
   useRoleCatalog,

@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { useDropdown } from '../../hooks/useDropdown';
-import { rolesForDepartment } from './DepartmentRoleSelect';
+import { rolesForDepartment } from './DepartmentSelect';
 import { FIELD_LABEL, FIELD_SM, HINT } from './styles';
 import { useWeightStatus } from './useWeightStatus';
 import type { BranchOption, OrgAssignment, RoleOption, WeightStatus } from './types';
@@ -15,8 +15,6 @@ interface Props {
   onHomeChange: (orgId: string) => void;
   roles: RoleOption[];
   departmentId: string;
-  /** Role applied to a branch as it is added. */
-  defaultRoleId: string;
   /** Multi-branch needs tenant-admin authority; below that the branch set is fixed. */
   canPickBranches: boolean;
   disabled?: boolean;
@@ -34,7 +32,7 @@ interface Props {
  */
 export default function OrgAssignmentsField({
   branches, assignments, onChange, homeOrgId, onHomeChange,
-  roles, departmentId, defaultRoleId, canPickBranches, disabled, excludeUserId,
+  roles, departmentId, canPickBranches, disabled, excludeUserId,
 }: Props) {
   const { open, setOpen, search, setSearch, rootRef, searchInputRef } = useDropdown();
 
@@ -66,7 +64,10 @@ export default function OrgAssignmentsField({
   );
 
   const addBranch = (orgId: string) => {
-    const next = [...assignments, { org_id: orgId, role_id: defaultRoleId, lead_assignment_weight: 0 }];
+    // New rows inherit the home branch's current role as a convenience
+    // default — still just a starting point, fully editable per row.
+    const homeRoleId = assignments.find((a) => a.org_id === homeOrgId)?.role_id ?? '';
+    const next = [...assignments, { org_id: orgId, role_id: homeRoleId, lead_assignment_weight: 0 }];
     onChange(next);
     // First branch added is home by definition; there is nothing to choose from.
     if (next.length === 1) onHomeChange(orgId);

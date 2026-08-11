@@ -189,6 +189,7 @@ export default function EditApiTokenModal({ open, onClose, token, orgs, isOrgAdm
             <input
               id="et-expires"
               type="date"
+              lang="en-GB"
               value={expiresAt}
               onChange={(e) => setExpiresAt(e.target.value)}
               disabled={pending}

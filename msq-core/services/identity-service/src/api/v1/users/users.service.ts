@@ -223,7 +223,12 @@ export async function getAssignableUsers(
   // walk-in-lead form's org picker on the Assignments page).
   const canQueryOtherOrg = canSeeOrgFilter(ctx.role);
   const effectiveOrgId = orgId && canQueryOtherOrg ? orgId : undefined;
-  return repo.getAssignableUsers(ctx, actorRank, product, effectiveOrgId, scope, maxRank);
+  // Same as listUsers: tenant admin+ with no explicit org_id sees candidates
+  // across every branch in the tenant, not just their own — a caller whose
+  // Leads History scope is 'tenant'/'all' but who hasn't picked a branch yet
+  // should get the full candidate list, not silently just their home org's.
+  const tenantWide = canQueryOtherOrg && !effectiveOrgId;
+  return repo.getAssignableUsers(ctx, actorRank, product, effectiveOrgId, scope, maxRank, tenantWide);
 }
 
 export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {

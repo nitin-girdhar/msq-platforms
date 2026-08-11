@@ -330,13 +330,20 @@ export async function changePassword(
   const pca = updated?.password_changed_at;
   const pwd_iat = pca ? Math.floor(pca.getTime() / 1000) : Math.floor(Date.now() / 1000);
 
+  let licensed_products: ProductKey[] = [];
+  try {
+    licensed_products = await getLicensedProducts(db_user.tenant_id);
+  } catch (err) {
+    console.error('[auth] getLicensedProducts failed during password change:', (err as Error).message, db_user.tenant_id);
+  }
+
   const new_token = signJwt({
     sub: db_user.id,
     email: db_user.email,
     platform_role: platformRoleOf(db_user),
     org_id: db_user.org_id,
     tenant_id: db_user.tenant_id,
-    licensed_products: await getLicensedProducts(db_user.tenant_id),
+    licensed_products,
     pwd_iat,
     force_password_change: false,
   });

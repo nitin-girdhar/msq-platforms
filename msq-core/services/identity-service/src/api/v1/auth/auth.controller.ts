@@ -70,12 +70,17 @@ export class AuthController {
     const user_id = (request.headers['x-user-id'] as string) ?? '';
     if (!user_id) throw new UnauthorizedError('Not authenticated');
 
-    const body = changePasswordSchema.parse(request.body);
-    const new_token = await service.changePassword(user_id, body.current_password, body.new_password);
+    try {
+      const body = changePasswordSchema.parse(request.body);
+      const new_token = await service.changePassword(user_id, body.current_password, body.new_password);
 
-    return reply
-      .setCookie(AUTH_COOKIE_NAME, new_token, sessionCookieOptions())
-      .status(200)
-      .send({ success: true, data: null });
+      return reply
+        .setCookie(AUTH_COOKIE_NAME, new_token, sessionCookieOptions())
+        .status(200)
+        .send({ success: true, data: null });
+    } catch (err) {
+      request.log.error({ err, user_id }, 'changePassword failed');
+      throw err;
+    }
   };
 }

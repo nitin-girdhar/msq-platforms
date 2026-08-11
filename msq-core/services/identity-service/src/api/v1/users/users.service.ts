@@ -6,8 +6,9 @@ import { toApiRow, toApiRows } from '@platform/db';
 import { ROLE_RANK } from '@platform/auth-constants';
 import type { UserRole } from '@platform/auth-constants';
 import { canGrantRole, canManageUser, canOverridePasswordPolicy, canSeeOrgFilter, checkMoveUserBranchAccess } from '@platform/authz';
+import { ANCHOR_RANK } from '@platform/rbac';
 import { createStrongPasswordSchema } from '@platform/validation';
-import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, AddOrgMappingInput } from '@platform/validation';
+import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, AddOrgMappingInput, OrgAssignmentInput } from '@platform/validation';
 import { NotFoundError, ConflictError, ForbiddenError, BadRequestError } from '../../../lib/errors.js';
 import { logActivity } from '@platform/audit-log';
 import { revokeAllUserSessions } from '../../../lib/jwt.js';
@@ -58,10 +59,101 @@ function asDuplicateUserConflict(err: unknown): unknown {
 
 // Resolve the rank of a role name, rejecting unknown roles. Used to enforce the
 // rank ceiling so an actor cannot grant a role above their own.
+//
+// Only the LEGACY role_name path uses this, and it is why that path cannot see
+// tenant-defined roles: ROLE_RANK is a fixed nine-entry map, so a custom
+// department role resolves to `undefined` and is rejected as unknown. The
+// org_assignments path resolves rank from iam.user_roles instead — see
+// resolveAssignments below.
 function rankForRole(roleName: string): number {
   const rank = ROLE_RANK[roleName as UserRole];
   if (rank === undefined) throw new BadRequestError(`Unknown role: ${roleName}`);
   return rank;
+}
+
+/**
+ * Validate an org_assignments payload against the actor's authority and the
+ * tenant's own data, returning assignments the repository can apply as-is.
+ *
+ * Everything the request asserts is re-derived here from the database:
+ *  - every branch is a live org of the ACTOR's tenant (never the caller's word);
+ *  - every role id exists, is active, and belongs to that same tenant — the
+ *    reason roles are addressed by id is that names are only unique per tenant;
+ *  - every role sits at or below the actor's own rank, so an admin cannot
+ *    promote someone past themselves in any branch, not just the home one;
+ *  - assigning outside the actor's own branch needs branch-move authority.
+ *
+ * Fails as a whole. A partially-applied assignment list would leave a user with
+ * access they were never meant to have in one branch and none in another.
+ */
+async function resolveAssignments(
+  ctx: RoleTxContext,
+  actorRank: number,
+  assignments: OrgAssignmentInput[],
+): Promise<repo.ResolvedAssignment[]> {
+  const orgIds = assignments.map((a) => a.org_id);
+  const roleIds = [...new Set(assignments.map((a) => a.role_id))];
+
+  const [orgs, roles] = await Promise.all([
+    repo.getOrgsInTenant(orgIds, ctx.tenant_id),
+    repo.getRolesByIdsForTenant(roleIds, ctx.tenant_id),
+  ]);
+
+  const knownOrgs = new Set(orgs.map((o) => o.id));
+  const missingOrgs = orgIds.filter((id) => !knownOrgs.has(id));
+  if (missingOrgs.length > 0) {
+    throw new BadRequestError(`Branch not found in this tenant: ${missingOrgs.join(', ')}`);
+  }
+
+  const roleById = new Map(roles.map((r) => [r.id, r]));
+  const missingRoles = roleIds.filter((id) => !roleById.has(id));
+  if (missingRoles.length > 0) {
+    throw new BadRequestError(`Role not found in this tenant: ${missingRoles.join(', ')}`);
+  }
+
+  // Assigning a user to a branch other than the actor's own is the same
+  // authority as moving them there, so it takes the same guard.
+  const foreign = orgIds.filter((id) => id !== ctx.org_id);
+  if (foreign.length > 0 && !checkMoveUserBranchAccess(ctx.role)) {
+    throw new ForbiddenError('You cannot assign a user to a different branch');
+  }
+
+  for (const a of assignments) {
+    const role = roleById.get(a.role_id)!;
+    if (!canGrantRole(actorRank, role.rank)) {
+      throw new ForbiddenError('You cannot grant a role higher than your own');
+    }
+  }
+
+  return assignments.map((a) => ({
+    org_id:  a.org_id,
+    role_id: a.role_id,
+    ...(a.lead_assignment_weight !== undefined ? { lead_assignment_weight: a.lead_assignment_weight } : {}),
+  }));
+}
+
+export async function getRoleCatalog(ctx: RoleTxContext, actorRank: number) {
+  const roles = await repo.getRoleCatalog(ctx.tenant_id, actorRank);
+
+  // Departments are derived from the roles actually on offer rather than listed
+  // independently, so the filter can never present a department that would
+  // yield an empty role list.
+  const seen = new Map<string, string>();
+  for (const r of roles) {
+    const id = r['department_id'] as string | null;
+    if (id && !seen.has(id)) seen.set(id, (r['department_label'] as string) ?? id);
+  }
+
+  return {
+    roles: toApiRows(roles),
+    departments: Array.from(seen, ([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label)),
+  };
+}
+
+export async function getManagerCandidates(ctx: RoleTxContext, orgId: string) {
+  const [org] = await repo.getOrgsInTenant([orgId], ctx.tenant_id);
+  if (!org) throw new BadRequestError('Branch not found in this tenant');
+  return toApiRows(await repo.getManagerCandidates(ctx.tenant_id, orgId));
 }
 
 // Blocks acting on a user who currently outranks the actor (RLS only isolates by
@@ -124,8 +216,18 @@ export async function getAssignableUsers(
   return repo.getAssignableUsers(ctx, actorRank, product, effectiveOrgId, scope, maxRank);
 }
 
-export async function getAssignmentWeights(ctx: RoleTxContext) {
-  return repo.getAssignmentWeights(ctx);
+export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
+  // Reading another branch's weights is the same visibility as the cross-org
+  // filter on the roster, so it takes the same guard — and the org must be in
+  // the actor's own tenant, checked against the database rather than trusted.
+  if (orgId !== undefined && orgId !== ctx.org_id) {
+    if (!canSeeOrgFilter(ctx.role)) {
+      throw new ForbiddenError('You cannot view lead assignment weights for another branch');
+    }
+    const [org] = await repo.getOrgsInTenant([orgId], ctx.tenant_id);
+    if (!org) throw new BadRequestError('Branch not found in this tenant');
+  }
+  return repo.getAssignmentWeights(ctx, orgId);
 }
 
 export async function updateAssignmentWeights(
@@ -145,19 +247,41 @@ export async function getOrgChart(ctx: RoleTxContext) {
 }
 
 export async function createUser(ctx: RoleTxContext, actorRank: number, data: CreateUserInput) {
-  // Rank ceiling: an actor can never create a user whose role outranks them.
-  if (!canGrantRole(actorRank, rankForRole(data.role_name))) {
-    throw new ForbiddenError('You cannot grant a role higher than your own');
+  // Multi-branch path: every branch/role pair is validated against the tenant
+  // and the actor's ceiling before anything is written.
+  const resolved = data.org_assignments
+    ? await resolveAssignments(ctx, actorRank, data.org_assignments)
+    : null;
+
+  const homeOrgId = resolved ? data.home_org_id! : ctx.org_id;
+
+  // Legacy path keeps its own ceiling check against the fixed rank map.
+  if (!resolved) {
+    if (!canGrantRole(actorRank, rankForRole(data.role_name!))) {
+      throw new ForbiddenError('You cannot grant a role higher than your own');
+    }
   }
 
-  // A manager must be an active member of the org the new user is joining.
+  // A manager must be an active member of the branch the new user calls home.
   // iam.check_reporting_line_membership() enforces this anyway, but catching it
-  // here turns a raw trigger exception into an answerable 400. Sharing a manager
-  // across branches is done by granting them a mapping in each branch.
-  if (data.manager_id && !(await repo.isActiveOrgMember(ctx, data.manager_id, ctx.org_id))) {
-    throw new BadRequestError(
-      'Selected manager is not an active member of this organisation. Add them to this branch first.',
-    );
+  // here turns a raw trigger exception into an answerable 400.
+  //
+  // Rank > 980 (tenant_admin/super_admin) is the deliberate exception: they
+  // manage across branches by design, and the repository grants them the
+  // mapping the trigger requires rather than refusing the request.
+  let managerGrantedInHome = false;
+  if (data.manager_id) {
+    const isMember = await repo.isActiveOrgMember(ctx, data.manager_id, homeOrgId);
+    if (!isMember) {
+      const manager = await repo.getUserByIdAsService(data.manager_id);
+      const managerRank = Number((manager as Record<string, unknown> | null)?.['rank'] ?? -1);
+      if (managerRank <= ANCHOR_RANK.ORG_ADMIN) {
+        throw new BadRequestError(
+          'Selected manager is not an active member of this branch. Add them to this branch first.',
+        );
+      }
+      managerGrantedInHome = true;
+    }
   }
 
   const temporaryPassword = generateTemporaryPassword();
@@ -170,21 +294,31 @@ export async function createUser(ctx: RoleTxContext, actorRank: number, data: Cr
       ...(data.last_name !== undefined ? { last_name: data.last_name } : {}),
       email: data.email,
       ...(data.mobile !== undefined ? { mobile: data.mobile } : {}),
-      role_name: data.role_name,
+      ...(data.role_name !== undefined ? { role_name: data.role_name } : {}),
       ...(data.manager_id !== undefined ? { manager_id: data.manager_id } : {}),
       ...(data.force_password_change !== undefined ? { force_password_change: data.force_password_change } : {}),
       password_hash: passwordHash,
+      ...(resolved ? { org_assignments: resolved, home_org_id: homeOrgId } : {}),
     });
 
     await logActivity({
       action_type: 'user_created',
       performed_by: ctx.user_id,
       subject_user_id: result.id,
-      org_id: ctx.org_id,
-      new_value: { email: data.email, role: data.role_name },
+      org_id: homeOrgId,
+      new_value: {
+        email: data.email,
+        ...(data.role_name ? { role: data.role_name } : {}),
+        ...(resolved ? { branches: resolved.map((a) => a.org_id), home_org_id: homeOrgId } : {}),
+      },
     });
 
-    return { id: result.id, email: data.email, temporary_password: temporaryPassword };
+    return {
+      id: result.id,
+      email: data.email,
+      temporary_password: temporaryPassword,
+      manager_granted_in_home_org: managerGrantedInHome,
+    };
   } catch (err) {
     throw asDuplicateUserConflict(err);
   }
@@ -263,6 +397,65 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
 
   if (fields.role_id !== undefined) {
     await repo.syncOrgMappingRole(targetCtx, targetUserId, fields.role_id);
+  }
+
+  // ── Multi-branch reconcile ────────────────────────────────────────────────
+  // Supersedes the legacy single-org move below: when the caller sends the full
+  // branch list, home comes from home_org_id and `org_id` is ignored entirely.
+  if (data.org_assignments) {
+    const resolved = await resolveAssignments(ctx, actorRank, data.org_assignments);
+    const newHomeOrgId = data.home_org_id!;
+    const homeAssignment = resolved.find((a) => a.org_id === newHomeOrgId)!;
+    const homeMoved = newHomeOrgId !== targetOrgId;
+    const stillHoldsOldOrg = resolved.some((a) => a.org_id === targetOrgId);
+
+    // Home moving OUT of a branch the user is also leaving strands their open
+    // leads there, so it takes the reassign-then-move saga. Home moving between
+    // branches they keep leaves nothing behind — a plain pointer update.
+    if (homeMoved && !stillHoldsOldOrg) {
+      if (!checkMoveUserBranchAccess(ctx.role)) {
+        throw new ForbiddenError('You cannot move a user to a different branch');
+      }
+      await repo.moveUserBranch(
+        ctx, targetUserId, targetOrgId, newHomeOrgId, homeAssignment.role_id, data.reassign_leads_to,
+      );
+    } else if (homeMoved || homeAssignment.role_id !== (beforeUser as Record<string, unknown>)['role_id']) {
+      await repo.setHomeOrg(targetUserId, newHomeOrgId, homeAssignment.role_id);
+    }
+
+    const reconcile = await repo.reconcileOrgAssignments(
+      ctx, targetUserId, resolved, data.manager_id, newHomeOrgId,
+    );
+
+    await logActivity({
+      action_type: 'user_org_access_changed',
+      performed_by: ctx.user_id,
+      subject_user_id: targetUserId,
+      org_id: newHomeOrgId,
+      old_value: { home_org_id: targetOrgId },
+      new_value: {
+        home_org_id: newHomeOrgId,
+        added: reconcile.added,
+        updated: reconcile.updated,
+        removed: reconcile.removed,
+        ...(reconcile.managerGrantedInOrg ? { manager_granted_in_org: reconcile.managerGrantedInOrg } : {}),
+      },
+    });
+
+    // Same contract as the legacy path: rank and org_id are baked into the JWT,
+    // so a branch or role change must not survive in an unrevoked token.
+    if (homeMoved || reconcile.updated.length > 0 || reconcile.removed.length > 0) {
+      await revokeAllUserSessions(targetUserId, {
+        revokedBy: ctx.user_id,
+        reason: homeMoved ? 'branch_changed' : 'role_changed',
+      });
+    }
+
+    if (data.is_active === false) {
+      await logActivity({ action_type: 'user_deactivated', performed_by: ctx.user_id, subject_user_id: targetUserId, org_id: newHomeOrgId });
+      await revokeAllUserSessions(targetUserId, { revokedBy: ctx.user_id, reason: 'user_deactivated' });
+    }
+    return;
   }
 
   const isMovingBranch = data.org_id !== undefined && data.org_id !== targetOrgId;

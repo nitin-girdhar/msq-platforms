@@ -1,13 +1,18 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { SessionUser, UserRole } from '@platform/types';
-import { ROLES, ROLE_RANK } from '@platform/auth-constants';
-import { Modal, UserPicker } from '@platform/ui-kit';
-import { canCreateUser } from '@/src/lib/permissions';
+import type { SessionUser } from '@platform/types';
+import { RANKS } from '@platform/authz';
+import {
+  Modal,
+  DepartmentRoleSelect,
+  OrgAssignmentsField,
+  ManagerSelect,
+  useRoleCatalog,
+  useUserAssignments,
+} from '@platform/ui-kit';
 import { users as usersApi } from '@/src/lib/api/client';
-import RoleSelector from './RoleSelector';
 import TemporaryPasswordPanel from './TemporaryPasswordPanel';
 
 const PHONE_RE = /^(\+91[\s-]?)?[6-9]\d{9}$/;
@@ -22,6 +27,7 @@ interface Props {
   actorRank: number;
   users: SessionUser[];
   actor: SessionUser;
+  orgs: Array<{ id: string; name: string }>;
 }
 
 interface CreateSuccess {
@@ -29,31 +35,36 @@ interface CreateSuccess {
   temporaryPassword: string;
 }
 
-function defaultCreatableRole(actorRank: number): UserRole | null {
-  for (const r of ROLES) {
-    if (canCreateUser(actorRank, ROLE_RANK[r] ?? 0)) return r;
-  }
-  return null;
-}
-
-export default function CreateUserModal({ open, onClose, actorRank, users, actor }: Props) {
+export default function CreateUserModal({ open, onClose, actorRank, actor, orgs }: Props) {
   const router = useRouter();
-  const initialRole = useMemo(
-    () => defaultCreatableRole(actorRank) ?? 'read_only',
-    [actorRank],
-  );
   const [firstName, setFirstName] = useState('');
   const [middleName, setMiddleName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [mobile, setMobile] = useState('');
   const [mobileError, setMobileError] = useState<string | null>(null);
-  const [role, setRole] = useState<UserRole>(initialRole);
-  const [managerId, setManagerId] = useState(actor.id);
   const [forcePasswordChange, setForcePasswordChange] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<CreateSuccess | null>(null);
+
+  // Only fetch the catalog while the modal is actually open — the Team page
+  // mounts this component up-front so the dialog can animate in.
+  const { roles, departments, loading: rolesLoading, error: rolesError } = useRoleCatalog(open);
+
+  // Assigning across branches is the same authority as moving someone between
+  // them, so it takes the same rank as the roster's cross-org filters.
+  const canPickBranches = actorRank >= RANKS.TENANT_ADMIN;
+
+  const a = useUserAssignments({
+    fallbackOrgId: actor.org_id,
+    roles,
+    rolesLoaded: !rolesLoading,
+  });
+
+  const branchOptions = canPickBranches
+    ? orgs
+    : orgs.filter((o) => o.id === actor.org_id);
 
   const reset = () => {
     setFirstName('');
@@ -62,11 +73,10 @@ export default function CreateUserModal({ open, onClose, actorRank, users, actor
     setEmail('');
     setMobile('');
     setMobileError(null);
-    setRole(initialRole);
-    setManagerId(actor.id);
     setForcePasswordChange(true);
     setError(null);
     setSuccess(null);
+    a.reset();
   };
 
   const handleClose = () => {
@@ -91,19 +101,27 @@ export default function CreateUserModal({ open, onClose, actorRank, users, actor
       setMobileError('Enter a valid 10-digit Indian mobile number.');
       return;
     }
+    if (!a.isComplete) {
+      setError(
+        a.assignments.length === 0
+          ? 'Select at least one branch.'
+          : 'Every branch needs a role.',
+      );
+      return;
+    }
     setMobileError(null);
     setPending(true);
     try {
       const body: Record<string, unknown> = {
         first_name: firstName.trim(),
         email: email.trim(),
-        role_name: role,
         force_password_change: forcePasswordChange,
+        ...a.payload(),
       };
       if (middleName.trim()) body.middle_name = middleName.trim();
       if (lastName.trim()) body.last_name = lastName.trim();
       if (mobile) body.mobile = mobile;
-      if (managerId) body.manager_id = managerId;
+      if (a.managerId) body.manager_id = a.managerId;
 
       const data = await usersApi.create(body);
       if (!data.temporary_password || !data.data?.email) {
@@ -147,7 +165,7 @@ export default function CreateUserModal({ open, onClose, actorRank, users, actor
   );
 
   return (
-    <Modal open={open} onClose={handleClose} title={success ? 'User created' : 'New user'} locked={pending} footer={footer}>
+    <Modal open={open} onClose={handleClose} title={success ? 'User created' : 'New user'} locked={pending} maxWidth="max-w-2xl" footer={footer}>
       {success ? (
         <div className="space-y-4">
           <p className="text-sm text-[#0F172A]">
@@ -186,20 +204,44 @@ export default function CreateUserModal({ open, onClose, actorRank, users, actor
             </div>
           </div>
 
-          <RoleSelector id="cu-role" value={role} onChange={setRole} actorRank={actorRank} disabled={pending} />
+          {rolesError && (
+            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {rolesError}
+            </div>
+          )}
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-[#0F172A]">Manager</label>
-            <UserPicker
-              value={managerId}
-              onChange={setManagerId}
-              users={users.filter((u) => u.is_active)}
-              disabled={pending}
-              allowEmpty
-              emptyLabel="— None —"
-              placeholder="— None —"
-            />
-          </div>
+          <hr className="border-0 border-t border-[#F1F5F9]" />
+
+          <DepartmentRoleSelect
+            departmentId={a.departmentId}
+            onDepartmentChange={a.setDepartmentId}
+            roleId={a.roleId}
+            onRoleChange={a.setRoleId}
+            roles={roles}
+            departments={departments}
+            loading={rolesLoading}
+            disabled={pending}
+          />
+
+          <OrgAssignmentsField
+            branches={branchOptions}
+            assignments={a.assignments}
+            onChange={a.setAssignments}
+            homeOrgId={a.homeOrgId}
+            onHomeChange={a.setHomeOrgId}
+            roles={roles}
+            departmentId={a.departmentId}
+            defaultRoleId={a.roleId}
+            canPickBranches={canPickBranches}
+            disabled={pending}
+          />
+
+          <ManagerSelect
+            value={a.managerId}
+            onChange={a.setManagerId}
+            homeOrgId={a.homeOrgId}
+            disabled={pending}
+          />
 
           <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
             <input

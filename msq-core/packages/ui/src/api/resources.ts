@@ -89,6 +89,38 @@ export const users = {
     return request<{ success: true; data: unknown[] }>(`/users/assignable${qs ? `?${qs}` : ''}`);
   },
 
+  // Roles this actor may actually grant, already capped at their own rank by the
+  // server, plus the departments those roles belong to. `department_id` is null
+  // for roles a tenant has not filed under one — a real bucket, not an error.
+  roleCatalog: () =>
+    request<{ success: true; data: {
+      roles: Array<{ id: string; name: string; label: string; rank: number; department_id: string | null; department_label: string | null }>;
+      departments: Array<{ id: string; label: string }>;
+    } }>('/users/role-catalog'),
+
+  // Who may manage a user in `orgId`: members of that branch, plus tenant_admin
+  // and above. Must be asked per branch — the roster alone cannot answer it,
+  // since it carries only each user's home org.
+  managerCandidates: (orgId: string) =>
+    request<{ success: true; data: Array<{
+      id: string; full_name: string; email: string;
+      role_name: string; role_label: string; rank: number; in_branch: boolean;
+    }> }>(`/users/manager-candidates?org_id=${encodeURIComponent(orgId)}`),
+
+  // Current per-user lead weights in a branch. Omit orgId for the actor's own.
+  assignmentWeights: (orgId?: string) =>
+    request<{ success: true; data: Array<{ user_id: string; full_name: string; weight: number }> }>(
+      `/users/assignment-weights${orgId ? `?org_id=${encodeURIComponent(orgId)}` : ''}`,
+    ),
+
+  // Every branch a user holds, with the role and weight in each. The view
+  // behind it resolves org_name/role_label, so callers never look up raw ids.
+  orgMappings: (userId: string) =>
+    request<{ success: true; data: Array<{
+      org_id: string; org_name: string; role_id: string; role_label: string;
+      lead_assignment_weight: number; is_active: boolean;
+    }> }>(`/users/${userId}/org-mappings`),
+
   orgChart: () => request<{ success: true; data: unknown[] }>('/users/org-chart'),
 
   team: () => request<{ success: true; data: unknown[] }>('/users/team'),

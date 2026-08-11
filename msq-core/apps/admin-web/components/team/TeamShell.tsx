@@ -11,9 +11,10 @@ interface Props {
   users: SessionUser[];
   actor: SessionUser;
   total: number;
+  orgs: Array<{ id: string; name: string }>;
 }
 
-export default function TeamShell({ users, actor, total }: Props) {
+export default function TeamShell({ users, actor, total, orgs }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SessionUser | null>(null);
 
@@ -49,6 +50,7 @@ export default function TeamShell({ users, actor, total }: Props) {
           actorRank={actor.rank}
           users={users}
           actor={actor}
+          orgs={orgs}
         />
       )}
 
@@ -61,6 +63,8 @@ export default function TeamShell({ users, actor, total }: Props) {
           actorRank={actor.rank}
           actorRole={actor.role}
           users={users}
+          orgs={orgs}
+          actor={actor}
         />
       )}
     </div>

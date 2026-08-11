@@ -13,6 +13,28 @@ export { MonthGrid, type MonthGridBar, type MonthGridMarker } from './components
 export { UserPicker } from './components/UserPicker';
 export { MultiSelect, type SelectOption } from './components/MultiSelect';
 export { PhotoUploadModal, PhotoAvatar, type PhotoUploadGate } from './components/PhotoUpload';
+
+// Create/Edit user form fields. Shared because admin-web "Team" and lms-web
+// "Users" are the same screen twice — they drifted apart while each app owned
+// its own copy, and the branch/role/weight model is too easy to get subtly
+// wrong in two places.
+export {
+  DepartmentRoleSelect,
+  OrgAssignmentsField,
+  ManagerSelect,
+  useRoleCatalog,
+  useUserAssignments,
+  useWeightStatus,
+  rolesForDepartment,
+  ALL_DEPARTMENTS,
+  NO_DEPARTMENT,
+  type BranchOption,
+  type DepartmentOption,
+  type ManagerCandidate,
+  type OrgAssignment,
+  type RoleOption,
+  type WeightStatus,
+} from './components/UserForm';
 export { ErrorState, AppErrorBoundary, type ErrorStateProps, type AppErrorBoundaryProps } from './components/ErrorState';
 
 // Page scaffold — the header band / body / section rhythm and the one button

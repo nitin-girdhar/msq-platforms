@@ -529,6 +529,15 @@ app.get('/users/assignment-weights', { ...withAuth }, async (req, reply) => {
 app.put('/users/assignment-weights', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/users/assignment-weights', req, reply, req.userCtx);
 });
+// Dropdown sources for the Create/Edit user form. Both are tenant-scoped from
+// the verified session, never from a query param, and both sit before
+// `/users/:id` so the literal segment wins rather than being read as an id.
+app.get('/users/role-catalog', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/users/role-catalog', req, reply, req.userCtx);
+});
+app.get('/users/manager-candidates', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/users/manager-candidates', req, reply, req.userCtx);
+});
 app.get('/users/team', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/users/team', req, reply, req.userCtx);
 });

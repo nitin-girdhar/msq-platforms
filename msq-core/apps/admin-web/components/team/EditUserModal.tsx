@@ -1,11 +1,20 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { SessionUser, UserRole } from '@platform/types';
-import { Modal, UserPicker } from '@platform/ui-kit';
+import type { SessionUser } from '@platform/types';
+import { RANKS } from '@platform/authz';
+import {
+  Modal,
+  UserPicker,
+  DepartmentRoleSelect,
+  OrgAssignmentsField,
+  ManagerSelect,
+  useRoleCatalog,
+  useUserAssignments,
+  type OrgAssignment,
+} from '@platform/ui-kit';
 import { users as usersApi } from '@/src/lib/api/client';
-import RoleSelector from './RoleSelector';
 import ResetPasswordModal from './ResetPasswordModal';
 
 const PHONE_RE = /^(\+91[\s-]?)?[6-9]\d{9}$/;
@@ -22,21 +31,28 @@ interface Props {
   actorRank: number;
   actorRole: string;
   users: SessionUser[];
+  orgs: Array<{ id: string; name: string }>;
+  actor: SessionUser;
 }
 
-export default function EditUserModal({ open, onClose, user, currentUserId, actorRank, actorRole, users }: Props) {
+export default function EditUserModal({
+  open, onClose, user, currentUserId, actorRank, actorRole, users, orgs, actor,
+}: Props) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(user.first_name ?? '');
   const [middleName, setMiddleName] = useState(user.middle_name ?? '');
   const [lastName, setLastName] = useState(user.last_name ?? '');
   const [mobile, setMobile] = useState(user.mobile ?? '');
   const [mobileError, setMobileError] = useState<string | null>(null);
-  const [role, setRole] = useState<UserRole>(user.role);
-  const [managerId, setManagerId] = useState(user.manager_id ?? '');
   const [forcePasswordChange, setForcePasswordChange] = useState(user.force_password_change);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
+
+  // Branches this user currently holds, loaded per-open. The roster row carries
+  // only their home org, so the full set has to be asked for.
+  const [existing, setExisting] = useState<OrgAssignment[] | null>(null);
+  const [mappingsError, setMappingsError] = useState<string | null>(null);
 
   useEffect(() => {
     setFirstName(user.first_name ?? '');
@@ -44,13 +60,62 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
     setLastName(user.last_name ?? '');
     setMobile(user.mobile ?? '');
     setMobileError(null);
-    setRole(user.role);
-    setManagerId(user.manager_id ?? '');
     setForcePasswordChange(user.force_password_change);
   }, [user]);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setExisting(null);
+    setMappingsError(null);
+
+    usersApi.orgMappings(user.id)
+      .then((res) => {
+        if (cancelled) return;
+        setExisting(
+          res.data
+            .filter((m) => m.is_active)
+            .map((m) => ({
+              org_id: m.org_id,
+              role_id: m.role_id,
+              lead_assignment_weight: Number(m.lead_assignment_weight ?? 0),
+            })),
+        );
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // Falling back to the home branch alone would silently drop the user's
+        // other branches on the next save, so the form reports and stops instead.
+        setMappingsError(err instanceof Error ? err.message : 'Could not load this user’s branches.');
+        setExisting([]);
+      });
+
+    return () => { cancelled = true; };
+  }, [open, user.id]);
+
   const isSelf = user.id === currentUserId;
   const canSetPassword = actorRank > user.rank && !isSelf;
+  const canPickBranches = actorRank >= RANKS.TENANT_ADMIN;
+
+  const { roles, departments, loading: rolesLoading, error: rolesError } = useRoleCatalog(open);
+
+  const a = useUserAssignments({
+    ...(existing ? { assignments: existing } : {}),
+    homeOrgId: user.org_id,
+    managerId: user.manager_id ?? '',
+    fallbackOrgId: user.org_id || actor.org_id,
+    roles,
+    rolesLoaded: !rolesLoading,
+  });
+
+  const branchOptions = useMemo(
+    () => (canPickBranches ? orgs : orgs.filter((o) => o.id === user.org_id)),
+    [canPickBranches, orgs, user.org_id],
+  );
+
+  const homeMoved = a.homeOrgId !== user.org_id;
+  const leavingHomeBranch = homeMoved && !a.assignments.some((x) => x.org_id === user.org_id);
+  const [reassignLeadsTo, setReassignLeadsTo] = useState('');
 
   const managerCandidates = users.filter((u) => u.is_active && u.id !== user.id);
 
@@ -82,16 +147,32 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
       setMobileError('Enter a valid 10-digit Indian mobile number.');
       return;
     }
+    if (!a.isComplete) {
+      setError(
+        a.assignments.length === 0
+          ? 'Select at least one branch.'
+          : 'Every branch needs a role.',
+      );
+      return;
+    }
     setMobileError(null);
     const patch: Record<string, unknown> = {};
     if (firstName !== (user.first_name ?? '')) patch.first_name = firstName;
     if (middleName !== (user.middle_name ?? '')) patch.middle_name = middleName || null;
     if (lastName !== (user.last_name ?? '')) patch.last_name = lastName || null;
     if (mobile !== (user.mobile ?? '')) patch.mobile = mobile || null;
-    if (role !== user.role) patch.role_name = role;
-    const newManagerId = managerId || null;
-    if (newManagerId !== (user.manager_id ?? null)) patch.manager_id = newManagerId;
     if (forcePasswordChange !== user.force_password_change) patch.force_password_change = forcePasswordChange;
+
+    // Branch memberships are sent as the complete set, not a diff — the server
+    // reconciles against what it currently holds, so a branch the admin removed
+    // is expressed by its absence. Only sent once the current set has loaded;
+    // sending before that would read as "remove everything".
+    if (existing !== null) {
+      Object.assign(patch, a.payload());
+      patch.manager_id = a.managerId || null;
+      if (leavingHomeBranch && reassignLeadsTo) patch.reassign_leads_to = reassignLeadsTo;
+    }
+
     if (Object.keys(patch).length === 0) {
       handleClose();
       return;
@@ -149,7 +230,7 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
 
   return (
     <>
-      <Modal open={open} onClose={handleClose} title={`Edit ${user.name || user.email}`} locked={locked} maxWidth="max-w-xl" footer={footer}>
+      <Modal open={open} onClose={handleClose} title={`Edit ${user.name || user.email}`} locked={locked} maxWidth="max-w-2xl" footer={footer}>
         <form id={FORM_ID} onSubmit={handleSave} className="flex flex-col gap-4" noValidate>
           {error && (
             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -206,23 +287,79 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
             </div>
           </div>
 
-          <RoleSelector id="eu-role" value={role} onChange={setRole} actorRank={actorRank} disabled={locked || isSelf} />
+          {(rolesError || mappingsError) && (
+            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {rolesError ?? mappingsError}
+            </div>
+          )}
+
+          <hr className="border-0 border-t border-[#F1F5F9]" />
+
+          <DepartmentRoleSelect
+            departmentId={a.departmentId}
+            onDepartmentChange={a.setDepartmentId}
+            roleId={a.roleId}
+            onRoleChange={a.setRoleId}
+            roles={roles}
+            departments={departments}
+            loading={rolesLoading}
+            disabled={locked || isSelf}
+            roleLabel="Default role"
+          />
           {isSelf && (
             <p className="-mt-2 text-[11px] text-[#64748B]">You can&apos;t change your own role.</p>
           )}
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-[#0F172A]">Manager</label>
-            <UserPicker
-              value={managerId}
-              onChange={setManagerId}
-              users={managerCandidates}
+          {existing === null && !mappingsError ? (
+            <p className="text-[11px] text-[#64748B]">Loading branches…</p>
+          ) : (
+            <OrgAssignmentsField
+              branches={branchOptions}
+              assignments={a.assignments}
+              onChange={a.setAssignments}
+              homeOrgId={a.homeOrgId}
+              onHomeChange={a.setHomeOrgId}
+              roles={roles}
+              departmentId={a.departmentId}
+              defaultRoleId={a.roleId}
+              canPickBranches={canPickBranches && !isSelf}
               disabled={locked}
-              allowEmpty
-              emptyLabel="— None —"
-              placeholder="— None —"
+              excludeUserId={user.id}
             />
-          </div>
+          )}
+
+          {leavingHomeBranch && (
+            <div className="flex flex-col gap-2 rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2.5">
+              <p className="text-[12.5px] leading-snug text-[#1E40AF]">
+                Home branch is moving and they are leaving their current one. Their open leads there need a
+                new owner.
+              </p>
+              <label className="text-xs font-semibold text-[#0F172A]">Reassign their leads to</label>
+              <UserPicker
+                value={reassignLeadsTo}
+                onChange={setReassignLeadsTo}
+                users={managerCandidates.filter((u) => u.org_id === user.org_id)}
+                disabled={locked}
+                allowEmpty
+                emptyLabel="— Leave them assigned —"
+                placeholder="— Leave them assigned —"
+              />
+            </div>
+          )}
+
+          <ManagerSelect
+            value={a.managerId}
+            onChange={a.setManagerId}
+            homeOrgId={a.homeOrgId}
+            excludeUserId={user.id}
+            disabled={locked}
+          />
+
+          {(homeMoved || a.roleId) && (
+            <p className="rounded-lg border border-[#FDE68A] bg-[#FFFBEB] px-2.5 py-1.5 text-[11.5px] leading-snug text-[#92400E]">
+              Changing role or home branch signs this user out of all devices.
+            </p>
+          )}
 
           <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
             <input

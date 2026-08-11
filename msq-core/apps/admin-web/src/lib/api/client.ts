@@ -40,6 +40,10 @@ export const users = {
 
   update: (id: string, body: Record<string, unknown>) => usersResource.update(id, body),
 
+  // Every branch the user holds. The Edit form needs the full set to send back a
+  // complete assignment list; the roster row only carries their home branch.
+  orgMappings: (id: string) => usersResource.orgMappings(id),
+
   resetPassword: (id: string, new_password?: string, override_policy?: boolean) =>
     usersResource.resetPassword(id, new_password, override_policy),
 };

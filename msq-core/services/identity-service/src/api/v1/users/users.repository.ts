@@ -1,7 +1,7 @@
 import { sql, eq, and, desc } from 'drizzle-orm';
 import { withRoleTx, withServiceTx, hasCapability } from '@platform/db';
 import type { RoleTxContext, DrizzleTx } from '@platform/db';
-import { CAPABILITY } from '@platform/rbac';
+import { CAPABILITY, ANCHOR_RANK } from '@platform/rbac';
 import {
   usersTable,
   userRolesTable,
@@ -127,21 +127,32 @@ export async function getUserByIdAsService(userId: string) {
 // so the CAPABILITY.LMS filter below is hardcoded rather than parameterized like
 // getAssignableUsers' `product` — no other product manages weights through this
 // endpoint today.
-export async function getAssignmentWeights(ctx: RoleTxContext) {
-  return withRoleTx(ctx, async (tx) => {
-    const rows = (await tx.execute(sql`
+export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
+  const targetOrgId = orgId ?? ctx.org_id;
+
+  const query = (tx: DrizzleTx) => tx.execute(sql`
       SELECT u.id AS user_id, u.full_name, u.email,
              ur.name AS role_name, ur.label AS role_label, ur.rank,
              uom.lead_assignment_weight AS weight
       FROM iam.user_org_mapping uom
       JOIN iam.users u       ON u.id  = uom.user_id
       JOIN iam.user_roles ur ON ur.id = uom.role_id
-      WHERE uom.org_id = ${ctx.org_id}::uuid AND uom.is_active AND NOT u.is_deleted AND u.is_active
+      WHERE uom.org_id = ${targetOrgId}::uuid AND uom.is_active AND NOT u.is_deleted AND u.is_active
         AND ur.rank > ${RANK_READ_ONLY} AND ur.rank < ${RANK_ADMIN}
       ORDER BY ur.rank DESC, u.full_name
-    `)) as Array<Record<string, unknown>>;
-    return filterRowsByCapability(ctx.tenant_id, rows, CAPABILITY.LMS);
-  });
+    `) as Promise<Array<Record<string, unknown>>>;
+
+  // The user form shows each selected branch's current total, which means
+  // reading orgs the actor is not currently switched into. withRoleTx is
+  // RLS-scoped to ctx.org_id and would return an empty set for any other org,
+  // reading as "0%" — a wrong answer rather than an error. The service layer
+  // gates cross-org reads on rank and confirms the org is in the actor's tenant
+  // before we get here, so the service connection is the correct tool.
+  const rows = targetOrgId === ctx.org_id
+    ? await withRoleTx(ctx, query)
+    : await withServiceTx(query);
+
+  return filterRowsByCapability(ctx.tenant_id, rows, CAPABILITY.LMS);
 }
 
 export async function updateAssignmentWeights(
@@ -265,6 +276,15 @@ export async function getOrgChart(ctx: RoleTxContext) {
   });
 }
 
+// One branch's membership, with its role already resolved to an id and checked
+// against the actor's rank ceiling by the service layer. The repository trusts
+// these ids — it does not re-authorize them.
+export interface ResolvedAssignment {
+  org_id: string;
+  role_id: string;
+  lead_assignment_weight?: number | undefined;
+}
+
 export interface CreateUserData {
   first_name: string;
   middle_name?: string;
@@ -272,10 +292,14 @@ export interface CreateUserData {
   email: string;
   // Normalized to E.164 by mobileInputSchema; null clears it.
   mobile?: string | null;
-  role_name: string;
+  // Legacy single-branch path. Required unless org_assignments is given.
+  role_name?: string;
   manager_id?: string;
   force_password_change?: boolean;
   password_hash: string;
+  // Multi-branch path. When present, home_org_id is too, and it is one of these.
+  org_assignments?: ResolvedAssignment[];
+  home_org_id?: string;
 }
 
 // Roles are tenant-owned since _migrations/23_tenant_scope_admin_roles.sql, so
@@ -300,6 +324,97 @@ export async function resolveRoleByName(roleName: string, orgId: string) {
   return withServiceTx(async (tx) => {
     const [row] = await roleIdByNameForOrg(tx, roleName, orgId);
     return row ?? null;
+  });
+}
+
+// The assignable-role catalog for ONE tenant, capped at the actor's own rank.
+//
+// Applying the ceiling here rather than in the UI is the point: the caller can
+// only ever see roles it is allowed to grant, so a hand-rolled request cannot
+// name a role the dropdown would have hidden. `super_admin` is excluded by name
+// as well as by the tenant filter — it is the one global row and must never be
+// grantable from a product screen (same reasoning as user-roles.repository.ts).
+//
+// department_id is nullable and, on a freshly provisioned tenant, is NULL for
+// every role (entity.seed_tenant_rbac clones templates without one). Callers
+// must therefore treat "no department" as a real bucket, not an error.
+export async function getRoleCatalog(tenantId: string, maxRank: number) {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT ur.id, ur.name, ur.label, ur.rank,
+             ur.department_id, d.label AS department_label
+      FROM iam.user_roles ur
+      LEFT JOIN iam.departments d ON d.id = ur.department_id AND NOT d.is_deleted
+      WHERE ur.tenant_id = ${tenantId}::uuid
+        AND ur.is_active
+        AND ur.name <> 'super_admin'
+        AND ur.rank < ${maxRank}
+      ORDER BY ur.rank DESC, ur.label
+    `)) as Array<Record<string, unknown>>;
+    return rows;
+  });
+}
+
+// Who may be set as a user's manager in `orgId`.
+//
+// Two disjoint groups, unioned:
+//   - anyone holding an active mapping in that branch, at any rank; and
+//   - tenant_admin/super_admin (rank > 980), who legitimately manage across
+//     branches. The bound is strictly > 980 so an org_admin of a DIFFERENT
+//     branch is excluded — their authority does not reach this one.
+//
+// This cannot be done client-side: the roster carries each user's home org_id
+// only, so someone mapped into this branch from elsewhere would be invisible.
+export async function getManagerCandidates(tenantId: string, orgId: string) {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT DISTINCT u.id, u.full_name, u.email,
+             ur.name AS role_name, ur.label AS role_label, ur.rank,
+             (uom.user_id IS NOT NULL) AS in_branch
+      FROM iam.users u
+      JOIN iam.user_roles ur       ON ur.id = u.role_id
+      JOIN entity.organizations o  ON o.id  = u.org_id
+      LEFT JOIN iam.user_org_mapping uom
+             ON uom.user_id = u.id AND uom.org_id = ${orgId}::uuid AND uom.is_active
+      WHERE u.is_active AND NOT u.is_deleted
+        AND o.tenant_id = ${tenantId}::uuid
+        AND (uom.user_id IS NOT NULL OR ur.rank > ${ANCHOR_RANK.ORG_ADMIN})
+      ORDER BY in_branch DESC, ur.rank DESC, u.full_name
+    `)) as Array<Record<string, unknown>>;
+    return rows;
+  });
+}
+
+// Resolve the roles named by an org_assignments payload, rejecting any that
+// belong to another tenant. Batched: an assignment list is validated as a whole,
+// so one round-trip is enough and a partial resolve never half-applies.
+export async function getRolesByIdsForTenant(roleIds: string[], tenantId: string) {
+  if (roleIds.length === 0) return [];
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT id, name, rank
+      FROM iam.user_roles
+      WHERE id = ANY(${roleIds}::uuid[])
+        AND is_active
+        AND (tenant_id = ${tenantId}::uuid OR tenant_id IS NULL)
+    `)) as Array<{ id: string; name: string; rank: number }>;
+    return rows;
+  });
+}
+
+// Confirm every org in an assignment list is a live branch of this tenant.
+// Returns the ones that resolved, so the caller can name the ones that did not.
+export async function getOrgsInTenant(orgIds: string[], tenantId: string) {
+  if (orgIds.length === 0) return [];
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT id, name
+      FROM entity.organizations
+      WHERE id = ANY(${orgIds}::uuid[])
+        AND tenant_id = ${tenantId}::uuid
+        AND is_active AND NOT is_deleted
+    `)) as Array<{ id: string; name: string }>;
+    return rows;
   });
 }
 
@@ -386,9 +501,28 @@ export async function isActiveOrgMember(
 
 export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
   return withRoleTx(ctx, async (tx) => {
-    const [roleRow] = await roleIdByNameForOrg(tx, data.role_name, ctx.org_id);
-    if (!roleRow) throw new BadRequestError(`Role not found: ${data.role_name}`);
-    const roleId = roleRow.id;
+    // Two ways in. The legacy path names a role and lands the user in the
+    // actor's own org. The multi-branch path carries a resolved assignment per
+    // branch plus which of them is home. Both converge on one INSERT below, so
+    // the RLS id-minting and the mapping-before-reporting-line ordering are
+    // written once and cannot drift apart.
+    const assignments: ResolvedAssignment[] = data.org_assignments ?? [];
+    let homeOrgId: string;
+    let roleId: string;
+
+    if (assignments.length > 0) {
+      homeOrgId = data.home_org_id!;
+      const home = assignments.find((a) => a.org_id === homeOrgId);
+      // Guaranteed by createUserSchema's refine; re-asserted because this is the
+      // last point where a mismatch is still cheap to catch.
+      if (!home) throw new BadRequestError('home_org_id must be one of the selected branches');
+      roleId = home.role_id;
+    } else {
+      const [roleRow] = await roleIdByNameForOrg(tx, data.role_name!, ctx.org_id);
+      if (!roleRow) throw new BadRequestError(`Role not found: ${data.role_name}`);
+      homeOrgId = ctx.org_id;
+      roleId = roleRow.id;
+    }
 
     // Mint the new user id up-front rather than reading it back with RETURNING.
     // Postgres evaluates a RETURNING clause through the table's SELECT (USING)
@@ -414,7 +548,7 @@ export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
          manager_id, password_hash, password_changed_at, is_active, force_password_change)
       VALUES (
         ${newUserId}::uuid,
-        ${ctx.org_id}::uuid,
+        ${homeOrgId}::uuid,
         ${data.first_name},
         ${data.middle_name ?? null},
         ${data.last_name ?? ''},
@@ -432,25 +566,44 @@ export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
     `);
     const created = { id: newUserId };
 
-    await tx
-      .insert(userOrgMappingTable)
-      .values({
-        userId:    created.id,
-        orgId:     ctx.org_id,
-        roleId,
-        grantedBy: ctx.user_id,
-      })
-      .onConflictDoUpdate({
-        target: [userOrgMappingTable.userId, userOrgMappingTable.orgId],
-        set: { roleId, isActive: true, updatedAt: new Date() },
-      });
+    // One mapping row per branch — or exactly one, for the legacy path.
+    const rows: ResolvedAssignment[] =
+      assignments.length > 0
+        ? assignments
+        : [{ org_id: homeOrgId, role_id: roleId }];
+
+    for (const a of rows) {
+      await tx
+        .insert(userOrgMappingTable)
+        .values({
+          userId:               created.id,
+          orgId:                a.org_id,
+          roleId:               a.role_id,
+          leadAssignmentWeight: a.lead_assignment_weight ?? 0,
+          grantedBy:            ctx.user_id,
+        })
+        .onConflictDoUpdate({
+          target: [userOrgMappingTable.userId, userOrgMappingTable.orgId],
+          set: {
+            roleId:               a.role_id,
+            isActive:             true,
+            leadAssignmentWeight: a.lead_assignment_weight ?? 0,
+            updatedAt:            new Date(),
+          },
+        });
+    }
 
     // After the mapping, never before: iam.check_reporting_line_membership()
     // requires the new user to be an active member of the org.
     if (data.manager_id) {
+      await ensureManagerMembership(tx, {
+        managerId: data.manager_id,
+        orgId:     homeOrgId,
+        actorId:   ctx.user_id,
+      });
       await setReportingLine(tx, {
         userId:    created.id,
-        orgId:     ctx.org_id,
+        orgId:     homeOrgId,
         managerId: data.manager_id,
         actorId:   ctx.user_id,
       });
@@ -458,6 +611,44 @@ export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
 
     return created;
   });
+}
+
+// A manager qualifying by rank alone (tenant_admin/super_admin) may hold no
+// mapping in the branch they are about to manage — and
+// iam.check_reporting_line_membership() requires BOTH parties to be active
+// members, so the reporting-line insert would fail on a trigger exception the
+// admin cannot act on.
+//
+// Granting the mapping is the honest resolution: being someone's manager in a
+// branch IS membership of it. Weight 0 so the grant never silently enters them
+// into that branch's lead rotation. Returns true when a row was actually
+// created, so the caller can tell the admin it happened.
+async function ensureManagerMembership(
+  tx: DrizzleTx,
+  opts: { managerId: string; orgId: string; actorId?: string | undefined },
+): Promise<boolean> {
+  const { managerId, orgId, actorId } = opts;
+
+  const existing = (await tx.execute(sql`
+    SELECT 1 FROM iam.user_org_mapping
+    WHERE user_id = ${managerId}::uuid AND org_id = ${orgId}::uuid AND is_active
+    LIMIT 1
+  `)) as Array<unknown>;
+  if (existing.length > 0) return false;
+
+  // The manager keeps their own default role in the new branch — inventing a
+  // different one here would silently change what they can do there.
+  const granted = (await tx.execute(sql`
+    INSERT INTO iam.user_org_mapping (user_id, org_id, role_id, lead_assignment_weight, granted_by)
+    SELECT ${managerId}::uuid, ${orgId}::uuid, u.role_id, 0, ${actorId ?? null}
+    FROM iam.users u
+    WHERE u.id = ${managerId}::uuid
+    ON CONFLICT (user_id, org_id)
+      DO UPDATE SET is_active = TRUE, updated_at = CLOCK_TIMESTAMP()
+    RETURNING user_id
+  `)) as Array<{ user_id: string }>;
+
+  return granted.length > 0;
 }
 
 export interface UpdateUserFields {
@@ -611,6 +802,149 @@ export async function moveUserBranch(
   return { newOrgName: targetOrg.name, reassignedLeadsCount };
 }
 
+export interface ReconcileResult {
+  added: string[];
+  updated: string[];
+  removed: string[];
+  managerGrantedInOrg: string | null;
+}
+
+// Bring a user's branch memberships in line with `assignments`, in one
+// transaction so the user is never briefly a member of nothing.
+//
+// Runs on the service connection, not the actor's role tx: reconciling spans
+// several orgs at once and an RLS-scoped tx can only see one. The service layer
+// has already checked the actor may act in every org named here.
+//
+// Removals are soft (is_active = false), matching removeOrgMapping — the row
+// carries granted_by/granted_at history that a DELETE would destroy, and a
+// re-grant later flips the same row back rather than losing the audit trail.
+//
+// addOrgMapping is deliberately NOT reused: it defaults lead_assignment_weight
+// to 0 when the field is absent, which would silently zero a branch's weight on
+// any edit that didn't touch it.
+export async function reconcileOrgAssignments(
+  ctx: RoleTxContext,
+  targetUserId: string,
+  assignments: ResolvedAssignment[],
+  managerId?: string | null,
+  homeOrgId?: string,
+): Promise<ReconcileResult> {
+  return withServiceTx(async (tx) => {
+    const current = (await tx.execute(sql`
+      SELECT org_id, role_id, lead_assignment_weight, is_active
+      FROM iam.user_org_mapping
+      WHERE user_id = ${targetUserId}::uuid
+    `)) as Array<{ org_id: string; role_id: string; lead_assignment_weight: number; is_active: boolean }>;
+
+    const currentById = new Map(current.map((r) => [r.org_id, r]));
+    const wanted = new Set(assignments.map((a) => a.org_id));
+
+    const added: string[] = [];
+    const updated: string[] = [];
+
+    for (const a of assignments) {
+      const weight = a.lead_assignment_weight ?? 0;
+      const existing = currentById.get(a.org_id);
+
+      if (!existing || !existing.is_active) {
+        added.push(a.org_id);
+      } else if (existing.role_id !== a.role_id || existing.lead_assignment_weight !== weight) {
+        updated.push(a.org_id);
+      } else {
+        continue; // identical — skip the write entirely
+      }
+
+      await tx
+        .insert(userOrgMappingTable)
+        .values({
+          userId:               targetUserId,
+          orgId:                a.org_id,
+          roleId:               a.role_id,
+          leadAssignmentWeight: weight,
+          grantedBy:            ctx.user_id,
+        })
+        .onConflictDoUpdate({
+          target: [userOrgMappingTable.userId, userOrgMappingTable.orgId],
+          set: {
+            roleId:               a.role_id,
+            isActive:             true,
+            leadAssignmentWeight: weight,
+            updatedAt:            new Date(),
+          },
+        });
+    }
+
+    const removed = current
+      .filter((r) => r.is_active && !wanted.has(r.org_id))
+      .map((r) => r.org_id);
+
+    if (removed.length > 0) {
+      await tx.execute(sql`
+        UPDATE iam.user_org_mapping
+        SET is_active = false, updated_at = NOW()
+        WHERE user_id = ${targetUserId}::uuid AND org_id = ANY(${removed}::uuid[])
+      `);
+
+      // A reporting line in a branch the user no longer belongs to would leave
+      // check_reporting_line_membership()'s invariant violated for existing
+      // rows, and strand an approver chain pointing into a branch they left.
+      await tx.execute(sql`
+        UPDATE iam.reporting_lines
+        SET effective_to = CURRENT_DATE, is_active = FALSE, updated_at = NOW()
+        WHERE user_id = ${targetUserId}::uuid
+          AND org_id = ANY(${removed}::uuid[])
+          AND NOT is_deleted AND effective_to IS NULL
+          AND effective_from < CURRENT_DATE
+      `);
+      await tx.execute(sql`
+        UPDATE iam.reporting_lines
+        SET is_deleted = TRUE, is_active = FALSE,
+            deleted_at = CLOCK_TIMESTAMP(), deleted_by = ${ctx.user_id}::uuid
+        WHERE user_id = ${targetUserId}::uuid
+          AND org_id = ANY(${removed}::uuid[])
+          AND NOT is_deleted AND effective_to IS NULL
+      `);
+    }
+
+    // The manager line always follows the home branch, and is rewritten after
+    // the mappings so both parties are members by the time the trigger checks.
+    let managerGrantedInOrg: string | null = null;
+    if (homeOrgId !== undefined && managerId !== undefined) {
+      if (managerId) {
+        const grantedNow = await ensureManagerMembership(tx, {
+          managerId,
+          orgId:   homeOrgId,
+          actorId: ctx.user_id,
+        });
+        if (grantedNow) managerGrantedInOrg = homeOrgId;
+      }
+      await setReportingLine(tx, {
+        userId:    targetUserId,
+        orgId:     homeOrgId,
+        managerId: managerId ?? null,
+        actorId:   ctx.user_id,
+      });
+    }
+
+    return { added, updated, removed, managerGrantedInOrg };
+  });
+}
+
+// Point iam.users at a new home branch without the cross-service lead
+// reassignment moveUserBranch performs. Used when the home radio moves between
+// branches the user ALREADY belongs to — nothing is being left, so no lead is
+// orphaned and there is nothing to reassign.
+export async function setHomeOrg(targetUserId: string, homeOrgId: string, roleId: string) {
+  return withServiceTx(async (tx) => {
+    await tx.execute(sql`
+      UPDATE iam.users
+      SET org_id = ${homeOrgId}::uuid, role_id = ${roleId}::uuid, updated_at = NOW()
+      WHERE id = ${targetUserId}::uuid
+    `);
+  });
+}
+
 export async function syncOrgMappingRole(ctx: RoleTxContext, userId: string, roleId: string) {
   return withRoleTx(ctx, async (tx) => {
     await tx
@@ -669,8 +1003,35 @@ export async function adminResetPassword(
 export async function listOrgMappings(userId: string) {
   return withServiceTx((tx) =>
     tx
-      .select()
+      .select({
+        userId:           vwUserOrgAccess.userId,
+        userFullName:     vwUserOrgAccess.userFullName,
+        userEmail:        vwUserOrgAccess.userEmail,
+        userIsActive:     vwUserOrgAccess.userIsActive,
+        orgId:            vwUserOrgAccess.orgId,
+        orgName:          vwUserOrgAccess.orgName,
+        tenantId:         vwUserOrgAccess.tenantId,
+        tenantName:       vwUserOrgAccess.tenantName,
+        roleName:         vwUserOrgAccess.roleName,
+        roleLabel:        vwUserOrgAccess.roleLabel,
+        roleRank:         vwUserOrgAccess.roleRank,
+        grantedAt:        vwUserOrgAccess.grantedAt,
+        mappingUpdatedAt: vwUserOrgAccess.mappingUpdatedAt,
+        // Not on the view, and both needed to seed the Edit user form: without
+        // role_id the form cannot preselect each branch's role, and without the
+        // weight an edit would round-trip every branch back to 0.
+        roleId:               userOrgMappingTable.roleId,
+        leadAssignmentWeight: userOrgMappingTable.leadAssignmentWeight,
+        isActive:             userOrgMappingTable.isActive,
+      })
       .from(vwUserOrgAccess)
+      .innerJoin(
+        userOrgMappingTable,
+        and(
+          eq(userOrgMappingTable.userId, vwUserOrgAccess.userId),
+          eq(userOrgMappingTable.orgId, vwUserOrgAccess.orgId),
+        ),
+      )
       .where(eq(vwUserOrgAccess.userId, userId))
       .orderBy(desc(vwUserOrgAccess.grantedAt)),
   );

@@ -42,6 +42,14 @@ export type GetAssignableQuery = z.infer<typeof getAssignableQuerySchema>;
 // decoded-size check (not this one) is what rejects an oversize image.
 const PHOTO_MAX_B64_CHARS = 2_900_000;
 
+// Both new lookups are scoped to one branch. org_id is optional and defaults to
+// the actor's own org; the service checks it belongs to the actor's tenant.
+export const orgScopedQuerySchema = z.object({
+  org_id: z.string().uuid().optional(),
+});
+
+export type OrgScopedQuery = z.infer<typeof orgScopedQuerySchema>;
+
 export const uploadPhotoSchema = z.object({
   photo: z.string().min(1).max(PHOTO_MAX_B64_CHARS),
   content_type: z.enum(['image/jpeg', 'image/png', 'image/webp']).optional(),

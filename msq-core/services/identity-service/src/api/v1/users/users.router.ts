@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../../middleware/auth.middleware.js';
 import { validate } from '../../../middleware/validate.middleware.js';
 import { createUserSchema, updateUserSchema, resetPasswordSchema, updateAssignmentWeightsSchema, addOrgMappingSchema } from '@platform/validation';
-import { listUsersQuerySchema, getAssignableQuerySchema, uploadPhotoSchema } from './users.schema.js';
+import { listUsersQuerySchema, getAssignableQuerySchema, uploadPhotoSchema, orgScopedQuerySchema } from './users.schema.js';
 import { UsersController } from './users.controller.js';
 import { PhotosController } from './photos.controller.js';
 
@@ -15,7 +15,10 @@ export async function usersRouter(app: FastifyInstance) {
 
   app.get('/users',            { preHandler: [authenticate, validate({ query: listUsersQuerySchema })] }, ctrl.list);
   app.get('/users/assignable', { preHandler: [authenticate, validate({ query: getAssignableQuerySchema })] }, ctrl.getAssignable);
-  app.get('/users/assignment-weights', { preHandler: [authenticate] }, ctrl.getAssignmentWeights);
+  app.get('/users/assignment-weights', { preHandler: [authenticate, validate({ query: orgScopedQuerySchema })] }, ctrl.getAssignmentWeights);
+  // Registered before `/users/:id` so the literal segments are unambiguous.
+  app.get('/users/role-catalog',       { preHandler: [authenticate] }, ctrl.getRoleCatalog);
+  app.get('/users/manager-candidates', { preHandler: [authenticate, validate({ query: orgScopedQuerySchema })] }, ctrl.getManagerCandidates);
   app.put('/users/assignment-weights', { preHandler: [authenticate, validate({ body: updateAssignmentWeightsSchema })] }, ctrl.updateAssignmentWeights);
   app.get('/users/team',       { preHandler: [authenticate] }, ctrl.getTeam);
   app.get('/users/org-chart',  { preHandler: [authenticate] }, ctrl.getOrgChart);

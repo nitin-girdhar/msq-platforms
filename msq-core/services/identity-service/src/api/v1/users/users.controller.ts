@@ -39,8 +39,26 @@ export class UsersController {
 
   getAssignmentWeights = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id } = request.auth;
-    const weights = await service.getAssignmentWeights({ org_id, user_id, role, tenant_id });
+    const { org_id: queryOrgId } = request.query as { org_id?: string };
+    const weights = await service.getAssignmentWeights({ org_id, user_id, role, tenant_id }, queryOrgId);
     return reply.send({ success: true, data: weights });
+  };
+
+  // Assignable roles for this tenant, already capped at the actor's own rank —
+  // the dropdown cannot offer a role the write would refuse.
+  getRoleCatalog = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to view roles');
+    const data = await service.getRoleCatalog({ org_id, user_id, role, tenant_id }, rank);
+    return reply.send({ success: true, data });
+  };
+
+  getManagerCandidates = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to view managers');
+    const { org_id: queryOrgId } = request.query as { org_id?: string };
+    const data = await service.getManagerCandidates({ org_id, user_id, role, tenant_id }, queryOrgId ?? org_id);
+    return reply.send({ success: true, data });
   };
 
   updateAssignmentWeights = async (request: FastifyRequest, reply: FastifyReply) => {

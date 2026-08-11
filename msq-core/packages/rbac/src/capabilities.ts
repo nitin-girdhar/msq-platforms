@@ -46,7 +46,7 @@ export const CAPABILITY = {
   HR_LEAVE_ADMIN_HOLIDAYS:          'hr.leave.admin.holidays',
   HR_LEAVE_ADMIN_POLICIES:          'hr.leave.admin.policies',
 
-  // ── Operations (68) ──
+  // ── Operations (69) ──
   ADMIN_LOOKUPS_MANAGE:                    'admin.lookups.manage',
   ADMIN_ROLES_MANAGE:                      'admin.roles.manage',
   HR_ATTENDANCE_ADMIN_ASSIGNMENTS_MANAGE:  'hr.attendance.admin.assignments.manage',
@@ -90,6 +90,7 @@ export const CAPABILITY = {
   LMS_FOLLOWUPS_DELETE:                    'lms.followups.delete',
   LMS_FOLLOWUPS_EDIT:                      'lms.followups.edit',
   LMS_FOLLOWUPS_VIEW:                      'lms.followups.view',
+  LMS_HISTORY_DETAIL_VIEW:                 'lms.history.detail.view',
   LMS_HISTORY_VIEW:                        'lms.history.view',
   LMS_LEADS_ASSIGN:                        'lms.leads.assign',
   LMS_LEADS_CREATE:                        'lms.leads.create',

@@ -209,4 +209,8 @@ INSERT INTO public.schema_versions (version, description) VALUES
   ('1.34.0', 'lms.lead_report_snapshot gains source_id/source_label so the public lead report''s per-source grids can compare against a prior day, not just live data. Unique key widened to (tenant_id, org_id, assigned_user_id, source_id, report_date); existing rows backfilled to source_id NULL / source_label ''Unknown''. send-lead-report.ts now writes one row per (branch, assignee, source) plus zero-fill placeholders per (branch, source), sourced from the same getTenantSourceReport() query the live page uses.')
   ON CONFLICT (version) DO NOTHING;
 
+INSERT INTO public.schema_versions (version, description) VALUES
+  ('1.35.0', 'New capability lms.history.detail.view — the Lead History dialog opened from a Leads History row now carries its own permission under the lms.history page instead of borrowing lms.leads.view / lms.leads.timeline.view from the Leads page. Denying the Leads page to org_admin/tenant_admin (2026-08-07) pruned those two operations and broke the dialog on a page both roles still hold. leads-service gains requireAnyCapability and accepts either key on GET /leads/:id, /leads/:id/timeline and /leads/:id/form-data; row scoping is untouched and still comes from lms.history.view''s scope ladder plus RLS. Back-filled for every role already holding lms.history.view, platform-default and per-tenant copies alike.')
+  ON CONFLICT (version) DO NOTHING;
+
 COMMIT;

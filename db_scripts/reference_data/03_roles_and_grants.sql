@@ -69,6 +69,7 @@ FROM (VALUES
   'platform',
   'lms','lms.dashboard.view','lms.leads.view','lms.leads.view.org',
   'lms.leads.timeline.view','lms.followups.view',
+  'lms.history.detail.view',
   'lms.history.view','lms.history.view.org',
   'lms.assignments.view',
   'hr.attendance','hr.attendance.view','hr.attendance.view.own',
@@ -84,6 +85,7 @@ FROM (VALUES
   'lms.leads.create','lms.leads.edit','lms.leads.edit.own',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit',
+  'lms.history.detail.view',
   'lms.history.view','lms.history.view.own',
   'lms.assignments.view',
   'hr.attendance','hr.attendance.view','hr.attendance.view.own',
@@ -109,6 +111,7 @@ FROM (VALUES
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
+  'lms.history.detail.view',
   'lms.history.view','lms.history.view.own','lms.history.view.team',
   'lms.assignments.view','lms.assignments.edit',
   'lms.users.view','lms.users.view.team',
@@ -136,6 +139,7 @@ FROM (VALUES
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
+  'lms.history.detail.view',
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.users.view','lms.users.view.team','lms.users.view.org',
@@ -168,6 +172,7 @@ FROM (VALUES
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
+  'lms.history.detail.view',
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.users.view','lms.users.view.team','lms.users.view.org',
@@ -238,6 +243,7 @@ FROM (VALUES
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.any',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
+  'lms.history.detail.view',
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.analytics.view',
@@ -282,6 +288,7 @@ FROM (VALUES
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.any',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
+  'lms.history.detail.view',
   'lms.history.view','lms.history.view.own','lms.history.view.team',
   'lms.history.view.org','lms.history.view.tenant',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
@@ -501,6 +508,41 @@ SELECT r.tenant_id, r.id, c.id, TRUE
 FROM iam.user_roles r
 JOIN iam.capabilities c ON c.key IN ('lms.analytics','lms.analytics.view')
 WHERE r.name IN ('org_manager','org_sr_manager') AND r.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = TRUE;
+
+
+-- ── Back-fill: lms.history.detail.view (Lead History dialog) ────────
+-- Same trap as the WhatsApp back-fill above, and the same remedy: pin the new
+-- capability to one that already has exactly the right audience. Whoever may
+-- read the history list may open a row from it, so this follows
+-- lms.history.view — for the per-tenant ladder copies AND for the anchors,
+-- including tenant-scoped copies of org_admin/tenant_admin that a tenant
+-- provisioned before those two became global.
+--
+-- This is what makes the dialog independent of the Leads page: a role denied
+-- 'lms.leads' loses lms.leads.view and lms.leads.timeline.view with it, and
+-- before this capability existed that silently broke the dialog on the history
+-- page the role still holds.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.history.view'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'lms.history.detail.view'
+  AND rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO UPDATE SET is_granted = TRUE;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.history.view'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'lms.history.detail.view'
+  AND rc.is_granted
+  AND rc.tenant_id IS NOT NULL
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO UPDATE SET is_granted = TRUE;
 

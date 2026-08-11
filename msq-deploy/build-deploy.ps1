@@ -22,13 +22,22 @@
     cross-repo service DNS (api-gateway -> leads-service, hr-service, ...)
     resolve on the server.
 
+    Only repos whose build-relevant source actually changed since the last
+    successful build get rebuilt (see "Change detection" below); the bundle is
+    always packaged from the full image set, so a one-repo change still ships a
+    complete artifact.
+
 .EXAMPLE
     .\msq-deploy\build-deploy.ps1
     .\msq-deploy\build-deploy.ps1 -SkipBuild            # repackage without rebuilding
+    .\msq-deploy\build-deploy.ps1 -Force                # rebuild every repo, ignore the cache
     .\msq-deploy\build-deploy.ps1 -Repos msq-core,msq-lms   # subset of child repos
+    .\msq-deploy\build-deploy.ps1 -WhatIfChanged        # just report what would build
 #>
 param(
     [switch]$SkipBuild,
+    [switch]$Force,
+    [switch]$WhatIfChanged,
     [string[]]$Repos
 )
 
@@ -47,6 +56,7 @@ $ProjectRoot  = Split-Path -Parent $PSScriptRoot
 $ArtifactsDir = Join-Path $PSScriptRoot 'artifacts'
 $DbScriptsDst = Join-Path $ArtifactsDir 'db_scripts'
 $TarFile      = Join-Path $ArtifactsDir 'msq-images.tar'
+$StateFile    = Join-Path $PSScriptRoot '.build-state.json'
 $ComposeDst   = Join-Path $ArtifactsDir 'docker-compose.yml'
 $EnvDst       = Join-Path $ArtifactsDir '.env.example'
 
@@ -120,6 +130,88 @@ function Get-NativeOutput([scriptblock]$block) {
     $ErrorActionPreference = 'Continue'
     try { $out = & $block 2>$null } finally { $ErrorActionPreference = $savedEAP }
     return $out
+}
+
+# -- Change detection helpers -------------------------------------------------
+# Which paths inside a repo can change one of its Docker images. Everything
+# else (docs, the deploy bundle itself, db_scripts - which is copied into the
+# artifact on every run regardless) is excluded so a README edit does not cost
+# a 400s rebuild.
+function Get-RepoPathspec([string]$RepoDir) {
+    if ($RepoDir -eq $ProjectRoot) {
+        # db_scripts/ is packaged (Step 7) but never baked into an image, and
+        # msq-deploy/ holds this script plus the artifacts it writes - letting
+        # either in would mark the root dirty on every single build.
+        return @('.', ':(exclude)docs', ':(exclude)db_scripts', ':(exclude)db_backups',
+                 ':(exclude)msq-deploy', ':(exclude)skills', ':(exclude)*.md')
+    }
+    return @('.', ':(exclude)docs', ':(exclude)*.md')
+}
+
+# A content fingerprint of the repo's build inputs - deliberately NOT the HEAD
+# sha: commits that only touch docs must not trigger a rebuild, and an
+# uncommitted edit must. So hash the index entries (`ls-files -s` gives the
+# blob sha of every tracked file) plus the real working-tree content of
+# anything modified or untracked. Returns $null if the folder is not a git
+# repo, which callers treat as "always rebuild".
+function Get-RepoFingerprint([string]$RepoDir) {
+    $specs = Get-RepoPathspec $RepoDir
+
+    $tracked = Get-NativeOutput { git -c core.quotePath=false -C $RepoDir ls-files -s -- @specs }
+    if ($LASTEXITCODE -ne 0) { return $null }
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($t in @($tracked)) { if ($t) { $lines.Add([string]$t) } }
+
+    $dirty     = @(Get-NativeOutput { git -c core.quotePath=false -C $RepoDir diff --name-only -- @specs })
+    $untracked = @(Get-NativeOutput { git -c core.quotePath=false -C $RepoDir ls-files --others --exclude-standard -- @specs })
+
+    $work = @($dirty + $untracked | Where-Object { $_ -and $_.Trim() } | Sort-Object -Unique)
+    $present = @()
+    foreach ($f in $work) {
+        if (Test-Path -LiteralPath (Join-Path $RepoDir $f)) { $present += $f }
+        # A staged deletion already shows up in `ls-files -s`; an unstaged one
+        # has no content to hash, so record the path alone.
+        else { $lines.Add("deleted $f") }
+    }
+    # Hashed in batches rather than one git process per file, which costs
+    # seconds once a working tree has dozens of edits. Not `--stdin-paths`:
+    # Windows PowerShell 5.1 prefixes a UTF-8 BOM onto the first piped line, and
+    # git then fails with `could not open '<BOM>path'`. Passing the paths as
+    # arguments sidesteps the pipe entirely; 200 at a time stays well inside the
+    # command-line length limit.
+    for ($start = 0; $start -lt $present.Count; $start += 200) {
+        $chunk  = @($present[$start..([Math]::Min($start + 199, $present.Count - 1))])
+        $hashes = @(Get-NativeOutput { git -C $RepoDir hash-object -- @chunk })
+        if ($LASTEXITCODE -ne 0 -or $hashes.Count -ne $chunk.Count) { return $null }
+        for ($i = 0; $i -lt $chunk.Count; $i++) { $lines.Add("work $($hashes[$i]) $($chunk[$i])") }
+    }
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
+# Uncommitted paths, for the human-readable "why is this rebuilding" line.
+function Get-RepoDirtyFiles([string]$RepoDir) {
+    $specs = Get-RepoPathspec $RepoDir
+    $out = Get-NativeOutput { git -c core.quotePath=false -C $RepoDir status --porcelain -- @specs }
+    if ($LASTEXITCODE -ne 0) { return @() }
+    return @($out | Where-Object { $_ -and $_.Trim() })
+}
+
+# The images this one repo owns, so a repo whose fingerprint is unchanged but
+# whose images have been pruned still gets rebuilt instead of failing Step 3.
+function Get-RepoImages([string]$RepoDir) {
+    $file = Join-Path $RepoDir 'docker-compose-linux.yml'
+    $envf = Join-Path $RepoDir '.env.example'
+    $out = Get-NativeOutput {
+        docker compose -f $file --env-file $envf --project-directory $RepoDir config --images
+    }
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return @($out | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() } | Sort-Object -Unique)
 }
 
 # `docker compose config` resolves every relative path (bind-mount sources,
@@ -219,11 +311,106 @@ $env:COMPOSE_DOCKER_CLI_BUILD = '1'
 # Invoke-NativeWithRetry) - that pull is a handful of small images, so losing
 # parallelism there only costs seconds.
 
-# -- Step 1: Build every repo -------------------------------------------------
+# -- Change detection ---------------------------------------------------------
+# Compare each repo's current build-input fingerprint against the one recorded
+# by its last successful build (.build-state.json, next to this script) and
+# build only what moved. Docker's own layer cache already makes a no-op rebuild
+# cheapish, but it still pays the full `COPY . .` context upload plus a
+# `pnpm install --frozen-lockfile` cache probe per service - minutes across ~15
+# images - so skipping the repo outright is what actually saves the time.
+Write-Step 'Detecting changed repos'
+
+$PrevState = @{}
+# Loaded even under -Force: repos outside a -Repos subset keep their recorded
+# fingerprint instead of being reset to "never built".
+if (Test-Path $StateFile) {
+    try {
+        $json = Get-Content -Raw -LiteralPath $StateFile | ConvertFrom-Json
+        foreach ($p in $json.PSObject.Properties) { $PrevState[$p.Name] = [string]$p.Value }
+    } catch {
+        Write-Host '  state file unreadable - treating every repo as changed' -ForegroundColor Yellow
+    }
+} else {
+    Write-Host '  no previous build state - first build of every repo' -ForegroundColor Yellow
+}
+
+$Fingerprints = @{}
+$BuildReason  = [ordered]@{}
+
+foreach ($r in $RepoDirs) {
+    $name = Split-Path -Leaf $r
+    $fp   = Get-RepoFingerprint $r
+    $Fingerprints[$name] = $fp
+
+    if ($Force)                          { $BuildReason[$name] = 'forced (-Force)'; continue }
+    if (-not $fp)                        { $BuildReason[$name] = 'no git metadata - cannot tell'; continue }
+    if (-not $PrevState.ContainsKey($name)) { $BuildReason[$name] = 'never built from this checkout'; continue }
+    if ($PrevState[$name] -ne $fp) {
+        # @() because PowerShell unwraps a single-element array on return.
+        $dirty  = @(Get-RepoDirtyFiles $r)
+        $detail = if ($dirty.Count -gt 0) {
+            $shown = ($dirty | Select-Object -First 3 | ForEach-Object { $_.Trim() }) -join '; '
+            "source changed ($($dirty.Count) uncommitted: $shown$(if ($dirty.Count -gt 3) { ' ...' }))"
+        } else {
+            'source changed (committed)'
+        }
+        $BuildReason[$name] = $detail
+        continue
+    }
+
+    $imgs = @(Get-RepoImages $r)
+    if (-not $imgs) {
+        $BuildReason[$name] = 'image list unavailable - rebuilding to be safe'
+        continue
+    }
+    $gone = @($imgs | Where-Object { -not (Get-NativeOutput { docker images -q $_ }) })
+    if ($gone.Count -gt 0) {
+        $BuildReason[$name] = "unchanged but $($gone.Count) image(s) missing locally"
+    }
+}
+
+# Every child repo builds with the platform root as its Docker context and
+# resolves @platform/* from msq-core through the shared pnpm workspace, so a
+# root change invalidates the children too - rebuilding only the root would
+# ship children still linked against the previous shared packages.
+$rootName = Split-Path -Leaf $ProjectRoot
+if ($BuildReason.Contains($rootName)) {
+    foreach ($r in $RepoDirs) {
+        $name = Split-Path -Leaf $r
+        if (-not $BuildReason.Contains($name)) {
+            $BuildReason[$name] = "$rootName changed (shared build context / @platform packages)"
+        }
+    }
+}
+
+$ReposToBuild = @($RepoDirs | Where-Object { $BuildReason.Contains((Split-Path -Leaf $_)) })
+
+foreach ($r in $RepoDirs) {
+    $name = Split-Path -Leaf $r
+    if ($BuildReason.Contains($name)) {
+        Write-Host ("  BUILD  {0,-22} {1}" -f $name, $BuildReason[$name]) -ForegroundColor Yellow
+    } else {
+        Write-Host ("  skip   {0,-22} unchanged since last build" -f $name) -ForegroundColor DarkGray
+    }
+}
+Write-Host "  $($ReposToBuild.Count) of $($RepoDirs.Count) repo(s) need a build" -ForegroundColor Green
+
+if ($WhatIfChanged) {
+    Write-Host "`n-WhatIfChanged: stopping before build/package." -ForegroundColor Cyan
+    $BuildStopwatch.Stop()
+    return
+}
+
+# -- Step 1: Build changed repos ----------------------------------------------
+$NewState = @{}
+foreach ($kv in $PrevState.GetEnumerator()) { $NewState[$kv.Key] = $kv.Value }
+
 if ($SkipBuild) {
     Write-Step 'Skipping Docker build (repackage only)'
+} elseif ($ReposToBuild.Count -eq 0) {
+    Write-Step 'No repo changed - skipping Docker build entirely'
 } else {
-    foreach ($r in $RepoDirs) {
+    foreach ($r in $ReposToBuild) {
         $name = Split-Path -Leaf $r
         Write-Step "Building images: $name"
         Push-Location $r
@@ -260,7 +447,16 @@ if ($SkipBuild) {
         } finally {
             Pop-Location
         }
+
+        # Flushed after each repo, not once at the end: if a later repo fails
+        # (or the run is Ctrl-C'd), the repos already built must still count as
+        # up to date on the next run - that is the whole point of the cache.
+        if ($Fingerprints[$name]) {
+            $NewState[$name] = $Fingerprints[$name]
+            [System.IO.File]::WriteAllText($StateFile, ($NewState | ConvertTo-Json))
+        }
     }
+    Write-Host "  build state recorded in $(Split-Path -Leaf $StateFile)" -ForegroundColor DarkGray
 }
 
 # -- Step 2: Merge the linux compose files ------------------------------------

@@ -89,6 +89,9 @@ ec2-deploy/deploy.sh
 # untracked the next time the bundle layout changes.
 msq-deploy/artifacts/
 msq-deploy/msq-images.tar
+# Per-machine incremental-build cache (repo name -> source fingerprint of its
+# last successful build). Local state, never shared.
+msq-deploy/.build-state.json
 DB_Migration/.gitignore
 DB_Migration/export_source.ps1
 DB_Migration/README.md

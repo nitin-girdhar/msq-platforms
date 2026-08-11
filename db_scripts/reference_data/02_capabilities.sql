@@ -127,6 +127,16 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'All activity across every branch in the tenant.', 4),
 ('lms.history.view.all',    'scope', 'lms.history.view', 'Every tenant',
  'All activity platform-wide. Crosses the tenant boundary.', 5),
+-- The Lead History dialog opened from a history row reads the lead, its timeline
+-- and its original form submission. Those three reads used to be gated on
+-- lms.leads.view / lms.leads.timeline.view, which live under the LEADS page —
+-- so taking the Leads page away from a role (org_admin and tenant_admin, since
+-- 2026-08-07) pruned them and broke the dialog on a page the role still holds.
+-- Owning the read here means the history page carries its own permission.
+-- Row scoping is unchanged: it still comes from lms.history.view's scope ladder
+-- and RLS, so this widens which BUTTON works, never which rows come back.
+('lms.history.detail.view', 'operation', 'lms.history', 'Open lead history detail',
+ 'Open the Lead History dialog on a history row — the lead''s details, activity timeline and original form submission.', 2),
 
 ('lms.assignments', 'page', 'lms', 'Assignments',
  'The lead assignment queue and its history.', 5),

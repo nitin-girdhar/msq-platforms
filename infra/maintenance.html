@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Under maintenance · Fitclass</title>
+<meta name="description" content="The FitClass platform is temporarily unavailable for scheduled maintenance." />
+<meta name="robots" content="noindex" />
+<!-- Served while the app containers are down, so it must be a single file with
+     zero external requests: no CDN font, no logo asset, no JS bundle. The
+     wordmark is rendered as text inside the same navy badge the auth screens
+     use, and the font stack falls back to system UI where Inter isn't present.
+     Re-checks every 60s so an idle tab recovers on its own once we're back. -->
+<meta http-equiv="refresh" content="60" />
+<style>
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    background: #F8FAFC;
+    color: #0F172A;
+    -webkit-font-smoothing: antialiased;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+  }
+
+  .page {
+    display: flex;
+    min-height: 100vh;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+  }
+
+  .shell { width: 100%; max-width: 28rem; }
+
+  .brand {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 32px;
+  }
+
+  .brand-badge {
+    background: #0b1f3a;
+    border-radius: 16px;
+    padding: 16px 24px;
+    color: #fff;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  .card {
+    background: #fff;
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 1px 2px 0 rgb(15 23 42 / 0.05);
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #EFF6FF;
+    color: #0b6cbf;
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: #1e88e5;
+  }
+
+  h1 {
+    margin: 16px 0 0;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #0F172A;
+  }
+
+  .lede {
+    margin: 8px 0 0;
+    font-size: 14px;
+    line-height: 1.65;
+    color: #64748B;
+  }
+
+  dl {
+    margin: 20px 0 0;
+    background: #F8FAFC;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 12px;
+  }
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .row + .row { margin-top: 8px; }
+
+  dt { font-weight: 500; color: #64748B; }
+  dd { margin: 0; text-align: right; font-weight: 600; color: #0F172A; }
+
+  .actions { margin-top: 24px; }
+
+  .btn {
+    display: block;
+    width: 100%;
+    background: #0b1f3a;
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    padding: 11px 16px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .btn:hover { background: #123056; }
+
+  .foot {
+    margin: 24px 0 0;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.65;
+    color: #94A3B8;
+  }
+
+  .foot a { color: #64748B; }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="shell">
+      <div class="brand">
+        <div class="brand-badge">FitClass</div>
+      </div>
+
+      <div class="card">
+        <span class="pill"><span class="dot"></span>Maintenance</span>
+
+        <h1>We&rsquo;ll be back shortly</h1>
+        <p class="lede">
+          The FitClass platform is temporarily offline while we complete scheduled
+          maintenance. No data is affected &mdash; anything you saved before the
+          window started is safe, and everything will be exactly where you left it.
+        </p>
+
+        <dl>
+          <div class="row">
+            <dt>Status</dt>
+            <dd>Maintenance in progress</dd>
+          </div>
+          <div class="row">
+            <dt>Affects</dt>
+            <dd>LMS, HRMS</dd>
+          </div>
+        </dl>
+
+        <div class="actions">
+          <a class="btn" href="/">Try again</a>
+        </div>
+      </div>
+
+      <p class="foot">
+        This page refreshes on its own every minute. If it persists well past the
+        expected window, contact your administrator.
+      </p>
+    </div>
+  </div>
+</body>
+</html>

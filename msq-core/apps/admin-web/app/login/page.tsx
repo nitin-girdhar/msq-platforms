@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@platform/ui-kit/server';
+import { adminWebOrigin } from '@platform/ui-kit';
 import LoginForm from '@/components/auth/LoginForm';
 
 export const metadata: Metadata = {
@@ -24,12 +25,19 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     searchParams,
   ]);
 
-  const safeCallback =
+  const callbackPath =
     params.callbackUrl && params.callbackUrl.startsWith('/')
       ? params.callbackUrl
       : '/dashboard';
 
-  if (authed) redirect(safeCallback);
+  // For auth-web's callback validation, we need an absolute URL, not a relative path.
+  // Build the full admin-web URL that auth-web will redirect back to after login.
+  const adminOrigin = adminWebOrigin();
+  const absoluteCallback = adminOrigin
+    ? `${adminOrigin}${callbackPath}`
+    : callbackPath;
+
+  if (authed) redirect(callbackPath);
 
   return (
     <div className="grid h-full w-full overflow-y-auto bg-white lg:grid-cols-2">
@@ -81,7 +89,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             </p>
           </header>
 
-          <LoginForm callbackUrl={safeCallback} />
+          <LoginForm callbackUrl={absoluteCallback} />
 
           <p className="mt-8 text-center text-xs leading-relaxed text-slate-400 lg:text-left">
             Access is restricted to org and tenant admin accounts. By signing in

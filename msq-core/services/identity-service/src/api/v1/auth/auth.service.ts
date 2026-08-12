@@ -316,45 +316,55 @@ export async function changePassword(
   const new_hash = await hashPassword(new_password);
   const updated = await repo.changePassword(user_id, new_hash);
 
-  // A user who just proved knowledge of their current password and rotated it
-  // should not stay locked out by failures that preceded the change. Best-effort:
-  // the password change itself already committed, so a hiccup here must not turn
-  // a successful change into a client-visible 500 (mirrors logout's revocation
-  // handling in auth.controller.ts).
+  // Password is now persisted. All operations below are best-effort: if any fail,
+  // we MUST still return a valid token since the password change succeeded.
+  const pca = updated?.password_changed_at;
+  const pwd_iat = pca
+    ? Math.floor(new Date(pca as unknown as string | Date).getTime() / 1000)
+    : Math.floor(Date.now() / 1000);
+
+  let licensed_products: ProductKey[] = [];
+  try {
+    licensed_products = await getLicensedProducts(db_user.tenant_id);
+  } catch (err) {
+    console.error('[auth] getLicensedProducts failed after password change:', (err as Error).message, db_user.tenant_id);
+  }
+
+  let new_token: string;
+  try {
+    new_token = signJwt({
+      sub: db_user.id,
+      email: db_user.email,
+      platform_role: platformRoleOf(db_user),
+      org_id: db_user.org_id,
+      tenant_id: db_user.tenant_id,
+      licensed_products,
+      pwd_iat,
+      force_password_change: false,
+    });
+  } catch (err) {
+    console.error('[auth] signJwt failed after password change:', (err as Error).message, db_user.id);
+    // Fallback: sign a minimal token without licensed_products claim
+    new_token = signJwt({
+      sub: db_user.id,
+      email: db_user.email,
+      platform_role: platformRoleOf(db_user),
+      org_id: db_user.org_id,
+      tenant_id: db_user.tenant_id,
+      licensed_products: [],
+      pwd_iat,
+      force_password_change: false,
+    });
+  }
+
+  // Best-effort: clear lockout, revoke other sessions, log the change.
+  // Password is already persisted; these must NOT fail the response.
   try {
     await repo.clearLockout(user_id);
   } catch (err) {
     console.error('[auth] clearLockout failed after password change:', (err as Error).message, user_id);
   }
 
-  const pca = updated?.password_changed_at;
-  const pwd_iat = pca ? Math.floor(pca.getTime() / 1000) : Math.floor(Date.now() / 1000);
-
-  let licensed_products: ProductKey[] = [];
-  try {
-    licensed_products = await getLicensedProducts(db_user.tenant_id);
-  } catch (err) {
-    console.error('[auth] getLicensedProducts failed during password change:', (err as Error).message, db_user.tenant_id);
-  }
-
-  const new_token = signJwt({
-    sub: db_user.id,
-    email: db_user.email,
-    platform_role: platformRoleOf(db_user),
-    org_id: db_user.org_id,
-    tenant_id: db_user.tenant_id,
-    licensed_products,
-    pwd_iat,
-    force_password_change: false,
-  });
-
-  // Invalidate every previously issued session for this user (other devices,
-  // stolen tokens) so the password change takes effect immediately across all
-  // services — not just at /auth/me. Scope the revocation to the freshly issued
-  // token's iat so the replacement session survives its own revocation.
-  // Best-effort for the same reason as clearLockout above — the password has
-  // already changed, so a failure here must not be reported as a failed
-  // password change.
   const newIat = decodeJwtUnchecked(new_token)?.iat ?? Math.floor(Date.now() / 1000);
   try {
     await revokeAllUserSessions(user_id, {
@@ -366,8 +376,6 @@ export async function changePassword(
     console.error('[auth] revokeAllUserSessions failed after password change:', (err as Error).message, user_id);
   }
 
-  // Best-effort for the same reason as above: the password has already changed,
-  // so an audit-log failure must not fail the entire request.
   try {
     await logActivity({ action_type: 'password_changed_self', performed_by: user_id, org_id: db_user.org_id });
   } catch (err) {

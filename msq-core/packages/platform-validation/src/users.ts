@@ -75,7 +75,7 @@ export const updateUserSchema = refineOrgAssignments(
     // Legacy single-branch move. When org_assignments is present the home branch
     // comes from home_org_id instead and this is ignored.
     org_id: z.string().uuid().optional(),
-    reassign_leads_to: z.string().uuid().optional(),
+    reassign_leads_to: z.string().uuid().nullable().optional(),
     org_assignments: z.array(orgAssignmentSchema).min(1).optional(),
     home_org_id: z.string().uuid().optional(),
   }),

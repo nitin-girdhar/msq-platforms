@@ -29,6 +29,14 @@ interface Props {
   orgs: OrgOption[];
 }
 
+interface AssignableUser {
+  id: string;
+  first_name?: string;
+  middle_name?: string;
+  last_name?: string;
+  email: string;
+}
+
 function displayName(u: UserRow): string {
   return [u.first_name, u.middle_name, u.last_name].filter(Boolean).join(' ').trim();
 }
@@ -49,6 +57,8 @@ export default function EditUserModal({ open, onClose, user, currentUserId, user
   const [resetOpen, setResetOpen] = useState(false);
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [deactivateReassignTo, setDeactivateReassignTo] = useState('');
+  const [lmsUsers, setLmsUsers] = useState<AssignableUser[]>([]);
+  const [lmsUsersLoading, setLmsUsersLoading] = useState(false);
 
   useEffect(() => {
     setFirstName(user.first_name ?? '');
@@ -62,7 +72,18 @@ export default function EditUserModal({ open, onClose, user, currentUserId, user
     setForcePasswordChange(Boolean(user.force_password_change));
     setDeactivateOpen(false);
     setDeactivateReassignTo('');
+    setLmsUsers([]);
   }, [user]);
+
+  useEffect(() => {
+    if (deactivateOpen) {
+      setLmsUsersLoading(true);
+      usersApi.getAssignable('lms', user.org_id)
+        .then((res) => setLmsUsers(res.data.filter((u) => u.id !== user.id)))
+        .catch(() => setLmsUsers([]))
+        .finally(() => setLmsUsersLoading(false));
+    }
+  }, [deactivateOpen, user.id, user.org_id]);
 
   const isSelf = user.id === currentUserId;
   const isChangingOrg = orgId !== user.org_id;
@@ -130,7 +151,8 @@ export default function EditUserModal({ open, onClose, user, currentUserId, user
 
   const handleConfirmDeactivate = async () => {
     const patch: Record<string, unknown> = { is_active: false };
-    if (deactivateReassignTo) patch.reassign_leads_to = deactivateReassignTo;
+    // Always include reassign_leads_to when deactivating: null means unassigned, UUID means assign to that user
+    patch.reassign_leads_to = deactivateReassignTo || null;
     const ok = await submitPatch(patch);
     if (ok) handleClose();
   };
@@ -295,23 +317,24 @@ export default function EditUserModal({ open, onClose, user, currentUserId, user
             <div className="flex flex-col gap-1.5 rounded-xl border border-red-200 bg-red-50 p-3">
               <p className="text-xs text-red-700">
                 Deactivating removes {displayName(user) || 'this user'}&apos;s login. Their currently assigned leads in{' '}
-                <span className="font-semibold">{user.org_name || 'this org'}</span> need a new owner.
+                <span className="font-semibold">{user.org_name || 'this org'}</span> will need to be assigned.
               </p>
-              <label htmlFor="eu-deactivate-reassign" className="text-xs font-semibold text-[#0F172A]">Reassign their current leads to</label>
+              <label htmlFor="eu-deactivate-reassign" className="text-xs font-semibold text-[#0F172A]">Reassign their leads to</label>
               <select
                 id="eu-deactivate-reassign"
                 value={deactivateReassignTo}
                 onChange={(e) => setDeactivateReassignTo(e.target.value)}
-                disabled={locked}
+                disabled={locked || lmsUsersLoading}
                 className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
               >
-                <option value="">
-                  {currentOrgActiveUsers.length === 0 ? '— No other active users in this org —' : 'Select a user…'}
-                </option>
-                {currentOrgActiveUsers.map((u) => (
+                <option value="">— Unassigned —</option>
+                {lmsUsers.map((u) => (
                   <option key={u.id} value={u.id}>{displayName(u) || u.email}</option>
                 ))}
               </select>
+              {!lmsUsersLoading && lmsUsers.length === 0 && (
+                <p className="text-[11px] text-red-600">No other LMS users available in this branch. Leads will remain unassigned.</p>
+              )}
               <div className="mt-1 flex justify-end gap-2">
                 <Button
                   variant="secondary"
@@ -323,7 +346,7 @@ export default function EditUserModal({ open, onClose, user, currentUserId, user
                 <Button
                   variant="primary"
                   onClick={handleConfirmDeactivate}
-                  disabled={locked || (currentOrgActiveUsers.length > 0 && !deactivateReassignTo)}
+                  disabled={locked}
                   className="!bg-red-600 hover:!bg-red-700"
                 >
                   Confirm deactivation

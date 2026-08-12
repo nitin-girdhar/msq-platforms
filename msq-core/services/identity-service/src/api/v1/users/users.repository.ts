@@ -768,7 +768,7 @@ export async function reassignUserLeadsInOrg(
   ctx: RoleTxContext,
   targetUserId: string,
   orgId: string,
-  reassignTo: string,
+  reassignTo: string | null,
 ): Promise<number> {
   return reassignOrgLeadsViaLeadsService({
     orgId,

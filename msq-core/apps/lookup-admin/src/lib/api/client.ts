@@ -171,6 +171,9 @@ export interface OrgMappingRow {
 export const users = {
   list: () => request<{ success: true; data: UserRow[] }>('/users'),
 
+  getAssignable: (product: 'lms' | 'tasks', orgId?: string, scope?: 'delegation' | 'collaboration') =>
+    request<{ success: true; data: UserRow[] }>(`/users/assignable?product=${product}${orgId ? `&org_id=${orgId}` : ''}${scope ? `&scope=${scope}` : ''}`),
+
   create: (body: Record<string, unknown>) =>
     request<{ success: true; data: { id: string; email: string }; temporary_password?: string }>('/users', {
       method: 'POST',

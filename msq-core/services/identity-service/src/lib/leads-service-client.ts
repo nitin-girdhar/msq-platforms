@@ -7,7 +7,7 @@ const INTERNAL_SECRET = process.env['INTERNAL_SERVICE_SECRET'] ?? '';
 export interface ReassignOrgLeadsParams {
   orgId: string;
   fromUserId: string;
-  toUserId: string;
+  toUserId: string | null;
   actorId: string;
 }
 

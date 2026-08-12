@@ -499,8 +499,8 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
   // moves a branch; that's isMovingBranch's job, which already handled its own
   // reassignment above if requested).
   let deactivationReassignedCount = 0;
-  if (data.is_active === false && !isMovingBranch && data.reassign_leads_to) {
-    deactivationReassignedCount = await repo.reassignUserLeadsInOrg(ctx, targetUserId, targetOrgId, data.reassign_leads_to);
+  if (data.is_active === false && !isMovingBranch && data.reassign_leads_to !== undefined) {
+    deactivationReassignedCount = await repo.reassignUserLeadsInOrg(ctx, targetUserId, targetOrgId, data.reassign_leads_to ?? null);
   }
 
   if (data.is_active === false) {
@@ -509,7 +509,7 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
       performed_by: ctx.user_id,
       subject_user_id: targetUserId,
       org_id: targetOrgId,
-      ...(data.reassign_leads_to ? { new_value: { reassigned_to: data.reassign_leads_to, reassigned_leads: deactivationReassignedCount } } : {}),
+      ...(data.reassign_leads_to !== undefined ? { new_value: { reassigned_to: data.reassign_leads_to, reassigned_leads: deactivationReassignedCount } } : {}),
     });
   } else if (data.is_active === true) {
     await logActivity({ action_type: 'user_reactivated', performed_by: ctx.user_id, subject_user_id: targetUserId, org_id: targetOrgId });

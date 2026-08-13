@@ -31,13 +31,13 @@ interface Props {
 
 interface AssignableUser {
   id: string;
-  first_name?: string;
-  middle_name?: string;
-  last_name?: string;
+  first_name?: string | null;
+  middle_name?: string | null;
+  last_name?: string | null;
   email: string;
 }
 
-function displayName(u: UserRow): string {
+function displayName(u: UserRow | AssignableUser): string {
   return [u.first_name, u.middle_name, u.last_name].filter(Boolean).join(' ').trim();
 }
 

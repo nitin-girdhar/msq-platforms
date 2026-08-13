@@ -354,8 +354,13 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
     throw new ForbiddenError('You cannot grant a role higher than your own');
   }
 
-  if (data.reassign_leads_to !== undefined && data.org_id === undefined && data.is_active !== false) {
-    throw new BadRequestError('reassign_leads_to can only be set together with org_id, or when deactivating a user');
+  if (
+    data.reassign_leads_to !== undefined &&
+    data.org_id === undefined &&
+    data.org_assignments === undefined &&
+    data.is_active !== false
+  ) {
+    throw new BadRequestError('reassign_leads_to can only be set together with org_id or org_assignments, or when deactivating a user');
   }
 
   const fields: UpdateUserFields = {};

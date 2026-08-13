@@ -61,6 +61,8 @@ export default function EditUserModal({
     setMobile(user.mobile ?? '');
     setMobileError(null);
     setForcePasswordChange(user.force_password_change);
+    setDeactivating(false);
+    setDeactivateReassignTo('');
   }, [user]);
 
   useEffect(() => {
@@ -119,6 +121,8 @@ export default function EditUserModal({
   const currentHomeRoleId = a.assignments.find((x) => x.org_id === a.homeOrgId)?.role_id;
   const roleChanged = Boolean(currentHomeRoleId) && currentHomeRoleId !== originalHomeRoleId;
   const [reassignLeadsTo, setReassignLeadsTo] = useState('');
+  const [deactivating, setDeactivating] = useState(false);
+  const [deactivateReassignTo, setDeactivateReassignTo] = useState('');
 
   const managerCandidates = users.filter((u) => u.is_active && u.id !== user.id);
 
@@ -185,7 +189,20 @@ export default function EditUserModal({
   };
 
   const handleToggleActive = async () => {
-    const ok = await submitPatch({ is_active: !user.is_active });
+    if (user.is_active) {
+      // Deactivating: give the admin a chance to move this user's open leads
+      // before the account goes dark, rather than submitting immediately.
+      setDeactivating(true);
+      return;
+    }
+    const ok = await submitPatch({ is_active: true });
+    if (ok) handleClose();
+  };
+
+  const confirmDeactivate = async () => {
+    const patch: Record<string, unknown> = { is_active: false };
+    if (deactivateReassignTo) patch.reassign_leads_to = deactivateReassignTo;
+    const ok = await submitPatch(patch);
     if (ok) handleClose();
   };
 
@@ -204,7 +221,7 @@ export default function EditUserModal({
           <button
             type="button"
             onClick={handleToggleActive}
-            disabled={locked}
+            disabled={locked || deactivating}
             className={
               user.is_active
                 ? 'rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60'
@@ -238,6 +255,43 @@ export default function EditUserModal({
           {error && (
             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
               {error}
+            </div>
+          )}
+
+          {deactivating && (
+            <div className="flex flex-col gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
+              <p className="text-[12.5px] leading-snug text-red-800">
+                Deactivating removes their access immediately. Their open leads in {user.org_name || 'their branch'}{' '}
+                need a new owner.
+              </p>
+              <label className="text-xs font-semibold text-[#0F172A]">Reassign their leads to</label>
+              <UserPicker
+                value={deactivateReassignTo}
+                onChange={setDeactivateReassignTo}
+                users={managerCandidates.filter((u) => u.org_id === user.org_id)}
+                disabled={locked}
+                allowEmpty
+                emptyLabel="— Leave them assigned —"
+                placeholder="— Leave them assigned —"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setDeactivating(false); setDeactivateReassignTo(''); }}
+                  disabled={locked}
+                  className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeactivate}
+                  disabled={locked}
+                  className="rounded-lg border border-red-300 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Confirm deactivation
+                </button>
+              </div>
             </div>
           )}
 

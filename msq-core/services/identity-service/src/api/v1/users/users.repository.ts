@@ -171,7 +171,7 @@ export async function updateAssignmentWeights(
       JOIN iam.user_roles ur ON ur.id = uom.role_id
       WHERE uom.org_id = ${ctx.org_id}::uuid AND uom.is_active
         AND ur.rank > ${RANK_READ_ONLY} AND ur.rank < ${RANK_ADMIN}
-        AND uom.user_id = ANY(${userIds}::uuid[])
+        AND uom.user_id IN (${sql.join(userIds.map((id) => sql`${id}::uuid`), sql`, `)})
     `)) as Array<{ user_id: string }>;
     const eligibleIds = new Set(eligible.map((r) => r.user_id));
     const ineligible = userIds.filter((id) => !eligibleIds.has(id));
@@ -430,7 +430,7 @@ export async function getRolesByIdsForTenant(roleIds: string[], tenantId: string
     const rows = (await tx.execute(sql`
       SELECT id, name, rank
       FROM iam.user_roles
-      WHERE id = ANY(${roleIds}::uuid[])
+      WHERE id IN (${sql.join(roleIds.map((id) => sql`${id}::uuid`), sql`, `)})
         AND is_active
         AND (tenant_id = ${tenantId}::uuid OR tenant_id IS NULL)
     `)) as Array<{ id: string; name: string; rank: number }>;
@@ -446,7 +446,7 @@ export async function getOrgsInTenant(orgIds: string[], tenantId: string) {
     const rows = (await tx.execute(sql`
       SELECT id, name
       FROM entity.organizations
-      WHERE id = ANY(${orgIds}::uuid[])
+      WHERE id IN (${sql.join(orgIds.map((id) => sql`${id}::uuid`), sql`, `)})
         AND tenant_id = ${tenantId}::uuid
         AND is_active AND NOT is_deleted
     `)) as Array<{ id: string; name: string }>;
@@ -916,10 +916,12 @@ export async function reconcileOrgAssignments(
       .map((r) => r.org_id);
 
     if (removed.length > 0) {
+      const removedOrgIds = sql.join(removed.map((id) => sql`${id}::uuid`), sql`, `);
+
       await tx.execute(sql`
         UPDATE iam.user_org_mapping
         SET is_active = false, updated_at = NOW()
-        WHERE user_id = ${targetUserId}::uuid AND org_id = ANY(${removed}::uuid[])
+        WHERE user_id = ${targetUserId}::uuid AND org_id IN (${removedOrgIds})
       `);
 
       // A reporting line in a branch the user no longer belongs to would leave
@@ -929,7 +931,7 @@ export async function reconcileOrgAssignments(
         UPDATE iam.reporting_lines
         SET effective_to = CURRENT_DATE, is_active = FALSE, updated_at = NOW()
         WHERE user_id = ${targetUserId}::uuid
-          AND org_id = ANY(${removed}::uuid[])
+          AND org_id IN (${removedOrgIds})
           AND NOT is_deleted AND effective_to IS NULL
           AND effective_from < CURRENT_DATE
       `);
@@ -938,7 +940,7 @@ export async function reconcileOrgAssignments(
         SET is_deleted = TRUE, is_active = FALSE,
             deleted_at = CLOCK_TIMESTAMP(), deleted_by = ${ctx.user_id}::uuid
         WHERE user_id = ${targetUserId}::uuid
-          AND org_id = ANY(${removed}::uuid[])
+          AND org_id IN (${removedOrgIds})
           AND NOT is_deleted AND effective_to IS NULL
       `);
     }

@@ -127,7 +127,7 @@ export async function getUserByIdAsService(userId: string) {
 // so the CAPABILITY.LMS filter below is hardcoded rather than parameterized like
 // getAssignableUsers' `product` — no other product manages weights through this
 // endpoint today.
-export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
+export async function getAssignmentWeights(ctx: RoleTxContext, orgId: string | undefined, tenantId: string) {
   const targetOrgId = orgId ?? ctx.org_id;
 
   const query = (tx: DrizzleTx) => tx.execute(sql`
@@ -152,7 +152,7 @@ export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
     ? await withRoleTx(ctx, query)
     : await withServiceTx(query);
 
-  return filterRowsByCapability(ctx.tenant_id, rows, CAPABILITY.LMS);
+  return filterRowsByCapability(tenantId, rows, CAPABILITY.LMS);
 }
 
 export async function updateAssignmentWeights(
@@ -207,16 +207,17 @@ export async function getAssignableUsers(
   ctx: RoleTxContext,
   actorRank: number,
   product: 'lms' | 'tasks',
-  orgId?: string,
-  scope: 'delegation' | 'collaboration' = 'delegation',
-  maxRank?: number,
-  tenantWide?: boolean,
+  orgId: string | undefined,
+  scope: 'delegation' | 'collaboration',
+  maxRank: number | undefined,
+  tenantWide: boolean | undefined,
+  tenantId: string,
 ) {
   const targetOrgId = orgId ?? ctx.org_id;
   // Same join pattern as listUsers: tenant admin+ with no explicit org_id sees
   // candidates across every branch in the tenant, not just their own.
   const scopeClause = tenantWide
-    ? sql`o.tenant_id = ${ctx.tenant_id}::uuid`
+    ? sql`o.tenant_id = ${tenantId}::uuid`
     : sql`uom.org_id = ${targetOrgId}::uuid`;
   // delegation: strictly below the actor (CRM lead hand-down).
   // collaboration: at or below the actor, so same-rank peers and the actor
@@ -242,7 +243,7 @@ export async function getAssignableUsers(
         AND ${rankFilter}
       ORDER BY ur.rank DESC, u.full_name
     `)) as Array<Record<string, unknown>>;
-    return filterRowsByCapability(ctx.tenant_id, rows, PRODUCT_CAPABILITY[product]);
+    return filterRowsByCapability(tenantId, rows, PRODUCT_CAPABILITY[product]);
   });
 }
 

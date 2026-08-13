@@ -213,4 +213,8 @@ INSERT INTO public.schema_versions (version, description) VALUES
   ('1.35.0', 'New capability lms.history.detail.view — the Lead History dialog opened from a Leads History row now carries its own permission under the lms.history page instead of borrowing lms.leads.view / lms.leads.timeline.view from the Leads page. Denying the Leads page to org_admin/tenant_admin (2026-08-07) pruned those two operations and broke the dialog on a page both roles still hold. leads-service gains requireAnyCapability and accepts either key on GET /leads/:id, /leads/:id/timeline and /leads/:id/form-data; row scoping is untouched and still comes from lms.history.view''s scope ladder plus RLS. Back-filled for every role already holding lms.history.view, platform-default and per-tenant copies alike.')
   ON CONFLICT (version) DO NOTHING;
 
+INSERT INTO public.schema_versions (version, description) VALUES
+  ('1.36.0', 'Dedup-superseded leads (marketing_leads.superseded_by IS NOT NULL — an old lead replaced by a newer submission with the same org_id+phone/email) were only excluded from the daily lead-report views, leaking into every other operational surface: the main leads list, follow-up queue, org/tenant dashboards, rep leaderboard, and lead assignment endpoints. lms.vw_org_performance_snapshot, lms.vw_tenant_full_dashboard and lms.vw_rep_performance now additionally filter superseded_by IS NULL, matching the pattern vw_lead_report_branch/user already used; lms.vw_dashboard_leads is left unfiltered by design since its callers (leads-service listLeads/listFollowUps/assignments queries) now apply the same filter themselves so a direct-ID lookup (getLeadById) can still resolve a superseded lead.')
+  ON CONFLICT (version) DO NOTHING;
+
 COMMIT;

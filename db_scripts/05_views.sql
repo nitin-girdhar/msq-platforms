@@ -327,7 +327,7 @@ WITH lead_counts AS (
     COUNT(*) FILTER (WHERE ls.name = 'converted')   AS converted_leads,
     COUNT(*) FILTER (WHERE ls.name = 'unqualified') AS unqualified_leads
   FROM lms.marketing_leads ml JOIN lms.lead_stage ls ON ls.id = ml.stage_id
-  WHERE NOT ml.is_deleted GROUP BY ml.org_id
+  WHERE NOT ml.is_deleted AND ml.superseded_by IS NULL GROUP BY ml.org_id
 ),
 interaction_stats AS (
   SELECT org_id, COUNT(*) AS total_interactions, COUNT(DISTINCT lead_id) AS leads_with_interactions
@@ -345,7 +345,7 @@ platform_usage AS (
     SELECT ac.org_id, mp.name AS most_used_platform, COUNT(ml.id) AS lead_count,
            ROW_NUMBER() OVER (PARTITION BY ac.org_id ORDER BY COUNT(ml.id) DESC) AS rn
     FROM marketing.ad_campaigns ac JOIN marketing.marketing_platforms mp ON mp.id = ac.platform_id
-    LEFT JOIN lms.marketing_leads ml ON ml.campaign_id = ac.id AND NOT ml.is_deleted
+    LEFT JOIN lms.marketing_leads ml ON ml.campaign_id = ac.id AND NOT ml.is_deleted AND ml.superseded_by IS NULL
     WHERE NOT ac.is_deleted GROUP BY ac.org_id, mp.name
   ) r WHERE rn = 1
 )
@@ -380,7 +380,7 @@ WITH org_leads AS (
     COUNT(*) FILTER (WHERE ls.name = 'unqualified')       AS unqualified_leads,
     COUNT(*) FILTER (WHERE ls.name = 'transferred_out')   AS transferred_out_leads
   FROM lms.marketing_leads ml JOIN lms.lead_stage ls ON ls.id = ml.stage_id
-  WHERE NOT ml.is_deleted GROUP BY ml.org_id
+  WHERE NOT ml.is_deleted AND ml.superseded_by IS NULL GROUP BY ml.org_id
 ),
 org_follow_ups AS (
   SELECT lf.org_id,
@@ -395,7 +395,7 @@ org_platform AS (
     SELECT ac.org_id, mp.name AS most_used_platform, COUNT(ml.id) AS cnt,
            ROW_NUMBER() OVER (PARTITION BY ac.org_id ORDER BY COUNT(ml.id) DESC) AS rn
     FROM marketing.ad_campaigns ac JOIN marketing.marketing_platforms mp ON mp.id = ac.platform_id
-    LEFT JOIN lms.marketing_leads ml ON ml.campaign_id = ac.id AND NOT ml.is_deleted
+    LEFT JOIN lms.marketing_leads ml ON ml.campaign_id = ac.id AND NOT ml.is_deleted AND ml.superseded_by IS NULL
     WHERE NOT ac.is_deleted GROUP BY ac.org_id, mp.name
   ) r WHERE rn = 1
 )
@@ -508,7 +508,7 @@ JOIN iam.users          u  ON u.id  = ml.assigned_user_id AND NOT u.is_deleted
 JOIN iam.user_roles     ur ON ur.id = u.role_id
                           AND (ur.tenant_id = o.tenant_id OR ur.tenant_id IS NULL)  -- global super_admin
 JOIN lms.lead_stage     ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
-WHERE NOT ml.is_deleted
+WHERE NOT ml.is_deleted AND ml.superseded_by IS NULL
 GROUP BY ml.org_id, o.name, u.id, u.full_name, u.email, ur.name;
 
 -- ─────────────────────────────────────────────────────────────────────────────

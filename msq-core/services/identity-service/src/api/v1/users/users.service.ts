@@ -228,10 +228,12 @@ export async function getAssignableUsers(
   // Leads History scope is 'tenant'/'all' but who hasn't picked a branch yet
   // should get the full candidate list, not silently just their home org's.
   const tenantWide = canQueryOtherOrg && !effectiveOrgId;
-  return repo.getAssignableUsers(ctx, actorRank, product, effectiveOrgId, scope, maxRank, tenantWide);
+  const tenantId = await resolveTenantId(ctx);
+  return repo.getAssignableUsers(ctx, actorRank, product, effectiveOrgId, scope, maxRank, tenantWide, tenantId);
 }
 
 export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
+  const tenantId = await resolveTenantId(ctx);
   // Reading another branch's weights is the same visibility as the cross-org
   // filter on the roster, so it takes the same guard — and the org must be in
   // the actor's own tenant, checked against the database rather than trusted.
@@ -239,10 +241,10 @@ export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
     if (!canSeeOrgFilter(ctx.role)) {
       throw new ForbiddenError('You cannot view lead assignment weights for another branch');
     }
-    const [org] = await repo.getOrgsInTenant([orgId], await resolveTenantId(ctx));
+    const [org] = await repo.getOrgsInTenant([orgId], tenantId);
     if (!org) throw new BadRequestError('Branch not found in this tenant');
   }
-  return repo.getAssignmentWeights(ctx, orgId);
+  return repo.getAssignmentWeights(ctx, orgId, tenantId);
 }
 
 export async function updateAssignmentWeights(

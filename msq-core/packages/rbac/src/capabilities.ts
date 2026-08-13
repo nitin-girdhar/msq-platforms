@@ -118,7 +118,7 @@ export const CAPABILITY = {
   TASKS_LISTS_VIEW:                        'tasks.lists.view',
   TASKS_VIEW:                              'tasks.view',
 
-  // ── Scopes — read with resolveScope(), not can() (29) ──
+  // ── Scopes — read with resolveScope(), not can() (30) ──
   HR_ATTENDANCE_VIEW_ORG:    'hr.attendance.view.org',
   HR_ATTENDANCE_VIEW_OWN:    'hr.attendance.view.own',
   HR_ATTENDANCE_VIEW_TEAM:   'hr.attendance.view.team',
@@ -141,6 +141,7 @@ export const CAPABILITY = {
   LMS_LEADS_VIEW_ORG:        'lms.leads.view.org',
   LMS_LEADS_VIEW_OWN:        'lms.leads.view.own',
   LMS_LEADS_VIEW_TEAM:       'lms.leads.view.team',
+  LMS_LEADS_VIEW_TENANT:     'lms.leads.view.tenant',
   LMS_USERS_VIEW_ORG:        'lms.users.view.org',
   LMS_USERS_VIEW_TEAM:       'lms.users.view.team',
   TASKS_EDIT_ANY:            'tasks.edit.any',

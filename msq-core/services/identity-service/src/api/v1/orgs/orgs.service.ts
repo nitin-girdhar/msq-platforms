@@ -5,8 +5,8 @@ import * as repo from './orgs.repository.js';
 import type { LocationFilter } from './orgs.repository.js';
 import type { UpdateOrgGeoInput } from './orgs.schema.js';
 
-export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter) {
-  return repo.getOrgs(ctx, filter);
+export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter, isTenantWide: boolean) {
+  return repo.getOrgs(ctx, filter, isTenantWide);
 }
 
 // Org geofence-centre update — org_admin+ (rank >= RANKS.ORG_ADMIN, 980) only.

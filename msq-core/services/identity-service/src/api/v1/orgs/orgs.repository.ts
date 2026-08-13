@@ -10,8 +10,7 @@ export interface LocationFilter {
   countryIds?: string[];
 }
 
-export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter) {
-  const isTenantWide = ctx.role === 'tenant_admin' || ctx.role === 'super_admin';
+export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter, isTenantWide: boolean) {
   return withRoleTx(ctx, async (tx) => {
     const scopeClause = isTenantWide
       ? sql`o.tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = ${ctx.org_id}::uuid)`

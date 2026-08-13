@@ -69,6 +69,8 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Their own, plus everyone reporting to them.', 2),
 ('lms.leads.view.org',  'scope', 'lms.leads.view', 'Whole branch',
  'Every lead in the branch, including unassigned.', 3),
+('lms.leads.view.tenant', 'scope', 'lms.leads.view', 'Every branch',
+ 'Every lead across every branch in the tenant.', 4),
 ('lms.leads.unassigned.view', 'operation', 'lms.leads', 'See unassigned leads',
  'Adds the unassigned queue to the list and dashboard.', 2),
 ('lms.leads.create', 'operation', 'lms.leads', 'Create leads',

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { UserRole } from '@platform/types';
 import { users as usersApi, type UserRow } from '@/src/lib/api/client';
@@ -25,7 +25,6 @@ interface Props {
   onClose: () => void;
   user: UserRow;
   currentUserId: string;
-  users: UserRow[];
   orgs: OrgOption[];
 }
 
@@ -41,7 +40,7 @@ function displayName(u: UserRow | AssignableUser): string {
   return [u.first_name, u.middle_name, u.last_name].filter(Boolean).join(' ').trim();
 }
 
-export default function EditUserModal({ open, onClose, user, currentUserId, users, orgs }: Props) {
+export default function EditUserModal({ open, onClose, user, currentUserId, orgs }: Props) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(user.first_name ?? '');
   const [middleName, setMiddleName] = useState(user.middle_name ?? '');
@@ -75,26 +74,21 @@ export default function EditUserModal({ open, onClose, user, currentUserId, user
     setLmsUsers([]);
   }, [user]);
 
+  // Fetched on open rather than on deactivate: both the deactivation handoff and
+  // the org-move handoff need the same list — lead-capable members of the branch
+  // the leads sit in. The plain roster cannot answer that, since the rank ladder
+  // is shared across products and tenants add their own roles to it.
   useEffect(() => {
-    if (deactivateOpen) {
-      setLmsUsersLoading(true);
-      usersApi.getAssignable('lms', user.org_id)
-        .then((res) => setLmsUsers(res.data.filter((u) => u.id !== user.id)))
-        .catch(() => setLmsUsers([]))
-        .finally(() => setLmsUsersLoading(false));
-    }
-  }, [deactivateOpen, user.id, user.org_id]);
+    if (!open) return;
+    setLmsUsersLoading(true);
+    usersApi.getAssignable('lms', user.org_id)
+      .then((res) => setLmsUsers(res.data.filter((u) => u.id !== user.id)))
+      .catch(() => setLmsUsers([]))
+      .finally(() => setLmsUsersLoading(false));
+  }, [open, user.id, user.org_id]);
 
   const isSelf = user.id === currentUserId;
   const isChangingOrg = orgId !== user.org_id;
-
-  // Active users still in this user's CURRENT org — eligible to take over
-  // their open leads, whether because the user is moving orgs (leads stay
-  // behind) or being deactivated (their login goes away).
-  const currentOrgActiveUsers = useMemo(
-    () => users.filter((u) => u.org_id === user.org_id && u.id !== user.id && u.is_active),
-    [users, user.org_id, user.id],
-  );
 
   const handleClose = () => {
     if (pending) return;
@@ -290,14 +284,19 @@ export default function EditUserModal({ open, onClose, user, currentUserId, user
                   id="eu-reassign"
                   value={reassignTo}
                   onChange={(e) => setReassignTo(e.target.value)}
-                  disabled={locked}
+                  disabled={locked || lmsUsersLoading}
                   className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
                 >
                   <option value="">— Don&apos;t reassign —</option>
-                  {currentOrgActiveUsers.map((u) => (
+                  {lmsUsers.map((u) => (
                     <option key={u.id} value={u.id}>{displayName(u) || u.email}</option>
                   ))}
                 </select>
+                {!lmsUsersLoading && lmsUsers.length === 0 && (
+                  <p className="text-[11px] text-[#64748B]">
+                    No other LMS users available in this branch. Leads will stay with this user.
+                  </p>
+                )}
               </div>
             )}
           </div>

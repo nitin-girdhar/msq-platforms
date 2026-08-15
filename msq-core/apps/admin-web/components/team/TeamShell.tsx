@@ -62,7 +62,6 @@ export default function TeamShell({ users, actor, total, orgs }: Props) {
           currentUserId={actor.id}
           actorRank={actor.rank}
           actorRole={actor.role}
-          users={users}
           orgs={orgs}
           actor={actor}
         />

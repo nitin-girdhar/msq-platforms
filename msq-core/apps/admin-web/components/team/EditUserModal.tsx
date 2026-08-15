@@ -30,13 +30,12 @@ interface Props {
   currentUserId: string;
   actorRank: number;
   actorRole: string;
-  users: SessionUser[];
   orgs: Array<{ id: string; name: string }>;
   actor: SessionUser;
 }
 
 export default function EditUserModal({
-  open, onClose, user, currentUserId, actorRank, actorRole, users, orgs, actor,
+  open, onClose, user, currentUserId, actorRank, actorRole, orgs, actor,
 }: Props) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(user.first_name ?? '');

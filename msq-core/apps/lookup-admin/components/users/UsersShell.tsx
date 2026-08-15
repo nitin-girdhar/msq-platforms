@@ -57,7 +57,6 @@ export default function UsersShell({ users, currentUserId }: Props) {
           onClose={() => setEditTarget(null)}
           user={editTarget}
           currentUserId={currentUserId}
-          users={users}
           orgs={orgs}
         />
       )}

@@ -79,12 +79,18 @@ export const users = {
   // node so the rank ladder (shared across every product, and freely
   // extensible with custom tenant roles) doesn't leak unrelated staff into an
   // assignee picker. Pass the product the picker actually belongs to.
-  assignable: (opts: { product: 'lms' | 'tasks'; orgId?: string; scope?: 'delegation' | 'collaboration'; maxRank?: number }) => {
+  // `purpose` defaults to 'assign' server-side, where an LMS list ignores
+  // `scope`/`maxRank` and derives the ceiling from the actor's own
+  // lms.leads.assign.* grants instead. Pass 'filter' when the list populates a
+  // filter rather than an assignee picker — that keeps the supplied rank
+  // semantics, because "whose leads can I see" is not an assignment question.
+  assignable: (opts: { product: 'lms' | 'tasks'; orgId?: string; scope?: 'delegation' | 'collaboration'; maxRank?: number; purpose?: 'assign' | 'filter' }) => {
     const params = new URLSearchParams();
     params.set('product', opts.product);
     if (opts.orgId) params.set('org_id', opts.orgId);
     if (opts.scope) params.set('scope', opts.scope);
     if (opts.maxRank !== undefined) params.set('max_rank', String(opts.maxRank));
+    if (opts.purpose) params.set('purpose', opts.purpose);
     const qs = params.toString();
     return request<{ success: true; data: unknown[] }>(`/users/assignable${qs ? `?${qs}` : ''}`);
   },

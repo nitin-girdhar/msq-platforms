@@ -104,7 +104,7 @@ function Invoke-Native([scriptblock]$block, [string]$failMessage) {
 # with "timed out dialing Hyper-V socket" on an arbitrary service. The daemon
 # itself is fine - a serial retry of the identical command succeeds - so retry
 # rather than abort a 400s build.
-function Invoke-NativeWithRetry([scriptblock]$block, [string]$failMessage, [int]$Attempts = 6) {
+function Invoke-NativeWithRetry([scriptblock]$block, [string]$failMessage, [int]$Attempts = 10) {
     for ($n = 1; $n -le $Attempts; $n++) {
         $savedEAP = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
@@ -496,7 +496,20 @@ Write-Host "  $($Images.Count) images across $($RepoDirs.Count) repos"
 Write-Step 'Verifying images exist locally'
 $missing = @()
 foreach ($img in $Images) {
-    $id = Get-NativeOutput { docker images -q $img }
+    # `docker images -q` can come back empty because the image is genuinely
+    # absent, or because the npipe->WSL bridge hiccuped (see the Hyper-V
+    # socket flakiness noted around the build/pull retries above) - Get-
+    # NativeOutput discards stderr and $LASTEXITCODE, so those two cases are
+    # indistinguishable without checking the exit code and retrying like the
+    # other docker calls in this script do.
+    $id = $null
+    for ($n = 1; $n -le 10; $n++) {
+        $savedEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $id = docker images -q $img 2>$null } finally { $ErrorActionPreference = $savedEAP }
+        if ($LASTEXITCODE -eq 0) { break }
+        if ($n -lt 10) { Start-Sleep -Seconds 3 }
+    }
     if (-not $id) { $missing += $img }
 }
 if ($missing.Count -gt 0) {

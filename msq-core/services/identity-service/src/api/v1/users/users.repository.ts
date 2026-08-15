@@ -208,7 +208,7 @@ export async function getAssignableUsers(
   actorRank: number,
   product: 'lms' | 'tasks',
   orgId: string | undefined,
-  scope: 'delegation' | 'collaboration',
+  scope: 'delegation' | 'collaboration' | 'unlimited',
   maxRank: number | undefined,
   tenantWide: boolean | undefined,
   tenantId: string,
@@ -221,15 +221,25 @@ export async function getAssignableUsers(
     : sql`uom.org_id = ${targetOrgId}::uuid`;
   // delegation: strictly below the actor (CRM lead hand-down).
   // collaboration: at or below the actor, so same-rank peers and the actor
-  // themselves are assignable (Tasks). See getAssignableQuerySchema.
-  // maxRank, when given, overrides both: an absolute ceiling independent of
-  // the actor's own rank (e.g. bulk lead assignment).
+  // themselves are assignable. See getAssignableQuerySchema.
+  // unlimited: no ceiling RELATIVE to the actor — for an actor whose grant
+  // reaches anyone (lms.leads.assign.any). Still bounded by ANCHOR_RANK.ORG_ADMIN:
+  // an org_admin is never a lead assignee, and leads-service's canAssignToUser
+  // rejects `target_rank >= LMS_RANKS.ADMIN` (which resolves to that same 980)
+  // outright, so listing them here would offer a name the write is guaranteed
+  // to refuse. Deliberately NOT the local RANK_ADMIN (80): that bound belongs
+  // to auto-assignment weights, and using it here would hide the custom
+  // tenant roles between 80 and 979 that canAssignToUser does allow.
+  // maxRank, when given, overrides all three: an absolute ceiling independent
+  // of the actor's own rank.
   const rankFilter =
     maxRank !== undefined
       ? sql`ur.rank <= ${maxRank}`
-      : scope === 'collaboration'
-        ? sql`ur.rank <= ${actorRank}`
-        : sql`ur.rank < ${actorRank}`;
+      : scope === 'unlimited'
+        ? sql`ur.rank < ${ANCHOR_RANK.ORG_ADMIN}`
+        : scope === 'collaboration'
+          ? sql`ur.rank <= ${actorRank}`
+          : sql`ur.rank < ${actorRank}`;
   return withRoleTx(ctx, async (tx) => {
     const rows = (await tx.execute(sql`
       SELECT u.id, u.org_id, u.full_name, u.first_name, u.middle_name, u.last_name,

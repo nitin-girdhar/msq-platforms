@@ -92,7 +92,7 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
 ('lms.leads.assign.reports', 'scope', 'lms.leads.assign', 'People below them',
  'Only people ranked below them.', 1),
 ('lms.leads.assign.peers',   'scope', 'lms.leads.assign', 'Peers and below',
- 'Adds same-rank colleagues and themselves.', 2),
+ 'Adds same-rank colleagues. Assigning a lead to yourself never needs a scope.', 2),
 ('lms.leads.assign.any',     'scope', 'lms.leads.assign', 'Anyone in the branch',
  'No rank limit, including seniors.', 3),
 ('lms.leads.interaction.log', 'operation', 'lms.leads', 'Log interactions',

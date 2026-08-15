@@ -27,6 +27,8 @@ out/
 .env.remote-backup
 # keep the example committed
 !.env.example
+# GPG passphrase for msq-deploy/pg-backup|pg-restore — never commit
+.secrets/
 
 # ── Logs ───────────────────────────────────────────────────────────────────────
 *.log

@@ -30,6 +30,23 @@ export const getAssignableQuerySchema = z.object({
   // silently fell back to "no product filter" would reintroduce the exact bug
   // this field exists to close.
   product: z.enum(['lms', 'tasks']),
+  // What the candidate list is FOR, which decides whether `scope`/`max_rank`
+  // above are honored at all.
+  //
+  // 'assign' (default) + product 'lms': the server ignores both and derives the
+  // ceiling from the actor's own lms.leads.assign.reports/.peers/.any grants,
+  // so the picker matches exactly what canAssignToUser (leads-service) and
+  // iam.can_assign_to (the PATCH path) will actually permit. A picker that
+  // offers a name the write then rejects is the render-then-403 bug the
+  // capability model exists to prevent, and a client-supplied `scope` cannot
+  // know the actor's grants.
+  //
+  // 'filter': this list populates a FILTER, not an assignee picker — "whose
+  // leads am I looking at", whose authority is the lms.history.view.* scope,
+  // not the assign ladder. Deriving it from assign grants would empty the
+  // Leads History filter for a role that can read a wide history scope but
+  // holds no assign capability. Keeps the caller-supplied rank semantics.
+  purpose: z.enum(['assign', 'filter']).default('assign'),
 });
 
 export type GetAssignableQuery = z.infer<typeof getAssignableQuerySchema>;

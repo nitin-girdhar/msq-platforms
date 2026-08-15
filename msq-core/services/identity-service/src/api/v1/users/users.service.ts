@@ -2,11 +2,11 @@ import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import type { RoleTxContext } from '@platform/db';
-import { toApiRow, toApiRows } from '@platform/db';
+import { toApiRow, toApiRows, capabilitiesFor } from '@platform/db';
 import { ROLE_RANK } from '@platform/auth-constants';
 import type { UserRole } from '@platform/auth-constants';
 import { canGrantRole, canManageUser, canOverridePasswordPolicy, canSeeOrgFilter, checkMoveUserBranchAccess } from '@platform/authz';
-import { ANCHOR_RANK } from '@platform/rbac';
+import { ANCHOR_RANK, can, CAPABILITY, type CapabilityHolder } from '@platform/rbac';
 import { createStrongPasswordSchema } from '@platform/validation';
 import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, AddOrgMappingInput, OrgAssignmentInput } from '@platform/validation';
 import { NotFoundError, ConflictError, ForbiddenError, BadRequestError } from '../../../lib/errors.js';
@@ -210,13 +210,33 @@ export async function getUserById(ctx: RoleTxContext, targetUserId: string) {
   return user;
 }
 
+// For an LMS assignee picker the ceiling is not the caller's to choose: it is
+// whatever the actor's own lms.leads.assign.* grants allow, mirroring
+// leads-service's canAssignToUser and the iam.can_assign_to database function
+// so the three never disagree. Returns null when the actor holds no rung at
+// all — they may assign to nobody, and an empty picker is the honest answer.
+//
+// Tasks is deliberately excluded: it has a single flat tasks.assign capability
+// with no reports/peers/any ladder to read, so its callers keep supplying
+// scope themselves.
+function assignScopeFromCapabilities(
+  actor: CapabilityHolder,
+): 'delegation' | 'collaboration' | 'unlimited' | null {
+  if (can(actor, CAPABILITY.LMS_LEADS_ASSIGN_ANY)) return 'unlimited';
+  if (can(actor, CAPABILITY.LMS_LEADS_ASSIGN_PEERS)) return 'collaboration';
+  if (can(actor, CAPABILITY.LMS_LEADS_ASSIGN_REPORTS)) return 'delegation';
+  return null;
+}
+
 export async function getAssignableUsers(
   ctx: RoleTxContext,
+  roleName: string | null,
   actorRank: number,
   product: 'lms' | 'tasks',
   orgId?: string,
   scope: 'delegation' | 'collaboration' = 'delegation',
   maxRank?: number,
+  purpose: 'assign' | 'filter' = 'assign',
 ) {
   // Same threshold as listUsers' org filter — only actors who can already see
   // other branches may request assignable candidates for one of them (e.g. the
@@ -229,6 +249,24 @@ export async function getAssignableUsers(
   // should get the full candidate list, not silently just their home org's.
   const tenantWide = canQueryOtherOrg && !effectiveOrgId;
   const tenantId = await resolveTenantId(ctx);
+
+  // An LMS assignee picker takes its ceiling from the actor's grants, not from
+  // the query string — see assignScopeFromCapabilities above. A 'filter' list
+  // and every Tasks caller keep the supplied scope/max_rank.
+  if (product === 'lms' && purpose === 'assign') {
+    // Resolved here rather than off request.auth: unlike the product services,
+    // identity-service's auth context carries no capability list, and adding
+    // one would mean resolving the matrix on every route including /auth.
+    // capabilitiesFor is the same TTL-cached read those services use.
+    const derived = assignScopeFromCapabilities({
+      capabilities: await capabilitiesFor(tenantId, roleName),
+    });
+    if (derived === null) return [];
+    return repo.getAssignableUsers(
+      ctx, actorRank, product, effectiveOrgId, derived, undefined, tenantWide, tenantId,
+    );
+  }
+
   return repo.getAssignableUsers(ctx, actorRank, product, effectiveOrgId, scope, maxRank, tenantWide, tenantId);
 }
 

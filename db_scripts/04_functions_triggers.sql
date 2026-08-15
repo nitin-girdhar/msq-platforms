@@ -966,19 +966,42 @@ CREATE TRIGGER trg_lead_assignment_log
 -- ── iam.can_assign_to ─────────────────────────────────────────────────
 -- Looks up role via iam.user_org_mapping instead of iam.users.org_id so that
 -- multi-org iam.users are evaluated for the org they are currently working in.
--- The subtree half resolves from iam.reporting_lines via iam.fn_is_in_subtree —
--- the same single hierarchy HR approvals and Tasks use.
+--
+-- Resolves the SAME reports < peers < any ladder as @lms/authz's
+-- canAssignToUser, so the two write paths into a lead's assignee agree:
+-- POST /assignments (checked in leads-service) and PATCH /leads/:id +
+-- follow-up assignment (checked here). This function previously fell back to
+-- iam.fn_is_in_subtree, which predates the peers/any rungs — under it,
+-- granting a role lms.leads.assign.peers had no effect on this path at all,
+-- because a peer is by definition not in your reporting subtree.
+--
+-- The hierarchy is deliberately no longer consulted for lead assignment: the
+-- seeded capability describes its scope as "Only people RANKED below them",
+-- and rank is what both sides now compare. iam.reporting_lines remains the
+-- authority elsewhere (hr.can_approve_leave, tasks team scope) — only this
+-- function stopped reading it.
+--
+-- Self-assignment stays unconditional (below): claiming a lead you are already
+-- working is not "handing work down", LeadEditModal auto-assigns an unassigned
+-- lead to whoever marks it rejected, and canAssignToUser short-circuits on self
+-- for the same reason.
 CREATE OR REPLACE FUNCTION iam.can_assign_to(
   p_org_id         UUID,
   p_acting_user_id UUID,
   p_target_user_id UUID
 ) RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
 DECLARE
-  v_role TEXT;
+  v_role        TEXT;
+  v_actor_rank  INT;
+  v_target_rank INT;
+  v_tenant      UUID;
+  v_any         BOOLEAN;
+  v_peers       BOOLEAN;
+  v_reports     BOOLEAN;
 BEGIN
   IF p_acting_user_id = p_target_user_id THEN RETURN TRUE; END IF;
 
-  SELECT ur.name INTO v_role
+  SELECT ur.name, ur.rank INTO v_role, v_actor_rank
   FROM iam.user_org_mapping uom
   JOIN iam.user_roles ur ON ur.id = uom.role_id
   JOIN iam.users      u  ON u.id  = uom.user_id
@@ -990,14 +1013,56 @@ BEGIN
   IF v_role IS NULL THEN RETURN FALSE; END IF;
   IF v_role IN ('super_admin','tenant_admin','org_admin') THEN RETURN TRUE; END IF;
 
-  -- Everyone else may assign within their own subtree, resolved from
-  -- iam.reporting_lines as of today — the same tree hr.can_approve_leave and
-  -- tasks-service use. The role list that used to gate this branch
-  -- ('org_manager','org_sr_manager','senior_sales_executive') was removed: the
-  -- capability lms.leads.assign.reports already decides WHETHER a role may hand
-  -- work down, and the hierarchy decides to WHOM. Hardcoding names here meant
-  -- any new or renamed role was silently denied.
-  RETURN iam.fn_is_in_subtree(p_acting_user_id, p_target_user_id);
+  -- The target must be an active member of the SAME org, and their rank is
+  -- what the ladder below compares against. The old subtree check never needed
+  -- this row; the capability rungs do.
+  SELECT ur.rank INTO v_target_rank
+  FROM iam.user_org_mapping uom
+  JOIN iam.user_roles ur ON ur.id = uom.role_id
+  JOIN iam.users      u  ON u.id  = uom.user_id
+  WHERE uom.user_id = p_target_user_id
+    AND uom.org_id  = p_org_id
+    AND uom.is_active
+    AND u.is_active AND NOT u.is_deleted;
+
+  IF v_target_rank IS NULL THEN RETURN FALSE; END IF;
+  -- An org_admin or above is never a lead assignee. 980 = ANCHOR_RANK.ORG_ADMIN,
+  -- the same bound canAssignToUser applies as LMS_RANKS.ADMIN, inlined here as
+  -- hr.can_approve_leave already does.
+  IF v_target_rank >= 980 THEN RETURN FALSE; END IF;
+
+  SELECT tenant_id INTO v_tenant FROM entity.organizations WHERE id = p_org_id;
+  IF v_tenant IS NULL THEN RETURN FALSE; END IF;
+
+  -- All three rungs in ONE matrix build. Asking per-key instead costs a full
+  -- rebuild each time: measured against production, one build is ~35ms warm
+  -- (~267ms cold) and three sequential probes put ~100ms on every assignment
+  -- write, against ~0.1ms for the reporting-subtree walk this replaced.
+  --
+  -- fn_role_capability_matrix is the authority rather than a direct read of
+  -- iam.role_capabilities because it already implements BOTH resolution rules:
+  -- tenant override > platform default > deny, AND "an ancestor resolving FALSE
+  -- prunes its subtree". A raw row lookup honours the first and misses the
+  -- second, so a tenant denying `lms.leads.assign` would still see its `.peers`
+  -- child read TRUE here while the application layer — resolving this same
+  -- function through @platform/db's capability cache — says FALSE. Two
+  -- authorities disagreeing about one grant is the bug this function exists to
+  -- remove, so both sides ask the question the same way.
+  SELECT bool_or(m.granted) FILTER (WHERE m.capability_key = 'lms.leads.assign.any'),
+         bool_or(m.granted) FILTER (WHERE m.capability_key = 'lms.leads.assign.peers'),
+         bool_or(m.granted) FILTER (WHERE m.capability_key = 'lms.leads.assign.reports')
+    INTO v_any, v_peers, v_reports
+  FROM iam.fn_role_capability_matrix(v_tenant) m
+  WHERE m.role_name = v_role
+    AND m.capability_key IN ('lms.leads.assign.any',
+                             'lms.leads.assign.peers',
+                             'lms.leads.assign.reports');
+
+  IF COALESCE(v_any,     FALSE) THEN RETURN TRUE;                        END IF;
+  IF COALESCE(v_peers,   FALSE) THEN RETURN v_target_rank <= v_actor_rank; END IF;
+  IF COALESCE(v_reports, FALSE) THEN RETURN v_target_rank <  v_actor_rank; END IF;
+
+  RETURN FALSE;
 END; $$;
 
 -- Audit trigger for lms.marketing_leads (field-level diff on UPDATE, snapshot on DELETE).

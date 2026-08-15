@@ -87,6 +87,10 @@ export const updateUserSchema = refineOrgAssignments(
 export const resetPasswordSchema = z.object({
   new_password: z.string().min(1).max(128).optional(),
   override_policy: z.boolean().optional(),
+  // Whether the target must pick a new password at next login. Defaults to true
+  // in the service — an admin handing out a temporary password is the norm —
+  // but an admin who deliberately set a final password can send false.
+  force_password_change: z.boolean().optional(),
 });
 
 export const updateAssignmentWeightsSchema = z.object({

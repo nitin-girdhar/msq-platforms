@@ -1,13 +1,22 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { SessionUser } from "@platform/types";
 import { useDismissible } from "../../hooks/useDropdown";
+
+// Only the four fields this list actually renders. Deliberately not SessionUser:
+// the rows from /users/assignable carry a different, thinner shape, and a full
+// SessionUser[] still satisfies this.
+export interface PickerUser {
+  id: string;
+  name?: string | null;
+  email: string;
+  role_label?: string | null;
+}
 
 interface Props {
   value: string;
   onChange: (userId: string) => void;
-  users: SessionUser[];
+  users: PickerUser[];
   disabled?: boolean;
   placeholder?: string;
   hasError?: boolean;

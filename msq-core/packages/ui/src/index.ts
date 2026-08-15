@@ -10,7 +10,7 @@ export { Pagination } from './components/Pagination';
 export { DownloadButton, type ExportFormat } from './components/DownloadButton';
 export { Placeholder } from './components/Placeholder';
 export { MonthGrid, type MonthGridBar, type MonthGridMarker } from './components/MonthGrid';
-export { UserPicker } from './components/UserPicker';
+export { UserPicker, type PickerUser } from './components/UserPicker';
 export { MultiSelect, type SelectOption } from './components/MultiSelect';
 export { PhotoUploadModal, PhotoAvatar, type PhotoUploadGate } from './components/PhotoUpload';
 

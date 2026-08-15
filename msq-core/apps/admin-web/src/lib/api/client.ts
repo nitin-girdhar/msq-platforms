@@ -33,8 +33,28 @@ export const auth = {
 // org_admin's own-org ceiling). This app is deliberately org/tenant-scoped,
 // unlike lookup-admin's cross-tenant Users screen.
 
+// One row of GET /users/assignable — see getAssignableUsers in
+// identity-service's users.repository.ts for the SELECT this mirrors.
+export interface AssignableUser {
+  id: string;
+  org_id: string;
+  full_name: string;
+  email: string;
+  is_active: boolean;
+  role_name: string;
+  role_label: string;
+  rank: number;
+}
+
 export const users = {
   list: () => usersResource.list() as Promise<{ success: true; data: SessionUser[]; total: number; page: number; page_size: number }>,
+
+  // Who may actually be handed this product's work in a branch. Gated
+  // server-side on the product's CAPABILITY node, so it excludes staff who sit
+  // on the same rank ladder but do not work that product — never filter the
+  // plain roster by hand for an assignee list.
+  assignable: (opts: { product: 'lms' | 'tasks'; orgId?: string }) =>
+    usersResource.assignable(opts) as Promise<{ success: true; data: AssignableUser[] }>,
 
   create: (body: Record<string, unknown>) => usersResource.create(body),
 
@@ -44,8 +64,12 @@ export const users = {
   // complete assignment list; the roster row only carries their home branch.
   orgMappings: (id: string) => usersResource.orgMappings(id),
 
-  resetPassword: (id: string, new_password?: string, override_policy?: boolean) =>
-    usersResource.resetPassword(id, new_password, override_policy),
+  resetPassword: (
+    id: string,
+    new_password?: string,
+    override_policy?: boolean,
+    force_password_change?: boolean,
+  ) => usersResource.resetPassword(id, new_password, override_policy, force_password_change),
 };
 
 // ── API Tokens ───────────────────────────────────────────────────────────────

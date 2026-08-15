@@ -546,6 +546,35 @@ export async function isActiveOrgMember(
   });
 }
 
+// Whether this user may take over another user's open leads in `orgId`: an
+// active member of that branch whose role there actually holds the LMS
+// capability. Same two rules getAssignableUsers applies to build the picker
+// (membership via user_org_mapping + filterRowsByCapability), so a hand-rolled
+// PATCH cannot hand a branch's leads to someone the picker would never offer —
+// e.g. a "Fitness Manager" who sits on the same rank ladder but owns no leads.
+export async function isLeadAssignableInOrg(
+  ctx: RoleTxContext,
+  userId: string,
+  orgId: string,
+  tenantId: string,
+): Promise<boolean> {
+  return withRoleTx(ctx, async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT ur.name AS role_name
+      FROM iam.user_org_mapping uom
+      JOIN iam.users u       ON u.id  = uom.user_id
+      JOIN iam.user_roles ur ON ur.id = uom.role_id
+      WHERE uom.user_id = ${userId}::uuid
+        AND uom.org_id  = ${orgId}::uuid
+        AND uom.is_active
+        AND u.is_active AND NOT u.is_deleted
+      LIMIT 1
+    `)) as Array<Record<string, unknown>>;
+    if (rows.length === 0) return false;
+    return (await filterRowsByCapability(tenantId, rows, CAPABILITY.LMS)).length > 0;
+  });
+}
+
 export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
   return withRoleTx(ctx, async (tx) => {
     // Two ways in. The legacy path names a role and lands the user in the
@@ -1031,6 +1060,7 @@ export async function adminResetPassword(
   ctx: RoleTxContext,
   targetUserId: string,
   passwordHash: string,
+  forcePasswordChange = true,
 ) {
   return withRoleTx(ctx, async (tx) => {
     const orgScope = ctx.role === 'super_admin' ? sql`TRUE` : sql`org_id = ${ctx.org_id}::uuid`;
@@ -1038,7 +1068,7 @@ export async function adminResetPassword(
       UPDATE iam.users
       SET password_hash = ${passwordHash},
           password_changed_at = CLOCK_TIMESTAMP(),
-          force_password_change = TRUE
+          force_password_change = ${forcePasswordChange}
       WHERE id = ${targetUserId}::uuid AND ${orgScope} AND NOT is_deleted
       RETURNING id
     `)) as Array<{ id: string }>;

@@ -367,6 +367,7 @@ export default function EditUserModal({ open, onClose, user, currentUserId, user
           onClose={() => setResetOpen(false)}
           userId={user.id}
           email={user.email}
+          forcePasswordChange={forcePasswordChange}
         />
       )}
     </>

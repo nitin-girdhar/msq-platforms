@@ -69,10 +69,15 @@ export const users = {
   delete: (id: string) =>
     request<void>(`/users/${id}`, { method: 'DELETE' }),
 
-  resetPassword: (id: string, new_password?: string, override_policy?: boolean) =>
+  resetPassword: (
+    id: string,
+    new_password?: string,
+    override_policy?: boolean,
+    force_password_change?: boolean,
+  ) =>
     request<{ success: true; data: { temporary_password: string } }>(`/users/${id}/reset-password`, {
       method: 'POST',
-      body: JSON.stringify({ new_password, override_policy }),
+      body: JSON.stringify({ new_password, override_policy, force_password_change }),
     }),
 
   // `product` is required: it gates candidates on that product's CAPABILITY

@@ -14,7 +14,7 @@ import {
   useUserAssignments,
   type OrgAssignment,
 } from '@platform/ui-kit';
-import { users as usersApi } from '@/src/lib/api/client';
+import { users as usersApi, type AssignableUser } from '@/src/lib/api/client';
 import ResetPasswordModal from './ResetPasswordModal';
 
 const PHONE_RE = /^(\+91[\s-]?)?[6-9]\d{9}$/;
@@ -53,6 +53,11 @@ export default function EditUserModal({
   // only their home org, so the full set has to be asked for.
   const [existing, setExisting] = useState<OrgAssignment[] | null>(null);
   const [mappingsError, setMappingsError] = useState<string | null>(null);
+
+  // Lead-capable members of this user's current branch, for the two "Reassign
+  // their leads to" pickers. Fetched once per open and shared by both.
+  const [lmsUsers, setLmsUsers] = useState<AssignableUser[]>([]);
+  const [lmsUsersLoading, setLmsUsersLoading] = useState(false);
 
   useEffect(() => {
     setFirstName(user.first_name ?? '');
@@ -95,6 +100,22 @@ export default function EditUserModal({
     return () => { cancelled = true; };
   }, [open, user.id]);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLmsUsersLoading(true);
+
+    usersApi.assignable({ product: 'lms', orgId: user.org_id })
+      .then((res) => {
+        if (cancelled) return;
+        setLmsUsers(res.data.filter((u) => u.id !== user.id));
+      })
+      .catch(() => { if (!cancelled) setLmsUsers([]); })
+      .finally(() => { if (!cancelled) setLmsUsersLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [open, user.id, user.org_id]);
+
   const isSelf = user.id === currentUserId;
   const canSetPassword = actorRank > user.rank && !isSelf;
   const canPickBranches = actorRank >= RANKS.TENANT_ADMIN;
@@ -124,7 +145,17 @@ export default function EditUserModal({
   const [deactivating, setDeactivating] = useState(false);
   const [deactivateReassignTo, setDeactivateReassignTo] = useState('');
 
-  const managerCandidates = users.filter((u) => u.is_active && u.id !== user.id);
+  // Who can inherit this user's open leads. Deliberately NOT a filter of the
+  // roster: the rank ladder is shared across products and tenants add their own
+  // roles to it, so a same-rank "Fitness Manager" would otherwise be offered as
+  // the new owner of a sales pipeline. /users/assignable gates on the LMS
+  // capability and on real membership of the branch (the roster row only carries
+  // each user's home branch). The leads sit in the branch they are leaving —
+  // user.org_id — for both the move and the deactivation case.
+  const leadCandidates = useMemo(
+    () => lmsUsers.map((u) => ({ id: u.id, name: u.full_name, email: u.email, role_label: u.role_label })),
+    [lmsUsers],
+  );
 
   const handleClose = () => {
     if (pending) return;
@@ -268,12 +299,17 @@ export default function EditUserModal({
               <UserPicker
                 value={deactivateReassignTo}
                 onChange={setDeactivateReassignTo}
-                users={managerCandidates.filter((u) => u.org_id === user.org_id)}
-                disabled={locked}
+                users={leadCandidates}
+                disabled={locked || lmsUsersLoading}
                 allowEmpty
                 emptyLabel="— Leave them assigned —"
-                placeholder="— Leave them assigned —"
+                placeholder={lmsUsersLoading ? 'Loading…' : '— Leave them assigned —'}
               />
+              {!lmsUsersLoading && leadCandidates.length === 0 && (
+                <p className="text-[11px] text-[#64748B]">
+                  No other users who work on leads are available in this branch.
+                </p>
+              )}
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
@@ -391,12 +427,17 @@ export default function EditUserModal({
               <UserPicker
                 value={reassignLeadsTo}
                 onChange={setReassignLeadsTo}
-                users={managerCandidates.filter((u) => u.org_id === user.org_id)}
-                disabled={locked}
+                users={leadCandidates}
+                disabled={locked || lmsUsersLoading}
                 allowEmpty
                 emptyLabel="— Leave them assigned —"
-                placeholder="— Leave them assigned —"
+                placeholder={lmsUsersLoading ? 'Loading…' : '— Leave them assigned —'}
               />
+              {!lmsUsersLoading && leadCandidates.length === 0 && (
+                <p className="text-[11px] text-[#1E40AF]">
+                  No other users who work on leads are available in this branch.
+                </p>
+              )}
             </div>
           )}
 
@@ -434,6 +475,7 @@ export default function EditUserModal({
           userId={user.id}
           email={user.email}
           actorRole={actorRole}
+          forcePasswordChange={forcePasswordChange}
         />
       )}
     </>

@@ -189,10 +189,10 @@ export const users = {
   remove: (id: string) =>
     request<void>(`/users/${id}`, { method: 'DELETE' }),
 
-  resetPassword: (id: string, new_password?: string) =>
+  resetPassword: (id: string, new_password?: string, force_password_change?: boolean) =>
     request<{ success: true; data: { temporary_password: string } }>(`/users/${id}/reset-password`, {
       method: 'POST',
-      body: JSON.stringify({ new_password }),
+      body: JSON.stringify({ new_password, force_password_change }),
     }),
 
   orgMappings: {

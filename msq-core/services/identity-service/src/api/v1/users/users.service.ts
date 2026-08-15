@@ -426,15 +426,48 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
     fields.password_changed_at = new Date();
   }
 
-  // Same membership rule as on create, checked against the org the target user
-  // actually sits in rather than the actor's current one.
+  // Same membership rule as on create, checked against the branch the reporting
+  // line will actually live in — which, when this same request moves the user,
+  // is the NEW home branch, not the one they are leaving. Checking targetOrgId
+  // here would reject exactly the manager the edit form offered, since
+  // ManagerSelect lists candidates for the new branch.
+  const effectiveHomeOrgId = data.home_org_id ?? data.org_id ?? targetOrgId;
   if (data.manager_id) {
     if (data.manager_id === targetUserId) {
       throw new BadRequestError('A user cannot report to themselves');
     }
-    if (!(await repo.isActiveOrgMember(targetCtx, data.manager_id, targetOrgId))) {
+    // ctx pinned to the branch being validated: targetCtx is RLS-scoped to the
+    // old org, so a mapping in the new one would be invisible to it.
+    const homeCtx: RoleTxContext = { ...ctx, org_id: effectiveHomeOrgId };
+    if (!(await repo.isActiveOrgMember(homeCtx, data.manager_id, effectiveHomeOrgId))) {
+      // Rank > 980 (tenant_admin/super_admin) is the same deliberate exception
+      // the create path makes: they manage across branches by design, and
+      // reconcileOrgAssignments grants them the mapping the trigger wants
+      // rather than the request being refused.
+      const manager = await repo.getUserByIdAsService(data.manager_id);
+      const managerRank = Number((manager as Record<string, unknown> | null)?.['rank'] ?? -1);
+      if (managerRank <= ANCHOR_RANK.ORG_ADMIN) {
+        throw new BadRequestError(
+          'Selected manager is not an active member of this branch. Add them to this branch first.',
+        );
+      }
+    }
+  }
+
+  // The leads being handed over sit in the branch the user is leaving (or is
+  // being deactivated in), so the new owner has to be someone who can hold leads
+  // THERE. Mirrors what /users/assignable offers the picker; without it a raw
+  // PATCH could park a branch's pipeline on someone who never sees it.
+  if (data.reassign_leads_to) {
+    if (data.reassign_leads_to === targetUserId) {
+      throw new BadRequestError('Leads cannot be reassigned to the same user');
+    }
+    const eligible = await repo.isLeadAssignableInOrg(
+      targetCtx, data.reassign_leads_to, targetOrgId, ctx.tenant_id,
+    );
+    if (!eligible) {
       throw new BadRequestError(
-        'Selected manager is not an active member of this organisation. Add them to this branch first.',
+        'Selected user cannot take over these leads. Pick an active member of this branch who works on leads.',
       );
     }
   }
@@ -621,7 +654,11 @@ export async function resetPassword(
   // Written with targetCtx (target's own org), not the actor's ctx — the actor
   // may be a tenant-wide role managing a user in a different org, and scoping
   // the UPDATE to the actor's org would silently match zero rows there.
-  const result = await repo.adminResetPassword(targetCtx, targetUserId, passwordHash);
+  // Defaults to true — a reset normally hands out a temporary password — but an
+  // admin who set a final password themselves can turn the prompt off, and that
+  // choice must not be overwritten here.
+  const forcePasswordChange = data.force_password_change ?? true;
+  const result = await repo.adminResetPassword(targetCtx, targetUserId, passwordHash, forcePasswordChange);
   if (!result) throw new NotFoundError('User not found');
 
   // An admin reset is also the unlock path for a user locked out by failed

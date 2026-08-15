@@ -12,6 +12,10 @@ interface Props {
   userId: string;
   email: string;
   actorRole: string;
+  // Mirrors the "Require password change on next login" checkbox on the edit
+  // form, so a reset applies the admin's current choice instead of silently
+  // forcing the prompt back on.
+  forcePasswordChange: boolean;
 }
 
 const OVERRIDE_MIN_LENGTH = 5;
@@ -36,7 +40,7 @@ type Mode = 'generate' | 'specific';
 // the HTML `form` attribute is what still wires it to this form.
 const FORM_ID = 'reset-password-form';
 
-export default function ResetPasswordModal({ open, onClose, userId, email, actorRole }: Props) {
+export default function ResetPasswordModal({ open, onClose, userId, email, actorRole, forcePasswordChange }: Props) {
   const [mode, setMode] = useState<Mode>('generate');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -81,6 +85,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
         userId,
         mode === 'specific' ? password : undefined,
         mode === 'specific' ? useOverrideFloor : undefined,
+        forcePasswordChange,
       );
       setPassword('');
       setConfirm('');
@@ -130,8 +135,10 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
       {result ? (
         <div className="flex flex-col gap-4">
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            Password updated. The user&apos;s existing sessions have been signed
-            out and they&apos;ll be asked to choose a new password on next login.
+            Password updated. The user&apos;s existing sessions have been signed out
+            {forcePasswordChange
+              ? " and they'll be asked to choose a new password on next login."
+              : ' and they can sign in with this password as-is.'}
           </div>
           <TemporaryPasswordPanel password={result} email={email} />
         </div>

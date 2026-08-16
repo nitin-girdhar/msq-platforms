@@ -198,6 +198,14 @@ CREATE INDEX IF NOT EXISTS idx_lead_interactions_lead_id
 CREATE INDEX IF NOT EXISTS idx_lead_interactions_lead_id_full
   ON lms.lead_interactions (lead_id);
 
+-- lms.marketing_leads.scheduled_at — the "next follow-up due" pointer. Read by the
+-- notifications-service poller on every tick, by the follow-up queue's overdue
+-- filter and by the dashboard's scheduled/overdue counters, all of which want the
+-- small set of rows that actually have a due time.
+CREATE INDEX IF NOT EXISTS idx_marketing_leads_scheduled_at
+  ON lms.marketing_leads (org_id, scheduled_at)
+  WHERE NOT is_deleted AND scheduled_at IS NOT NULL;
+
 -- lms.lead_follow_ups
 CREATE INDEX IF NOT EXISTS idx_lead_follow_ups_org_user_scheduled
   ON lms.lead_follow_ups (org_id, assigned_user_id, scheduled_at ASC, status_id) WHERE NOT is_deleted;

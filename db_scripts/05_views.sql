@@ -246,11 +246,15 @@ SELECT
   cu.full_name, cu.email,
   NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
   COALESCE(new_u.full_name, 'Unassigned'),
+  -- Generated sentence, plus whatever the operator typed. lead_assignment_log.note
+  -- is populated by lms.log_lead_assignment() from app.lead_transition_note, so a
+  -- note left against an assignment-only edit is visible in Lead History rather
+  -- than only reachable via vw_lead_assignment_timeline.
   CASE
     WHEN old_u.full_name IS NULL THEN 'Assigned to '    || COALESCE(new_u.full_name, 'unknown')
     WHEN new_u.full_name IS NULL THEN 'Unassigned from '|| old_u.full_name
     ELSE 'Reassigned from ' || old_u.full_name || ' to ' || COALESCE(new_u.full_name, 'unknown')
-  END,
+  END || COALESCE(' — ' || l.note, ''),
   NULL, NULL, NULL, NULL, NULL, NULL, NULL
 FROM lms.lead_assignment_log l
 LEFT JOIN iam.users cu    ON cu.id = l.assigned_by_id

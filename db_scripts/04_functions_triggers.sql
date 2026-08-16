@@ -940,11 +940,20 @@ RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_actor  UUID;
   v_action TEXT;
+  v_note   TEXT;
 BEGIN
   IF NEW.assigned_user_id IS NOT DISTINCT FROM OLD.assigned_user_id THEN RETURN NEW; END IF;
   BEGIN
     v_actor := NULLIF(current_setting('app.current_user_id', true), '')::uuid;
   EXCEPTION WHEN OTHERS THEN v_actor := NULL; END;
+  -- Same GUC lms.log_lead_stage_change() reads, set by the API for any PATCH
+  -- carrying transition_note. Without this the note a user typed against an
+  -- assignment-only edit was set and then dropped: that trigger returns early
+  -- when neither stage_id nor outcome_id moved, so nothing recorded it and the
+  -- lead_assignment_log.note column was never written by anything.
+  BEGIN
+    v_note := NULLIF(current_setting('app.lead_transition_note', true), '');
+  EXCEPTION WHEN OTHERS THEN v_note := NULL; END;
   v_action := CASE
     WHEN OLD.assigned_user_id IS NULL AND NEW.assigned_user_id IS NOT NULL THEN 'initial'
     WHEN OLD.assigned_user_id IS NOT NULL AND NEW.assigned_user_id IS NULL  THEN 'unassigned'
@@ -952,9 +961,9 @@ BEGIN
     ELSE 'reassigned'
   END;
   INSERT INTO lms.lead_assignment_log
-    (org_id, lead_id, assigned_by_id, assigned_to_id, action, previous_assignee_id)
+    (org_id, lead_id, assigned_by_id, assigned_to_id, action, previous_assignee_id, note)
   VALUES
-    (NEW.org_id, NEW.id, v_actor, NEW.assigned_user_id, v_action, OLD.assigned_user_id);
+    (NEW.org_id, NEW.id, v_actor, NEW.assigned_user_id, v_action, OLD.assigned_user_id, v_note);
   RETURN NEW;
 END; $$;
 

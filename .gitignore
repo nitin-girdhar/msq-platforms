@@ -117,3 +117,5 @@ DB_Migration/sql/75_post_fanout.sql
 DB_Migration/sql/90_verify.sql
 DB_Migration/sql/99_drop_staging.sql
 db_backups/*
+db_scripts/one_time/*
+open_issues/*

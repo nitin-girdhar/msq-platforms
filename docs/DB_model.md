@@ -977,6 +977,61 @@ Immutable stage/outcome transition log. Written by trigger.
 
 ---
 
+### lms.lead_report_snapshot
+
+Day-over-day comparison history for the daily lead report. One row per
+(branch × assignee × source × report_date), written once a day by the
+leads-service report job (`upsertReportSnapshot`, idempotent via `ON CONFLICT`)
+and read back by the report page's `?compare=YYYY-MM-DD` mode.
+
+| Column               | Type        | Constraints                                                      |
+| -------------------- | ----------- | ---------------------------------------------------------------- |
+| tenant_id            | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE               |
+| org_id               | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE         |
+| org_name             | TEXT        | NOT NULL                                                          |
+| assigned_user_id     | UUID        | FK → iam.users(id) ON DELETE SET NULL; NULL = Unassigned bucket    |
+| assignee             | TEXT        | NOT NULL                                                          |
+| is_unassigned        | BOOLEAN     | NOT NULL, DEFAULT FALSE                                           |
+| source_id            | UUID        | FK → lms.lead_sources(id) ON DELETE SET NULL; NULL = "Unknown"     |
+| source_label         | TEXT        | NOT NULL, DEFAULT 'Unknown' — kept even if the source is renamed  |
+| report_date          | DATE        | NOT NULL — branch-local calendar date                             |
+| *(29 metric columns)* | INT        | NOT NULL — see below                                              |
+| captured_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                               |
+
+UNIQUE NULLS NOT DISTINCT (tenant_id, org_id, assigned_user_id, source_id, report_date)
+
+**The 29 metric columns** are the same set, in the same order, as
+`lms.vw_lead_report_branch` / `lms.vw_lead_report_user` and as `METRIC_KEYS` in
+the leads-service (`lib/reports/lead-report.types.ts`), which generates its SUM /
+INSERT / ON CONFLICT column lists from that array. All four must stay in
+lock-step. The set is:
+
+- **core (6):** `total_leads`, `unassigned_count`, `followup_scheduled`,
+  `followup_overdue`, `new_leads_today`, `new_leads_this_month`
+- **per stage (7):** one per `lms.lead_stage.name` in `sort_order` —
+  `new_count`, `contacting_count`, `on_hold_count`, `qualified_count`,
+  `converted_count`, `unqualified_count`, `transferred_out_count`
+- **per stage outcome (16):** one per non-`other` `lms.lead_stage_outcome.name`,
+  prefixed `oc_` so the `on_hold` *stage* and the `on_hold` *outcome* do not
+  collide on a column name — e.g. `oc_visit_scheduled_count`, `oc_visited_count`,
+  `oc_membership_sold_count`
+
+Every stage and outcome is captured even though any given screen renders a
+handful. A live counter can be added at any time and is instantly correct for all
+history (it is computed from `lms.marketing_leads` on read), but this table is
+the half that can never be backfilled — a metric not captured today has no
+comparison history tomorrow. So adding a KPI card or a report column is a
+UI-only change.
+
+Counters are **current state**, not "ever reached": `stage_id`/`outcome_id` hold
+what the lead reads as right now, and `outcome_id` is overwritten when the lead
+moves on, so a lead that visited and then converted leaves `oc_visited_count` and
+joins `converted_count`.
+
+**RLS:** SELECT-only for app_user (by org_id) + tenant_admin (by tenant_id)
+
+---
+
 ### marketing.marketing_platforms
 
 | Column      | Type    | Constraints             |
@@ -1344,6 +1399,8 @@ Schema migration tracking.
 | `lms.vw_org_performance_snapshot`            | lms       | yes              | Per-org KPIs for analytics                                 |
 | `lms.vw_tenant_full_dashboard`               | lms       | yes              | Cross-org tenant KPIs by stage                             |
 | `lms.vw_rep_performance`                     | lms       | yes              | Per-rep lead counts by stage (leaderboard)                 |
+| `lms.vw_lead_report_branch`                  | lms       | yes              | Daily lead report, per branch — the 29-metric set          |
+| `lms.vw_lead_report_user`                    | lms       | yes              | Daily lead report, per branch × assignee — same 29 metrics |
 | `iam.vw_user_org_chart`                      | iam       | yes              | Recursive org chart with depth + breadcrumb path, as of today (over iam.reporting_lines) |
 | `iam.vw_user_team_members`                   | iam       | yes              | Recursive subtree membership as of today; wraps iam.fn_subtree_members |
 | `iam.vw_user_org_access`                     | iam       | yes              | Active org-user mappings with role context                 |

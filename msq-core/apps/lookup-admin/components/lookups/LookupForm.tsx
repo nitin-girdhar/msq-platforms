@@ -11,6 +11,7 @@ interface Props {
   setField: (key: string, value: string | number | boolean) => void;
   disabled: boolean;
   tenantId?: string | undefined;
+  orgId?: string | undefined;
   // Field keys the form shows but does not let you change — used for a row's
   // own `tenant_id`, which now comes from the navbar tenant scope instead of
   // being re-picked in every form.
@@ -30,7 +31,7 @@ const INPUT_CLASS =
 // JSX used to be duplicated between them near-verbatim. Owns nothing but
 // rendering; form state and submit/validation stay with the caller since
 // Create and Edit build very different bodies (fresh values vs. a dirty diff).
-export default function LookupForm({ formId, idPrefix, config, values, setField, disabled, tenantId, lockedKeys = [], lockedHints = {}, error, onSubmit }: Props) {
+export default function LookupForm({ formId, idPrefix, config, values, setField, disabled, tenantId, orgId, lockedKeys = [], lockedHints = {}, error, onSubmit }: Props) {
   return (
     <form id={formId} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       {error && (
@@ -55,6 +56,7 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
               onChange={(v) => setField(field.key, v)}
               formValues={values}
               tenantId={tenantId}
+              orgId={orgId}
               disabled={disabled || locked}
               idPrefix={idPrefix}
               dependsOnLabel={dependsOnLabel}
@@ -99,6 +101,30 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
                 id={`${idPrefix}-${field.key}`}
                 type="number"
                 value={values[field.key] as string | number}
+                onChange={(e) => setField(field.key, e.target.value)}
+                disabled={disabled || locked}
+                required={field.required}
+                className={INPUT_CLASS}
+              />
+            )}
+
+            {field.type === 'date' && (
+              <input
+                id={`${idPrefix}-${field.key}`}
+                type="date"
+                value={values[field.key] as string}
+                onChange={(e) => setField(field.key, e.target.value)}
+                disabled={disabled || locked}
+                required={field.required}
+                className={INPUT_CLASS}
+              />
+            )}
+
+            {field.type === 'time' && (
+              <input
+                id={`${idPrefix}-${field.key}`}
+                type="time"
+                value={values[field.key] as string}
                 onChange={(e) => setField(field.key, e.target.value)}
                 disabled={disabled || locked}
                 required={field.required}

@@ -17,6 +17,8 @@ interface Props {
   // The app-wide tenant from the navbar. Seeds a `tenant_id` COLUMN on tables
   // that carry one (Organizations) so it is never re-picked per form.
   scopeTenantId?: string | undefined;
+  // Scopes the create request itself (org-scoped tables only, e.g. Designations).
+  orgId?: string | undefined;
 }
 
 // The submit button lives in the Modal's pinned footer, outside the <form>;
@@ -35,7 +37,7 @@ function initialValues(config: LookupTableDef, scopeTenantId?: string): FormValu
   return values;
 }
 
-export default function CreateLookupModal({ open, onClose, table, config, tenantId, scopeTenantId }: Props) {
+export default function CreateLookupModal({ open, onClose, table, config, tenantId, scopeTenantId, orgId }: Props) {
   const router = useRouter();
   const [values, setValues] = useState<FormValues>(() => initialValues(config, scopeTenantId));
   const [pending, setPending] = useState(false);
@@ -96,7 +98,7 @@ export default function CreateLookupModal({ open, onClose, table, config, tenant
 
     setPending(true);
     try {
-      await lookupAdmin.create(table, body, tenantId);
+      await lookupAdmin.create(table, body, tenantId, orgId);
       router.refresh();
       handleClose();
     } catch (err) {
@@ -130,6 +132,7 @@ export default function CreateLookupModal({ open, onClose, table, config, tenant
         setField={setField}
         disabled={pending}
         tenantId={tenantId}
+        orgId={orgId}
         lockedKeys={[
           ...(scopeTenantId ? [TENANT_KEY] : []),
           ...(reservedRank !== undefined ? ['rank'] : []),

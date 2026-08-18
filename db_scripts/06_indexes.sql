@@ -529,26 +529,8 @@ CREATE INDEX IF NOT EXISTS idx_task_status_log_task
 CREATE INDEX IF NOT EXISTS idx_task_comments_task
   ON task.task_comments (org_id, task_id, created_at);
 
-CREATE INDEX IF NOT EXISTS idx_lms_member_roles_org_active
-  ON lms.member_roles (org_id)    WHERE is_active;
-CREATE INDEX IF NOT EXISTS idx_lms_member_roles_tenant_active
-  ON lms.member_roles (tenant_id) WHERE is_active;
-CREATE INDEX IF NOT EXISTS idx_lms_member_roles_role
-  ON lms.member_roles (role_id);
-
-CREATE INDEX IF NOT EXISTS idx_hr_member_roles_org_active
-  ON hr.member_roles (org_id)    WHERE is_active;
-CREATE INDEX IF NOT EXISTS idx_hr_member_roles_tenant_active
-  ON hr.member_roles (tenant_id) WHERE is_active;
-CREATE INDEX IF NOT EXISTS idx_hr_member_roles_role
-  ON hr.member_roles (role_id);
-
-CREATE INDEX IF NOT EXISTS idx_task_member_roles_org_active
-  ON task.member_roles (org_id)    WHERE is_active;
-CREATE INDEX IF NOT EXISTS idx_task_member_roles_tenant_active
-  ON task.member_roles (tenant_id) WHERE is_active;
-CREATE INDEX IF NOT EXISTS idx_task_member_roles_role
-  ON task.member_roles (role_id);
+-- Indexes for lms/hr/task.member_roles were removed here (schema_version
+-- 1.19.0) along with the tables. See db_scripts/one_time for the one-off drop.
 CREATE INDEX IF NOT EXISTS idx_catalog_defaults_key_version
   ON entity.catalog_defaults (catalog_key, version);
 CREATE INDEX IF NOT EXISTS idx_tenant_catalog_versions_tenant

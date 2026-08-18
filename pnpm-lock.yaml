@@ -497,6 +497,9 @@ importers:
       '@platform/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@platform/rbac':
+        specifier: workspace:*
+        version: link:../../packages/rbac
       '@platform/service-auth':
         specifier: workspace:*
         version: link:../../packages/service-auth

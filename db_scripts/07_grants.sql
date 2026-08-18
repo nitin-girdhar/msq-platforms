@@ -195,11 +195,11 @@ GRANT EXECUTE ON FUNCTION iam.fn_user_active_orgs(UUID)  TO app_user, tenant_adm
 GRANT EXECUTE ON FUNCTION iam.fn_org_active_users(UUID)  TO app_user, tenant_admin;
 GRANT EXECUTE ON FUNCTION iam.fn_user_org_rank(UUID,UUID) TO app_user, tenant_admin;
 -- Product-service logins are created later (lead_svc below, hr/task in 03,
--- lms_svc in 04), so their EXECUTE grant lives at the end of 04 alongside the
--- <product>.fn_member_role grants.
+-- lms_svc in 04), so their EXECUTE grant lives further down this file
+-- alongside iam.fn_role_capability_matrix's.
 GRANT EXECUTE ON FUNCTION iam.fn_user_org_role(UUID,UUID) TO app_user, tenant_admin;
--- Product-service logins are created later, so their EXECUTE grant lives at the
--- end of 04 alongside iam.fn_user_org_role's.
+-- Product-service logins are created later, so their EXECUTE grant lives
+-- further down this file alongside iam.fn_user_org_role's.
 GRANT EXECUTE ON FUNCTION iam.fn_role_capability_matrix(UUID) TO app_user, tenant_admin;
 
 GRANT ALL ON TABLE iam.token_blocklist TO root_service;
@@ -429,25 +429,8 @@ GRANT ALL PRIVILEGES          ON task.task_comments TO root_service;
 
 GRANT SELECT ON task.vw_tasks_enriched TO app_user, tenant_admin, root_service;
 
--- ── Catalog grants (readable by every subject role; only root_service writes)
-GRANT SELECT         ON lms.roles, hr.roles, task.roles TO app_user;
-GRANT SELECT         ON lms.roles, hr.roles, task.roles TO tenant_admin;
-GRANT ALL PRIVILEGES ON lms.roles, hr.roles, task.roles TO root_service;
-
-GRANT SELECT, INSERT, UPDATE ON lms.member_roles TO app_user;
-GRANT SELECT, INSERT, UPDATE ON lms.member_roles TO tenant_admin;
-GRANT ALL PRIVILEGES         ON lms.member_roles TO root_service;
-
-GRANT SELECT, INSERT, UPDATE ON hr.member_roles TO app_user;
-GRANT SELECT, INSERT, UPDATE ON hr.member_roles TO tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.member_roles TO root_service;
-
-GRANT SELECT, INSERT, UPDATE ON task.member_roles TO app_user;
-GRANT SELECT, INSERT, UPDATE ON task.member_roles TO tenant_admin;
-GRANT ALL PRIVILEGES         ON task.member_roles TO root_service;
-
-GRANT SELECT ON lms.vw_member_roles, hr.vw_member_roles, task.vw_member_roles TO app_user;
-GRANT SELECT ON lms.vw_member_roles, hr.vw_member_roles, task.vw_member_roles TO tenant_admin;
+-- Grants for lms/hr/task.roles, .member_roles and .vw_member_roles were
+-- removed here (schema_version 1.19.0) along with the tables/views.
 -- Membership only (NOINHERIT role => no privilege leak) — satisfies every
 -- RLS policy scoped "TO app_user" without needing SET ROLE. Mirrors the
 -- `GRANT app_user TO hr_svc/task_svc` pattern from 10_init-hr-task-schemas.sql.
@@ -508,8 +491,8 @@ REVOKE ALL PRIVILEGES ON ALL TABLES    IN SCHEMA task                FROM hr_svc
 -- existing org_admin_manage_policy/org_admin_insert_policy/
 -- org_admin_update_policy RLS policies (01_init-db.sql) — restricting
 -- to read-only here would break existing "manage team" functionality in
--- every product. Revisit when P1.3 moves role assignment onto the
--- per-product member_roles tables (lms/hr/task.member_roles) exclusively.
+-- every product. P1.3/Tier C settled role assignment onto the single
+-- iam.user_roles ladder instead of a per-product table, so this stays.
 -- ===================================================================
 GRANT SELECT ON ALL TABLES IN SCHEMA geo, entity TO lms_svc, hr_svc, task_svc;
 GRANT SELECT ON ALL TABLES IN SCHEMA iam         TO lms_svc, hr_svc, task_svc;
@@ -562,11 +545,6 @@ GRANT SELECT, INSERT, UPDATE ON TABLE lms.lead_links TO lms_svc;
 -- write grant needed.
 GRANT EXECUTE ON FUNCTION iam.can_assign_to(UUID,UUID,UUID) TO lms_svc;
 
--- lms per-product role model (P1.1)
-GRANT SELECT                 ON TABLE lms.roles         TO lms_svc;
-GRANT SELECT, INSERT, UPDATE ON TABLE lms.member_roles  TO lms_svc;
-GRANT SELECT                 ON TABLE lms.vw_member_roles TO lms_svc;
-
 ALTER DEFAULT PRIVILEGES IN SCHEMA lms       GRANT SELECT, INSERT, UPDATE ON TABLES TO lms_svc;
 ALTER DEFAULT PRIVILEGES IN SCHEMA marketing GRANT SELECT, INSERT, UPDATE ON TABLES TO lms_svc;
 ALTER DEFAULT PRIVILEGES IN SCHEMA ext       GRANT SELECT, INSERT, UPDATE ON TABLES TO lms_svc;
@@ -596,11 +574,6 @@ GRANT SELECT ON TABLE
   hr.vw_attendance_monthly_summary, hr.vw_org_attendance_today
   TO hr_svc;
 
--- hr per-product role model (P1.1)
-GRANT SELECT                 ON TABLE hr.roles         TO hr_svc;
-GRANT SELECT, INSERT, UPDATE ON TABLE hr.member_roles  TO hr_svc;
-GRANT SELECT                 ON TABLE hr.vw_member_roles TO hr_svc;
-
 ALTER DEFAULT PRIVILEGES IN SCHEMA hr GRANT SELECT, INSERT, UPDATE ON TABLES TO hr_svc;
 
 -- ── task_svc: task ──────────────────────────────────────────────────
@@ -610,24 +583,7 @@ GRANT SELECT                 ON TABLE task.task_status_log TO task_svc;
 GRANT SELECT, INSERT         ON TABLE task.task_comments TO task_svc;
 GRANT SELECT                 ON TABLE task.vw_tasks_enriched TO task_svc;
 
--- task per-product role model (P1.1)
-GRANT SELECT                 ON TABLE task.roles         TO task_svc;
-GRANT SELECT, INSERT, UPDATE ON TABLE task.member_roles  TO task_svc;
-GRANT SELECT                 ON TABLE task.vw_member_roles TO task_svc;
-
 ALTER DEFAULT PRIVILEGES IN SCHEMA task GRANT SELECT, INSERT, UPDATE ON TABLES TO task_svc;
-
--- EXECUTE grants — the resolver runs on each caller's own login role (the *_svc
--- logins are NOINHERIT, so an app_user-only grant would NOT reach them via
--- membership without SET ROLE). Grant directly to every login that resolves that
--- product's rank, plus app_user/tenant_admin for SET ROLE paths. Mirrors the
--- explicit EXECUTE grants on iam.fn_user_org_rank (script 01).
---   lms.fn_member_role  → lms_svc (leads/meta), lead_svc (gateway + notifications)
---   hr.fn_member_role   → hr_svc
---   task.fn_member_role → task_svc
-GRANT EXECUTE ON FUNCTION lms.fn_member_role(UUID, UUID)  TO app_user, tenant_admin, lms_svc, lead_svc;
-GRANT EXECUTE ON FUNCTION hr.fn_member_role(UUID, UUID)   TO app_user, tenant_admin, hr_svc;
-GRANT EXECUTE ON FUNCTION task.fn_member_role(UUID, UUID) TO app_user, tenant_admin, task_svc;
 
 -- Tier C: every product service now resolves role/rank/department from the one
 -- iam ladder via iam.fn_user_org_role (see 02_schema.sql), so each product login
@@ -690,14 +646,11 @@ REVOKE ALL ON FUNCTION entity.reset_tenant_catalog(UUID, TEXT, INT)          FRO
 GRANT EXECUTE ON FUNCTION entity._apply_catalog_rows(UUID, TEXT, INT, BOOLEAN) TO root_service;
 GRANT EXECUTE ON FUNCTION entity.seed_tenant_defaults(UUID)                     TO root_service;
 GRANT EXECUTE ON FUNCTION entity.reset_tenant_catalog(UUID, TEXT, INT)          TO root_service;
-GRANT INSERT, UPDATE ON TABLE lms.roles TO lms_svc;
 GRANT INSERT, UPDATE ON TABLE hr.leave_types TO hr_svc;
 GRANT INSERT, UPDATE ON TABLE hr.employment_types TO hr_svc;
 GRANT INSERT, UPDATE ON TABLE hr.attendance_statuses TO hr_svc;
-GRANT INSERT, UPDATE ON TABLE hr.roles TO hr_svc;
 GRANT INSERT, UPDATE ON TABLE task.task_statuses TO task_svc;
 GRANT INSERT, UPDATE ON TABLE task.task_priorities TO task_svc;
-GRANT INSERT, UPDATE ON TABLE task.roles TO task_svc;
 GRANT SELECT              ON iam.departments TO app_user, tenant_admin;
 GRANT INSERT, UPDATE      ON iam.departments TO app_user, hr_svc;
 GRANT SELECT ON iam.capabilities TO app_user, tenant_admin;

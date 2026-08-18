@@ -5,6 +5,7 @@ export { RANKS, platformRank } from './ranks.js';
 export * from './scope.js';
 export * from './user-management.js';
 export * from './product.js';
+export * from './reserved-lookups.js';
 
 export function hasRole(session: SessionUser, role: UserRole): boolean {
   return session.role === role;

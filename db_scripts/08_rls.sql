@@ -783,6 +783,22 @@ CREATE POLICY tenant_isolation_policy ON hr.designations AS PERMISSIVE FOR ALL T
   USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
   WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
 
+-- N-6 admin write (super_admin acting within a selected tenant+org via
+-- withTenantConfigTx, from lookup-admin's Designations screen). Unlike its
+-- tenant-scoped sibling lookups this table has no tenant_id column — org_id is
+-- resolved to a tenant through entity.organizations, same join
+-- tenant_isolation_policy above already uses. hr_svc holds app_user
+-- membership only (07_grants.sql), not tenant_admin, so without this policy
+-- the admin write path had no role it could actually run as: app_user's own
+-- org_isolation_policy requires app.current_org_id (never set by
+-- withTenantConfigTx), and tenant_admin requires a PG role hr_svc is not a
+-- member of.
+DROP POLICY IF EXISTS admin_tenant_config_policy ON hr.designations;
+CREATE POLICY admin_tenant_config_policy ON hr.designations
+  AS PERMISSIVE FOR ALL TO app_user
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+
 ALTER TABLE hr.employee_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.employee_profiles FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON hr.employee_profiles;
@@ -812,6 +828,15 @@ CREATE POLICY org_isolation_policy ON hr.holiday_calendars AS PERMISSIVE FOR ALL
 CREATE POLICY tenant_isolation_policy ON hr.holiday_calendars AS PERMISSIVE FOR ALL TO tenant_admin
   USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
   WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+-- N-6 admin write, same rationale as hr.designations above: hr_svc holds only
+-- app_user membership, which needs app.current_org_id (never set by the
+-- super_admin admin-write helper); tenant_admin requires a PG role hr_svc
+-- does not hold.
+DROP POLICY IF EXISTS admin_tenant_config_policy ON hr.holiday_calendars;
+CREATE POLICY admin_tenant_config_policy ON hr.holiday_calendars
+  AS PERMISSIVE FOR ALL TO app_user
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
 
 ALTER TABLE hr.holidays ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.holidays FORCE ROW LEVEL SECURITY;
@@ -821,6 +846,11 @@ CREATE POLICY org_isolation_policy ON hr.holidays AS PERMISSIVE FOR ALL TO app_u
   USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted)
   WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
 CREATE POLICY tenant_isolation_policy ON hr.holidays AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+DROP POLICY IF EXISTS admin_tenant_config_policy ON hr.holidays;
+CREATE POLICY admin_tenant_config_policy ON hr.holidays
+  AS PERMISSIVE FOR ALL TO app_user
   USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
   WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
 
@@ -967,6 +997,11 @@ CREATE POLICY org_isolation_policy ON hr.shifts AS PERMISSIVE FOR ALL TO app_use
   USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted)
   WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
 CREATE POLICY tenant_isolation_policy ON hr.shifts AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+DROP POLICY IF EXISTS admin_tenant_config_policy ON hr.shifts;
+CREATE POLICY admin_tenant_config_policy ON hr.shifts
+  AS PERMISSIVE FOR ALL TO app_user
   USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
   WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
 
@@ -1164,80 +1199,8 @@ CREATE POLICY self_insert_policy ON task.task_comments AS PERMISSIVE FOR INSERT 
 CREATE POLICY tenant_isolation_policy ON task.task_comments AS PERMISSIVE FOR SELECT TO tenant_admin
   USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted));
 
-ALTER TABLE lms.roles ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS org_isolation_policy    ON lms.roles;
-DROP POLICY IF EXISTS tenant_isolation_policy ON lms.roles;
-CREATE POLICY org_isolation_policy ON lms.roles AS PERMISSIVE FOR SELECT TO app_user
-  USING (tenant_id = (SELECT tenant_id FROM entity.organizations
-                      WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
-CREATE POLICY tenant_isolation_policy ON lms.roles AS PERMISSIVE FOR SELECT TO tenant_admin
-  USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
-
-ALTER TABLE hr.roles ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS org_isolation_policy    ON hr.roles;
-DROP POLICY IF EXISTS tenant_isolation_policy ON hr.roles;
-CREATE POLICY org_isolation_policy ON hr.roles AS PERMISSIVE FOR SELECT TO app_user
-  USING (tenant_id = (SELECT tenant_id FROM entity.organizations
-                      WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
-CREATE POLICY tenant_isolation_policy ON hr.roles AS PERMISSIVE FOR SELECT TO tenant_admin
-  USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
-
-ALTER TABLE task.roles ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS org_isolation_policy    ON task.roles;
-DROP POLICY IF EXISTS tenant_isolation_policy ON task.roles;
-CREATE POLICY org_isolation_policy ON task.roles AS PERMISSIVE FOR SELECT TO app_user
-  USING (tenant_id = (SELECT tenant_id FROM entity.organizations
-                      WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
-CREATE POLICY tenant_isolation_policy ON task.roles AS PERMISSIVE FOR SELECT TO tenant_admin
-  USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
-
-ALTER TABLE lms.member_roles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lms.member_roles FORCE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS org_isolation_policy    ON lms.member_roles;
-DROP POLICY IF EXISTS tenant_isolation_policy ON lms.member_roles;
-
-CREATE POLICY org_isolation_policy ON lms.member_roles
-  AS PERMISSIVE FOR ALL TO app_user
-  USING      (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
-  WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
-
-CREATE POLICY tenant_isolation_policy ON lms.member_roles
-  AS PERMISSIVE FOR ALL TO tenant_admin
-  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
-  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
-
-ALTER TABLE hr.member_roles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE hr.member_roles FORCE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS org_isolation_policy    ON hr.member_roles;
-DROP POLICY IF EXISTS tenant_isolation_policy ON hr.member_roles;
-
-CREATE POLICY org_isolation_policy ON hr.member_roles
-  AS PERMISSIVE FOR ALL TO app_user
-  USING      (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
-  WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
-
-CREATE POLICY tenant_isolation_policy ON hr.member_roles
-  AS PERMISSIVE FOR ALL TO tenant_admin
-  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
-  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
-
-ALTER TABLE task.member_roles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE task.member_roles FORCE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS org_isolation_policy    ON task.member_roles;
-DROP POLICY IF EXISTS tenant_isolation_policy ON task.member_roles;
-
-CREATE POLICY org_isolation_policy ON task.member_roles
-  AS PERMISSIVE FOR ALL TO app_user
-  USING      (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
-  WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
-
-CREATE POLICY tenant_isolation_policy ON task.member_roles
-  AS PERMISSIVE FOR ALL TO tenant_admin
-  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
-  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+-- RLS policies for lms/hr/task.roles and .member_roles were removed here
+-- (schema_version 1.19.0) along with the tables.
 
 ALTER TABLE entity.tenant_catalog_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE entity.tenant_catalog_versions FORCE ROW LEVEL SECURITY;
@@ -1264,15 +1227,8 @@ CREATE POLICY org_isolation_policy ON entity.tenant_catalog_versions
 -- Shared predicate: the row's tenant must equal the admin-selected tenant.
 -- (Written inline per table below — Postgres has no policy macros.)
 
--- ── lms.roles  (lms_svc) ────────────────────────────────────────────
-DROP POLICY IF EXISTS admin_tenant_config_policy ON lms.roles;
-CREATE POLICY admin_tenant_config_policy ON lms.roles
-  AS PERMISSIVE FOR ALL TO app_user
-  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
-  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
-
 -- ── hr.leave_types / employment_types / attendance_statuses /
---    leave_request_statuses / roles  (hr_svc) ──
+--    leave_request_statuses  (hr_svc) ──
 DROP POLICY IF EXISTS admin_tenant_config_policy ON hr.leave_request_statuses;
 CREATE POLICY admin_tenant_config_policy ON hr.leave_request_statuses
   AS PERMISSIVE FOR ALL TO app_user
@@ -1297,13 +1253,7 @@ CREATE POLICY admin_tenant_config_policy ON hr.attendance_statuses
   USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
-DROP POLICY IF EXISTS admin_tenant_config_policy ON hr.roles;
-CREATE POLICY admin_tenant_config_policy ON hr.roles
-  AS PERMISSIVE FOR ALL TO app_user
-  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
-  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
-
--- ── task.task_statuses / task_priorities / roles  (task_svc) ─────────
+-- ── task.task_statuses / task_priorities  (task_svc) ─────────────────
 DROP POLICY IF EXISTS admin_tenant_config_policy ON task.task_statuses;
 CREATE POLICY admin_tenant_config_policy ON task.task_statuses
   AS PERMISSIVE FOR ALL TO app_user
@@ -1312,12 +1262,6 @@ CREATE POLICY admin_tenant_config_policy ON task.task_statuses
 
 DROP POLICY IF EXISTS admin_tenant_config_policy ON task.task_priorities;
 CREATE POLICY admin_tenant_config_policy ON task.task_priorities
-  AS PERMISSIVE FOR ALL TO app_user
-  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
-  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
-
-DROP POLICY IF EXISTS admin_tenant_config_policy ON task.roles;
-CREATE POLICY admin_tenant_config_policy ON task.roles
   AS PERMISSIVE FOR ALL TO app_user
   USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);

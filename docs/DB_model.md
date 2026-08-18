@@ -625,7 +625,7 @@ Versioned default-catalog registry + provisioning seeder that gives a brand-new 
 
 `UNIQUE (catalog_key, version, name)`.
 
-**`entity.catalog_versions`** — one row per catalog: `current_version` (which version a NEW tenant gets) + `modules TEXT[]` (seed only if the tenant has ANY of these active `entity.tenant_modules`). Editing a catalog for future tenants = insert v N+1 rows into `catalog_defaults` and bump `current_version`. The eight registered catalogs and their gating modules: `lms.roles`→`{lms}`; `task.task_statuses`/`task.task_priorities`/`task.roles`→`{tasks}`; `hr.leave_types`→`{leave}`; `hr.attendance_statuses`→`{attendance}`; `hr.roles`/`hr.employment_types`→`{leave,attendance}` (HR-wide).
+**`entity.catalog_versions`** — one row per catalog: `current_version` (which version a NEW tenant gets) + `modules TEXT[]` (seed only if the tenant has ANY of these active `entity.tenant_modules`). Editing a catalog for future tenants = insert v N+1 rows into `catalog_defaults` and bump `current_version`. The **six** registered catalogs and their gating modules: `task.task_statuses`/`task.task_priorities`→`{tasks}`; `hr.leave_types`/`hr.leave_request_statuses`→`{leave}`; `hr.attendance_statuses`→`{attendance}`; `hr.employment_types`→`{leave,attendance}` (HR-wide). The former `lms.roles`/`hr.roles`/`task.roles` catalogs were removed at schema_version 1.19.0 along with the tables they seeded — role/rank resolution runs on the single `iam.user_roles` ladder now (see `reference_data/07_catalog_registry.sql:86-90`).
 
 **`entity.tenant_catalog_versions`** — per-tenant record of the seeded/reset version per catalog. `UNIQUE (tenant_id, catalog_key)`; `tenant_id` FK → `entity.tenants` ON DELETE CASCADE. Drives seeder idempotency (a catalog already recorded is never re-seeded). **RLS:** SELECT-only, mirroring `entity.tenant_modules` (app_user via current org, tenant_admin own tenant); only `root_service` writes.
 
@@ -636,6 +636,34 @@ Versioned default-catalog registry + provisioning seeder that gives a brand-new 
 - `entity._apply_catalog_rows(tenant_id, catalog_key, version, reset)` → shared per-catalog copy helper.
 
 TS wrappers: `seedTenantDefaults()` / `resetTenantCatalog()` / `getTenantCatalogVersions()` in `@platform/db` (`packages/db/src/seed-tenant-defaults.ts`).
+
+#### Two provisioning mechanisms — and what the Catalog Versions screen can see
+
+Per-tenant catalog provisioning happens through **two unrelated mechanisms**. Only the first is version-tracked, and the lookup-admin **Catalog Versions** screen (`/dashboard/catalogs`) can only ever report on that one.
+
+| | Mechanism 1 — versioned registry | Mechanism 2 — template-row cloning |
+| --- | --- | --- |
+| Entry point | `entity.seed_tenant_defaults()` (`04_functions_triggers.sql`) | `entity.seed_tenant_lms_catalogs()` + `seed_tenant_rbac` / `seed_tenant_comms` / `seed_tenant_geo` (`10_tenant_provisioning.sql`) |
+| Source of defaults | `entity.catalog_defaults` rows, keyed by `(catalog_key, version)` | rows with `tenant_id IS NULL` living in the target table itself |
+| Version tracking | `entity.tenant_catalog_versions` | **none** |
+| Covers | the six catalogs above | `lms.lead_stage`, `lms.lead_stage_outcome`, `lms.interaction_types`, `lms.follow_up_statuses`, `lms.lead_sources`, `marketing.marketing_platforms`, `marketing.campaign_statuses`, `ext.lead_stage_capi_event_map`, plus RBAC / comms / geo |
+| Visible on Catalog Versions? | yes | **no** — the report cross-joins `entity.catalog_versions`, which has no rows for these |
+
+Both mechanisms insert `ON CONFLICT DO NOTHING` and neither back-fills retroactively, so a default added after a tenant was provisioned silently never reaches it. For mechanism 1 that at least surfaces as a red cell; for mechanism 2 there is **no visibility at all**. This has already caused two production defects — see `02_tables_core.sql` (marketing platforms / campaign statuses were RLS'd but never cloned, so every tenant saw empty dropdowns) and the `KNOWN FOLLOW-UP` note it references.
+
+**Mechanism 2 depends on the template rows still existing.** `seed_tenant_lms_catalogs()` clones `WHERE tenant_id IS NULL`; if those rows are absent, it silently clones nothing and a newly provisioned tenant gets an empty LMS. The templates are (re)created by `reference_data/04_lms_catalog_templates.sql`, which is idempotent and touches only `tenant_id IS NULL` rows. Verify with:
+
+```sql
+SELECT count(*) FILTER (WHERE tenant_id IS NULL) AS templates, count(*) AS total FROM lms.lead_stage;
+```
+
+#### Meta / CAPI tables — which are catalogs and which are not
+
+Only one Meta table is catalog-shaped, which is why the rest correctly never appear on the Catalog Versions screen:
+
+- `ext.lead_stage_capi_event_map` — **tenant-scoped catalog**, cloned per tenant by mechanism 2. Untracked and unversioned.
+- `ext.meta_capi_event_types` — deliberately **global** vocabulary, no `tenant_id`. Not per-tenant, so nothing to drift.
+- `ext.meta_tenant_config`, `ext.meta_page_form_org_map`, `ext.meta_forms` — per-tenant **credentials and page→org routing config**, not defaults cloned from a platform template. Each tenant's values are unique by nature; there is no version to compare against.
 
 ---
 
@@ -893,6 +921,16 @@ Scheduled follow-up tasks.
 
 **RLS:** org + tenant isolation  
 **Triggers:** `set_updated_at`, `soft_delete_row`, `set_org_id`, `set_created_by`, `check_follow_up_completion`, `check_follow_up_fk_org_scope`, `set_default_follow_up_status`, `sync_follow_up_status`, `audit_row_changes`
+
+**On `notes` — intentional duplication.** When one Edit Lead save both changes the lead and
+schedules a follow-up, the operator's single note is stored twice: here, and on
+`lead_status_log.transition_note` / `lead_assignment_log.note` (both fed from the
+`app.lead_transition_note` GUC). This is deliberate, not drift — `lead_follow_ups.notes` is
+what `vw_followup_pipeline_enriched` surfaces as the NOTES column on the Missed/Overdue
+follow-up screen, while the log copy is the audit record of *why* the change happened.
+Neither may be dropped. The duplicate is resolved **on read** in `LeadHistoryModal.tsx`
+(`suppressDuplicateFollowUpNotes`), where the log copy wins so Lead History shows the note
+once; a follow-up note with no matching log entry is always shown.
 
 ---
 

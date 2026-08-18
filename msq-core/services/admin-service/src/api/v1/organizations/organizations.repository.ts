@@ -54,6 +54,10 @@ export async function list() {
       .leftJoin(citiesTable, and(eq(organizationsTable.cityId, citiesTable.id), eq(citiesTable.tenantId, organizationsTable.tenantId)))
       .leftJoin(statesTable, and(eq(organizationsTable.stateId, statesTable.id), eq(statesTable.tenantId, organizationsTable.tenantId)))
       .leftJoin(countriesTable, and(eq(organizationsTable.countryId, countriesTable.id), eq(countriesTable.tenantId, organizationsTable.tenantId)))
+      // The grid projects isDeleted but had never filtered on it — a
+      // soft-deleted org listed as live, indistinguishable from a merely
+      // deactivated one.
+      .where(eq(organizationsTable.isDeleted, false))
       .orderBy(asc(organizationsTable.name)),
   );
 }

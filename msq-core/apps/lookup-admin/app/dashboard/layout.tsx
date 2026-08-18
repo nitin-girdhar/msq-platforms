@@ -3,10 +3,11 @@ import { can, CAPABILITY, ANCHOR_RANK } from '@platform/rbac';
 import { buildLoginUrl, buildChangePasswordUrl } from '@platform/ui-kit';
 import { AppSidebar, MobileSidebar, HamburgerButton, UserMenu } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
-import { fetchTenants, getSelectedTenantId } from '@/src/lib/tenant-scope';
+import { fetchTenants, fetchOrgs, getSelectedTenantId, getSelectedOrgId } from '@/src/lib/tenant-scope';
 import { ADMIN_NAV } from '@/src/config/navigation';
 import LogoutButton from '@/components/auth/LogoutButton';
 import TenantScopeSwitcher from '@/components/shell/TenantScopeSwitcher';
+import OrgScopeSwitcher from '@/components/shell/OrgScopeSwitcher';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,10 +63,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   // One tenant scope for the whole admin app, chosen here in the navbar. Pages
   // below read it from the cookie (getSelectedTenantId) rather than each one
-  // rendering its own selector.
-  const [tenants, selectedTenantId] = await Promise.all([
+  // rendering its own selector. The org scope is the same shape one level
+  // down, for `scope: 'org'` tables — always rendered in chrome (not
+  // conditioned on the current page) for the same reason the tenant switcher
+  // is: pages that don't need it simply ignore it.
+  const [tenants, selectedTenantId, orgs, selectedOrgId] = await Promise.all([
     fetchTenants(result.cookieHeader),
     getSelectedTenantId(),
+    fetchOrgs(result.cookieHeader),
+    getSelectedOrgId(),
   ]);
 
   return (
@@ -75,6 +81,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <span className="text-base font-bold tracking-tight text-[#0F172A]">Admin</span>
         <div className="ml-auto flex items-center gap-3">
           <TenantScopeSwitcher tenants={tenants} selectedTenantId={selectedTenantId} />
+          <OrgScopeSwitcher orgs={orgs} selectedTenantId={selectedTenantId} selectedOrgId={selectedOrgId} />
           <UserMenu user={session} loginUrl={buildLoginUrl()} changePasswordUrl={buildChangePasswordUrl()} />
         </div>
       </header>

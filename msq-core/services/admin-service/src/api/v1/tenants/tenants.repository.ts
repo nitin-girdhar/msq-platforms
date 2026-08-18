@@ -27,6 +27,10 @@ export async function list() {
       .from(tenantsTable)
       .leftJoin(tenantDomainsTable, eq(tenantsTable.domainId, tenantDomainsTable.id))
       .leftJoin(tenantPlanTypesTable, eq(tenantsTable.planTypeId, tenantPlanTypesTable.id))
+      // The grid projects isDeleted but had never filtered on it — a
+      // soft-deleted tenant listed as live, indistinguishable from a merely
+      // deactivated one.
+      .where(eq(tenantsTable.isDeleted, false))
       .orderBy(asc(tenantsTable.name)),
   );
 }

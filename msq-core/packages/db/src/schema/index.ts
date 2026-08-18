@@ -110,14 +110,3 @@ export * from './tables/task-lists.table.js';
 export * from './tables/tasks.table.js';
 export * from './tables/task-status-log.table.js';
 export * from './tables/task-comments.table.js';
-
-// Per-product roles (P1.1 — per-product role ladders + (user, product, role) grants)
-export * from './tables/lms-roles.table.js';
-export * from './tables/hr-roles.table.js';
-export * from './tables/task-roles.table.js';
-export * from './tables/lms-member-roles.table.js';
-export * from './tables/hr-member-roles.table.js';
-export * from './tables/task-member-roles.table.js';
-export * from './views/lms-member-roles.view.js';
-export * from './views/hr-member-roles.view.js';
-export * from './views/task-member-roles.view.js';

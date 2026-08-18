@@ -2035,118 +2035,10 @@ DROP TRIGGER IF EXISTS trg_00_task_comments_set_org_id ON task.task_comments;
 CREATE TRIGGER trg_00_task_comments_set_org_id
   BEFORE INSERT ON task.task_comments FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
 
-DROP TRIGGER IF EXISTS trg_00_lms_member_roles_tenant_id ON lms.member_roles;
-CREATE TRIGGER trg_00_lms_member_roles_tenant_id
-  BEFORE INSERT OR UPDATE ON lms.member_roles
-  FOR EACH ROW EXECUTE FUNCTION public.set_member_role_tenant_id();
-
-DROP TRIGGER IF EXISTS trg_lms_member_roles_updated_at ON lms.member_roles;
-CREATE TRIGGER trg_lms_member_roles_updated_at
-  BEFORE UPDATE ON lms.member_roles
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
-DROP TRIGGER IF EXISTS trg_00_hr_member_roles_tenant_id ON hr.member_roles;
-CREATE TRIGGER trg_00_hr_member_roles_tenant_id
-  BEFORE INSERT OR UPDATE ON hr.member_roles
-  FOR EACH ROW EXECUTE FUNCTION public.set_member_role_tenant_id();
-
-DROP TRIGGER IF EXISTS trg_hr_member_roles_updated_at ON hr.member_roles;
-CREATE TRIGGER trg_hr_member_roles_updated_at
-  BEFORE UPDATE ON hr.member_roles
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
-DROP TRIGGER IF EXISTS trg_00_task_member_roles_tenant_id ON task.member_roles;
-CREATE TRIGGER trg_00_task_member_roles_tenant_id
-  BEFORE INSERT OR UPDATE ON task.member_roles
-  FOR EACH ROW EXECUTE FUNCTION public.set_member_role_tenant_id();
-
-DROP TRIGGER IF EXISTS trg_task_member_roles_updated_at ON task.member_roles;
-CREATE TRIGGER trg_task_member_roles_updated_at
-  BEFORE UPDATE ON task.member_roles
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
-
--- ===================================================================
--- OWN-RANK HELPERS  (SECURITY DEFINER — bypass member_roles RLS so they
--- can be called inside OTHER tables' RLS policies without recursion.
--- Mirrors iam.fn_user_org_rank. Returns -1 when the user has no active
--- grant in that product+org, which is how "no product access" is encoded.
--- ===================================================================
-
-CREATE OR REPLACE FUNCTION lms.fn_member_rank(p_user_id UUID, p_org_id UUID)
-RETURNS INT LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
-DECLARE v_rank INT;
-BEGIN
-  SELECT r.rank INTO v_rank
-  FROM lms.member_roles mr
-  JOIN lms.roles r ON r.id = mr.role_id
-  WHERE mr.user_id = p_user_id AND mr.org_id = p_org_id AND mr.is_active;
-  RETURN COALESCE(v_rank, -1);
-END; $$;
-
-CREATE OR REPLACE FUNCTION hr.fn_member_rank(p_user_id UUID, p_org_id UUID)
-RETURNS INT LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
-DECLARE v_rank INT;
-BEGIN
-  SELECT r.rank INTO v_rank
-  FROM hr.member_roles mr
-  JOIN hr.roles r ON r.id = mr.role_id
-  WHERE mr.user_id = p_user_id AND mr.org_id = p_org_id AND mr.is_active;
-  RETURN COALESCE(v_rank, -1);
-END; $$;
-
-CREATE OR REPLACE FUNCTION task.fn_member_rank(p_user_id UUID, p_org_id UUID)
-RETURNS INT LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
-DECLARE v_rank INT;
-BEGIN
-  SELECT r.rank INTO v_rank
-  FROM task.member_roles mr
-  JOIN task.roles r ON r.id = mr.role_id
-  WHERE mr.user_id = p_user_id AND mr.org_id = p_org_id AND mr.is_active;
-  RETURN COALESCE(v_rank, -1);
-END; $$;
-
-CREATE OR REPLACE FUNCTION lms.fn_member_role(p_user_id UUID, p_org_id UUID)
-RETURNS TABLE(role TEXT, rank INT) LANGUAGE sql STABLE SECURITY DEFINER AS $$
-  SELECT r.name, r.rank
-  FROM lms.member_roles mr
-  JOIN lms.roles r ON r.id = mr.role_id
-  WHERE mr.user_id = p_user_id AND mr.org_id = p_org_id AND mr.is_active
-  UNION ALL
-  SELECT NULL::text, -1
-  WHERE NOT EXISTS (
-    SELECT 1 FROM lms.member_roles mr
-    WHERE mr.user_id = p_user_id AND mr.org_id = p_org_id AND mr.is_active
-  )
-$$;
-
-CREATE OR REPLACE FUNCTION hr.fn_member_role(p_user_id UUID, p_org_id UUID)
-RETURNS TABLE(role TEXT, rank INT) LANGUAGE sql STABLE SECURITY DEFINER AS $$
-  SELECT r.name, r.rank
-  FROM hr.member_roles mr
-  JOIN hr.roles r ON r.id = mr.role_id
-  WHERE mr.user_id = p_user_id AND mr.org_id = p_org_id AND mr.is_active
-  UNION ALL
-  SELECT NULL::text, -1
-  WHERE NOT EXISTS (
-    SELECT 1 FROM hr.member_roles mr
-    WHERE mr.user_id = p_user_id AND mr.org_id = p_org_id AND mr.is_active
-  )
-$$;
-
-CREATE OR REPLACE FUNCTION task.fn_member_role(p_user_id UUID, p_org_id UUID)
-RETURNS TABLE(role TEXT, rank INT) LANGUAGE sql STABLE SECURITY DEFINER AS $$
-  SELECT r.name, r.rank
-  FROM task.member_roles mr
-  JOIN task.roles r ON r.id = mr.role_id
-  WHERE mr.user_id = p_user_id AND mr.org_id = p_org_id AND mr.is_active
-  UNION ALL
-  SELECT NULL::text, -1
-  WHERE NOT EXISTS (
-    SELECT 1 FROM task.member_roles mr
-    WHERE mr.user_id = p_user_id AND mr.org_id = p_org_id AND mr.is_active
-  )
-$$;
+-- The lms/hr/task.member_roles triggers and their fn_member_rank/fn_member_role
+-- resolvers (P1.1's per-product RBAC, superseded by the unified iam.user_roles
+-- ladder) were removed here (schema_version 1.19.0). See
+-- db_scripts/one_time for the one-off drop script.
 
 DROP TRIGGER IF EXISTS trg_catalog_versions_updated_at ON entity.catalog_versions;
 CREATE TRIGGER trg_catalog_versions_updated_at BEFORE UPDATE ON entity.catalog_versions
@@ -2233,36 +2125,6 @@ BEGIN
     WHERE d.catalog_key = p_catalog_key AND d.version = p_version
     ON CONFLICT (tenant_id, name) DO UPDATE
       SET label = EXCLUDED.label, description = EXCLUDED.description, is_active = EXCLUDED.is_active
-      WHERE p_reset;
-
-  ELSIF p_catalog_key = 'lms.roles' THEN
-    INSERT INTO lms.roles (tenant_id, name, label, description, rank, sort_order, is_active)
-    SELECT p_tenant_id, d.name, d.label, d.description, COALESCE(d.rank, 0), d.sort_order, d.is_active
-    FROM entity.catalog_defaults d
-    WHERE d.catalog_key = p_catalog_key AND d.version = p_version
-    ON CONFLICT (tenant_id, name) DO UPDATE
-      SET label = EXCLUDED.label, description = EXCLUDED.description,
-          rank = EXCLUDED.rank, sort_order = EXCLUDED.sort_order, is_active = EXCLUDED.is_active
-      WHERE p_reset;
-
-  ELSIF p_catalog_key = 'hr.roles' THEN
-    INSERT INTO hr.roles (tenant_id, name, label, description, rank, sort_order, is_active)
-    SELECT p_tenant_id, d.name, d.label, d.description, COALESCE(d.rank, 0), d.sort_order, d.is_active
-    FROM entity.catalog_defaults d
-    WHERE d.catalog_key = p_catalog_key AND d.version = p_version
-    ON CONFLICT (tenant_id, name) DO UPDATE
-      SET label = EXCLUDED.label, description = EXCLUDED.description,
-          rank = EXCLUDED.rank, sort_order = EXCLUDED.sort_order, is_active = EXCLUDED.is_active
-      WHERE p_reset;
-
-  ELSIF p_catalog_key = 'task.roles' THEN
-    INSERT INTO task.roles (tenant_id, name, label, description, rank, sort_order, is_active)
-    SELECT p_tenant_id, d.name, d.label, d.description, COALESCE(d.rank, 0), d.sort_order, d.is_active
-    FROM entity.catalog_defaults d
-    WHERE d.catalog_key = p_catalog_key AND d.version = p_version
-    ON CONFLICT (tenant_id, name) DO UPDATE
-      SET label = EXCLUDED.label, description = EXCLUDED.description,
-          rank = EXCLUDED.rank, sort_order = EXCLUDED.sort_order, is_active = EXCLUDED.is_active
       WHERE p_reset;
 
   ELSE

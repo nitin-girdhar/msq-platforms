@@ -358,94 +358,47 @@ app.get('/lookups/lead-stage-outcomes', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.leadsServiceUrl, '/api/v1/lookups/lead-stage-outcomes', req, reply, req.userCtx);
 });
 
-// Lookup Admin (super_admin only — enforced in admin-service)
-app.get('/lookups/org-types', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/org-types', req, reply, req.userCtx);
-});
-app.post('/lookups/org-types', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/org-types', req, reply, req.userCtx);
-});
-app.patch('/lookups/org-types/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/org-types/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/tenant-domains', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/tenant-domains', req, reply, req.userCtx);
-});
-app.post('/lookups/tenant-domains', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/tenant-domains', req, reply, req.userCtx);
-});
-app.patch('/lookups/tenant-domains/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/tenant-domains/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/tenant-plan-types', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/tenant-plan-types', req, reply, req.userCtx);
-});
-app.post('/lookups/tenant-plan-types', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/tenant-plan-types', req, reply, req.userCtx);
-});
-app.patch('/lookups/tenant-plan-types/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/tenant-plan-types/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/user-roles', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/user-roles', req, reply, req.userCtx);
-});
-app.post('/lookups/user-roles', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/user-roles', req, reply, req.userCtx);
-});
-app.patch('/lookups/user-roles/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/user-roles/${id}`, req, reply, req.userCtx);
-});
-
-// geo.* is a tenant catalog now (db_scripts/02_tables_core.sql), curated from
-// lookup-admin. It stays in admin-service because geo sits in the shared
-// schema set alongside entity/iam, not in a product schema.
-// No DELETE — removing a place is PATCH { is_active: false }.
-for (const level of ['geo-countries', 'geo-states', 'geo-cities'] as const) {
-  app.get(`/lookups/${level}`, { ...withAuth }, async (req, reply) => {
-    return proxyTo(config.adminServiceUrl, `/api/v1/lookups/${level}`, req, reply, req.userCtx);
+// Lookup Admin (super_admin only — enforced in admin-service). Every slug here
+// is global or admin-service-owned (org-types/tenant-domains/tenant-plan-types/
+// user-roles/tenants/organizations/departments, plus the geo-* tenant catalog,
+// which stays in admin-service because geo sits in the shared schema set
+// alongside entity/iam, not a product schema). No DELETE anywhere — removing a
+// row is PATCH { is_active: false }. Mirrors TENANT_LOOKUP_TARGETS below;
+// folded into one map so a new global slug is a one-line addition instead of a
+// hand-written GET/POST/PATCH triple.
+const GLOBAL_LOOKUP_TARGETS: Record<string, string> = {
+  'org-types':          config.adminServiceUrl,
+  'tenant-domains':     config.adminServiceUrl,
+  'tenant-plan-types':  config.adminServiceUrl,
+  'user-roles':         config.adminServiceUrl,
+  'geo-countries':      config.adminServiceUrl,
+  'geo-states':         config.adminServiceUrl,
+  'geo-cities':         config.adminServiceUrl,
+  'tenants':            config.adminServiceUrl,
+  'organizations':      config.adminServiceUrl,
+  // iam.departments — writable since it is the parent of iam.user_roles,
+  // whose form requires a department_id.
+  'departments':        config.adminServiceUrl,
+  // ext.meta_capi_event_types — global CAPI event catalog (Meta Conversion API).
+  'capi-event-types':   config.adminServiceUrl,
+};
+for (const [slug, target] of Object.entries(GLOBAL_LOOKUP_TARGETS)) {
+  app.get(`/lookups/${slug}`, { ...withAuth }, async (req, reply) => {
+    return proxyTo(target, `/api/v1/lookups/${slug}`, req, reply, req.userCtx);
   });
-  app.post(`/lookups/${level}`, { ...withAuth }, async (req, reply) => {
-    return proxyTo(config.adminServiceUrl, `/api/v1/lookups/${level}`, req, reply, req.userCtx);
+  app.post(`/lookups/${slug}`, { ...withAuth }, async (req, reply) => {
+    return proxyTo(target, `/api/v1/lookups/${slug}`, req, reply, req.userCtx);
   });
-  app.patch(`/lookups/${level}/:id`, { ...withAuth }, async (req, reply) => {
+  app.patch(`/lookups/${slug}/:id`, { ...withAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    return proxyTo(config.adminServiceUrl, `/api/v1/lookups/${level}/${id}`, req, reply, req.userCtx);
+    return proxyTo(target, `/api/v1/lookups/${slug}/${id}`, req, reply, req.userCtx);
   });
 }
 
 // The 7 LMS marketing lookups (lead-stage, lead-stage-outcome, interaction-types,
 // follow-up-statuses, lead-sources, marketing-platforms, campaign-statuses) are
-// now tenant-scoped and owned by leads-service (N-6 Half B) — registered via the
+// tenant-scoped and owned by leads-service (N-6 Half B) — registered via the
 // TENANT_LOOKUP_TARGETS map below, not here.
-
-app.get('/lookups/tenants', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/tenants', req, reply, req.userCtx);
-});
-app.post('/lookups/tenants', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/tenants', req, reply, req.userCtx);
-});
-app.patch('/lookups/tenants/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/tenants/${id}`, req, reply, req.userCtx);
-});
-
-app.get('/lookups/organizations', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/organizations', req, reply, req.userCtx);
-});
-app.post('/lookups/organizations', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/lookups/organizations', req, reply, req.userCtx);
-});
-app.patch('/lookups/organizations/:id', { ...withAuth }, async (req, reply) => {
-  const { id } = req.params as { id: string };
-  return proxyTo(config.adminServiceUrl, `/api/v1/lookups/organizations/${id}`, req, reply, req.userCtx);
-});
 
 // Capabilities admin (super_admin only — enforced in admin-service). The
 // capability catalog is global; role↔capability grants are read/written per
@@ -462,9 +415,6 @@ app.put('/roles/:id/capabilities', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.adminServiceUrl, `/api/v1/roles/${id}/capabilities`, req, reply, req.userCtx);
 });
-app.get('/departments', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.adminServiceUrl, '/api/v1/departments', req, reply, req.userCtx);
-});
 
 // Tenant-scoped lookup/role admin (N-6 Half A): super_admin manages a SELECTED
 // tenant's product reference data. These 8 slugs are owned by their product
@@ -479,6 +429,14 @@ const TENANT_LOOKUP_TARGETS: Record<string, string> = {
   'leave-types':        config.hrServiceUrl,
   'employment-types':   config.hrServiceUrl,
   'attendance-statuses':config.hrServiceUrl,
+  'leave-request-statuses': config.hrServiceUrl,
+  // Org-scoped, not tenant-scoped (hr.designations has no tenant_id column) —
+  // the frontend sends ?org_id= instead of ?tenant_id=, forwarded verbatim by
+  // proxyTo the same as every other query param here.
+  'designations':       config.hrServiceUrl,
+  'holiday-calendars':  config.hrServiceUrl,
+  'holidays':           config.hrServiceUrl,
+  'shifts':             config.hrServiceUrl,
   'hr-roles':           config.hrServiceUrl,
   'lms-roles':          config.leadsServiceUrl,
   // N-6 Half B — 7 tenant-scoped LMS marketing lookups
@@ -502,6 +460,37 @@ for (const [slug, target] of Object.entries(TENANT_LOOKUP_TARGETS)) {
     return proxyTo(target, `/api/v1/lookups/${slug}/${id}`, req, reply, req.userCtx);
   });
 }
+
+// ext.lead_stage_capi_event_map — one row per (tenant's) lead stage mapping it
+// to a Meta Conversion API event. Not a GET/POST/PATCH-per-row lookup like the
+// rest of TENANT_LOOKUP_TARGETS: the admin screen edits every stage's mapping
+// at once, so this is GET (current mapping, joined against lead_stage) + PUT
+// (upsert-and-prune the whole set) instead.
+app.get('/lookups/lead-stage-capi-events', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/lookups/lead-stage-capi-events', req, reply, req.userCtx);
+});
+app.put('/lookups/lead-stage-capi-events', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/lookups/lead-stage-capi-events', req, reply, req.userCtx);
+});
+
+// entity.tenant_modules — per-tenant product entitlements, edited from the
+// tenant record. Was previously only settable by hand-run SQL.
+app.get('/tenants/:id/modules', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.adminServiceUrl, `/api/v1/tenants/${id}/modules`, req, reply, req.userCtx);
+});
+app.put('/tenants/:id/modules', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.adminServiceUrl, `/api/v1/tenants/${id}/modules`, req, reply, req.userCtx);
+});
+
+// entity.catalog_versions / tenant_catalog_versions — read-only drift report.
+// No re-seed action: entity.seed_tenant_defaults()'s behavior on an
+// already-provisioned tenant needs verifying against a real database before
+// any write path here is safe (see catalog-drift.repository.ts).
+app.get('/catalogs/drift', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.adminServiceUrl, '/api/v1/catalogs/drift', req, reply, req.userCtx);
+});
 
 // Users
 app.get('/users', { ...withAuth }, async (req, reply) => {

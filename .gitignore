@@ -119,3 +119,4 @@ DB_Migration/sql/99_drop_staging.sql
 db_backups/*
 db_scripts/one_time/*
 open_issues/*
+db_scripts/tools/*

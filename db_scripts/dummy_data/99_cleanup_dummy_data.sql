@@ -163,11 +163,8 @@ DELETE FROM iam.reporting_lines            WHERE tenant_id IN (SELECT id FROM _t
 DELETE FROM hr.employee_profiles           WHERE tenant_id IN (SELECT id FROM _t);
 
 -- ============================================================
--- 6. Per-product RBAC, campaigns, API clients
+-- 6. Campaigns, API clients
 -- ============================================================
-DELETE FROM lms.member_roles      WHERE tenant_id IN (SELECT id FROM _t);
-DELETE FROM hr.member_roles       WHERE tenant_id IN (SELECT id FROM _t);
-DELETE FROM task.member_roles     WHERE tenant_id IN (SELECT id FROM _t);
 DELETE FROM marketing.ad_campaigns WHERE org_id   IN (SELECT id FROM _o);
 DELETE FROM iam.api_client_orgs    WHERE org_id   IN (SELECT id FROM _o);
 
@@ -209,9 +206,6 @@ DELETE FROM lms.follow_up_statuses   WHERE tenant_id IN (SELECT id FROM _t);
 DELETE FROM lms.lead_sources         WHERE tenant_id IN (SELECT id FROM _t);
 DELETE FROM comms.message_templates  WHERE tenant_id IN (SELECT id FROM _t);
 
-DELETE FROM lms.roles                WHERE tenant_id IN (SELECT id FROM _t);
-DELETE FROM hr.roles                 WHERE tenant_id IN (SELECT id FROM _t);
-DELETE FROM task.roles               WHERE tenant_id IN (SELECT id FROM _t);
 DELETE FROM task.task_statuses       WHERE tenant_id IN (SELECT id FROM _t);
 DELETE FROM task.task_priorities     WHERE tenant_id IN (SELECT id FROM _t);
 DELETE FROM hr.leave_types           WHERE tenant_id IN (SELECT id FROM _t);

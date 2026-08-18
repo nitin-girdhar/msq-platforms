@@ -8,6 +8,9 @@ import { organizationsRouter } from './organizations/organizations.router.js';
 import { capabilitiesRouter } from './capabilities/capabilities.router.js';
 import { departmentsRouter } from './departments/departments.router.js';
 import { geoRouter } from './geo/geo.router.js';
+import { capiEventTypesRouter } from './capi-event-types/capi-event-types.router.js';
+import { tenantModulesRouter } from './tenant-modules/tenant-modules.router.js';
+import { catalogDriftRouter } from './catalog-drift/catalog-drift.router.js';
 
 // N-6 DONE: every product-schema lookup/role admin module has moved to its
 // owning product service so the writes execute in the schema-owning service
@@ -32,4 +35,8 @@ export async function v1Router(app: FastifyInstance): Promise<void> {
   // geo.* lives in the shared `geo` schema alongside entity/iam, so it stays
   // here rather than moving to a product service under the N-6 split.
   await app.register(geoRouter);
+  // ext.* is the Meta Conversion API integration, also a shared schema.
+  await app.register(capiEventTypesRouter);
+  await app.register(tenantModulesRouter);
+  await app.register(catalogDriftRouter);
 }

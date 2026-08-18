@@ -523,6 +523,38 @@ GROUP BY ml.org_id, o.name, u.id, u.full_name, u.email, ur.name;
 --   user level    -> lms.vw_lead_report_user   (per assignee, plus one
 --                    "Unassigned" row per branch)
 --
+-- THE METRIC SET is 29 columns in one fixed, grouped order -- core, then one
+-- counter per lms.lead_stage in sort_order, then one per lms.lead_stage_outcome
+-- grouped by parent stage. That exact order is repeated in four places and they
+-- must stay in lock-step:
+--     lms.vw_lead_report_branch   (here)
+--     lms.vw_lead_report_user     (here)
+--     lms.lead_report_snapshot    (02_tables_core.sql)
+--     METRIC_KEYS                 (leads-service lib/reports/lead-report.types.ts)
+-- The service GENERATES its SUM / INSERT / ON CONFLICT column lists from
+-- METRIC_KEYS, so a metric added there but forgotten here fails loudly rather
+-- than silently reporting zeros.
+--
+-- Every stage and every outcome is counted, not just the ones a screen shows
+-- today. A live counter can be added whenever and is instantly correct for all
+-- history, because it is computed from lms.marketing_leads on read -- but
+-- lms.lead_report_snapshot is the half that can never be backfilled. A metric
+-- not captured today has no comparison history tomorrow. So the whole catalog is
+-- captured, and adding a KPI card or a grid column is a UI-only change.
+--
+-- The five duplicate 'other' outcomes are deliberately NOT counted: one per
+-- stage, no analytic meaning, and they would need stage-prefixed column names to
+-- disambiguate. The oc_ prefix on the outcome columns is load-bearing for the
+-- same reason -- the on_hold STAGE and the on_hold OUTCOME would otherwise
+-- collide on one column name.
+--
+-- DROP + CREATE, not CREATE OR REPLACE. The latter can only append columns and
+-- can never reposition them, which is how new_leads_this_month previously ended
+-- up stranded after snapshot_at. Dropping is free here: views hold no data,
+-- nothing else depends on these two (only the leads-service repository reads
+-- them), and 07_grants.sql re-issues their grants in the same apply_schema.ps1
+-- pass that recreates them.
+--
 -- Population is `NOT is_deleted AND is_active` in BOTH views. is_active = FALSE
 -- means the row was superseded by a dedup re-submission or transferred out to
 -- another branch (see COMMENT ON lms.marketing_leads.is_active). A transferred
@@ -538,6 +570,12 @@ GROUP BY ml.org_id, o.name, u.id, u.full_name, u.email, ur.name;
 -- and in vw_dashboard_leads together, or the emailed count stops matching the
 -- overdue badge in the leads list.
 --
+-- Stage and outcome counters are CURRENT STATE, not "ever reached": stage_id and
+-- outcome_id hold what the lead reads as right now, and outcome_id is overwritten
+-- when the lead moves on. A lead that visited and then converted therefore leaves
+-- oc_visited_count and joins converted_count. lms.lead_follow_ups snapshots
+-- stage_id/outcome_id per entry if an "ever reached" definition is ever wanted.
+--
 -- NOW() (not CLOCK_TIMESTAMP()) inside the filters: it is stable for the whole
 -- statement, so a lead whose scheduled_at crosses the boundary mid-scan cannot
 -- land in both followup_scheduled and followup_overdue. CLOCK_TIMESTAMP() is
@@ -545,7 +583,7 @@ GROUP BY ml.org_id, o.name, u.id, u.full_name, u.email, ur.name;
 --
 -- Neither view joins entity.tenants, and neither exposes tenant_name, even
 -- though tenant_id is right there. Under security_invoker the CALLER's grants
--- apply, and neither app_user nor tenant_admin has SELECT on entity.tenants —
+-- apply, and neither app_user nor tenant_admin has SELECT on entity.tenants --
 -- adding the join would make both views fail with "permission denied for table
 -- tenants" for every HTTP caller on the tenant_admin path. (This is not
 -- hypothetical: lms.vw_tenant_full_dashboard above does exactly that and is
@@ -557,33 +595,69 @@ GROUP BY ml.org_id, o.name, u.id, u.full_name, u.email, ur.name;
 -- leads still appears, as a zero row, so a silent join failure looks different
 -- from a genuinely quiet branch.
 --
--- new_leads_today is the only date-bounded metric, and it is bounded in the
--- BRANCH's own timezone (entity.organizations.timezone). date_trunc/::date on a
--- timestamptz truncates in UTC, which for an Asia/Kolkata branch (UTC+5:30)
--- files everything created before 05:30 local under the previous day and makes
--- the report disagree with the leads list. Hence AT TIME ZONE o.timezone.
-CREATE OR REPLACE VIEW lms.vw_lead_report_branch WITH (security_invoker = true) AS
+-- new_leads_today / new_leads_this_month are the only date-bounded metrics, and
+-- they are bounded in the BRANCH's own timezone (entity.organizations.timezone).
+-- date_trunc/::date on a timestamptz truncates in UTC, which for an Asia/Kolkata
+-- branch (UTC+5:30) files everything created before 05:30 local under the
+-- previous day and makes the report disagree with the leads list. Hence
+-- AT TIME ZONE o.timezone.
+
+DROP VIEW IF EXISTS lms.vw_lead_report_branch;
+CREATE VIEW lms.vw_lead_report_branch WITH (security_invoker = true) AS
 WITH counters AS (
   SELECT
     ml.org_id,
-    COUNT(*)                                                         AS total_leads,
-    COUNT(*) FILTER (WHERE ls.name = 'new')                          AS new_count,
+    -- core
+    COUNT(*)                                                                AS total_leads,
+    COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)                     AS unassigned_count,
+    COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                           AND ml.scheduled_at >= NOW())                    AS followup_scheduled,
+    COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                           AND ml.scheduled_at <  NOW())                    AS followup_overdue,
     COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
-                         = (NOW()          AT TIME ZONE o.timezone)::date) AS new_leads_today,
+                             = (NOW()          AT TIME ZONE o.timezone)::date) AS new_leads_today,
     COUNT(*) FILTER (WHERE date_trunc('month', ml.created_at AT TIME ZONE o.timezone)
-                         = date_trunc('month', NOW()          AT TIME ZONE o.timezone)) AS new_leads_this_month,
-    COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)              AS unassigned_count,
-    COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
-                       AND ml.scheduled_at >= NOW())                 AS followup_scheduled,
-    COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
-                       AND ml.scheduled_at <  NOW())                 AS followup_overdue,
-    COUNT(*) FILTER (WHERE ls.name = 'converted')                    AS converted_count,
-    COUNT(*) FILTER (WHERE ls.name = 'unqualified')                  AS unqualified_count
+                             = date_trunc('month', NOW()          AT TIME ZONE o.timezone)) AS new_leads_this_month,
+    -- per stage (lms.lead_stage.name, in sort_order)
+    COUNT(*) FILTER (WHERE ls.name = 'new')                                 AS new_count,
+    COUNT(*) FILTER (WHERE ls.name = 'contacting')                          AS contacting_count,
+    COUNT(*) FILTER (WHERE ls.name = 'on_hold')                             AS on_hold_count,
+    COUNT(*) FILTER (WHERE ls.name = 'qualified')                           AS qualified_count,
+    COUNT(*) FILTER (WHERE ls.name = 'converted')                           AS converted_count,
+    COUNT(*) FILTER (WHERE ls.name = 'unqualified')                         AS unqualified_count,
+    COUNT(*) FILTER (WHERE ls.name = 'transferred_out')                     AS transferred_out_count,
+    -- per stage outcome (lms.lead_stage_outcome.name, by parent stage)
+    --   contacting
+    COUNT(*) FILTER (WHERE lo.name = 'not_connected')                       AS oc_not_connected_count,
+    COUNT(*) FILTER (WHERE lo.name = 'switch_off')                          AS oc_switch_off_count,
+    COUNT(*) FILTER (WHERE lo.name = 'not_answered')                        AS oc_not_answered_count,
+    COUNT(*) FILTER (WHERE lo.name = 'call_back_later')                     AS oc_call_back_later_count,
+    --   on_hold
+    COUNT(*) FILTER (WHERE lo.name = 'on_hold')                             AS oc_on_hold_count,
+    --   qualified
+    COUNT(*) FILTER (WHERE lo.name = 'visit_scheduled')                     AS oc_visit_scheduled_count,
+    COUNT(*) FILTER (WHERE lo.name = 'visited')                             AS oc_visited_count,
+    --   converted
+    COUNT(*) FILTER (WHERE lo.name = 'membership_sold')                     AS oc_membership_sold_count,
+    --   unqualified
+    COUNT(*) FILTER (WHERE lo.name = 'no_response_after_multiple_attempts') AS oc_no_response_after_multiple_attempts_count,
+    COUNT(*) FILTER (WHERE lo.name = 'wrong_number')                        AS oc_wrong_number_count,
+    COUNT(*) FILTER (WHERE lo.name = 'job_applicant')                       AS oc_job_applicant_count,
+    COUNT(*) FILTER (WHERE lo.name = 'budget_issue')                        AS oc_budget_issue_count,
+    COUNT(*) FILTER (WHERE lo.name = 'not_interested')                      AS oc_not_interested_count,
+    COUNT(*) FILTER (WHERE lo.name = 'location_issue')                      AS oc_location_issue_count,
+    COUNT(*) FILTER (WHERE lo.name = 'duplicate_lead')                      AS oc_duplicate_lead_count,
+    --   transferred_out
+    COUNT(*) FILTER (WHERE lo.name = 'transferred_to_other_branch')         AS oc_transferred_to_other_branch_count
   FROM lms.marketing_leads ml
   JOIN entity.organizations o ON o.id = ml.org_id
-  -- LEFT, not INNER: stage_id is nullable, and an inner join would silently drop
-  -- stage-less leads from total_leads and new_leads_today.
-  LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
+  -- LEFT, not INNER, on both lookups: stage_id and outcome_id are nullable, and
+  -- an inner join would silently drop stage-less / outcome-less leads from
+  -- total_leads and from every date-bounded counter.
+  LEFT JOIN lms.lead_stage         ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
+  -- Joined on id alone: lms.lead_stage_outcome is UNIQUE (stage_id, name) and
+  -- stage_id already carries the tenancy, so the outcome name is unambiguous.
+  LEFT JOIN lms.lead_stage_outcome lo ON lo.id = ml.outcome_id
   WHERE NOT ml.is_deleted AND ml.is_active
   GROUP BY ml.org_id
 )
@@ -593,20 +667,39 @@ SELECT
   o.name                                   AS org_name,
   o.timezone                               AS org_timezone,
   (NOW() AT TIME ZONE o.timezone)::date    AS report_date,
-  COALESCE(c.total_leads,        0)::INT    AS total_leads,
-  COALESCE(c.new_count,          0)::INT    AS new_count,
-  COALESCE(c.new_leads_today,    0)::INT    AS new_leads_today,
-  COALESCE(c.unassigned_count,   0)::INT    AS unassigned_count,
-  COALESCE(c.followup_scheduled, 0)::INT    AS followup_scheduled,
-  COALESCE(c.followup_overdue,   0)::INT    AS followup_overdue,
-  COALESCE(c.converted_count,    0)::INT    AS converted_count,
-  COALESCE(c.unqualified_count,  0)::INT    AS unqualified_count,
-  CLOCK_TIMESTAMP()                        AS snapshot_at,
-  -- Appended after snapshot_at (not inserted earlier in the list): PostgreSQL's
-  -- CREATE OR REPLACE VIEW can only add columns at the end, never reposition
-  -- existing ones — see apply_schema.ps1's ON_ERROR_STOP failure this caused
-  -- the first time this was placed next to new_leads_today.
-  COALESCE(c.new_leads_this_month, 0)::INT  AS new_leads_this_month
+  -- core
+  COALESCE(c.total_leads, 0)::INT                                  AS total_leads,
+  COALESCE(c.unassigned_count, 0)::INT                             AS unassigned_count,
+  COALESCE(c.followup_scheduled, 0)::INT                           AS followup_scheduled,
+  COALESCE(c.followup_overdue, 0)::INT                             AS followup_overdue,
+  COALESCE(c.new_leads_today, 0)::INT                              AS new_leads_today,
+  COALESCE(c.new_leads_this_month, 0)::INT                         AS new_leads_this_month,
+  -- per stage
+  COALESCE(c.new_count, 0)::INT                                    AS new_count,
+  COALESCE(c.contacting_count, 0)::INT                             AS contacting_count,
+  COALESCE(c.on_hold_count, 0)::INT                                AS on_hold_count,
+  COALESCE(c.qualified_count, 0)::INT                              AS qualified_count,
+  COALESCE(c.converted_count, 0)::INT                              AS converted_count,
+  COALESCE(c.unqualified_count, 0)::INT                            AS unqualified_count,
+  COALESCE(c.transferred_out_count, 0)::INT                        AS transferred_out_count,
+  -- per stage outcome
+  COALESCE(c.oc_not_connected_count, 0)::INT                       AS oc_not_connected_count,
+  COALESCE(c.oc_switch_off_count, 0)::INT                          AS oc_switch_off_count,
+  COALESCE(c.oc_not_answered_count, 0)::INT                        AS oc_not_answered_count,
+  COALESCE(c.oc_call_back_later_count, 0)::INT                     AS oc_call_back_later_count,
+  COALESCE(c.oc_on_hold_count, 0)::INT                             AS oc_on_hold_count,
+  COALESCE(c.oc_visit_scheduled_count, 0)::INT                     AS oc_visit_scheduled_count,
+  COALESCE(c.oc_visited_count, 0)::INT                             AS oc_visited_count,
+  COALESCE(c.oc_membership_sold_count, 0)::INT                     AS oc_membership_sold_count,
+  COALESCE(c.oc_no_response_after_multiple_attempts_count, 0)::INT AS oc_no_response_after_multiple_attempts_count,
+  COALESCE(c.oc_wrong_number_count, 0)::INT                        AS oc_wrong_number_count,
+  COALESCE(c.oc_job_applicant_count, 0)::INT                       AS oc_job_applicant_count,
+  COALESCE(c.oc_budget_issue_count, 0)::INT                        AS oc_budget_issue_count,
+  COALESCE(c.oc_not_interested_count, 0)::INT                      AS oc_not_interested_count,
+  COALESCE(c.oc_location_issue_count, 0)::INT                      AS oc_location_issue_count,
+  COALESCE(c.oc_duplicate_lead_count, 0)::INT                      AS oc_duplicate_lead_count,
+  COALESCE(c.oc_transferred_to_other_branch_count, 0)::INT         AS oc_transferred_to_other_branch_count,
+  CLOCK_TIMESTAMP()                        AS snapshot_at
 FROM entity.organizations o
 LEFT JOIN counters c ON c.org_id = o.id
 WHERE NOT o.is_deleted;
@@ -627,8 +720,10 @@ WHERE NOT o.is_deleted;
 -- Unassigned row and 0 elsewhere -- purely so the metric column set is identical
 -- across all three result shapes and one renderer serves them all.
 --
--- Same population, timezone and follow-up rules as lms.vw_lead_report_branch.
-CREATE OR REPLACE VIEW lms.vw_lead_report_user WITH (security_invoker = true) AS
+-- Same population, timezone, follow-up and current-state rules as
+-- lms.vw_lead_report_branch.
+DROP VIEW IF EXISTS lms.vw_lead_report_user;
+CREATE VIEW lms.vw_lead_report_user WITH (security_invoker = true) AS
 SELECT
   o.tenant_id,
   ml.org_id,
@@ -638,27 +733,59 @@ SELECT
   u.email                                  AS assignee_email,
   (ml.assigned_user_id IS NULL)            AS is_unassigned,
   (NOW() AT TIME ZONE o.timezone)::date    AS report_date,
-  COUNT(*)::INT                                                    AS total_leads,
-  COUNT(*) FILTER (WHERE ls.name = 'new')::INT                     AS new_count,
+  -- core
+  COUNT(*)::INT                                                                AS total_leads,
+  COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)::INT                     AS unassigned_count,
+  COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                         AND ml.scheduled_at >= NOW())::INT                    AS followup_scheduled,
+  COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                         AND ml.scheduled_at <  NOW())::INT                    AS followup_overdue,
   COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
-                       = (NOW()          AT TIME ZONE o.timezone)::date)::INT AS new_leads_today,
-  COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)::INT          AS unassigned_count,
-  COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
-                     AND ml.scheduled_at >= NOW())::INT             AS followup_scheduled,
-  COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
-                     AND ml.scheduled_at <  NOW())::INT             AS followup_overdue,
-  COUNT(*) FILTER (WHERE ls.name = 'converted')::INT                AS converted_count,
-  COUNT(*) FILTER (WHERE ls.name = 'unqualified')::INT              AS unqualified_count,
-  CLOCK_TIMESTAMP()                        AS snapshot_at,
-  -- Appended after snapshot_at, not next to new_leads_today — see the same
-  -- note on lms.vw_lead_report_branch above (CREATE OR REPLACE VIEW can only
-  -- add columns at the end).
+                           = (NOW()          AT TIME ZONE o.timezone)::date)::INT AS new_leads_today,
   COUNT(*) FILTER (WHERE date_trunc('month', ml.created_at AT TIME ZONE o.timezone)
-                       = date_trunc('month', NOW()          AT TIME ZONE o.timezone))::INT AS new_leads_this_month
+                           = date_trunc('month', NOW()          AT TIME ZONE o.timezone))::INT AS new_leads_this_month,
+  -- per stage (lms.lead_stage.name, in sort_order)
+  COUNT(*) FILTER (WHERE ls.name = 'new')::INT                                 AS new_count,
+  COUNT(*) FILTER (WHERE ls.name = 'contacting')::INT                          AS contacting_count,
+  COUNT(*) FILTER (WHERE ls.name = 'on_hold')::INT                             AS on_hold_count,
+  COUNT(*) FILTER (WHERE ls.name = 'qualified')::INT                           AS qualified_count,
+  COUNT(*) FILTER (WHERE ls.name = 'converted')::INT                           AS converted_count,
+  COUNT(*) FILTER (WHERE ls.name = 'unqualified')::INT                         AS unqualified_count,
+  COUNT(*) FILTER (WHERE ls.name = 'transferred_out')::INT                     AS transferred_out_count,
+  -- per stage outcome (lms.lead_stage_outcome.name, by parent stage)
+  --   contacting
+  COUNT(*) FILTER (WHERE lo.name = 'not_connected')::INT                       AS oc_not_connected_count,
+  COUNT(*) FILTER (WHERE lo.name = 'switch_off')::INT                          AS oc_switch_off_count,
+  COUNT(*) FILTER (WHERE lo.name = 'not_answered')::INT                        AS oc_not_answered_count,
+  COUNT(*) FILTER (WHERE lo.name = 'call_back_later')::INT                     AS oc_call_back_later_count,
+  --   on_hold
+  COUNT(*) FILTER (WHERE lo.name = 'on_hold')::INT                             AS oc_on_hold_count,
+  --   qualified
+  COUNT(*) FILTER (WHERE lo.name = 'visit_scheduled')::INT                     AS oc_visit_scheduled_count,
+  COUNT(*) FILTER (WHERE lo.name = 'visited')::INT                             AS oc_visited_count,
+  --   converted
+  COUNT(*) FILTER (WHERE lo.name = 'membership_sold')::INT                     AS oc_membership_sold_count,
+  --   unqualified
+  COUNT(*) FILTER (WHERE lo.name = 'no_response_after_multiple_attempts')::INT AS oc_no_response_after_multiple_attempts_count,
+  COUNT(*) FILTER (WHERE lo.name = 'wrong_number')::INT                        AS oc_wrong_number_count,
+  COUNT(*) FILTER (WHERE lo.name = 'job_applicant')::INT                       AS oc_job_applicant_count,
+  COUNT(*) FILTER (WHERE lo.name = 'budget_issue')::INT                        AS oc_budget_issue_count,
+  COUNT(*) FILTER (WHERE lo.name = 'not_interested')::INT                      AS oc_not_interested_count,
+  COUNT(*) FILTER (WHERE lo.name = 'location_issue')::INT                      AS oc_location_issue_count,
+  COUNT(*) FILTER (WHERE lo.name = 'duplicate_lead')::INT                      AS oc_duplicate_lead_count,
+  --   transferred_out
+  COUNT(*) FILTER (WHERE lo.name = 'transferred_to_other_branch')::INT         AS oc_transferred_to_other_branch_count,
+  CLOCK_TIMESTAMP()                        AS snapshot_at
 FROM lms.marketing_leads ml
 JOIN entity.organizations o ON o.id = ml.org_id AND NOT o.is_deleted
-LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
-LEFT JOIN iam.users      u  ON u.id  = ml.assigned_user_id AND NOT u.is_deleted
+-- LEFT, not INNER, on both lookups: stage_id and outcome_id are nullable, and
+-- an inner join would silently drop stage-less / outcome-less leads from
+-- total_leads and from every date-bounded counter.
+LEFT JOIN lms.lead_stage         ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
+-- Joined on id alone: lms.lead_stage_outcome is UNIQUE (stage_id, name) and
+-- stage_id already carries the tenancy, so the outcome name is unambiguous.
+LEFT JOIN lms.lead_stage_outcome lo ON lo.id = ml.outcome_id
+LEFT JOIN iam.users              u  ON u.id  = ml.assigned_user_id AND NOT u.is_deleted
 WHERE NOT ml.is_deleted AND ml.is_active
 GROUP BY o.tenant_id, ml.org_id, o.name, o.timezone,
          ml.assigned_user_id, u.full_name, u.email;
@@ -960,72 +1087,8 @@ LEFT JOIN iam.users            uc ON uc.id = t.created_by
 WHERE NOT t.is_deleted;
 
 
--- ===================================================================
--- RESOLVER VIEWS  (vw_ + security_invoker: RLS on member_roles applies
--- through the view for the calling role). Resolve role -> name/label/rank.
--- ===================================================================
-
-CREATE OR REPLACE VIEW lms.vw_member_roles WITH (security_invoker = true) AS
-SELECT
-  mr.user_id,
-  u.full_name  AS user_name,
-  u.email      AS user_email,
-  mr.org_id,
-  o.name       AS org_name,
-  mr.tenant_id,
-  mr.role_id,
-  r.name       AS role,
-  r.label      AS role_label,
-  r.rank       AS rank,
-  mr.is_active,
-  mr.granted_by,
-  mr.granted_at,
-  mr.updated_at
-FROM lms.member_roles mr
-JOIN      iam.users            u ON u.id = mr.user_id
-JOIN      entity.organizations o ON o.id = mr.org_id
-JOIN      lms.roles            r ON r.id = mr.role_id AND r.tenant_id = mr.tenant_id;
-
-CREATE OR REPLACE VIEW hr.vw_member_roles WITH (security_invoker = true) AS
-SELECT
-  mr.user_id,
-  u.full_name  AS user_name,
-  u.email      AS user_email,
-  mr.org_id,
-  o.name       AS org_name,
-  mr.tenant_id,
-  mr.role_id,
-  r.name       AS role,
-  r.label      AS role_label,
-  r.rank       AS rank,
-  mr.is_active,
-  mr.granted_by,
-  mr.granted_at,
-  mr.updated_at
-FROM hr.member_roles mr
-JOIN      iam.users            u ON u.id = mr.user_id
-JOIN      entity.organizations o ON o.id = mr.org_id
-JOIN      hr.roles             r ON r.id = mr.role_id AND r.tenant_id = mr.tenant_id;
-
-CREATE OR REPLACE VIEW task.vw_member_roles WITH (security_invoker = true) AS
-SELECT
-  mr.user_id,
-  u.full_name  AS user_name,
-  u.email      AS user_email,
-  mr.org_id,
-  o.name       AS org_name,
-  mr.tenant_id,
-  mr.role_id,
-  r.name       AS role,
-  r.label      AS role_label,
-  r.rank       AS rank,
-  mr.is_active,
-  mr.granted_by,
-  mr.granted_at,
-  mr.updated_at
-FROM task.member_roles mr
-JOIN      iam.users            u ON u.id = mr.user_id
-JOIN      entity.organizations o ON o.id = mr.org_id
-JOIN      task.roles           r ON r.id = mr.role_id AND r.tenant_id = mr.tenant_id;
+-- lms/hr/task.vw_member_roles (resolver views over the per-product RBAC
+-- tables) were removed here (schema_version 1.19.0) along with the tables
+-- they resolved. See db_scripts/one_time for the one-off drop script.
 
 COMMIT;

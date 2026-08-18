@@ -94,7 +94,7 @@ Meta (Facebook) ─→ API Gateway /meta/webhook                ─→ meta-conv
 | GET/POST/PATCH | `/lookups/{task-statuses,task-priorities,task-roles}` (super_admin, `?tenant_id=`) | tasks-service (N-6) |
 | GET/POST | `/lookups/tenants` (super_admin only) | admin-service |
 | PATCH | `/lookups/tenants/:id` (super_admin only) | admin-service |
-| GET/POST | `/lookups/organizations` (super_admin only, tenant-scoped) | admin-service |
+| GET/POST | `/lookups/organizations` (super_admin only) — GET lists orgs **across all tenants** (each row carries `tenantId`; callers filter client-side). This is lookup-admin's org source for the navbar Org scope and the departments `org_id` FK; identity-service's `/orgs/all` is NOT usable there, as it omits `tenant_id` and is pinned to the caller's own tenant | admin-service |
 | PATCH | `/lookups/organizations/:id` (super_admin only, tenant-scoped) | admin-service |
 | GET | `/capabilities` (super_admin only) — the global `iam.capabilities` tree (tool→page→tab→operation→scope) | admin-service |
 | GET | `/roles/:id/capabilities?tenant_id=` (super_admin only) — platform defaults + this tenant's overrides for one role | admin-service |

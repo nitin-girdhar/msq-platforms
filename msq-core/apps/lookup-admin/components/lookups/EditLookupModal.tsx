@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { lookupAdmin } from '@/src/lib/api/client';
 import type { LookupTableDef, FormValues } from '@/src/lib/lookupTableConfig';
 import type { LookupRow } from './LookupTable';
@@ -15,6 +16,7 @@ interface Props {
   config: LookupTableDef;
   row: LookupRow;
   tenantId?: string | undefined;
+  orgId?: string | undefined;
 }
 
 // The submit button lives in the Modal's pinned footer, outside the <form>;
@@ -32,7 +34,7 @@ function valuesFromRow(config: LookupTableDef, row: LookupRow): FormValues {
   return values;
 }
 
-export default function EditLookupModal({ open, onClose, table, config, row, tenantId }: Props) {
+export default function EditLookupModal({ open, onClose, table, config, row, tenantId, orgId }: Props) {
   const router = useRouter();
   const [values, setValues] = useState<FormValues>(() => valuesFromRow(config, row));
   const [pending, setPending] = useState(false);
@@ -94,7 +96,7 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
 
     setPending(true);
     try {
-      await lookupAdmin.update(table, row.id, patch, tenantId);
+      await lookupAdmin.update(table, row.id, patch, tenantId, orgId);
       router.refresh();
       handleClose();
     } catch (err) {
@@ -108,7 +110,7 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
     setError(null);
     setStatusPending(true);
     try {
-      await lookupAdmin.update(table, row.id, { is_active: !row.is_active }, tenantId);
+      await lookupAdmin.update(table, row.id, { is_active: !row.is_active }, tenantId, orgId);
       router.refresh();
       handleClose();
     } catch (err) {
@@ -120,10 +122,19 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
 
   const locked = pending || statusPending;
 
+  // A reserved row's name is load-bearing for a workflow (see reservedNames in
+  // lookupTableConfig): deactivating it breaks the same code path renaming it
+  // would, so the toggle is withdrawn rather than left to fail at the service.
+  const isReserved = config.reservedNames?.includes(String(row['name'] ?? '')) ?? false;
+
   const footer = (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div>
-        {row.is_active ? (
+        {isReserved ? (
+          <p className="max-w-xs text-[11px] text-[#94A3B8]">
+            Required by the platform — cannot be renamed or deactivated.
+          </p>
+        ) : row.is_active ? (
           <Button
             variant="danger"
             onClick={handleToggleActive}
@@ -160,6 +171,18 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
 
   return (
     <Modal open={open} onClose={handleClose} title={`Edit ${row.label || row.name}`} locked={locked} footer={footer}>
+      {table === 'tenants' && (
+        // entity.tenant_modules doesn't fit this generic form (a fixed set of
+        // four checkboxes, not a field on the tenant row itself) — bespoke
+        // page linked from here instead, same shape as the CAPI mapping link
+        // on the Lead Stages page.
+        <Link
+          href={`/dashboard/tenants/${row.id}/modules`}
+          className="mb-2 inline-block text-xs font-semibold text-[#0b6cbf] hover:underline"
+        >
+          Manage modules →
+        </Link>
+      )}
       <LookupForm
         formId={FORM_ID}
         idPrefix="el"
@@ -168,15 +191,18 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
         setField={setField}
         disabled={locked}
         tenantId={tenantId}
+        orgId={orgId}
         // A row's owning tenant is not an edit — moving an org between tenants
         // would silently re-parent all its data. Shown, never re-picked here.
         lockedKeys={[
           'tenant_id',
           ...(config.reservedRanks?.[String(row['name'] ?? '')] !== undefined ? ['rank'] : []),
+          ...(isReserved ? ['name'] : []),
         ]}
         lockedHints={{
           tenant_id: "A row's tenant cannot be changed after it is created.",
           rank: 'Fixed for this role — set by the platform.',
+          name: 'Fixed by the platform — edit the label to change how this reads.',
         }}
         error={error}
         onSubmit={handleSave}

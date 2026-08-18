@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useTransition } from 'react';
 // From tenant-cookie, NOT tenant-scope — the latter imports `next/headers`,
 // which cannot be pulled into a client component.
-import { TENANT_COOKIE, type TenantOption } from '@/src/lib/tenant-cookie';
+import { TENANT_COOKIE, ORG_COOKIE, type TenantOption } from '@/src/lib/tenant-cookie';
 
 interface Props {
   tenants: TenantOption[];
@@ -25,6 +25,9 @@ export default function TenantScopeSwitcher({ tenants, selectedTenantId }: Props
     document.cookie = value
       ? `${TENANT_COOKIE}=${encodeURIComponent(value)}; path=/; max-age=${ONE_YEAR}; samesite=lax`
       : `${TENANT_COOKIE}=; path=/; max-age=0; samesite=lax`;
+    // A stale org from a different tenant must never survive a tenant switch —
+    // clear it here rather than relying on OrgScopeSwitcher to notice.
+    document.cookie = `${ORG_COOKIE}=; path=/; max-age=0; samesite=lax`;
     startTransition(() => router.refresh());
   };
 

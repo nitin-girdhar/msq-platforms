@@ -2,8 +2,7 @@
 -- reference_data/07_catalog_registry.sql — Tenant catalog registry
 --
 -- The versioned default rows behind entity.seed_tenant_defaults(): task
--- statuses and priorities, HR leave/employment/attendance types, and the
--- per-product role catalogs.
+-- statuses and priorities, and HR leave/employment/attendance types.
 -- 
 -- Never edit a shipped (catalog_key, version) row set — add rows at
 -- version N+1 and bump entity.catalog_versions.current_version, so
@@ -84,43 +83,21 @@ INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label,
   ('hr.attendance_statuses', 'attendance', 1, 'wfh',        'Work From Home',  7)
 ON CONFLICT (catalog_key, version, name) DO NOTHING;
 
--- lms.roles (module: lms)
-INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label, description, rank, sort_order) VALUES
-  ('lms.roles', 'lms', 1, 'read_only',              'Read Only',              'Read-only viewer — dashboards and reports only',                    0,  1),
-  ('lms.roles', 'lms', 1, 'sales_representative',   'Sales Representative',   'Front-line sales — manages own assigned leads and follow-ups',     20, 2),
-  ('lms.roles', 'lms', 1, 'senior_sales_executive', 'Senior Sales Executive', 'Manages a team of sales reps',                                     40, 3),
-  ('lms.roles', 'lms', 1, 'org_manager',            'Manager',                'Manages a team of Senior Sales Executives and reps within an org', 60, 4),
-  ('lms.roles', 'lms', 1, 'org_sr_manager',         'Senior Manager',         'Manages a team of managers and reps within an org',                70, 5),
-  ('lms.roles', 'lms', 1, 'lms_admin',              'LMS Admin',              'Full control of the LMS product within an org',                    80, 6)
-ON CONFLICT (catalog_key, version, name) DO NOTHING;
-
--- hr.roles (modules: leave OR attendance — HR-wide)
-INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label, description, rank, sort_order) VALUES
-  ('hr.roles', 'leave', 1, 'hr_viewer',  'HR Viewer',  'Read-only access to HR data',                                  0,  1),
-  ('hr.roles', 'leave', 1, 'hr_staff',   'HR Staff',   'Day-to-day HR operations — leave/attendance entry',           40, 2),
-  ('hr.roles', 'leave', 1, 'hr_manager', 'HR Manager', 'Approves leave, manages team attendance',                     70, 3),
-  ('hr.roles', 'leave', 1, 'hr_admin',   'HR Admin',   'Full control of the HR product — profiles, policies, config', 80, 4)
-ON CONFLICT (catalog_key, version, name) DO NOTHING;
-
--- task.roles (module: tasks)
-INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label, description, rank, sort_order) VALUES
-  ('task.roles', 'tasks', 1, 'task_member', 'Task Member', 'Creates and works own tasks',                     20, 1),
-  ('task.roles', 'tasks', 1, 'task_lead',   'Task Lead',   'Manages a team''s tasks and lists',               40, 2),
-  ('task.roles', 'tasks', 1, 'task_admin',  'Task Admin',  'Full control of the Tasks product within an org', 80, 3)
-ON CONFLICT (catalog_key, version, name) DO NOTHING;
+-- lms.roles / hr.roles / task.roles (module: capabilities) default rows and
+-- their catalog_versions entries were removed here (schema_version 1.19.0)
+-- along with the tables they seeded — role/rank resolution runs on the
+-- single iam.user_roles ladder now. See db_scripts/one_time for the one-off
+-- cleanup of already-provisioned tenants' rows.
 
 
 -- Register the current version + module gating per catalog.
 INSERT INTO entity.catalog_versions (catalog_key, product, modules, current_version) VALUES
   ('task.task_statuses',     'tasks',      ARRAY['tasks'],               1),
   ('task.task_priorities',   'tasks',      ARRAY['tasks'],               1),
-  ('task.roles',             'tasks',      ARRAY['tasks'],               1),
   ('hr.leave_types',         'leave',      ARRAY['leave'],               1),
   ('hr.attendance_statuses', 'attendance', ARRAY['attendance'],          1),
   ('hr.leave_request_statuses','leave',     ARRAY['leave'],               1),
-  ('hr.employment_types',    'leave',      ARRAY['leave','attendance'],  1),
-  ('hr.roles',               'leave',      ARRAY['leave','attendance'],  1),
-  ('lms.roles',              'lms',        ARRAY['lms'],                 1)
+  ('hr.employment_types',    'leave',      ARRAY['leave','attendance'],  1)
 ON CONFLICT (catalog_key) DO NOTHING;
 
 COMMIT;

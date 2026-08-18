@@ -461,7 +461,8 @@ CREATE TABLE IF NOT EXISTS iam.users (
   -- The single, coarse cross-product role that survives in the shrunk JWT.
   -- Nullable (backfilled by the roles/grants backfill step, made NOT NULL in
   -- the Phase E contract). Drives PG-role selection and platform-wide
-  -- capabilities only; product authority comes from <product>.member_roles.
+  -- capabilities only; product authority comes from the unified
+  -- iam.user_roles ladder (iam.fn_user_org_role, resolveGlobalRole).
   platform_role         TEXT
                         CONSTRAINT chk_users_platform_role
                         CHECK (platform_role IN ('super_admin','tenant_admin','org_admin','member')),
@@ -759,14 +760,49 @@ CREATE TABLE IF NOT EXISTS lms.lead_report_snapshot (
   source_label       TEXT        NOT NULL DEFAULT 'Unknown',
   -- Branch-local calendar date, same semantics as report_date in the views.
   report_date        DATE        NOT NULL,
-  total_leads        INT         NOT NULL,
-  new_count          INT         NOT NULL,
-  new_leads_today    INT         NOT NULL,
-  unassigned_count   INT         NOT NULL,
-  followup_scheduled INT         NOT NULL,
-  followup_overdue   INT         NOT NULL,
-  converted_count    INT         NOT NULL,
-  unqualified_count  INT         NOT NULL,
+  -- The 29 metric columns, in the same grouped order as
+  -- lms.vw_lead_report_branch / _user and as METRIC_KEYS in the leads-service.
+  -- Plain NOT NULL with no DEFAULT, like every other column here: the table is
+  -- created empty and upsertReportSnapshot always supplies every metric.
+  -- core
+  total_leads                                  INT         NOT NULL,
+  unassigned_count                             INT         NOT NULL,
+  followup_scheduled                           INT         NOT NULL,
+  followup_overdue                             INT         NOT NULL,
+  new_leads_today                              INT         NOT NULL,
+  new_leads_this_month                         INT         NOT NULL,
+  -- per stage (lms.lead_stage.name, in sort_order)
+  new_count                                    INT         NOT NULL,
+  contacting_count                             INT         NOT NULL,
+  on_hold_count                                INT         NOT NULL,
+  qualified_count                              INT         NOT NULL,
+  converted_count                              INT         NOT NULL,
+  unqualified_count                            INT         NOT NULL,
+  transferred_out_count                        INT         NOT NULL,
+  -- per stage outcome (lms.lead_stage_outcome.name, grouped by parent stage).
+  -- oc_ prefix disambiguates the on_hold STAGE from the on_hold OUTCOME.
+  --   contacting
+  oc_not_connected_count                       INT         NOT NULL,
+  oc_switch_off_count                          INT         NOT NULL,
+  oc_not_answered_count                        INT         NOT NULL,
+  oc_call_back_later_count                     INT         NOT NULL,
+  --   on_hold
+  oc_on_hold_count                             INT         NOT NULL,
+  --   qualified
+  oc_visit_scheduled_count                     INT         NOT NULL,
+  oc_visited_count                             INT         NOT NULL,
+  --   converted
+  oc_membership_sold_count                     INT         NOT NULL,
+  --   unqualified
+  oc_no_response_after_multiple_attempts_count INT         NOT NULL,
+  oc_wrong_number_count                        INT         NOT NULL,
+  oc_job_applicant_count                       INT         NOT NULL,
+  oc_budget_issue_count                        INT         NOT NULL,
+  oc_not_interested_count                      INT         NOT NULL,
+  oc_location_issue_count                      INT         NOT NULL,
+  oc_duplicate_lead_count                      INT         NOT NULL,
+  --   transferred_out
+  oc_transferred_to_other_branch_count         INT         NOT NULL,
   captured_at        TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   CONSTRAINT uq_lead_report_snapshot UNIQUE NULLS NOT DISTINCT (tenant_id, org_id, assigned_user_id, source_id, report_date)
 );

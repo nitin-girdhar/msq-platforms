@@ -27,24 +27,37 @@ export const auth = {
 
 // ── Lookups ───────────────────────────────────────────────────────────────────
 
+// A scope: 'tenant' table sends only tenant_id. A scope: 'org' table
+// (hr.designations) sends BOTH: org_id is the row-level filter, and tenant_id
+// still pins the admin-write RLS session (there is no tenant_id column to
+// derive it from server-side — see db_scripts/08_rls.sql's
+// admin_tenant_config_policy on hr.designations).
+function scopeQuery(tenantId?: string, orgId?: string): string {
+  const params = new URLSearchParams();
+  if (tenantId) params.set('tenant_id', tenantId);
+  if (orgId) params.set('org_id', orgId);
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
 export const lookupAdmin = {
-  list: (table: string, tenantId?: string) =>
+  list: (table: string, tenantId?: string, orgId?: string) =>
     request<{ success: true; data: Record<string, unknown>[] }>(
-      `/lookups/${table}${tenantId ? `?tenant_id=${tenantId}` : ''}`,
+      `/lookups/${table}${scopeQuery(tenantId, orgId)}`,
     ),
 
-  create: (table: string, body: unknown, tenantId?: string) =>
+  create: (table: string, body: unknown, tenantId?: string, orgId?: string) =>
     request<{ success: true; data: Record<string, unknown> }>(
-      `/lookups/${table}${tenantId ? `?tenant_id=${tenantId}` : ''}`,
+      `/lookups/${table}${scopeQuery(tenantId, orgId)}`,
       {
         method: 'POST',
         body: JSON.stringify(body),
       },
     ),
 
-  update: (table: string, id: string, body: unknown, tenantId?: string) =>
+  update: (table: string, id: string, body: unknown, tenantId?: string, orgId?: string) =>
     request<{ success: true; data: Record<string, unknown> }>(
-      `/lookups/${table}/${id}${tenantId ? `?tenant_id=${tenantId}` : ''}`,
+      `/lookups/${table}/${id}${scopeQuery(tenantId, orgId)}`,
       {
         method: 'PATCH',
         body: JSON.stringify(body),
@@ -125,16 +138,89 @@ export const capabilitiesApi = {
     }),
 };
 
+// Departments moved under /lookups/* when they became writable, so the generic
+// [table] grid can manage them; this stays as the FkSelect option source.
 export const departmentsApi = {
   list: (tenantId: string) =>
-    request<{ success: true; data: DepartmentRow[] }>(`/departments?tenant_id=${tenantId}`),
+    request<{ success: true; data: DepartmentRow[] }>(`/lookups/departments?tenant_id=${tenantId}`),
+};
+
+// ── Lead Stage CAPI event mapping (bespoke — see lead-stage-capi-events tab) ──
+
+export interface LeadStageCapiEventRow {
+  stage_id: string;
+  stage_name: string;
+  stage_label: string;
+  capi_event_type_id: number | null;
+}
+
+export const leadStageCapiEvents = {
+  list: (tenantId: string) =>
+    request<{ success: true; data: LeadStageCapiEventRow[] }>(
+      `/lookups/lead-stage-capi-events?tenant_id=${tenantId}`,
+    ),
+
+  put: (tenantId: string, mappings: Array<{ stage_id: string; capi_event_type_id: number | null }>) =>
+    request<{ success: true; data: LeadStageCapiEventRow[] }>(
+      `/lookups/lead-stage-capi-events?tenant_id=${tenantId}`,
+      { method: 'PUT', body: JSON.stringify({ mappings }) },
+    ),
+};
+
+// ── Tenant module entitlements (bespoke — see tenants/[id]/modules) ──────────
+
+export type ModuleKey = 'lms' | 'leave' | 'attendance' | 'tasks';
+
+export interface TenantModuleRow {
+  module: ModuleKey;
+  is_active: boolean;
+}
+
+export const tenantModules = {
+  list: (tenantId: string) =>
+    request<{ success: true; data: TenantModuleRow[] }>(`/tenants/${tenantId}/modules`),
+
+  put: (tenantId: string, modules: ModuleKey[]) =>
+    request<{ success: true; data: TenantModuleRow[] }>(`/tenants/${tenantId}/modules`, {
+      method: 'PUT',
+      body: JSON.stringify({ modules }),
+    }),
+};
+
+// ── Catalog version drift (read-only report) ──────────────────────────────
+
+export interface CatalogDriftRow {
+  tenant_id: string;
+  tenant_name: string;
+  catalog_key: string;
+  current_version: number;
+  tenant_version: number | null;
+  seeded_at: string | null;
+}
+
+export const catalogDrift = {
+  list: () => request<{ success: true; data: CatalogDriftRow[] }>('/catalogs/drift'),
 };
 
 // ── Orgs (cross-tenant) ────────────────────────────────────────────────────
 
+// admin-service's /lookups/organizations, not identity-service's /orgs/all —
+// see fetchOrgs in src/lib/tenant-scope.ts for why (/orgs/all has no tenant_id
+// to filter on, and is pinned to the caller's own tenant). Normalized to
+// snake_case tenant_id so callers keep the row shape they already use.
 export const orgs = {
-  listAll: () =>
-    request<{ success: true; data: Array<{ id: string; name: string; tenant_id: string }> }>('/orgs/all'),
+  listAll: async (): Promise<{ success: true; data: Array<{ id: string; name: string; tenant_id: string }> }> => {
+    const res = await request<{
+      success: true;
+      data: Array<{ id: string; name: string; tenantId: string; isActive?: boolean }>;
+    }>('/lookups/organizations');
+    return {
+      success: true,
+      data: res.data
+        .filter((o) => o.isActive !== false)
+        .map((o) => ({ id: String(o.id), name: o.name, tenant_id: String(o.tenantId) })),
+    };
+  },
 };
 
 // ── Users ────────────────────────────────────────────────────────────────────

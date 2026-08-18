@@ -124,23 +124,4 @@ BEGIN
   RETURN NEW;
 END; $$;
 
--- ===================================================================
--- SHARED TRIGGER FUNCTION — derive member_roles.tenant_id from org_id
--- tenant_id is denormalized onto member_roles so the tenant_admin RLS
--- policy needs no join. This trigger sets it authoritatively from the
--- org's real tenant on every INSERT/UPDATE, so an app_user cannot write
--- a spoofed tenant_id to escape isolation.
--- ===================================================================
-CREATE OR REPLACE FUNCTION public.set_member_role_tenant_id()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-  SELECT tenant_id INTO NEW.tenant_id
-  FROM entity.organizations
-  WHERE id = NEW.org_id;
-  IF NEW.tenant_id IS NULL THEN
-    RAISE EXCEPTION 'org_id % does not resolve to a tenant', NEW.org_id;
-  END IF;
-  RETURN NEW;
-END; $$;
-
 COMMIT;

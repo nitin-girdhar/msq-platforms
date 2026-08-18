@@ -184,8 +184,8 @@ END; $$;-- ===================================================================
 -- The lookup tables tenant-scoped by the historical 22_tenant-scope-lookups.sql
 -- carry tenant_id + their org/tenant SELECT policies directly in their CREATE
 -- TABLE here: hr.leave_types / hr.employment_types / hr.attendance_statuses /
--- task.task_statuses / task.task_priorities (lms.roles / hr.roles / task.roles
--- live in 04_roles_and_grants.sql).
+-- task.task_statuses / task.task_priorities. (lms.roles / hr.roles / task.roles
+-- used to live alongside these; removed at schema_version 1.19.0.)
 -- entity.organizations.geo_lat/geo_lng (historically an ALTER in
 -- 13_init-attendance.sql) now lives in 02_schema.sql.
 -- Idempotent: safe to re-run.

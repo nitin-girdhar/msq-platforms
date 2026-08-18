@@ -22,6 +22,12 @@ const EXTRA_CARDS: Partial<Record<ModuleKey, { slug: string; title: string; desc
       description: 'Platform users, roles, and organization access.',
       href: '/dashboard/users',
     },
+    {
+      slug: 'catalog-drift',
+      title: 'Catalog Versions',
+      description: 'Which tenants are behind the current default catalog version.',
+      href: '/dashboard/catalogs',
+    },
   ],
   capabilities: [
     {

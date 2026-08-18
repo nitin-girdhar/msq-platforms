@@ -120,3 +120,4 @@ db_backups/*
 db_scripts/one_time/*
 open_issues/*
 db_scripts/tools/*
+.env.remote-uat

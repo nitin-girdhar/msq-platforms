@@ -1,5 +1,5 @@
 import { sql, asc, and, eq } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@platform/db';
+import { withRoleTx, withServiceTx, sqlUuidArr } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
 import { leadSourcesTable } from '@platform/db/schema';
 
@@ -11,7 +11,14 @@ export interface LocationFilter {
 }
 
 export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter, isTenantWide: boolean) {
-  return withRoleTx(ctx, async (tx) => {
+  // entity.organizations' org_isolation_policy limits app_user to the orgs they
+  // are mapped to, so a capability-driven tenant-wide caller whose platform_role
+  // is not literally tenant_admin would get the scopeClause below widened and
+  // then have RLS narrow it straight back to their own branch — an empty branch
+  // picker. Hand the capability decision to withRoleTx (read-only: this is a
+  // list endpoint).
+  const txCtx: RoleTxContext = isTenantWide ? { ...ctx, tenantWide: true, readOnly: true } : ctx;
+  return withRoleTx(txCtx, async (tx) => {
     const scopeClause = isTenantWide
       ? sql`o.tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = ${ctx.org_id}::uuid)`
       : sql`o.id = ${ctx.org_id}::uuid`;
@@ -22,11 +29,11 @@ export async function getOrgs(ctx: RoleTxContext, filter: LocationFilter, isTena
     // nothing rather than leaking a row.
     let locationClause = sql``;
     if (filter.cityIds?.length) {
-      locationClause = sql`AND o.city_id = ANY(${filter.cityIds}::uuid[])`;
+      locationClause = sql`AND o.city_id = ANY(${sqlUuidArr(filter.cityIds)})`;
     } else if (filter.stateIds?.length) {
-      locationClause = sql`AND o.state_id = ANY(${filter.stateIds}::uuid[])`;
+      locationClause = sql`AND o.state_id = ANY(${sqlUuidArr(filter.stateIds)})`;
     } else if (filter.countryIds?.length) {
-      locationClause = sql`AND o.country_id = ANY(${filter.countryIds}::uuid[])`;
+      locationClause = sql`AND o.country_id = ANY(${sqlUuidArr(filter.countryIds)})`;
     }
 
     return (await tx.execute(sql`

@@ -815,6 +815,7 @@ export async function reassignUserLeadsInOrg(
     fromUserId: targetUserId,
     toUserId: reassignTo,
     actorId: ctx.user_id,
+    reason: 'user_deactivated',
   });
 }
 
@@ -852,7 +853,10 @@ export async function moveUserBranch(
   if (!targetOrg) throw new BadRequestError('Target branch not found or not in this tenant');
 
   const reassignedLeadsCount = reassignLeadsTo
-    ? await reassignOrgLeadsViaLeadsService({ orgId: oldOrgId, fromUserId: targetUserId, toUserId: reassignLeadsTo, actorId: ctx.user_id })
+    ? await reassignOrgLeadsViaLeadsService({
+        orgId: oldOrgId, fromUserId: targetUserId, toUserId: reassignLeadsTo,
+        actorId: ctx.user_id, reason: 'branch_transfer',
+      })
     : 0;
 
   await withServiceTx(async (tx) => {

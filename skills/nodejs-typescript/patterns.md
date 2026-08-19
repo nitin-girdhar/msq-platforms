@@ -144,7 +144,7 @@ export async function delete<Entity>(ctx: RoleTxContext, id: string) {
 
 ```ts
 import { sql, and, eq } from 'drizzle-orm';
-import { withRoleTx } from '@platform/db';
+import { withRoleTx, sqlUuidArr } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
 import { <entity>Table } from '@platform/db/schema';
 
@@ -158,7 +158,11 @@ export async function list<Entity>(ctx: RoleTxContext, filters: List<Entity>Filt
     const offset = (filters.page - 1) * filters.page_size;
     const where = and(
       sql`NOT is_deleted`,
-      filters.org_ids?.length ? sql`org_id = ANY(${filters.org_ids}::uuid[])` : undefined,
+      // Postgres arrays: use sqlUuidArr/sqlTextArr from @platform/db. A bare JS
+      // array in a `sql` template compiles to a parameter LIST, not an array —
+      // `ANY(${ids}::uuid[])` becomes `ANY(($1)::uuid[])`, which Postgres
+      // rejects at runtime with `malformed array literal`.
+      filters.org_ids?.length ? sql`org_id = ANY(${sqlUuidArr(filters.org_ids)})` : undefined,
       filters.search ? sql`full_name ILIKE ${`%${filters.search}%`}` : undefined,
     );
     const rows = (await tx.execute(sql`

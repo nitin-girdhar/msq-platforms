@@ -409,6 +409,10 @@ Keys are `snake_case` (`page_size`). Never return naked arrays/objects; never va
 - `throw new Error(...)` for an expected condition — use an `AppError` subclass.
 - Read `process.env` outside `config/index.ts`.
 - String-concatenate user input into SQL — always parameterise via `sql`` templates.
+- Interpolate a bare JS array into a `sql` template for a Postgres array. Drizzle expands
+  it into a parameter LIST, so `ANY(${ids}::uuid[])` compiles to `ANY(($1)::uuid[])` and
+  fails at runtime with `malformed array literal`. Use `sqlUuidArr` / `sqlTextArr` from
+  `@platform/db`.
 - Join multiple tables ad hoc in TypeScript for a read — query the `vw_*` view instead.
 - Omit the ESM `.js` suffix on relative imports.
 - Log tokens, passwords, or PII.

@@ -414,6 +414,10 @@ Role → capability grants (Tier C3), resolved per tenant by `iam.fn_role_capabi
 **Drizzle:** `roleCapabilitiesTable` in `@platform/db/schema` (`tables/role-capabilities.table.ts`).
 **Admin API:** `GET /roles/:id/capabilities?tenant_id=`, `PUT /roles/:id/capabilities` (admin-service, via gateway — see Architecture.md → "Capability administration").
 
+> **Seeding trap — a grant on the global template does not reach a tenant that owns a copy of the role.** `iam.fn_role_capability_matrix` resolves **one role row per name** and the per-tenant copy **wins** (`DISTINCT ON (r.name) … ORDER BY (r.tenant_id IS NOT NULL) DESC`), and grants are keyed on `role_id`. Since `_migrations/19` the ladder roles — and, in practice, tenant copies of `tenant_admin`/`org_admin` too — exist per tenant, so a capability added to a template list in `reference_data/03_roles_and_grants.sql` lands on the template's `role_id` only and is invisible to every tenant that has its own copy. This is why that file ends with **back-fill blocks** that pin each new capability to an existing one with the same audience (`lms.leads.view.tenant` ← `lms.history.view.tenant`; `lms.leads.assign.bulk` ← `lms.leads.assign.any`), run once for `tenant_id IS NULL` and once for `tenant_id IS NOT NULL`. Add a matching pair of blocks for any new capability, or the roles the feature was built for silently will not have it.
+
+> **`lms.leads.view.tenant` is what makes the branch picker work.** It is granted to `tenant_admin` only (plus `super_admin` via `'*'`). identity-service's `GET /orgs` widens the branch list to the whole tenant exactly when `resolveScope(actor, 'lms.leads.view')` is `tenant`/`all`, and leads-service reads the picked branch under the tenant Postgres role on the same condition (`RoleTxContext.tenantWide`). It was defined in `iam.capabilities` but granted to **no role at all**, which left every user with a single-option branch picker and the LMS Bulk Assign screen unusable.
+
 ---
 
 ### iam.users
@@ -953,6 +957,15 @@ Immutable log of lead assignment changes. Auto-populated by trigger.
 **Action values:** initial, reassigned, unassigned, self_assigned, bulk_assigned  
 **RLS:** org + tenant isolation (SELECT only for non-service roles)
 
+**Bulk moves are labelled.** The branch-transfer and deactivation flows both reach this table
+through `POST /internal/leads/reassign-org`, which sets `app.lead_transition_note` before the
+UPDATE so every row it produces carries a stamped `note` — `Leads bulk transferred: previous
+owner moved to another branch`, or `… was deactivated`, and `Leads bulk unassigned: …` when no
+successor was named. `vw_lead_history` appends it to its generated sentence, so the row reads
+`Reassigned from X to Y — Leads bulk transferred: …`. Without it Lead History could not tell a bulk move apart from a manual
+reassign. The cause comes from identity-service as the request's `reason` field; it is optional,
+so an older caller degrades to a cause-neutral note rather than failing.
+
 ---
 
 ### lms.lead_status_log
@@ -995,7 +1008,7 @@ and read back by the report page's `?compare=YYYY-MM-DD` mode.
 | source_id            | UUID        | FK → lms.lead_sources(id) ON DELETE SET NULL; NULL = "Unknown"     |
 | source_label         | TEXT        | NOT NULL, DEFAULT 'Unknown' — kept even if the source is renamed  |
 | report_date          | DATE        | NOT NULL — branch-local calendar date                             |
-| *(29 metric columns)* | INT        | NOT NULL — see below                                              |
+| *(29 metric columns)* | INT        | NOT NULL DEFAULT 0 — see below                                    |
 | captured_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                               |
 
 UNIQUE NULLS NOT DISTINCT (tenant_id, org_id, assigned_user_id, source_id, report_date)
@@ -1027,6 +1040,17 @@ Counters are **current state**, not "ever reached": `stage_id`/`outcome_id` hold
 what the lead reads as right now, and `outcome_id` is overwritten when the lead
 moves on, so a lead that visited and then converted leaves `oc_visited_count` and
 joins `converted_count`.
+
+`DEFAULT 0` on the metric columns is load-bearing, not decoration: it keeps the
+table writable by an older build of leads-service whose snapshot INSERT names only
+the original 8 metric columns, so the service can be rolled back without a
+database rollback. Do not replace it with a bare `NOT NULL`.
+
+Adding metrics to an existing server is `db_scripts/one_time/apply_lead_report_metrics.sql`
+(`ALTER TABLE ... ADD COLUMN`, O(1) on PG 11+, no rewrite, rows preserved) —
+`apply_schema.ps1` deliberately does not re-run `02_tables_core.sql` on a populated
+database. Rows written before a metric existed read 0 for it and are not
+backfillable, since stage/outcome are current state and have since moved.
 
 **RLS:** SELECT-only for app_user (by org_id) + tenant_admin (by tenant_id)
 
@@ -1463,7 +1487,7 @@ Schema migration tracking.
 | `app.current_user_id`        | Acting user's UUID (used by triggers + RLS) |
 | `app.current_org_id`         | Current org context (RLS org isolation)      |
 | `app.current_tenant_id`      | Current tenant context (RLS tenant isolation)|
-| `app.lead_transition_note`   | Free-text note for lead stage transitions   |
+| `app.lead_transition_note`   | Free-text note for lead stage transitions, and the stamped reason on bulk assignment moves |
 
 ---
 

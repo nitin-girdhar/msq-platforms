@@ -761,48 +761,55 @@ CREATE TABLE IF NOT EXISTS lms.lead_report_snapshot (
   -- Branch-local calendar date, same semantics as report_date in the views.
   report_date        DATE        NOT NULL,
   -- The 29 metric columns, in the same grouped order as
-  -- lms.vw_lead_report_branch / _user and as METRIC_KEYS in the leads-service.
-  -- Plain NOT NULL with no DEFAULT, like every other column here: the table is
-  -- created empty and upsertReportSnapshot always supplies every metric.
+  -- lms.vw_lead_report_branch / _user and as METRIC_KEYS in the leads-service
+  -- (lib/reports/lead-report.types.ts), which generates its INSERT column list from
+  -- that array and so always supplies every one.
+  --
+  -- DEFAULT 0 is load-bearing, not decoration. It is what keeps this table readable
+  -- and writable by a PREVIOUS build of the service, whose snapshot INSERT names only
+  -- the first 8 of these columns: the other 21 default instead of raising a not-null
+  -- violation. That makes a code-only rollback possible with no database change, and
+  -- it is why the in-place ALTER ... ADD COLUMN on a populated server does not need a
+  -- follow-up DROP DEFAULT. See db_scripts/one_time/apply_lead_report_metrics.sql.
   -- core
-  total_leads                                  INT         NOT NULL,
-  unassigned_count                             INT         NOT NULL,
-  followup_scheduled                           INT         NOT NULL,
-  followup_overdue                             INT         NOT NULL,
-  new_leads_today                              INT         NOT NULL,
-  new_leads_this_month                         INT         NOT NULL,
+  total_leads                                  INT NOT NULL DEFAULT 0,
+  unassigned_count                             INT NOT NULL DEFAULT 0,
+  followup_scheduled                           INT NOT NULL DEFAULT 0,
+  followup_overdue                             INT NOT NULL DEFAULT 0,
+  new_leads_today                              INT NOT NULL DEFAULT 0,
+  new_leads_this_month                         INT NOT NULL DEFAULT 0,
   -- per stage (lms.lead_stage.name, in sort_order)
-  new_count                                    INT         NOT NULL,
-  contacting_count                             INT         NOT NULL,
-  on_hold_count                                INT         NOT NULL,
-  qualified_count                              INT         NOT NULL,
-  converted_count                              INT         NOT NULL,
-  unqualified_count                            INT         NOT NULL,
-  transferred_out_count                        INT         NOT NULL,
+  new_count                                    INT NOT NULL DEFAULT 0,
+  contacting_count                             INT NOT NULL DEFAULT 0,
+  on_hold_count                                INT NOT NULL DEFAULT 0,
+  qualified_count                              INT NOT NULL DEFAULT 0,
+  converted_count                              INT NOT NULL DEFAULT 0,
+  unqualified_count                            INT NOT NULL DEFAULT 0,
+  transferred_out_count                        INT NOT NULL DEFAULT 0,
   -- per stage outcome (lms.lead_stage_outcome.name, grouped by parent stage).
   -- oc_ prefix disambiguates the on_hold STAGE from the on_hold OUTCOME.
   --   contacting
-  oc_not_connected_count                       INT         NOT NULL,
-  oc_switch_off_count                          INT         NOT NULL,
-  oc_not_answered_count                        INT         NOT NULL,
-  oc_call_back_later_count                     INT         NOT NULL,
+  oc_not_connected_count                       INT NOT NULL DEFAULT 0,
+  oc_switch_off_count                          INT NOT NULL DEFAULT 0,
+  oc_not_answered_count                        INT NOT NULL DEFAULT 0,
+  oc_call_back_later_count                     INT NOT NULL DEFAULT 0,
   --   on_hold
-  oc_on_hold_count                             INT         NOT NULL,
+  oc_on_hold_count                             INT NOT NULL DEFAULT 0,
   --   qualified
-  oc_visit_scheduled_count                     INT         NOT NULL,
-  oc_visited_count                             INT         NOT NULL,
+  oc_visit_scheduled_count                     INT NOT NULL DEFAULT 0,
+  oc_visited_count                             INT NOT NULL DEFAULT 0,
   --   converted
-  oc_membership_sold_count                     INT         NOT NULL,
+  oc_membership_sold_count                     INT NOT NULL DEFAULT 0,
   --   unqualified
-  oc_no_response_after_multiple_attempts_count INT         NOT NULL,
-  oc_wrong_number_count                        INT         NOT NULL,
-  oc_job_applicant_count                       INT         NOT NULL,
-  oc_budget_issue_count                        INT         NOT NULL,
-  oc_not_interested_count                      INT         NOT NULL,
-  oc_location_issue_count                      INT         NOT NULL,
-  oc_duplicate_lead_count                      INT         NOT NULL,
+  oc_no_response_after_multiple_attempts_count INT NOT NULL DEFAULT 0,
+  oc_wrong_number_count                        INT NOT NULL DEFAULT 0,
+  oc_job_applicant_count                       INT NOT NULL DEFAULT 0,
+  oc_budget_issue_count                        INT NOT NULL DEFAULT 0,
+  oc_not_interested_count                      INT NOT NULL DEFAULT 0,
+  oc_location_issue_count                      INT NOT NULL DEFAULT 0,
+  oc_duplicate_lead_count                      INT NOT NULL DEFAULT 0,
   --   transferred_out
-  oc_transferred_to_other_branch_count         INT         NOT NULL,
+  oc_transferred_to_other_branch_count         INT NOT NULL DEFAULT 0,
   captured_at        TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   CONSTRAINT uq_lead_report_snapshot UNIQUE NULLS NOT DISTINCT (tenant_id, org_id, assigned_user_id, source_id, report_date)
 );

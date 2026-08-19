@@ -15,6 +15,27 @@ export interface RoleTxContext {
   // SELECT policy still applies unchanged — read visibility is identical, only
   // writes are blocked. Set by callers for read-only actors (product rank 0).
   readOnly?: boolean;
+  /**
+   * Run under the `tenant_admin` Postgres role even when `role` (platform_role)
+   * is not literally tenant_admin — i.e. this actor's CAPABILITY reaches every
+   * branch in their tenant.
+   *
+   * Cross-branch reach in this platform is a capability (`lms.leads.view.tenant`),
+   * but platform_role is a 4-value denormalisation that a tenant-defined role —
+   * a regional manager, say — collapses to `member`. Such an actor passed every
+   * app-layer gate and then read ZERO rows, because RLS was still pinned to
+   * `app.current_org_id`. This flag lets the capability, not the denormalised
+   * role name, pick the Postgres role.
+   *
+   * This is NOT an RLS bypass: `tenant_isolation_policy` (db_scripts/08_rls.sql)
+   * still fences every row to `app.current_tenant_id`, which is taken from the
+   * VERIFIED session below and never from client input. It widens BRANCH reach
+   * within one tenant; it can never cross tenants.
+   *
+   * Like `readOnly`, this is a caller assertion: whoever sets it MUST have
+   * already resolved the actor's tenant-scoped capability.
+   */
+  tenantWide?: boolean;
 }
 
 export async function withRoleTx<T>(ctx: RoleTxContext, fn: (tx: DrizzleTx) => Promise<T>): Promise<T> {
@@ -26,9 +47,12 @@ export async function withRoleTx<T>(ctx: RoleTxContext, fn: (tx: DrizzleTx) => P
       return fn(tx);
     });
   }
-  if (ctx.role === 'tenant_admin') {
+  if (ctx.role === 'tenant_admin' || ctx.tenantWide) {
     return tenantDrizzle().transaction(async (tx) => {
       await tx.execute(sql.raw(`SET LOCAL ROLE tenant_admin`));
+      // Same defence-in-depth as the app_user path below: a read-only actor's
+      // transaction is made physically incapable of writing.
+      if (ctx.readOnly) await tx.execute(sql.raw(`SET LOCAL transaction_read_only = on`));
       await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${ctx.tenant_id}, true)`);
       await tx.execute(sql`SELECT set_config('app.current_user_id', ${ctx.user_id}, true)`);
       // Set org_id so audit triggers and any org-scoped policy checks have context.

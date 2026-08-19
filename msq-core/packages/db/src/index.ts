@@ -7,6 +7,7 @@ export * from './blocklist.js';
 export * from './notify.js';
 export * from './api-clients.js';
 export * from './recipients.js';
+export * from './sql-arrays.js';
 export * from './tenant-modules.js';
 export * from './seed-tenant-defaults.js';
 export * from './member-role.js';

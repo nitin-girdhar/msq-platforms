@@ -6,7 +6,7 @@ import { toApiRow, toApiRows, capabilitiesFor } from '@platform/db';
 import { ROLE_RANK } from '@platform/auth-constants';
 import type { UserRole } from '@platform/auth-constants';
 import { canGrantRole, canManageUser, canOverridePasswordPolicy, canSeeOrgFilter, checkMoveUserBranchAccess } from '@platform/authz';
-import { ANCHOR_RANK, can, CAPABILITY, type CapabilityHolder } from '@platform/rbac';
+import { ANCHOR_RANK, can, resolveScope, CAPABILITY, type CapabilityHolder } from '@platform/rbac';
 import { createStrongPasswordSchema } from '@platform/validation';
 import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, AddOrgMappingInput, OrgAssignmentInput } from '@platform/validation';
 import { NotFoundError, ConflictError, ForbiddenError, BadRequestError } from '../../../lib/errors.js';
@@ -53,6 +53,31 @@ function asDuplicateUserConflict(err: unknown): unknown {
   }
   if (msg.includes('row-level security policy')) {
     return new ForbiddenError('You do not have permission to grant access in this organisation.');
+  }
+  return err;
+}
+
+/**
+ * Turn the iam.reporting_lines guard triggers into clean 400s.
+ *
+ * check_reporting_line_membership() and check_reporting_line_no_cycle() RAISE
+ * with ERRCODE = check_violation, and — like the constraint violations above —
+ * the text only ever appears on `.cause.message`, so without this they escaped
+ * as a 500 that told the admin nothing actionable. The trigger already words
+ * the problem well, so its own message is passed through rather than replaced.
+ */
+function asReportingLineBadRequest(err: unknown): unknown {
+  const causeMsg = (err as { cause?: { message?: string } })?.cause?.message ?? '';
+  const msg = `${(err as Error)?.message ?? ''} ${causeMsg}`;
+  if (msg.includes('is not an active member of org')) {
+    return new BadRequestError(
+      'The selected manager is not a member of the branch this reporting line belongs to. Add them to that branch first.',
+    );
+  }
+  if (msg.includes('Circular reporting chain')) {
+    return new BadRequestError(
+      'That manager reports (directly or indirectly) to this user, so the change would create a reporting loop.',
+    );
   }
   return err;
 }
@@ -238,17 +263,32 @@ export async function getAssignableUsers(
   maxRank?: number,
   purpose: 'assign' | 'filter' = 'assign',
 ) {
-  // Same threshold as listUsers' org filter — only actors who can already see
-  // other branches may request assignable candidates for one of them (e.g. the
-  // walk-in-lead form's org picker on the Assignments page).
-  const canQueryOtherOrg = canSeeOrgFilter(ctx.role);
+  // Cross-branch reach is a capability, not a platform_role check. canSeeOrgFilter
+  // reads platform_role, which a tenant-defined multi-branch role collapses to
+  // 'member' — so the actor could pick another branch in the Bulk Assign
+  // dropdown and then be offered that branch's leads with only their OWN
+  // branch's assignees. Ask the same lms.leads.view ladder the branch picker and
+  // leads-service ask. (Non-LMS callers keep the platform_role threshold.)
+  const tenantIdForCaps = await resolveTenantId(ctx);
+  const leadsViewScope = product === 'lms'
+    ? resolveScope({ capabilities: await capabilitiesFor(tenantIdForCaps, roleName) }, CAPABILITY.LMS_LEADS_VIEW)
+    : null;
+  const canQueryOtherOrg = product === 'lms'
+    ? (leadsViewScope === 'tenant' || leadsViewScope === 'all')
+    : canSeeOrgFilter(ctx.role);
   const effectiveOrgId = orgId && canQueryOtherOrg ? orgId : undefined;
   // Same as listUsers: tenant admin+ with no explicit org_id sees candidates
   // across every branch in the tenant, not just their own — a caller whose
   // Leads History scope is 'tenant'/'all' but who hasn't picked a branch yet
   // should get the full candidate list, not silently just their home org's.
   const tenantWide = canQueryOtherOrg && !effectiveOrgId;
-  const tenantId = await resolveTenantId(ctx);
+  const tenantId = tenantIdForCaps;
+  // iam.users' org_isolation_policy scopes app_user to the current branch, so a
+  // capability-driven cross-branch caller needs the tenant role to actually see
+  // the branch they picked — same reasoning as orgs.repository.getOrgs.
+  const txCtx: RoleTxContext = canQueryOtherOrg
+    ? { ...ctx, tenantWide: true, readOnly: true }
+    : ctx;
 
   // An LMS assignee picker takes its ceiling from the actor's grants, not from
   // the query string — see assignScopeFromCapabilities above. A 'filter' list
@@ -263,11 +303,11 @@ export async function getAssignableUsers(
     });
     if (derived === null) return [];
     return repo.getAssignableUsers(
-      ctx, actorRank, product, effectiveOrgId, derived, undefined, tenantWide, tenantId,
+      txCtx, actorRank, product, effectiveOrgId, derived, undefined, tenantWide, tenantId,
     );
   }
 
-  return repo.getAssignableUsers(ctx, actorRank, product, effectiveOrgId, scope, maxRank, tenantWide, tenantId);
+  return repo.getAssignableUsers(txCtx, actorRank, product, effectiveOrgId, scope, maxRank, tenantWide, tenantId);
 }
 
 export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
@@ -411,7 +451,19 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
   if (data.mobile !== undefined)                fields.mobile = data.mobile;
   if (data.is_active !== undefined)             fields.is_active = data.is_active;
   if (data.force_password_change !== undefined) fields.force_password_change = data.force_password_change;
-  if (data.manager_id !== undefined)            fields.manager_id = data.manager_id;
+
+  // manager_id is deliberately NOT routed through the generic update when the
+  // request also carries org_assignments. repo.updateUser writes the reporting
+  // line against `targetOrgId` — the branch the user is LEAVING — so a manager
+  // who sits in the new branch holds no mapping there and
+  // iam.check_reporting_line_membership() rejects the insert, failing the whole
+  // transfer. The multi-branch path below hands manager_id to
+  // reconcileOrgAssignments instead, which writes the line in the NEW home org
+  // after the mappings exist (and grants the manager a weight-0 mapping there
+  // if they lack one). The legacy single-org_id path keeps the old behaviour.
+  if (data.manager_id !== undefined && data.org_assignments === undefined) {
+    fields.manager_id = data.manager_id;
+  }
 
   // Resolved before the role lookup: roles are tenant-owned, so the role name
   // only identifies a row once you know which tenant — and that comes from the
@@ -483,7 +535,10 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
     try {
       result = await repo.updateUser(targetCtx, targetUserId, fields, targetOrgId);
     } catch (err) {
-      throw asDuplicateUserConflict(err);
+      // Both mappers pass an unrecognised error through unchanged, so chaining
+      // them covers the manager-only (legacy) path, which still writes a
+      // reporting line from here.
+      throw asDuplicateUserConflict(asReportingLineBadRequest(err));
     }
     if (!result) throw new NotFoundError('User not found');
   }
@@ -516,9 +571,17 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
       await repo.setHomeOrg(targetUserId, newHomeOrgId, homeAssignment.role_id);
     }
 
-    const reconcile = await repo.reconcileOrgAssignments(
-      ctx, targetUserId, resolved, data.manager_id, newHomeOrgId,
-    );
+    // Owns the reporting line for the new home branch (see the manager_id note
+    // at the top of this function), so this is where the membership and cycle
+    // triggers can still fire on a hand-rolled PATCH the checks above missed.
+    let reconcile;
+    try {
+      reconcile = await repo.reconcileOrgAssignments(
+        ctx, targetUserId, resolved, data.manager_id, newHomeOrgId,
+      );
+    } catch (err) {
+      throw asReportingLineBadRequest(err);
+    }
 
     await logActivity({
       action_type: 'user_org_access_changed',

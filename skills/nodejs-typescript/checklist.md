@@ -8,6 +8,7 @@ Run every item before marking a backend task complete or opening a PR.
 - [ ] Acting identity comes from `request.auth`, never from request body/query
 - [ ] Writes rely on RLS `WITH CHECK` for scope; no client-supplied `org_id`/`tenant_id` trusted blindly
 - [ ] No user input string-concatenated into SQL — all via parameterised `sql`` templates
+- [ ] Postgres array params built with `sqlUuidArr`/`sqlTextArr` — never a bare JS array in a `sql` template
 
 ## Layering
 - [ ] Router is `export async function <domain>Router(app)`; routes list preHandlers only

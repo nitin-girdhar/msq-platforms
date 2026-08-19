@@ -241,6 +241,11 @@ FROM (VALUES
   'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
   'lms.leads.delete','lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.any',
+  -- assign.any is the RANK ceiling (assign to anyone); assign.bulk is the Bulk
+  -- Assign PAGE gate. They are independent rungs, so holding the wider one did
+  -- not open the page — org_admin and tenant_admin were locked out of a screen
+  -- every role beneath them (senior_sales_executive upward) could already use.
+  'lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
   'lms.history.detail.view',
@@ -281,11 +286,22 @@ FROM (VALUES
   'platform','platform.write',
   'lms','lms.dashboard.view',
   'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
+  -- The only role with cross-BRANCH lead reach: this is what puts every branch
+  -- in the Bulk Assign / dashboard branch picker (identity-service resolves the
+  -- picker off this exact ladder) and what lets leads-service run the read under
+  -- the tenant Postgres role. tenant_admin already holds lms.history.view.tenant;
+  -- leads was the outlier, which left the branch picker frozen for everyone.
+  'lms.leads.view.tenant',
   'lms.leads.unassigned.view',
   'lms.leads.create','lms.leads.edit',
   'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
   'lms.leads.delete','lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.any',
+  -- assign.any is the RANK ceiling (assign to anyone); assign.bulk is the Bulk
+  -- Assign PAGE gate. They are independent rungs, so holding the wider one did
+  -- not open the page — org_admin and tenant_admin were locked out of a screen
+  -- every role beneath them (senior_sales_executive upward) could already use.
+  'lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
   'lms.history.detail.view',
@@ -545,6 +561,66 @@ WHERE tgt.key = 'lms.history.detail.view'
   AND rc.tenant_id IS NOT NULL
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO UPDATE SET is_granted = TRUE;
+
+
+-- ── Back-fill: cross-branch lead reach + the Bulk Assign page gate ──
+-- Same trap as the WhatsApp back-fill above, and the reason the Bulk Assign
+-- branch picker shipped frozen. iam.fn_role_capability_matrix resolves ONE role
+-- row per name and the per-tenant copy WINS, so a grant written onto the global
+-- tenant_admin/org_admin template never reaches a tenant that already has its
+-- own copy of that role. Both capabilities are therefore pinned to an existing
+-- one with an identical audience, which reaches every copy in every tenant.
+--
+--   lms.leads.view.tenant  ← lms.history.view.tenant  (tenant_admin + super_admin)
+--   lms.leads.assign.bulk  ← lms.leads.assign.any     (org_admin, tenant_admin, super_admin)
+--
+-- DO NOTHING, not DO UPDATE, unlike the back-fills above: both capabilities
+-- predate this change, so a tenant may already have deliberately revoked one
+-- (Fitclass had turned assign.bulk off for tenant_admin). `is_granted = FALSE`
+-- is a tenant's opt-out and must survive a re-seed — only ABSENT rows are added.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.history.view.tenant'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'lms.leads.view.tenant'
+  AND rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO NOTHING;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.history.view.tenant'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'lms.leads.view.tenant'
+  AND rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO NOTHING;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.assign.any'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'lms.leads.assign.bulk'
+  AND rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO NOTHING;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.assign.any'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'lms.leads.assign.bulk'
+  AND rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO NOTHING;
 
 
 -- ===================================================================

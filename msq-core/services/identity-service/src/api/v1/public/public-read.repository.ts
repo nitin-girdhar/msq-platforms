@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { withServiceTx } from '@platform/db';
+import { withServiceTx, sqlUuidArr } from '@platform/db';
 
 // Public read endpoints run under the service role but with a MANDATORY explicit
 // tenant filter and a whitelisted column list — never the tenant_admin role, and
@@ -28,9 +28,9 @@ export async function listBranches(tenantId: string, orgId?: string, filter: Geo
       WHERE o.tenant_id = ${tenantId}::uuid
         AND NOT o.is_deleted
         ${orgId ? sql`AND o.id = ${orgId}::uuid` : sql``}
-        ${filter.cityIds?.length    ? sql`AND o.city_id    = ANY(${filter.cityIds}::uuid[])`    : sql``}
-        ${filter.stateIds?.length   ? sql`AND o.state_id   = ANY(${filter.stateIds}::uuid[])`   : sql``}
-        ${filter.countryIds?.length ? sql`AND o.country_id = ANY(${filter.countryIds}::uuid[])` : sql``}
+        ${filter.cityIds?.length    ? sql`AND o.city_id    = ANY(${sqlUuidArr(filter.cityIds)})`    : sql``}
+        ${filter.stateIds?.length   ? sql`AND o.state_id   = ANY(${sqlUuidArr(filter.stateIds)})`   : sql``}
+        ${filter.countryIds?.length ? sql`AND o.country_id = ANY(${sqlUuidArr(filter.countryIds)})` : sql``}
       ORDER BY o.name
     `)) as Array<Record<string, unknown>>;
   });
@@ -92,7 +92,7 @@ export async function listStates(tenantId: string, opts: PresenceOptions = {}) {
        AND NOT o.is_deleted AND o.is_active
        ${opts.orgId ? sql`AND o.id = ${opts.orgId}::uuid` : sql``}
       WHERE st.tenant_id = ${tenantId}::uuid AND st.is_active
-        ${opts.countryIds?.length ? sql`AND st.country_id = ANY(${opts.countryIds}::uuid[])` : sql``}
+        ${opts.countryIds?.length ? sql`AND st.country_id = ANY(${sqlUuidArr(opts.countryIds)})` : sql``}
       GROUP BY st.id, st.name, st.code, st.country_id, co.name
       ${opts.hasBranches ? sql`HAVING COUNT(o.id) > 0` : sql``}
       ORDER BY st.name
@@ -115,8 +115,8 @@ export async function listCities(tenantId: string, opts: PresenceOptions = {}) {
        AND NOT o.is_deleted AND o.is_active
        ${opts.orgId ? sql`AND o.id = ${opts.orgId}::uuid` : sql``}
       WHERE ci.tenant_id = ${tenantId}::uuid AND ci.is_active
-        ${opts.stateIds?.length   ? sql`AND ci.state_id   = ANY(${opts.stateIds}::uuid[])`   : sql``}
-        ${opts.countryIds?.length ? sql`AND st.country_id = ANY(${opts.countryIds}::uuid[])` : sql``}
+        ${opts.stateIds?.length   ? sql`AND ci.state_id   = ANY(${sqlUuidArr(opts.stateIds)})`   : sql``}
+        ${opts.countryIds?.length ? sql`AND st.country_id = ANY(${sqlUuidArr(opts.countryIds)})` : sql``}
       GROUP BY ci.id, ci.name, ci.state_id, st.name, st.country_id, co.name
       ${opts.hasBranches ? sql`HAVING COUNT(o.id) > 0` : sql``}
       ORDER BY ci.name

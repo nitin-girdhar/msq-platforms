@@ -9,6 +9,9 @@ export interface ReassignOrgLeadsParams {
   fromUserId: string;
   toUserId: string | null;
   actorId: string;
+  // Recorded on each lead's history row by leads-service. Identity is the only
+  // side that knows which of the two flows triggered the bulk move.
+  reason?: 'branch_transfer' | 'user_deactivated';
 }
 
 // Identity owns the identity change (org/role/active-state); leads-service
@@ -35,6 +38,7 @@ export async function reassignOrgLeadsViaLeadsService(params: ReassignOrgLeadsPa
         from_user_id: params.fromUserId,
         to_user_id: params.toUserId,
         actor_id: params.actorId,
+        ...(params.reason ? { reason: params.reason } : {}),
       }),
       timeoutMs: config.leadsServiceTimeoutMs,
       target: 'leads-service/reassign-org',

@@ -80,6 +80,7 @@ Meta (Facebook) ─→ API Gateway /meta/webhook                ─→ meta-conv
 | GET | `/orgs`, `/orgs/all`, `/lead-sources` | identity |
 | GET/POST | `/assignments` | leads |
 | GET | `/assignments/mine` | leads |
+| POST | `/assignments/bulk` | leads |
 | GET/PATCH/DELETE | `/assignments/:id` | leads |
 | GET | `/analytics/dashboard`, `/analytics/dashboard/campaigns` | leads |
 | GET | `/analytics/performance`, `/analytics/pipeline` | leads |

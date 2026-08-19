@@ -606,6 +606,13 @@ app.post('/assignments', { ...withAuth }, async (req, reply) => {
 app.get('/assignments/mine', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.leadsServiceUrl, '/api/v1/assignments/mine', req, reply, req.userCtx);
 });
+// Registered alongside the other static /assignments children, above the :id
+// routes: the gateway is an explicit allowlist, so a route leads-service exposes
+// is unreachable until it is named here. Capability (lms.leads.assign.bulk) is
+// enforced in leads-service, not at this hop.
+app.post('/assignments/bulk', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/assignments/bulk', req, reply, req.userCtx);
+});
 app.get('/assignments/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.leadsServiceUrl, `/api/v1/assignments/${id}`, req, reply, req.userCtx);

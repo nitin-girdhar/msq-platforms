@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
 import { RANKS } from '@platform/authz';
@@ -143,6 +143,16 @@ export default function EditUserModal({
   const [reassignLeadsTo, setReassignLeadsTo] = useState('');
   const [deactivating, setDeactivating] = useState(false);
   const [deactivateReassignTo, setDeactivateReassignTo] = useState('');
+
+  // The confirmation panel sits at the BOTTOM of the form (it is the last thing
+  // you do, not the first), but the button that opens it lives in the footer —
+  // so on a long form it would otherwise appear off-screen and the click would
+  // look like it did nothing. Pull it into view when it opens.
+  const deactivatePanelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!deactivating) return;
+    deactivatePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [deactivating]);
 
   // Who can inherit this user's open leads. Deliberately NOT a filter of the
   // roster: the rank ladder is shared across products and tenants add their own
@@ -288,48 +298,6 @@ export default function EditUserModal({
             </div>
           )}
 
-          {deactivating && (
-            <div className="flex flex-col gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
-              <p className="text-[12.5px] leading-snug text-red-800">
-                Deactivating removes their access immediately. Their open leads in {user.org_name || 'their branch'}{' '}
-                need a new owner.
-              </p>
-              <label className="text-xs font-semibold text-[#0F172A]">Reassign their leads to</label>
-              <UserPicker
-                value={deactivateReassignTo}
-                onChange={setDeactivateReassignTo}
-                users={leadCandidates}
-                disabled={locked || lmsUsersLoading}
-                allowEmpty
-                emptyLabel="— Leave them assigned —"
-                placeholder={lmsUsersLoading ? 'Loading…' : '— Leave them assigned —'}
-              />
-              {!lmsUsersLoading && leadCandidates.length === 0 && (
-                <p className="text-[11px] text-[#64748B]">
-                  No other users who work on leads are available in this branch.
-                </p>
-              )}
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setDeactivating(false); setDeactivateReassignTo(''); }}
-                  disabled={locked}
-                  className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={confirmDeactivate}
-                  disabled={locked}
-                  className="rounded-lg border border-red-300 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Confirm deactivation
-                </button>
-              </div>
-            </div>
-          )}
-
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <label htmlFor="eu-first-name" className="text-xs font-semibold text-[#0F172A]">First name</label>
@@ -464,6 +432,48 @@ export default function EditUserModal({
             />
             <span>Require password change on next login</span>
           </label>
+
+          {deactivating && (
+            <div ref={deactivatePanelRef} className="flex flex-col gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
+              <p className="text-[12.5px] leading-snug text-red-800">
+                Deactivating removes their access immediately. Their open leads in {user.org_name || 'their branch'}{' '}
+                need a new owner.
+              </p>
+              <label className="text-xs font-semibold text-[#0F172A]">Reassign their leads to</label>
+              <UserPicker
+                value={deactivateReassignTo}
+                onChange={setDeactivateReassignTo}
+                users={leadCandidates}
+                disabled={locked || lmsUsersLoading}
+                allowEmpty
+                emptyLabel="— Leave them assigned —"
+                placeholder={lmsUsersLoading ? 'Loading…' : '— Leave them assigned —'}
+              />
+              {!lmsUsersLoading && leadCandidates.length === 0 && (
+                <p className="text-[11px] text-[#64748B]">
+                  No other users who work on leads are available in this branch.
+                </p>
+              )}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setDeactivating(false); setDeactivateReassignTo(''); }}
+                  disabled={locked}
+                  className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeactivate}
+                  disabled={locked}
+                  className="rounded-lg border border-red-300 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Confirm deactivation
+                </button>
+              </div>
+            </div>
+          )}
         </form>
       </Modal>
 

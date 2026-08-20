@@ -203,6 +203,52 @@ const PRODUCT_CAPABILITY: Record<'lms' | 'tasks', CapabilityKey> = {
   tasks: CAPABILITY.TASKS,
 };
 
+/**
+ * The branches this actor covers — the one answer to "which orgs am I entitled
+ * to see at once", as opposed to ctx.org_id, which is only the branch they
+ * happen to be switched INTO right now (see BranchSwitcher / POST
+ * /auth/switch-org).
+ *
+ * Deliberately the same rule as auth.service's getMyOrgs, which backs
+ * GET /auth/my-orgs and the branch switcher itself: a tenant-wide role is not
+ * individually mapped to every branch, so mapping rows would surface only their
+ * home org — for them coverage is the whole tenant. Everyone else covers
+ * exactly their active iam.user_org_mapping rows, plus their home org for the
+ * legacy single-branch users who never got a mapping row. If the two rules ever
+ * diverge the branch picker and the data behind it disagree, which is the class
+ * of bug this function exists to close.
+ */
+export async function getCoveredOrgIds(
+  ctx: RoleTxContext,
+  tenantWideRole: boolean,
+  tenantId: string,
+): Promise<string[]> {
+  return withRoleTx(ctx, async (tx) => {
+    const rows = (await tx.execute(
+      tenantWideRole
+        ? sql`
+            SELECT id AS org_id
+            FROM entity.organizations
+            WHERE tenant_id = ${tenantId}::uuid AND NOT is_deleted
+          `
+        : sql`
+            SELECT uom.org_id AS org_id
+            FROM iam.user_org_mapping uom
+            JOIN entity.organizations o ON o.id = uom.org_id AND NOT o.is_deleted
+            WHERE uom.user_id = ${ctx.user_id}::uuid AND uom.is_active
+              AND o.tenant_id = ${tenantId}::uuid
+            UNION
+            SELECT u.org_id
+            FROM iam.users u
+            JOIN entity.organizations o ON o.id = u.org_id AND NOT o.is_deleted
+            WHERE u.id = ${ctx.user_id}::uuid AND NOT u.is_deleted
+              AND o.tenant_id = ${tenantId}::uuid
+          `,
+    )) as Array<Record<string, unknown>>;
+    return rows.map((r) => String(r['org_id']));
+  });
+}
+
 export async function getAssignableUsers(
   ctx: RoleTxContext,
   actorRank: number,

@@ -2,7 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, UpdateAssignmentWeightsInput, AddOrgMappingInput } from '@platform/validation';
 import { RANKS } from '@platform/authz';
 import { hasCapability } from '@platform/db';
-import { CAPABILITY } from '@platform/rbac';
+import { CAPABILITY, ANCHOR_RANK } from '@platform/rbac';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './users.service.js';
 import type { ListUsersQuery, GetAssignableQuery } from './users.schema.js';
@@ -85,25 +85,40 @@ export class UsersController {
     return reply.send({ success: true, data: chart });
   };
 
-  // Creating a user is gated on the CAPABILITY, not on rank.
+  // Creating a user: an anchor admin, OR anyone holding lms.users.manage.
   //
-  // The rank >= 40 floor this replaced disagreed with both of its neighbours:
-  // the UI showed the button to whoever held lms.users.manage, and the RLS
-  // policies on iam.user_org_mapping refused the INSERT below rank 980. A role
-  // in between passed here and failed there, so the operator's only working fix
-  // was to grant org_admin. All three now ask one question.
+  // This MIRRORS iam.fn_user_can_manage_users (db_scripts/04_functions_triggers.sql)
+  // clause for clause, and the mirroring is the whole point — the two must not
+  // be able to disagree. The SQL short-circuits on the effective role being
+  // super_admin/tenant_admin/org_admin before it ever consults the matrix; this
+  // check has to do the same or it becomes the stricter of the two and rejects
+  // requests RLS would have allowed.
   //
-  // Resolved here through the same DB-cached matrix orgs.controller uses, rather
-  // than by importing @lms/authz — identity is platform-shared and takes no
-  // product-authz dependency (N-1).
+  // The anchor half is NOT belt-and-braces, it is load-bearing: on a real
+  // database `lms.users.manage` resolves FALSE for org_admin and tenant_admin.
+  // reference_data/03_roles_and_grants.sql grants it to them on the global
+  // template, but the ladder roles have been per-tenant COPIES since
+  // _migrations/19, so template grants never reached existing tenants. Gating on
+  // the matrix alone therefore locked every admin out of user creation. Rank
+  // >= 980 is exactly those three roles (the dynamic band tops out at 979, see
+  // packages/rbac/src/ranks.ts), so this is the same set the SQL names.
   //
-  // role_name is the GLOBAL role from resolveGlobalRole, while
-  // iam.fn_user_can_manage_users checks the PER-ORG effective role. This is the
-  // deliberate fast-fail/authority split that can_assign_to and canAssignToUser
-  // already use: RLS decides, this only saves a round trip.
+  // The capability half is what the change is for: it lets a tenant delegate
+  // user creation to a role BELOW 980 by ticking one box in the Capability
+  // Matrix screen, which previously did nothing because RLS enforced 980
+  // underneath. That grant now reaches all the way down to the INSERT.
+  //
+  // role_name is the GLOBAL role from resolveGlobalRole, while the SQL checks
+  // the PER-ORG effective role. That is the deliberate fast-fail/authority split
+  // can_assign_to and canAssignToUser already use: RLS decides, this saves a
+  // round trip. Resolved through the same DB-cached matrix orgs.controller uses
+  // rather than by importing @lms/authz — identity is platform-shared and takes
+  // no product-authz dependency (N-1).
   create = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    if (!(await hasCapability(tenant_id, role_name, CAPABILITY.LMS_USERS_MANAGE))) {
+    const mayManageUsers = rank >= ANCHOR_RANK.ORG_ADMIN
+      || await hasCapability(tenant_id, role_name, CAPABILITY.LMS_USERS_MANAGE);
+    if (!mayManageUsers) {
       throw new ForbiddenError('Insufficient permissions to create iam.users');
     }
     const data = request.body as CreateUserInput;

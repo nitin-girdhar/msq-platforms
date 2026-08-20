@@ -294,29 +294,67 @@ export async function getAssignableUsers(
   const leadsViewScope = product === 'lms'
     ? resolveScope({ capabilities: await capabilitiesFor(tenantIdForCaps, roleName) }, CAPABILITY.LMS_LEADS_VIEW)
     : null;
+  // ...but the capability ladder alone is not the whole answer, because the
+  // platform tiers do not sit on it. tenant_admin holds NO lms.leads.view.*
+  // leaf at all (verified against UAT), so the ladder resolved to null for the
+  // very actor whose ROWS are tenant-wide — getLeadsHistoryAssignedToScope
+  // hands super_admin/tenant_admin 'all'/'tenant' off isTenantWideRole, which
+  // is what canSeeOrgFilter tests. Asking only the ladder pinned their user
+  // list to whichever branch they were switched into while the grid spanned
+  // every branch: the Leads History dropdown offering a single name against a
+  // tenant-wide result set. Reach is therefore the UNION of the two.
+  const tenantWideRole = canSeeOrgFilter(ctx.role);
   const canQueryOtherOrg = product === 'lms'
-    ? (leadsViewScope === 'tenant' || leadsViewScope === 'all')
-    : canSeeOrgFilter(ctx.role);
-  // A 'filter' list can span several branches at once (the Leads History org
-  // filter is multi-select); an assignee picker is always a single branch, so
-  // both shapes fold into one list here. Client-supplied orgs are honored only
-  // for an actor whose ladder actually reaches other branches — otherwise the
-  // list is forced back to their own org. The ids are NOT trusted beyond that:
-  // the query re-checks every one against the actor's tenant.
+    ? (leadsViewScope === 'tenant' || leadsViewScope === 'all' || tenantWideRole)
+    : tenantWideRole;
   const requestedOrgIds = orgIds?.length ? orgIds : (orgId ? [orgId] : undefined);
-  const effectiveOrgIds = canQueryOtherOrg ? requestedOrgIds : [ctx.org_id];
-  // Same as listUsers: tenant admin+ with no explicit org sees candidates
-  // across every branch in the tenant, not just their own — a caller whose
-  // Leads History scope is 'tenant'/'all' but who hasn't picked a branch yet
-  // should get the full candidate list, not silently just their home org's.
-  const tenantWide = canQueryOtherOrg && !effectiveOrgIds;
+
+  // Both purposes are coverage-scoped, for the same reason but with different
+  // consequences.
+  //
+  // An assignee picker is judged by iam.can_assign_to(LEAD's org, actor,
+  // target), which needs both parties mapped in the org it is given — so a
+  // candidate from any branch the actor covers is genuinely assignable, and
+  // restricting the picker to the branch they happened to be switched into
+  // hid people the write would have accepted. (leads.repository.updateLead was
+  // passing ctx.org_id to that function instead of the lead's org, which made
+  // the write agree with the too-narrow picker; both are fixed together.)
+  //
+  // The rank ceiling and the product-capability gate on the assign path are
+  // untouched — coverage decides WHICH BRANCHES, never WHO within them.
   const tenantId = tenantIdForCaps;
-  // iam.users' org_isolation_policy scopes app_user to the current branch, so a
-  // capability-driven cross-branch caller needs the tenant role to actually see
-  // the branch they picked — same reasoning as orgs.repository.getOrgs.
-  const txCtx: RoleTxContext = canQueryOtherOrg
-    ? { ...ctx, tenantWide: true, readOnly: true }
-    : ctx;
+  // iam.users' org_isolation_policy scopes app_user to the branch the actor is
+  // switched INTO, so any cross-branch read needs the elevated role to see the
+  // other branches at all — same reasoning as orgs.repository.getOrgs. What
+  // bounds the read is not the role but the explicit org-id list below plus the
+  // o.tenant_id assertion in SQL.
+  const elevatedCtx: RoleTxContext = { ...ctx, tenantWide: true, readOnly: true };
+
+  // Coverage is resolved for EVERY actor, not only those the capability ladder
+  // calls cross-org. That gate is about reaching branches you were never given;
+  // coverage is about the branches you were. A Wingman resolves to 'org' on the
+  // ladder — not tenant/all — yet is mapped to six branches, and gating coverage
+  // on the ladder pinned them to whichever one they were switched into.
+  // getCoveredOrgIds reuses getMyOrgs' rule so the branch picker and the data
+  // behind it cannot drift.
+  const coveredOrgIds = await repo.getCoveredOrgIds(elevatedCtx, tenantWideRole, tenantId);
+  // Client-supplied orgs NARROW coverage and can never widen it: an org the
+  // caller does not cover is dropped, so a forged id yields FEWER rows rather
+  // than another branch's roster. An empty result after filtering is a real
+  // answer (deny), not a reason to fall back to everything. The query still
+  // re-checks every id against the actor's tenant on top of this.
+  const covered = new Set(coveredOrgIds);
+  const effectiveOrgIds = requestedOrgIds
+    ? requestedOrgIds.filter((id) => covered.has(id))
+    : coveredOrgIds;
+  // Whole-tenant coverage with no branch picked reads through the tenant-wide
+  // clause instead of a 26-element id list — same plan as listUsers, and it
+  // keeps working as branches are added.
+  const tenantWide = tenantWideRole && !requestedOrgIds;
+  // Multi-branch coverage cannot be read under the caller's own branch-scoped
+  // role, so elevate whenever coverage reaches past the current branch.
+  const txCtx: RoleTxContext =
+    tenantWide || effectiveOrgIds.some((id) => id !== ctx.org_id) ? elevatedCtx : ctx;
 
   // An LMS assignee picker takes its ceiling from the actor's grants, not from
   // the query string — see assignScopeFromCapabilities above. A 'filter' list

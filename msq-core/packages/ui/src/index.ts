@@ -57,7 +57,9 @@ export { useIsMobile } from './hooks/useIsMobile';
 export { useDismissible, useDropdown } from './hooks/useDropdown';
 
 export { createApiClient, type ApiRequestError } from './api/http';
-export { orgs, users } from './api/resources';
+// `auth` is exported for myOrgs() — the covered-branches list that drives the
+// Leads History branch picker, and the same source BranchSwitcher uses.
+export { orgs, users, auth } from './api/resources';
 
 export {
   exportRows,

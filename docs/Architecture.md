@@ -203,10 +203,41 @@ rank band; the rank band is the only one that drops `super_admin` and `read_only
 gating on the root is why admins and non-lead staff appeared while reps did not.
 
 Both halves list **active** users only (`u.is_active`, `NOT u.is_deleted`, `uom.is_active`), so a
-rep who has left still appears in the grid but cannot be filtered on. Client-supplied orgs are
-honored only for an actor whose `lms.leads.view` ladder reaches other branches, and every id is
-re-checked against the actor's tenant in SQL (`o.tenant_id`) — the cross-branch read runs under
-the tenant role, which is exactly what widens RLS, so the org list is never trusted on its own.
+rep who has left still appears in the grid but cannot be filtered on.
+
+**The filter is scoped to the branches the actor COVERS, not the one they are switched into.**
+`ctx.org_id` is only the branch currently selected in the BranchSwitcher; coverage is every active
+`iam.user_org_mapping` row, resolved by `getCoveredOrgIds`, which deliberately mirrors
+`getMyOrgs` (`GET /auth/my-orgs`) so the branch picker and the data behind it cannot drift:
+
+- tenant-wide platform role (`isTenantWideRole`) → every org in the tenant;
+- everyone else → their mapped branches, falling back to the current org if they have none.
+
+Coverage is resolved for **every** actor, not only those the capability ladder calls cross-org.
+That gate is about reaching branches you were never granted; coverage is about the ones you were.
+A Wingman resolves to `org` on the ladder yet is mapped to six branches — gating coverage on the
+ladder pinned them to one. Likewise `tenant_admin` holds no `lms.leads.view.*` leaf at all, while
+`getLeadsHistoryAssignedToScope` gives it a tenant-wide *row* scope, so the dropdown offered a
+single name against a tenant-wide result set.
+
+**`effectiveOrgIds = requested ∩ covered`.** A client-supplied org list narrows and can never
+widen: an id the actor does not cover is dropped, so a forged `org_ids` returns *fewer* rows rather
+than another branch's roster, and an empty intersection is a real deny — never a fallback to full
+coverage. Multi-branch coverage cannot be read under the caller's own branch-scoped role, so the
+read is elevated; what bounds it is the explicit id list plus the `o.tenant_id` assertion in SQL,
+never the role.
+
+**Both purposes are coverage-scoped**, because `iam.can_assign_to(org, actor, target)` takes the
+org as a *parameter* and requires both parties mapped in it — so a candidate in any branch the
+actor covers is genuinely assignable. What differs is what the caller should pass:
+
+- an **assignee picker for one lead** sends the **lead's** `org_id`, since that is the org the
+  write is judged against — otherwise a six-branch Wingman is offered names only the lead's own
+  branch could accept;
+- the **filter** sends the selected branches, or nothing to mean "everywhere I cover".
+
+The rank ceiling and the product-capability gate are unchanged on both paths: coverage decides
+*which branches*, never *who* within them.
 
 ## Face verification (attendance)
 
@@ -337,7 +368,15 @@ platform tiers. Rank is resolved **from the DB per request** (see JWT & auth abo
 
 Cross-org / tenant-wide capabilities (e.g. Leads History "tenant"/"all" scope, moving a user's branch, tenant leave-admin) are **platform** concerns keyed on `platform_role` (`tenant_admin`/`super_admin`), not a product rank — a product rank tops out per-org at its admin tier (80) and cannot express "sees every org in the tenant".
 
-`can_assign_to(org_id, acting_user_id, target_user_id)` is a PostgreSQL function (3-param, SECURITY DEFINER). Admins and tenant_admins may assign within/across their org/tenant; everyone else may assign within their own subtree, resolved by `iam.fn_is_in_subtree` (see below).
+**Leads History scope (`getLeadsHistoryAssignedToScope`)** returns `all` for super_admin, `tenant` for tenant_admin, and otherwise `org` at or above `minRankForLeadsHistoryTeamScope` (SSE 40), `none` below it. It no longer returns `team`, and `org` now means **every branch the actor covers**, not one branch:
+
+- The old `team` tier restricted everyone between SSE (40) and `LMS_RANKS.ADMIN` (**980**) to their `iam.reporting_lines` subtree inside a single branch — that is every Wingman (60), Senior Manager (70) and SSE, i.e. essentially every manager, since no real role sits between 80 and 979. `minRankForLeadsHistoryOrgScope` was removed with the merge; it gated a distinction that no longer exists and was unreachable in practice.
+- **This is a visibility widening:** branch coverage, not the reporting hierarchy, now decides what a manager sees on this page, so they see lead activity from people who do not report to them within their own branches. Below the threshold nothing changes — a Sales Representative still sees only their own leads however many branches they are mapped to.
+- The leads *page* `view_scope` is a separate concept and remains subtree-based (`leads.repository.ts`); `LeadsHistoryScope` keeps its `team` member for it.
+
+`can_assign_to(org_id, acting_user_id, target_user_id)` is a PostgreSQL function (3-param, SECURITY DEFINER). Admins and tenant_admins may assign within/across their org/tenant; everyone else is judged on the `lms.leads.assign.any/.peers/.reports` ladder against the target's rank.
+
+**`org_id` must be the LEAD's org, not the caller's current branch.** The function looks up *both* parties' active mapping in the org it is given, so passing the caller's branch made every cross-branch assignment fail — a Wingman mapped to six branches could not hand a lead in one of their own branches to the rep who works there, because that rep holds no mapping in the branch the Wingman happened to be switched into. `follow-ups.repository` always resolved the lead's real org via `resolveLeadWriteScope`; `leads.repository.updateLead` passed `ctx.org_id` and has been corrected to match. Coverage remains the bound: an actor with no mapping in the lead's org fails on the function's first lookup.
 
 ### User management is a capability, per branch (`1.43.0`)
 

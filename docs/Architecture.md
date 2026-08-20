@@ -159,6 +159,8 @@ Some tables also have:
 
 `root_service` has `BYPASSRLS` and is unaffected by these policies.
 
+The `iam` write policies are the exception to the `org_id = app.current_org_id` shape: since `1.43.0` the user-management policies on `iam.users`, `iam.user_org_mapping` and `iam.reporting_lines` scope to the actor's **membership** (`iam.fn_user_active_orgs`) and ask `iam.fn_user_can_manage_users` per row. See *User management is a capability, per branch* under Permissions.
+
 ## Assignment model
 
 Assignments are **not** a separate table. The assignment is stored as `lms.marketing_leads.assigned_user_id`. The assignments module (in leads-service) queries and updates `lms.marketing_leads` directly. Assignment ID in API responses = Lead ID.
@@ -177,6 +179,34 @@ When a new lead is created without an explicit `assigned_user_id` (Meta sync, ma
 This deterministically converges to each user's target %, self-corrects as leads resolve (convert/reject/transfer), and is not retroactive — changing weights only affects future unassigned leads. If no users in the org have a weight set, `resolveAutoAssignedUser` returns `null` and the lead stays unassigned (today's default behavior, unchanged).
 
 **Managing weights:** `GET/PUT /users/assignment-weights` (identity-service, org-admin rank required for PUT). The PUT endpoint validates every `user_id` is actually eligible and that weights sum to exactly 100 (or all 0, disabling auto-assignment for the org) — both checked at the application layer inside the same transaction as the write, not via a DB constraint.
+
+### Assignee picker vs. Assigned-To filter (`GET /users/assignable`)
+
+One endpoint serves two different questions, told apart by `purpose`:
+
+| | `purpose=assign` (default) | `purpose=filter` |
+|---|---|---|
+| Question | "whom may I hand this lead to?" | "who works leads in this branch?" |
+| Authority | the actor's `lms.leads.assign.reports/.peers/.any` grants (server-derived; `scope`/`max_rank` from the query string are ignored for LMS) | the same eligibility rule as auto-assignment (`getAssignmentWeights`) |
+| Rank rule | relative to the actor — delegation / collaboration / unlimited, bounded by `ANCHOR_RANK.ORG_ADMIN` | absolute band: `> ANCHOR_RANK.READ_ONLY` and `< ANCHOR_RANK.ORG_ADMIN`. **No** actor-relative ceiling |
+| Capability gate | `CAPABILITY.LMS` / `.TASKS` — the product root | `CAPABILITY.LMS_LEADS` — the tool node |
+| Orgs | one (`org_id`) | one or many (`org_ids`, comma-separated) |
+
+The filter half drops the actor-relative ceiling because the grid shows every lead in scope
+regardless of the assignee's rank, so a relative ceiling can never agree with the rows — it left
+the Leads History "Assigned To" dropdown listing almost nobody.
+
+The two remaining predicates are both load-bearing, verified against the live capability matrix:
+`lms.leads` is the only one that drops `hr_admin` (rank 75) and the fitness roles, which clear the
+rank band; the rank band is the only one that drops `super_admin` and `read_only`, which hold
+`lms.leads`. Note `org_admin` and `tenant_admin` hold the `lms` root but **not** `lms.leads` —
+gating on the root is why admins and non-lead staff appeared while reps did not.
+
+Both halves list **active** users only (`u.is_active`, `NOT u.is_deleted`, `uom.is_active`), so a
+rep who has left still appears in the grid but cannot be filtered on. Client-supplied orgs are
+honored only for an actor whose `lms.leads.view` ladder reaches other branches, and every id is
+re-checked against the actor's tenant in SQL (`o.tenant_id`) — the cross-branch read runs under
+the tenant role, which is exactly what widens RLS, so the org list is never trusted on its own.
 
 ## Face verification (attendance)
 
@@ -309,6 +339,32 @@ Cross-org / tenant-wide capabilities (e.g. Leads History "tenant"/"all" scope, m
 
 `can_assign_to(org_id, acting_user_id, target_user_id)` is a PostgreSQL function (3-param, SECURITY DEFINER). Admins and tenant_admins may assign within/across their org/tenant; everyone else may assign within their own subtree, resolved by `iam.fn_is_in_subtree` (see below).
 
+### User management is a capability, per branch (`1.43.0`)
+
+Creating a user is authorized by **`lms.users.manage`, evaluated against the target branch** — not by a rank floor and not by the session's `org_id`.
+
+Before `1.43.0` four layers gated one `POST /users` and disagreed with each other: the UI showed the button to whoever held the capability, identity-service required `rank >= 40`, the service layer required `platform_role` ∈ {`tenant_admin`, `super_admin`} to touch any branch but the session's, and the RLS policies underneath required `iam.fn_user_org_rank(...) >= 980`. Granting `lms.users.manage` to a tenant-defined role was therefore inert — the request passed every application gate and the `iam.user_org_mapping` INSERT was refused by the database, surfacing as *"You do not have permission to grant access in this organisation."* The only way to delegate user creation was to hand out `org_admin`.
+
+`iam.fn_user_can_manage_users(user_id, org_id)` is now the single predicate. It resolves the actor's **effective role in that org** via `iam.fn_user_org_role`, then the grant via `iam.fn_role_capability_matrix` — the same function `@platform/db`'s capability cache reads, so SQL and application code apply tenant-override precedence and ancestor pruning identically and cannot disagree about a grant. It returns `TRUE` unconditionally for `org_admin`/`tenant_admin`/`super_admin`, so nothing that worked before stopped working.
+
+Five write policies moved onto it, each testing **the row's** `org_id` against `iam.fn_user_active_orgs(actor)` rather than `app.current_org_id`:
+
+| Table | Policies |
+|---|---|
+| `iam.user_org_mapping` | `org_admin_read_policy`, `org_admin_insert_policy`, `org_admin_update_policy` |
+| `iam.users` | `users_org_write` (INSERT) |
+| `iam.reporting_lines` | `org_admin_manage_policy` (a create supplying `manager_id` writes here too) |
+
+That second half is what makes **multi-branch** administration work. Membership is many-to-many, so an actor mapped into three branches now administers users in all three; previously they could only act in whichever branch they had switched into. Tenancy is unchanged — every org in `fn_user_active_orgs` is one the actor holds a mapping row for, and `tenant_isolation_policy` still fences the `tenant_admin` pool.
+
+Rank did not go away; it answers a different question. `canGrantRole` / `canManageUser` still stop an admin granting a role above their own or editing someone senior to them. Rank stopped answering *"may you manage users at all"*, which is a capability question.
+
+`users_org_update` on `iam.users` deliberately keeps the narrower `org_id = current_org_id` rule — editing an existing user across branches is a separate change.
+
+The branch picker follows the same rule: tenant-wide actors choose from `GET /orgs/all`, everyone else from `GET /auth/my-orgs` (their own mapping rows), merged by `branchOptionsForActor` in `@platform/ui-kit`.
+
+Existing databases: `db_scripts/one_time/apply_user_create_capability_authz.sql` (with a `_dryrun` that reports which roles gain the ability, and an `_ON_SERVER.sh` for UAT/prod).
+
 ## The single reporting hierarchy (P4, `1.27.0`)
 
 **`iam.reporting_lines` is the one hierarchy.** LMS lead assignment, HR leave/attendance approval and Tasks team scope all resolve authority from the same table, so "who is on my team" has one answer everywhere. It replaced two trees that disagreed: `iam.users.manager_id` (LMS + Tasks) and `hr.reporting_lines` (HR approvals only).
@@ -417,6 +473,7 @@ All packages live in `packages/` and are consumed via workspace references (`@cr
 - `iam.can_assign_to(org_id, acting_user_id, target_user_id)` — authority check (3-param, SECURITY DEFINER)
 - `public.gen_uuidv7()` — RFC 9562 time-ordered UUID generator
 - `iam.fn_user_active_orgs(user_id)` / `iam.fn_org_active_users(org_id)` — membership lookups
+- `iam.fn_user_can_manage_users(user_id, org_id)` — may this actor create/manage users in **that** org (SECURITY DEFINER; capability, not rank — see User management below)
 
 ### Meta-specific tables (`ext` schema)
 - `ext.meta_org_config` — per-org Meta credentials, pixel ID, CAPI trigger stages, `field_mappings` (JSONB, runtime-reloadable form field key overrides)

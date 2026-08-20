@@ -137,11 +137,31 @@ async function resolveAssignments(
     throw new BadRequestError(`Role not found in this tenant: ${missingRoles.join(', ')}`);
   }
 
-  // Assigning a user to a branch other than the actor's own is the same
-  // authority as moving them there, so it takes the same guard.
-  const foreign = orgIds.filter((id) => id !== ctx.org_id);
-  if (foreign.length > 0 && !checkMoveUserBranchAccess(ctx.role)) {
-    throw new ForbiddenError('You cannot assign a user to a different branch');
+  // Which branches may this actor place someone into?
+  //
+  // Not "their own branch, unless they are a tenant_admin" — membership is
+  // many-to-many (iam.user_org_mapping), so an actor mapped into several
+  // branches administers users in each of them without switching branch first,
+  // and pinning this to ctx.org_id made the other branches unreachable for the
+  // whole session. Every target is checked against the same predicate the RLS
+  // policies use, so a rejection here and a rejection there cannot disagree.
+  //
+  // checkMoveUserBranchAccess (platform_role === tenant_admin/super_admin) is
+  // still the fast path: those two reach every branch in the tenant by design
+  // and hold no per-branch mapping rows for the DB predicate to find.
+  if (!checkMoveUserBranchAccess(ctx.role)) {
+    const manageable = new Set(await repo.getManageableOrgIds(ctx.user_id, orgIds));
+    const denied = orgIds.filter((id) => !manageable.has(id));
+    if (denied.length > 0) {
+      // Name the branch. "You cannot assign a user to a different branch" sent
+      // an admin who genuinely worked in three branches looking for a bug in
+      // the branch picker instead of at their own grants.
+      const orgName = new Map(orgs.map((o) => [o.id, o.name]));
+      const names = [...new Set(denied.map((id) => orgName.get(id) ?? id))].join(', ');
+      throw new ForbiddenError(
+        `You do not have permission to manage users in this branch: ${names}`,
+      );
+    }
   }
 
   for (const a of assignments) {
@@ -262,6 +282,7 @@ export async function getAssignableUsers(
   scope: 'delegation' | 'collaboration' = 'delegation',
   maxRank?: number,
   purpose: 'assign' | 'filter' = 'assign',
+  orgIds?: string[],
 ) {
   // Cross-branch reach is a capability, not a platform_role check. canSeeOrgFilter
   // reads platform_role, which a tenant-defined multi-branch role collapses to
@@ -276,12 +297,19 @@ export async function getAssignableUsers(
   const canQueryOtherOrg = product === 'lms'
     ? (leadsViewScope === 'tenant' || leadsViewScope === 'all')
     : canSeeOrgFilter(ctx.role);
-  const effectiveOrgId = orgId && canQueryOtherOrg ? orgId : undefined;
-  // Same as listUsers: tenant admin+ with no explicit org_id sees candidates
+  // A 'filter' list can span several branches at once (the Leads History org
+  // filter is multi-select); an assignee picker is always a single branch, so
+  // both shapes fold into one list here. Client-supplied orgs are honored only
+  // for an actor whose ladder actually reaches other branches — otherwise the
+  // list is forced back to their own org. The ids are NOT trusted beyond that:
+  // the query re-checks every one against the actor's tenant.
+  const requestedOrgIds = orgIds?.length ? orgIds : (orgId ? [orgId] : undefined);
+  const effectiveOrgIds = canQueryOtherOrg ? requestedOrgIds : [ctx.org_id];
+  // Same as listUsers: tenant admin+ with no explicit org sees candidates
   // across every branch in the tenant, not just their own — a caller whose
   // Leads History scope is 'tenant'/'all' but who hasn't picked a branch yet
   // should get the full candidate list, not silently just their home org's.
-  const tenantWide = canQueryOtherOrg && !effectiveOrgId;
+  const tenantWide = canQueryOtherOrg && !effectiveOrgIds;
   const tenantId = tenantIdForCaps;
   // iam.users' org_isolation_policy scopes app_user to the current branch, so a
   // capability-driven cross-branch caller needs the tenant role to actually see
@@ -303,11 +331,13 @@ export async function getAssignableUsers(
     });
     if (derived === null) return [];
     return repo.getAssignableUsers(
-      txCtx, actorRank, product, effectiveOrgId, derived, undefined, tenantWide, tenantId,
+      txCtx, actorRank, product, effectiveOrgIds, derived, undefined, tenantWide, tenantId, purpose,
     );
   }
 
-  return repo.getAssignableUsers(txCtx, actorRank, product, effectiveOrgId, scope, maxRank, tenantWide, tenantId);
+  return repo.getAssignableUsers(
+    txCtx, actorRank, product, effectiveOrgIds, scope, maxRank, tenantWide, tenantId, purpose,
+  );
 }
 
 export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {

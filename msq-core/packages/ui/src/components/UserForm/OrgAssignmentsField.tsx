@@ -41,6 +41,16 @@ export default function OrgAssignmentsField({
     [branches],
   );
 
+  /**
+   * A selected branch's name, or an honest admission that we don't have one.
+   *
+   * This used to fall back to the raw org_id. A UUID in a chip reads as data —
+   * as though the branch were genuinely called that — when it actually means the
+   * branch list failed to load or came back without this branch in it. The id
+   * stays on the `title` so support can still recover it.
+   */
+  const label = (orgId: string) => branchName.get(orgId) ?? 'Unknown branch';
+
   const draftWeights = useMemo(() => {
     const w: Record<string, number> = {};
     for (const a of assignments) w[a.org_id] = a.lead_assignment_weight;
@@ -106,13 +116,14 @@ export default function OrgAssignmentsField({
           {assignments.map((a) => (
             <span
               key={a.org_id}
+              title={a.org_id}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[#BFDBFE] bg-[#EFF6FF] px-2 py-0.5 text-[12.5px] font-semibold text-[#0b6cbf]"
             >
-              {branchName.get(a.org_id) ?? a.org_id}
+              {label(a.org_id)}
               {canPickBranches && !disabled && (
                 <button
                   type="button"
-                  aria-label={`Remove ${branchName.get(a.org_id) ?? 'branch'}`}
+                  aria-label={`Remove ${label(a.org_id)}`}
                   onClick={(e) => { e.stopPropagation(); removeBranch(a.org_id); }}
                   className="text-[#60A5FA] hover:text-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/30 rounded"
                 >
@@ -187,12 +198,12 @@ export default function OrgAssignmentsField({
                         checked={isHome}
                         disabled={disabled}
                         onChange={() => onHomeChange(a.org_id)}
-                        aria-label={`Make ${branchName.get(a.org_id) ?? 'branch'} the home branch`}
+                        aria-label={`Make ${label(a.org_id)} the home branch`}
                         className="h-4 w-4 accent-[#0b6cbf] focus:ring-2 focus:ring-[#0b6cbf]/20"
                       />
                     </div>
-                    <div className="min-w-0 truncate text-[13.5px] font-semibold text-[#0F172A]">
-                      {branchName.get(a.org_id) ?? a.org_id}
+                    <div title={a.org_id} className="min-w-0 truncate text-[13.5px] font-semibold text-[#0F172A]">
+                      {label(a.org_id)}
                       {isHome && (
                         <span className="ml-1.5 rounded border border-[#BFDBFE] bg-[#EFF6FF] px-1 py-px text-[10px] font-bold uppercase tracking-wide text-[#0b6cbf]">
                           Home
@@ -204,7 +215,7 @@ export default function OrgAssignmentsField({
                         value={a.role_id}
                         disabled={disabled}
                         onChange={(e) => patch(a.org_id, { role_id: e.target.value })}
-                        aria-label={`Role in ${branchName.get(a.org_id) ?? 'branch'}`}
+                        aria-label={`Role in ${label(a.org_id)}`}
                         className={`w-full ${FIELD_SM}`}
                       >
                         <option value="">Select a role…</option>
@@ -215,7 +226,7 @@ export default function OrgAssignmentsField({
                       <WeightInput
                         value={a.lead_assignment_weight}
                         disabled={disabled}
-                        label={`Lead assignment weight in ${branchName.get(a.org_id) ?? 'branch'}`}
+                        label={`Lead assignment weight in ${label(a.org_id)}`}
                         onChange={(v) => patch(a.org_id, { lead_assignment_weight: v })}
                       />
                     </div>

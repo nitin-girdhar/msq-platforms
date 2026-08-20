@@ -20,9 +20,13 @@ export default async function TeamPage() {
   // Branches are fetched alongside the roster because the user form assigns
   // people to them. A failure here is not fatal — the form falls back to the
   // actor's own branch rather than blocking the whole page.
-  const [res, orgsRes] = await Promise.all([
+  // Two branch lists: /orgs/all is every branch in the tenant (assignable only
+  // by a tenant-wide actor), /auth/my-orgs is this actor's own mapping rows —
+  // the branches a multi-branch admin may actually place someone into.
+  const [res, orgsRes, myOrgsRes] = await Promise.all([
     fetch(`${GATEWAY_URL}/users?page_size=500`, { headers: { cookie: cookieHeader }, cache: 'no-store' }),
     fetch(`${GATEWAY_URL}/orgs/all`, { headers: { cookie: cookieHeader }, cache: 'no-store' }),
+    fetch(`${GATEWAY_URL}/auth/my-orgs`, { headers: { cookie: cookieHeader }, cache: 'no-store' }),
   ]);
 
   if (!res.ok) {
@@ -37,6 +41,19 @@ export default async function TeamPage() {
   } else {
     console.error(`[team] GET ${GATEWAY_URL}/orgs/all failed: ${orgsRes.status} ${orgsRes.statusText}`);
   }
+
+  let myOrgs: Array<{ id: string; name: string }> = [];
+  if (myOrgsRes.ok) {
+    const myOrgsData = await myOrgsRes.json() as { data?: { orgs?: Array<{ org_id: string; org_name: string }> } };
+    const rawOrgs = Array.isArray(myOrgsData.data?.orgs) ? myOrgsData.data.orgs : [];
+    myOrgs = rawOrgs.map((o) => ({ id: o.org_id, name: o.org_name }));
+  } else {
+    console.error(`[team] GET ${GATEWAY_URL}/auth/my-orgs failed: ${myOrgsRes.status} ${myOrgsRes.statusText}`);
+  }
+
+  // Not fatal, but no longer silent: the form says so instead of quietly
+  // offering a single nameless branch.
+  const branchesFailed = !orgsRes.ok || !myOrgsRes.ok;
 
   const body = await res.json() as { data?: Record<string, unknown>[]; total?: number };
   const raw = Array.isArray(body.data) ? body.data : [];
@@ -54,5 +71,5 @@ export default async function TeamPage() {
     manager_name: (u.manager_name ?? null) as string | null,
   })) as SessionUser[];
 
-  return <TeamShell users={users} actor={session} total={total} orgs={orgs} />;
+  return <TeamShell users={users} actor={session} total={total} orgs={orgs} myOrgs={myOrgs} branchesFailed={branchesFailed} />;
 }

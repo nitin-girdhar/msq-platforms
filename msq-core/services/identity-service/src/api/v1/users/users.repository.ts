@@ -1,5 +1,5 @@
 import { sql, eq, and, desc } from 'drizzle-orm';
-import { withRoleTx, withServiceTx, hasCapability } from '@platform/db';
+import { withRoleTx, withServiceTx, hasCapability, sqlUuidArr } from '@platform/db';
 import type { RoleTxContext, DrizzleTx } from '@platform/db';
 import { CAPABILITY, ANCHOR_RANK } from '@platform/rbac';
 import {
@@ -207,18 +207,26 @@ export async function getAssignableUsers(
   ctx: RoleTxContext,
   actorRank: number,
   product: 'lms' | 'tasks',
-  orgId: string | undefined,
+  orgIds: string[] | undefined,
   scope: 'delegation' | 'collaboration' | 'unlimited',
   maxRank: number | undefined,
   tenantWide: boolean | undefined,
   tenantId: string,
+  purpose: 'assign' | 'filter' = 'assign',
 ) {
-  const targetOrgId = orgId ?? ctx.org_id;
-  // Same join pattern as listUsers: tenant admin+ with no explicit org_id sees
-  // candidates across every branch in the tenant, not just their own.
+  const targetOrgIds = orgIds ?? [ctx.org_id];
+  // Same join pattern as listUsers: tenant admin+ with no explicit org sees
+  // candidates across every branch in the tenant, not just their own; otherwise
+  // the list is the union of the branches asked for (the Leads History org
+  // filter is multi-select, so this is a list, not a single id).
+  //
+  // o.tenant_id is asserted on BOTH arms, not just the tenant-wide one: a
+  // cross-branch caller runs this under the tenant role, which is exactly what
+  // widens RLS, so an org id from the query string must be proven to belong to
+  // the actor's tenant here rather than trusted.
   const scopeClause = tenantWide
     ? sql`o.tenant_id = ${tenantId}::uuid`
-    : sql`uom.org_id = ${targetOrgId}::uuid`;
+    : sql`uom.org_id = ANY(${sqlUuidArr(targetOrgIds)}) AND o.tenant_id = ${tenantId}::uuid`;
   // delegation: strictly below the actor (CRM lead hand-down).
   // collaboration: at or below the actor, so same-rank peers and the actor
   // themselves are assignable. See getAssignableQuerySchema.
@@ -232,27 +240,56 @@ export async function getAssignableUsers(
   // tenant roles between 80 and 979 that canAssignToUser does allow.
   // maxRank, when given, overrides all three: an absolute ceiling independent
   // of the actor's own rank.
+  //
+  // purpose 'filter' has no ceiling RELATIVE to the actor — every rung above is
+  // a rule about whom the actor may assign TO, and a filter answers "who works
+  // leads in this branch". Tying it to the actor's own rank hid every assignee
+  // at or above them from a grid that renders those same names in every row.
+  // What it keeps is an ABSOLUTE band, the same one getAssignmentWeights uses
+  // for auto-assignment eligibility: above read_only and below org_admin, so
+  // read-only staff and the org/tenant/super admin tiers stay out of a list of
+  // people who actually work leads. ORG_ADMIN (980), not the local RANK_ADMIN
+  // (80) — see the note above on the custom tenant roles between 80 and 979.
   const rankFilter =
-    maxRank !== undefined
-      ? sql`ur.rank <= ${maxRank}`
-      : scope === 'unlimited'
-        ? sql`ur.rank < ${ANCHOR_RANK.ORG_ADMIN}`
-        : scope === 'collaboration'
-          ? sql`ur.rank <= ${actorRank}`
-          : sql`ur.rank < ${actorRank}`;
+    purpose === 'filter'
+      ? sql`ur.rank > ${ANCHOR_RANK.READ_ONLY} AND ur.rank < ${ANCHOR_RANK.ORG_ADMIN}`
+      : maxRank !== undefined
+        ? sql`ur.rank <= ${maxRank}`
+        : scope === 'unlimited'
+          ? sql`ur.rank < ${ANCHOR_RANK.ORG_ADMIN}`
+          : scope === 'collaboration'
+            ? sql`ur.rank <= ${actorRank}`
+            : sql`ur.rank < ${actorRank}`;
   return withRoleTx(ctx, async (tx) => {
+    // DISTINCT ON: a user mapped into two of the selected branches joins once
+    // per mapping and would otherwise appear twice in the dropdown. The outer
+    // ordering is the display order; the inner one only picks which mapping row
+    // survives per user (the most senior, matching the display sort).
     const rows = (await tx.execute(sql`
-      SELECT u.id, u.org_id, u.full_name, u.first_name, u.middle_name, u.last_name,
-             u.email, u.is_active,
-             ur.name AS role_name, ur.label AS role_label, ur.rank
-      FROM iam.user_org_mapping uom
-      JOIN iam.users u       ON u.id  = uom.user_id
-      JOIN iam.user_roles ur ON ur.id = uom.role_id
-      JOIN entity.organizations o ON o.id = uom.org_id
-      WHERE ${scopeClause} AND uom.is_active AND NOT u.is_deleted AND u.is_active
-        AND ${rankFilter}
-      ORDER BY ur.rank DESC, u.full_name
+      SELECT * FROM (
+        SELECT DISTINCT ON (u.id)
+               u.id, u.org_id, u.full_name, u.first_name, u.middle_name, u.last_name,
+               u.email, u.is_active,
+               ur.name AS role_name, ur.label AS role_label, ur.rank
+        FROM iam.user_org_mapping uom
+        JOIN iam.users u       ON u.id  = uom.user_id
+        JOIN iam.user_roles ur ON ur.id = uom.role_id
+        JOIN entity.organizations o ON o.id = uom.org_id
+        WHERE ${scopeClause} AND uom.is_active AND NOT u.is_deleted AND u.is_active
+          AND ${rankFilter}
+        ORDER BY u.id, ur.rank DESC
+      ) d
+      ORDER BY d.rank DESC, d.full_name
     `)) as Array<Record<string, unknown>>;
+    // A filter gates on lms.leads, NOT on PRODUCT_CAPABILITY's `lms`. That
+    // distinction is the whole bug: `lms` is the product ROOT — "may open the
+    // LMS app" — which org_admin and tenant_admin hold and several lead-working
+    // roles' peers hold too, so it neither kept admins out nor let reps in.
+    // `lms.leads` is the tool node: verified against the live matrix, it is the
+    // only predicate that drops hr_admin and the fitness roles (which clear the
+    // rank band), while the rank band is the only one that drops super_admin and
+    // read_only (which hold lms.leads). Both are needed; neither suffices alone.
+    if (purpose === 'filter') return filterRowsByCapability(tenantId, rows, CAPABILITY.LMS_LEADS);
     return filterRowsByCapability(tenantId, rows, PRODUCT_CAPABILITY[product]);
   });
 }
@@ -462,6 +499,34 @@ export async function getOrgsInTenant(orgIds: string[], tenantId: string) {
         AND is_active AND NOT is_deleted
     `)) as Array<{ id: string; name: string }>;
     return rows;
+  });
+}
+
+// Of `orgIds`, the ones the ACTOR may create/manage users in.
+//
+// Asks the database the identical question its RLS policies ask —
+// iam.fn_user_can_manage_users(actor, org) over iam.fn_user_active_orgs(actor) —
+// so the 403 the caller gets back names the branch instead of arriving as a raw
+// "new row violates row-level security policy" from deep inside the INSERT.
+// This is a pre-flight for a better message, NOT the security boundary: the
+// policies re-decide every row independently, which is why disagreeing with
+// them is impossible rather than merely unlikely.
+//
+// withServiceTx (like every other lookup in this file's validation path):
+// fn_user_active_orgs is SECURITY DEFINER and already scopes the answer to the
+// actor passed in, so there is nothing here for RLS to narrow — and reading it
+// through the actor's own app_user pool would need the very mapping-table read
+// grant this function exists to check for.
+export async function getManageableOrgIds(actorUserId: string, orgIds: string[]): Promise<string[]> {
+  if (orgIds.length === 0) return [];
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT o.id
+      FROM unnest(${sqlUuidArr(orgIds)}) AS o(id)
+      WHERE o.id = ANY(iam.fn_user_active_orgs(${actorUserId}::uuid))
+        AND iam.fn_user_can_manage_users(${actorUserId}::uuid, o.id)
+    `)) as Array<{ id: string }>;
+    return rows.map((r) => r.id);
   });
 }
 

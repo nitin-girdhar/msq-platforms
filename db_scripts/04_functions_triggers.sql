@@ -1074,6 +1074,65 @@ BEGIN
   RETURN FALSE;
 END; $$;
 
+-- ── iam.fn_user_can_manage_users ──────────────────────────────────────
+-- May p_user_id create and manage users IN p_org_id?
+--
+-- p_org_id is the TARGET branch, never the session's app.current_org_id. That
+-- distinction is the whole point: membership here is many-to-many
+-- (iam.user_org_mapping), so someone mapped into three branches manages users in
+-- all three, and the policies that call this pass the ROW's org_id, not the GUC.
+--
+-- Modelled on iam.can_assign_to above, and for the same reason: the capability
+-- MATRIX — not a raw iam.role_capabilities lookup — is the authority, because
+-- fn_role_capability_matrix already implements BOTH resolution rules (tenant
+-- override > platform default > deny, AND an ancestor resolving FALSE prunes its
+-- whole subtree). @platform/db's capability cache resolves through that same
+-- function, so SQL and application code cannot disagree about a grant.
+--
+-- Replaces the bare `fn_user_org_rank(...) >= 980` term the user_org_mapping,
+-- users and reporting_lines write policies used to carry. That floor meant a
+-- tenant-defined role granted lms.users.manage in the Capability Matrix screen
+-- passed every application gate and was then refused by RLS: the capability
+-- promised something the database would not honour, and the operator's only
+-- recourse was to hand out org_admin. Rank still answers "who outranks whom"
+-- (canGrantRole, canManageUser in identity-service) — it stopped answering
+-- "may you manage users at all", which is a capability question.
+--
+-- SECURITY DEFINER so it can read iam.* from inside a policy without tripping
+-- those tables' own RLS — same rationale as fn_user_org_rank / fn_user_active_orgs.
+CREATE OR REPLACE FUNCTION iam.fn_user_can_manage_users(p_user_id UUID, p_org_id UUID)
+RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
+DECLARE
+  v_role    TEXT;
+  v_tenant  UUID;
+  v_granted BOOLEAN;
+BEGIN
+  IF p_user_id IS NULL OR p_org_id IS NULL THEN RETURN FALSE; END IF;
+
+  -- fn_user_org_role rather than a direct user_org_mapping read: it already
+  -- resolves the three cases a mapping row does not cover (super_admin,
+  -- tenant_admin, and a legacy user's own home org), so this function agrees
+  -- with every other role authority in the database instead of inventing a
+  -- fourth answer. Returns NULL when the user may not act in the org at all.
+  SELECT r.role INTO v_role FROM iam.fn_user_org_role(p_user_id, p_org_id) r;
+  IF v_role IS NULL THEN RETURN FALSE; END IF;
+
+  -- The three anchor roles keep their standing authority verbatim, so this can
+  -- never REMOVE a permission the >= 980 floor used to grant. It only adds the
+  -- capability route below it.
+  IF v_role IN ('super_admin','tenant_admin','org_admin') THEN RETURN TRUE; END IF;
+
+  SELECT tenant_id INTO v_tenant FROM entity.organizations WHERE id = p_org_id;
+  IF v_tenant IS NULL THEN RETURN FALSE; END IF;
+
+  SELECT bool_or(m.granted) INTO v_granted
+  FROM iam.fn_role_capability_matrix(v_tenant) m
+  WHERE m.role_name = v_role
+    AND m.capability_key = 'lms.users.manage';
+
+  RETURN COALESCE(v_granted, FALSE);
+END; $$;
+
 -- Audit trigger for lms.marketing_leads (field-level diff on UPDATE, snapshot on DELETE).
 -- SECURITY DEFINER: app_user has no INSERT on audit.marketing_leads_history.
 CREATE OR REPLACE FUNCTION audit.audit_marketing_leads_changes()

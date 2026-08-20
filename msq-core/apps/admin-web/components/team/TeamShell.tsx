@@ -11,10 +11,15 @@ interface Props {
   users: SessionUser[];
   actor: SessionUser;
   total: number;
+  /** Every branch in the tenant — assignable only by a tenant-wide actor. */
   orgs: Array<{ id: string; name: string }>;
+  /** The actor's own branches (iam.user_org_mapping), for everyone else. */
+  myOrgs: Array<{ id: string; name: string }>;
+  /** Either branch fetch failed; the modals say so rather than quietly offering one. */
+  branchesFailed: boolean;
 }
 
-export default function TeamShell({ users, actor, total, orgs }: Props) {
+export default function TeamShell({ users, actor, total, orgs, myOrgs, branchesFailed }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SessionUser | null>(null);
 
@@ -51,6 +56,8 @@ export default function TeamShell({ users, actor, total, orgs }: Props) {
           users={users}
           actor={actor}
           orgs={orgs}
+          myOrgs={myOrgs}
+          branchesFailed={branchesFailed}
         />
       )}
 
@@ -63,6 +70,8 @@ export default function TeamShell({ users, actor, total, orgs }: Props) {
           actorRank={actor.rank}
           actorRole={actor.role}
           orgs={orgs}
+          myOrgs={myOrgs}
+          branchesFailed={branchesFailed}
           actor={actor}
         />
       )}

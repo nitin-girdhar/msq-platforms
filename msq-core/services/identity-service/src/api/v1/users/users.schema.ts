@@ -10,6 +10,17 @@ export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
 
 export const getAssignableQuerySchema = z.object({
   org_id: z.string().uuid().optional(),
+  // Multi-branch variant of org_id, for a list that spans several orgs at once —
+  // the Leads History org filter is multi-select, and forwarding only the
+  // single-org case silently collapsed its user list to the actor's home branch.
+  // Comma-separated uuids; each is uuid-checked here so a malformed id is a 400
+  // rather than a query that quietly matches nothing. Still ignored entirely for
+  // an actor with no cross-org reach — see getAssignableUsers in the service.
+  org_ids: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v.split(',').map((s) => s.trim()).filter(Boolean) : undefined))
+    .pipe(z.array(z.string().uuid()).nonempty().optional()),
   // 'delegation' (default): candidates strictly below the actor's rank — the
   // CRM semantics for handing a lead down the hierarchy.
   // 'collaboration': candidates at or below the actor's rank, including the
@@ -41,11 +52,18 @@ export const getAssignableQuerySchema = z.object({
   // capability model exists to prevent, and a client-supplied `scope` cannot
   // know the actor's grants.
   //
-  // 'filter': this list populates a FILTER, not an assignee picker — "whose
-  // leads am I looking at", whose authority is the lms.history.view.* scope,
-  // not the assign ladder. Deriving it from assign grants would empty the
-  // Leads History filter for a role that can read a wide history scope but
-  // holds no assign capability. Keeps the caller-supplied rank semantics.
+  // 'filter': this list populates a FILTER, not an assignee picker. It answers
+  // "who works leads in this branch", so it drops the assign ladder entirely:
+  // no ceiling relative to the actor (that hid every assignee at or above them
+  // from a grid that shows those names in every row) and no derivation from
+  // lms.leads.assign.* grants (that emptied the filter for a role which can
+  // read a wide history but may assign to nobody).
+  //
+  // What it keeps is the same eligibility rule getAssignmentWeights uses: the
+  // absolute rank band above read_only and below org_admin, AND the lms.leads
+  // capability — the TOOL node, not the `lms` product root. Both are load
+  // bearing: the capability drops hr_admin and the fitness roles, the band
+  // drops super_admin and read_only. Accepts org_ids for a multi-branch filter.
   purpose: z.enum(['assign', 'filter']).default('assign'),
 });
 

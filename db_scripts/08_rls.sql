@@ -299,7 +299,14 @@ CREATE POLICY tenant_isolation_policy ON entity.organizations AS PERMISSIVE FOR 
 -- whose home org differs from the org they're currently working in).
 -- New SELECT policy: see all iam.users who have an active mapping to the
 -- current org (regardless of their home org_id).
--- Write policies remain anchored to org_id for home-org assignment.
+--
+-- users_org_write (INSERT) is anchored to the branches the ACTOR may manage
+-- users in — iam.fn_user_can_manage_users over iam.fn_user_active_orgs — rather
+-- than to app.current_org_id alone. A multi-branch admin creating someone whose
+-- home branch is not the one they are currently switched into was otherwise
+-- refused here. users_org_update deliberately keeps the narrower
+-- org_id = current_org_id rule: editing an existing user across branches is a
+-- separate question from creating one, and is not widened by this change.
 ALTER TABLE iam.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE iam.users FORCE ROW LEVEL SECURITY;
 
@@ -320,7 +327,8 @@ CREATE POLICY users_org_select ON iam.users AS PERMISSIVE FOR SELECT TO app_user
 
 CREATE POLICY users_org_write ON iam.users AS PERMISSIVE FOR INSERT TO app_user
   WITH CHECK (
-    org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
+    org_id = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, org_id)
     AND NOT is_deleted
   );
 
@@ -411,8 +419,12 @@ CREATE POLICY tenant_isolation_policy ON iam.user_org_mapping AS PERMISSIVE FOR 
 -- branches reads their Org A subtree in Org A context and their Org B subtree
 -- after switching branch — never a half-resolved mix of the two.
 --
--- Writes mirror org_admin_manage_policy on iam.user_org_mapping: re-orging is an
--- org_admin+ act, and identity-service performs it on the user's behalf.
+-- Writes mirror org_admin_manage_policy on iam.user_org_mapping: setting a
+-- reporting line is a user-management act, and identity-service performs it on
+-- the user's behalf. That mirroring is why this policy moved off the >= 980
+-- rank floor at the same time — a create that supplies manager_id writes here
+-- too, so leaving it behind would have failed the very request the mapping
+-- policy had just been widened to allow.
 ALTER TABLE iam.reporting_lines ENABLE ROW LEVEL SECURITY;
 ALTER TABLE iam.reporting_lines FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON iam.reporting_lines;
@@ -427,18 +439,12 @@ CREATE POLICY org_isolation_policy ON iam.reporting_lines AS PERMISSIVE FOR SELE
 
 CREATE POLICY org_admin_manage_policy ON iam.reporting_lines AS PERMISSIVE FOR ALL TO app_user
   USING (
-    org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
-    AND iam.fn_user_org_rank(
-      NULLIF(current_setting('app.current_user_id', true), '')::uuid,
-      NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 980
+    org_id = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, org_id)
   )
   WITH CHECK (
-    org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
-    AND iam.fn_user_org_rank(
-      NULLIF(current_setting('app.current_user_id', true), '')::uuid,
-      NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 980
+    org_id = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, org_id)
   );
 
 CREATE POLICY tenant_isolation_policy ON iam.reporting_lines AS PERMISSIVE FOR ALL TO tenant_admin
@@ -468,6 +474,23 @@ CREATE POLICY tenant_isolation_policy ON audit.activities AS PERMISSIVE FOR SELE
 -- The previous org_admin_manage_policy was FOR ALL (SELECT + DML),
 -- which stacks additively (OR) with self_read_policy for SELECT.
 -- Split into explicit per-operation policies to prevent ambiguity.
+--
+-- WHO MAY WRITE HERE — capability, not rank
+-- ----------------------------------------
+-- The predicate is iam.fn_user_can_manage_users(actor, THE ROW'S org_id), which
+-- is TRUE for org_admin/tenant_admin/super_admin (verbatim as before) or for any
+-- role the tenant granted `lms.users.manage` in the Capability Matrix screen.
+-- It replaced a bare `fn_user_org_rank(...) >= 980`, under which granting that
+-- capability to a tenant-defined role changed nothing: the UI showed the button,
+-- identity-service passed the request, and the INSERT was refused here — so the
+-- only way to delegate user creation was to hand out org_admin outright.
+--
+-- Reach follows MEMBERSHIP, not app.current_org_id: iam.user_org_mapping is
+-- many-to-many, so an actor mapped into several branches administers users in
+-- each of them without switching branch first. fn_user_active_orgs is the same
+-- SECURITY DEFINER helper users_org_isolation uses, so this cannot recurse.
+-- The tenant boundary is untouched — every org in that array is one the actor
+-- holds a mapping row for.
 DROP POLICY IF EXISTS org_admin_manage_policy ON iam.user_org_mapping;
 DROP POLICY IF EXISTS org_admin_read_policy   ON iam.user_org_mapping;
 DROP POLICY IF EXISTS org_admin_insert_policy ON iam.user_org_mapping;
@@ -475,40 +498,29 @@ DROP POLICY IF EXISTS org_admin_update_policy ON iam.user_org_mapping;
 
 CREATE POLICY org_admin_read_policy ON iam.user_org_mapping AS PERMISSIVE FOR SELECT TO app_user
   USING (
-    org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
-    AND iam.fn_user_org_rank(
-      NULLIF(current_setting('app.current_user_id', true), '')::uuid,
-      NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 980
+    org_id = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, org_id)
   );
 
 CREATE POLICY org_admin_insert_policy ON iam.user_org_mapping AS PERMISSIVE FOR INSERT TO app_user
   WITH CHECK (
-    org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
-    AND iam.fn_user_org_rank(
-      NULLIF(current_setting('app.current_user_id', true), '')::uuid,
-      NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 980
+    org_id = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, org_id)
   );
 
 CREATE POLICY org_admin_update_policy ON iam.user_org_mapping AS PERMISSIVE FOR UPDATE TO app_user
   USING (
-    org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
-    AND iam.fn_user_org_rank(
-      NULLIF(current_setting('app.current_user_id', true), '')::uuid,
-      NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 980
+    org_id = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, org_id)
   )
   WITH CHECK (
-    org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
-    AND iam.fn_user_org_rank(
-      NULLIF(current_setting('app.current_user_id', true), '')::uuid,
-      NULLIF(current_setting('app.current_org_id',  true), '')::uuid
-    ) >= 980
+    org_id = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, org_id)
   );
 
 -- ── USER_ORG_MAPPING: assignable-users read policy (issue #33) ────
--- org_admin_read_policy (rank >= 980 = ANCHOR_RANK.ORG_ADMIN) is the only SELECT grant beyond a
+-- org_admin_read_policy (now capability-driven; formerly rank >= 980 =
+-- ANCHOR_RANK.ORG_ADMIN) is the only SELECT grant beyond a
 -- user's own row, but GET /users/assignable (services/users-service)
 -- is meant for anyone at or above RANKS.SSE (40) — see
 -- packages/permissions/src/business-rules.ts minRankToAssignLeads.

@@ -13,3 +13,12 @@ get {
 headers {
   Cookie: auth_token={{authToken}}
 }
+
+params:query {
+  product: lms
+  ~purpose: filter
+  ~org_id: {{orgId}}
+  ~org_ids: {{orgId}}
+  ~scope: collaboration
+  ~max_rank: 40
+}

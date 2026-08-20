@@ -194,6 +194,11 @@ GRANT INSERT, UPDATE ON TABLE entity.organizations TO tenant_admin;
 GRANT EXECUTE ON FUNCTION iam.fn_user_active_orgs(UUID)  TO app_user, tenant_admin;
 GRANT EXECUTE ON FUNCTION iam.fn_org_active_users(UUID)  TO app_user, tenant_admin;
 GRANT EXECUTE ON FUNCTION iam.fn_user_org_rank(UUID,UUID) TO app_user, tenant_admin;
+-- Replaces the bare fn_user_org_rank >= 980 term in the iam.user_org_mapping,
+-- iam.users and iam.reporting_lines WRITE policies. SECURITY DEFINER, so its
+-- own calls to fn_user_org_role / fn_role_capability_matrix run as the owner
+-- and need no further grant here.
+GRANT EXECUTE ON FUNCTION iam.fn_user_can_manage_users(UUID,UUID) TO app_user, tenant_admin;
 -- Product-service logins are created later (lead_svc below, hr/task in 03,
 -- lms_svc in 04), so their EXECUTE grant lives further down this file
 -- alongside iam.fn_role_capability_matrix's.

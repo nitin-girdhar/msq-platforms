@@ -1,3 +1,4 @@
+export { branchOptionsForActor } from './branchOptions';
 export { default as DepartmentSelect, rolesForDepartment } from './DepartmentSelect';
 export { default as OrgAssignmentsField } from './OrgAssignmentsField';
 export { default as ManagerSelect } from './ManagerSelect';

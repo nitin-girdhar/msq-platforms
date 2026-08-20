@@ -12,6 +12,7 @@ import {
   ManagerSelect,
   useRoleCatalog,
   useUserAssignments,
+  branchOptionsForActor,
   type OrgAssignment,
 } from '@platform/ui-kit';
 import { users as usersApi, type AssignableUser } from '@/src/lib/api/client';
@@ -31,11 +32,13 @@ interface Props {
   actorRank: number;
   actorRole: string;
   orgs: Array<{ id: string; name: string }>;
+  myOrgs: Array<{ id: string; name: string }>;
+  branchesFailed: boolean;
   actor: SessionUser;
 }
 
 export default function EditUserModal({
-  open, onClose, user, currentUserId, actorRank, actorRole, orgs, actor,
+  open, onClose, user, currentUserId, actorRank, actorRole, orgs, myOrgs, branchesFailed, actor,
 }: Props) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(user.first_name ?? '');
@@ -130,9 +133,18 @@ export default function EditUserModal({
     rolesLoaded: !rolesLoading,
   });
 
+  // The branch that must always resolve to a name here is the EDITED USER's
+  // home branch, not the actor's — this form is about them. Below tenant-wide
+  // authority the assignable set is the actor's own branches, so a multi-branch
+  // admin can add this person to any branch they administer.
   const branchOptions = useMemo(
-    () => (canPickBranches ? orgs : orgs.filter((o) => o.id === user.org_id)),
-    [canPickBranches, orgs, user.org_id],
+    () => branchOptionsForActor(
+      orgs,
+      myOrgs,
+      { org_id: user.org_id, org_name: user.org_name },
+      canPickBranches,
+    ),
+    [canPickBranches, orgs, myOrgs, user.org_id, user.org_name],
   );
 
   const homeMoved = a.homeOrgId !== user.org_id;
@@ -350,6 +362,12 @@ export default function EditUserModal({
           {(rolesError || mappingsError) && (
             <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               {rolesError ?? mappingsError}
+            </div>
+          )}
+
+          {branchesFailed && (
+            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Branches could not be loaded — only this user&apos;s current branch is available.
             </div>
           )}
 

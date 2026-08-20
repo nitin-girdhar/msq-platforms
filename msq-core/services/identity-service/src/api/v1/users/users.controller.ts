@@ -1,6 +1,8 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, UpdateAssignmentWeightsInput, AddOrgMappingInput } from '@platform/validation';
 import { RANKS } from '@platform/authz';
+import { hasCapability } from '@platform/db';
+import { CAPABILITY } from '@platform/rbac';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './users.service.js';
 import type { ListUsersQuery, GetAssignableQuery } from './users.schema.js';
@@ -34,7 +36,7 @@ export class UsersController {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
     const q = request.query as GetAssignableQuery;
     const users = await service.getAssignableUsers(
-      { org_id, user_id, role, tenant_id }, role_name, rank, q.product, q.org_id, q.scope, q.max_rank, q.purpose,
+      { org_id, user_id, role, tenant_id }, role_name, rank, q.product, q.org_id, q.scope, q.max_rank, q.purpose, q.org_ids,
     );
     return reply.send({ success: true, data: users });
   };
@@ -83,9 +85,27 @@ export class UsersController {
     return reply.send({ success: true, data: chart });
   };
 
+  // Creating a user is gated on the CAPABILITY, not on rank.
+  //
+  // The rank >= 40 floor this replaced disagreed with both of its neighbours:
+  // the UI showed the button to whoever held lms.users.manage, and the RLS
+  // policies on iam.user_org_mapping refused the INSERT below rank 980. A role
+  // in between passed here and failed there, so the operator's only working fix
+  // was to grant org_admin. All three now ask one question.
+  //
+  // Resolved here through the same DB-cached matrix orgs.controller uses, rather
+  // than by importing @lms/authz — identity is platform-shared and takes no
+  // product-authz dependency (N-1).
+  //
+  // role_name is the GLOBAL role from resolveGlobalRole, while
+  // iam.fn_user_can_manage_users checks the PER-ORG effective role. This is the
+  // deliberate fast-fail/authority split that can_assign_to and canAssignToUser
+  // already use: RLS decides, this only saves a round trip.
   create = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to create iam.users');
+    const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
+    if (!(await hasCapability(tenant_id, role_name, CAPABILITY.LMS_USERS_MANAGE))) {
+      throw new ForbiddenError('Insufficient permissions to create iam.users');
+    }
     const data = request.body as CreateUserInput;
     const result = await service.createUser({ org_id, user_id, role, tenant_id }, rank, data);
     return reply.status(201).header('Cache-Control', 'no-store').send({ success: true, data: { id: result.id, email: result.email }, temporary_password: result.temporary_password });

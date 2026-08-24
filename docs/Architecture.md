@@ -167,9 +167,13 @@ Assignments are **not** a separate table. The assignment is stored as `lms.marke
 
 ### Weighted auto-assignment
 
-When a new lead is created without an explicit `assigned_user_id` (Meta sync, manual lead creation), `resolveAutoAssignedUser(tx, orgId)` in `@platform/db` (`packages/db/src/assignment.ts`) picks who receives it. Applies uniformly across every lead-creation path — both `services/meta-conversion-api/.../lead-sync.service.ts` and `services/leads-service/.../leads.repository.ts createLead()` call it.
+When a new lead is created without an explicit `assigned_user_id` (Meta sync, manual lead creation), `resolveAutoAssignedUser(tx, orgId)` in leads-service (`services/leads-service/src/lib/assignment.ts` — moved out of `@platform/db` in P-1, it is LMS business logic) picks who receives it. Applies uniformly across every lead-creation path — both `services/meta-conversion-api/.../lead-sync.service.ts` and `services/leads-service/.../leads.repository.ts createLead()` call it.
 
-**Eligibility:** active `iam.user_org_mapping` row for the org, `lead_assignment_weight > 0`, and role rank strictly between `READ_ONLY` and `ADMIN` (org admins and read-only users are never auto-assigned leads).
+**Eligibility:** active `iam.user_org_mapping` row for the org, an **active, non-deleted `iam.users` row**, `lead_assignment_weight > 0`, a role rank strictly between `READ_ONLY` and `ADMIN` (org admins and read-only users are never auto-assigned leads), and a role holding the `LMS` capability.
+
+The user-row condition mirrors `iam.fn_actor_can_act_in_org`, which `lms.check_lead_fk_org_scope()` re-runs on insert. **The two predicates must stay identical.** When they drifted, a user deactivated via edit-user (which sets `iam.users.is_active = false` but leaves the mapping and its weight untouched — unlike `softDeleteUser`, which cascades) stayed selectable: the picker chose them, the trigger rejected them, and the insert RAISEd. Because a user who can never receive a lead keeps an open-lead count of 0, their deficit stays maximal and they win *every* pick — so the branch fails 100% of the time, not intermittently. Via the Meta webhook that surfaced as a 404 from intake and every inbound lead for that branch was silently dropped (Gurugram - Sector 104, Aug 13-24 2026).
+
+Deactivating a user now zeroes `lead_assignment_weight` across all their org mappings in the same transaction as the `is_active` write (identity-service `updateUser`). The mappings stay active so reactivation restores membership; weights are not restored, since the share has to be redistributed while the user is away.
 
 **Algorithm — deficit-based weighted round-robin:**
 1. Count each eligible user's current *open* workload: leads assigned to them in this org where the lead's stage has `is_terminated = false` (no hardcoded stage names — picks up `new`/`contacting`/`on_hold`/`qualified`, and any future non-terminal stage, automatically)
@@ -343,6 +347,15 @@ Bidirectional integration with Meta (Facebook) Lead Ads:
 9. Address/job/demographic fields are written to `ext.meta_lead_addresses`, `ext.meta_lead_professional`, `ext.meta_lead_demographics` (1:1, only when at least one field is present)
 10. Any remaining unmapped form fields stored in `ext.meta_lead_custom_fields`
 
+### Inbound failure diagnostics
+Step 6 delegates the `lms.marketing_leads` insert to leads-service `POST /api/v1/intake/webhook`; a rejection there surfaces in meta-conversion-api as `evt: webhook.lead_sync_failed`. Two things make that line self-diagnosing:
+- It carries `orgId`, `tenantId`, `pageId`, `formId` alongside `metaLeadId`/`integrationId`. The org is the routing key for every follow-up query, so a failure can be traced to a branch without correlating logs across services.
+- `err.details.upstream` carries leads-service's structured rejection reason. For a `lms.check_*_fk_org_scope()` trigger RAISE (translated to a 404 by `translatePgError`), that is `{ constraint: 'fk_org_scope', field: '<column>' }` — e.g. `assigned_user_id` when auto-assignment picked a user the trigger's `iam.fn_actor_can_act_in_org` check rejects.
+
+**Only field names cross the service boundary, never values.** The intake request body is a lead's name, phone, email and every Meta form answer, so the client deliberately does not echo the upstream body into the error message; `details` is safe precisely because leads-service builds it from a fixed list of column literals.
+
+Note: the webhook still returns 200 after a per-lead failure, so Meta does not retry and the lead is not persisted anywhere — these log fields are currently the only record of it.
+
 ### Outbound flow (CRM → Meta CAPI)
 - **Auto-trigger**: When a lead's stage actually changes *and* the lead's source is a Meta one (`lms.lead_sources.name` in `facebook`/`instagram`/`whatsapp` — `META_LEAD_SOURCE_NAMES`, mirrored independently in `lead-sync.service.ts` and `meta-capi-trigger.ts` since the two are separate services), leads-service fires a fire-and-forget HTTP call to meta-conversion-api. Both conditions are checked before the call, so a website/walk-in/referral lead never reaches the CAPI service at all.
 - **Eligibility, re-checked server-side** (`capi-trigger.service.ts`, in order): lead exists → source is Meta (`SOURCE_NOT_META`) → a linked `ext.meta_leads` row supplies `meta_lead_id`/`form_id` (`NOT_META_ORIGIN`) → tenant has an active integration → the new stage maps to an event via `ext.vw_lead_stage_capi_event_map` → no prior `SUCCESS` for this (lead, event). The source check is what protects the manual path, which can name any lead id; it is also why an intake email-dedup merge (a Meta lead folded into an existing website lead) no longer causes that website lead to report to Meta. Credentials are resolved by the lead's tenant_id, falling back to the shared-app row if the tenant has no dedicated app.
@@ -377,6 +390,44 @@ Cross-org / tenant-wide capabilities (e.g. Leads History "tenant"/"all" scope, m
 `can_assign_to(org_id, acting_user_id, target_user_id)` is a PostgreSQL function (3-param, SECURITY DEFINER). Admins and tenant_admins may assign within/across their org/tenant; everyone else is judged on the `lms.leads.assign.any/.peers/.reports` ladder against the target's rank.
 
 **`org_id` must be the LEAD's org, not the caller's current branch.** The function looks up *both* parties' active mapping in the org it is given, so passing the caller's branch made every cross-branch assignment fail — a Wingman mapped to six branches could not hand a lead in one of their own branches to the rep who works there, because that rep holds no mapping in the branch the Wingman happened to be switched into. `follow-ups.repository` always resolved the lead's real org via `resolveLeadWriteScope`; `leads.repository.updateLead` passed `ctx.org_id` and has been corrected to match. Coverage remains the bound: an actor with no mapping in the lead's org fails on the function's first lookup.
+
+### A denied parent silently kills its whole subtree
+
+`iam.fn_role_capability_matrix` walks the `iam.capabilities` tree (tool → page → tab →
+operation → scope) and hard-cascades an ancestor denial — `WHEN NOT w.granted THEN FALSE`.
+A page node set to `is_granted = FALSE` therefore zeroes every operation and scope beneath
+it, no matter what those child rows say. The stored grants and the effective permission
+disagree, and the role editor shows the children ticked, so this is invisible until someone
+reports a missing screen.
+
+Seen in production on the tenant role `pre_sales_captain`, which denied `lms.users` and
+`lms.assignments` while granting `lms.users.view`, `lms.users.view.team`,
+`lms.assignments.view` and `lms.assignments.edit`. All four resolved FALSE, so `canOpenTeam`
+and `canOpenAssignments` redirected the role away from both pages. Repaired by
+`db_scripts/one_time/fix_pre_sales_captain_page_grants.sql`. **When granting an operation,
+grant its ancestors too** — and when auditing a role, read
+`iam.fn_role_capability_matrix(tenant)`, never `iam.role_capabilities` alone.
+
+Note the asymmetry: a `page`/`tab` child with no explicit row *inherits* its parent
+(`COALESCE(g.is_granted, w.nav_inherited)`), while an `operation`/`scope` child with no row
+defaults to FALSE. An absent row and an explicit FALSE are not the same thing.
+
+### UI gating reads capabilities, never a role-name list
+
+Frontend gates must ask `can(actor, CAPABILITY.…)` from `@platform/rbac`. A literal list of
+role names cannot work here: tenant-defined roles are created per tenant and no hardcoded
+array will ever contain them, so the gate fails closed against exactly the roles a tenant
+invented for itself.
+
+`LeadDashboardShell` gated its assignee-candidate fetch on an `INLINE_ASSIGN_ROLES` array of
+six built-in names. A Pre Sales Captain (a tenant role holding `lms.leads.assign`) matched
+none of them, so no candidates were fetched and the "Assigned To" dropdown rendered empty —
+while the identical `LeadEditModal` reached from Follow-ups was populated, because
+`useLeadEditData` already asked the capability. Both now use
+`can(actor, CAPABILITY.LMS_LEADS_ASSIGN)`.
+
+This is advisory UI gating only, as always: `GET /users/assignable`, `iam.can_assign_to` and
+RLS remain the enforcement boundary.
 
 ### User management is a capability, per branch (`1.43.0`)
 

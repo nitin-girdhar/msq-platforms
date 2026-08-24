@@ -907,6 +907,26 @@ export async function updateUser(
       WHERE id = ${targetUserId}::uuid AND ${orgScope} AND NOT is_deleted
       RETURNING id, password_changed_at, role_id
     `)) as Array<Record<string, unknown>>;
+
+    // A deactivated user must stop drawing auto-assigned leads at once. The org
+    // mappings themselves are deliberately LEFT ACTIVE so reactivating the user
+    // restores their membership as-is — but the assignment weight has to go to
+    // zero, because the LMS picker selects on the MAPPING while the lead
+    // FK-org-scope trigger validates the USER row. A weighted-but-inactive user
+    // therefore wins the pick and then fails the insert, which silently dropped
+    // every inbound lead for that branch (Gurugram - Sector 104, Aug 13-24).
+    // Same transaction as the is_active write: the two must never be observable
+    // apart, or a failure here leaves exactly the broken state this prevents.
+    // Weights are not restored on reactivation — the share has to be
+    // redistributed among whoever covered in the meantime anyway.
+    if (rows[0] && fields.is_active === false) {
+      await tx.execute(sql`
+        UPDATE iam.user_org_mapping
+        SET lead_assignment_weight = 0, updated_at = NOW()
+        WHERE user_id = ${targetUserId}::uuid AND lead_assignment_weight > 0
+      `);
+    }
+
     return rows[0] ?? null;
   });
 }

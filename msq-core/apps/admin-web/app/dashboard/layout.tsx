@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { buildLoginUrl, buildChangePasswordUrl, productOrigins } from '@platform/ui-kit';
-import { AppSidebar, MobileSidebar, HamburgerButton, ProductSwitcher, UserMenu, filterNavGroups } from '@platform/ui-kit/shell';
+import { AppSidebar, MobileSidebar, HamburgerButton, ProductSwitcher, UserMenu, BranchSwitcher, filterNavGroups } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { ADMIN_NAV } from '@/src/config/navigation';
 import LogoutButton from '@/components/auth/LogoutButton';
@@ -56,6 +56,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <HamburgerButton />
         <span className="text-base font-bold tracking-tight text-[#0F172A]">Admin</span>
         <div className="ml-auto flex items-center gap-3">
+          {/* Branch pill before the product tabs, matching AppNavbar's order.
+              The console is server-rendered per request (force-dynamic +
+              getServerSession), so switching branch re-mints the session cookie
+              and the full reload rebuilds the sidebar and every screen (Team,
+              API Tokens, HR admin) for the selected branch. Self-hides for
+              single-branch and non-switching actors. */}
+          <BranchSwitcher user={session} homeHref="/dashboard" />
           {/* No activeProduct: admin-web isn't a licensed product itself, so
               every LMS/HR/Task link here is cross-origin back out. The Admin
               pill itself is passed as an active extraLink instead, so it gets

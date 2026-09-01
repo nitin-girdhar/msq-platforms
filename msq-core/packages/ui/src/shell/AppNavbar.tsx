@@ -68,12 +68,12 @@ export default function AppNavbar({
           {title}
         </span>
         <div className="flex-1" />
-        {/* Branch pill BEFORE the product tabs, not after: admin-web renders no
-            BranchSwitcher at all (its header is hand-rolled), so with the tabs
-            first they shifted sideways by the pill's width the moment you
-            switched to Admin. Anchoring the tabs against the user menu keeps
-            them in the same place on every app, whether or not the pill (which
-            also self-hides for single-branch and non-switching actors) shows. */}
+        {/* Branch pill BEFORE the product tabs, not after: admin-web's header is
+            hand-rolled but mounts BranchSwitcher in the same slot order (see
+            apps/admin-web/app/dashboard/layout.tsx), so anchoring the tabs
+            against the user menu keeps them in the same place on every app,
+            whether or not the pill (which self-hides for single-branch and
+            non-switching actors) shows. */}
         <BranchSwitcher user={user} homeHref={homeHref} />
         {/* Inline on sm+; on mobile the switcher drops to its own full-width row
             below so it doesn't get squeezed out by the rest of the bar. */}

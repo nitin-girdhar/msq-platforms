@@ -50,7 +50,7 @@ async function requireApiClientCapability(
 export class ApiClientsController {
   create = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.PLATFORM_API_TOKENS_MANAGE);
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.ADMIN_API_TOKENS_MANAGE);
     const data = request.body as CreateApiClientInput;
     const isOrgAdmin = rank < RANKS.TENANT_ADMIN;
     const result = await service.createApiClient({ org_id, user_id, role, tenant_id }, data, isOrgAdmin);
@@ -59,14 +59,14 @@ export class ApiClientsController {
 
   list = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.PLATFORM_API_TOKENS_VIEW);
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.ADMIN_API_TOKENS_VIEW);
     const clients = await service.listApiClients({ org_id, user_id, role, tenant_id });
     return reply.send({ success: true, data: clients });
   };
 
   update = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.PLATFORM_API_TOKENS_MANAGE);
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.ADMIN_API_TOKENS_MANAGE);
     const { id } = request.params as { id: string };
     const data = request.body as UpdateApiClientInput;
     const isOrgAdmin = rank < RANKS.TENANT_ADMIN;
@@ -76,7 +76,7 @@ export class ApiClientsController {
 
   rotate = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.PLATFORM_API_TOKENS_MANAGE);
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.ADMIN_API_TOKENS_MANAGE);
     const { id } = request.params as { id: string };
     const result = await service.rotateApiClient({ org_id, user_id, role, tenant_id }, id);
     return reply.header('Cache-Control', 'no-store').send({ success: true, data: result });
@@ -84,7 +84,7 @@ export class ApiClientsController {
 
   revoke = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
-    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.PLATFORM_API_TOKENS_MANAGE);
+    await requireApiClientCapability({ tenant_id, role_name, rank }, CAPABILITY.ADMIN_API_TOKENS_MANAGE);
     const { id } = request.params as { id: string };
     await service.revokeApiClient({ org_id, user_id, role, tenant_id }, id);
     return reply.status(204).send();

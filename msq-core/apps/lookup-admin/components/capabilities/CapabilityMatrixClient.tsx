@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@platform/ui-kit';
 import {
   ANCHOR_RANK,
-  isPlatformAdminCapability,
+  isSuperAdminCapability,
   ownGrantsByKey,
   resolveCapabilityMatrix,
   type GrantSource,
@@ -160,16 +160,16 @@ export default function CapabilityMatrixClient({ selectedTenantId }: Props) {
   // UNCHECKED even though the resolver said granted. Unticking it wrote TRUE and
   // hiding a page took check, save, untick, save. That is the whole "I removed
   // the grant but the tab still shows" report.
-  // Whether the PLATFORM ADMINISTRATION subtree can be written to this role.
-  // admin-service's putGrants refuses it below super_admin, so this mirrors that
-  // rule rather than inventing a second one — both sides call
-  // isPlatformAdminCapability(), which is why it lives in @platform/rbac.
+  // Whether the PLATFORM OPERATOR subtree (`superadmin.*`) can be written to this
+  // role. admin-service's putGrants refuses it below super_admin, so this mirrors
+  // that rule rather than inventing a second one — both sides call
+  // isSuperAdminCapability(), which is why it lives in @platform/rbac.
   //
   // Not a permission question about the person using this screen: reaching it at
   // all already requires super_admin. It is about the role being EDITED.
   const selectedRole = roles.find((r) => r.id === roleId);
   const adminSubtreeLocked = !!selectedRole && selectedRole.rank < ANCHOR_RANK.SUPER_ADMIN;
-  const isLocked = (key: string) => adminSubtreeLocked && isPlatformAdminCapability(key);
+  const isLocked = (key: string) => adminSubtreeLocked && isSuperAdminCapability(key);
 
   const toggle = (key: string) => {
     const node = resolved.get(key);
@@ -178,7 +178,20 @@ export default function CapabilityMatrixClient({ selectedTenantId }: Props) {
     setPending((prev) => ({ ...prev, [key]: !node.granted }));
   };
 
-  const sorted = useMemo(() => inTreeOrder(tree), [tree]);
+  // `superadmin.*` is not rendered at all for a role that cannot hold it, rather
+  // than rendered as a locked row. A visible row invites the click; the one under
+  // it, superadmin.roles.manage, DEFINES capability grants, so a mis-tick there
+  // would hand out the ability to grant anything. Nothing is lost by hiding it:
+  // the rows were never actionable for these roles, and super_admin receives the
+  // subtree through the `*` wildcard rather than through rows on this screen.
+  //
+  // isLocked and putGrants both stay exactly as they were. This is an affordance,
+  // not the boundary — a hidden control that the server would still accept is the
+  // failure mode, so the server-side refusal must never be relaxed to match.
+  const sorted = useMemo(
+    () => inTreeOrder(tree).filter((cap) => !isLocked(cap.key)),
+    [tree, adminSubtreeLocked],
+  );
 
   const dirtyCount = Object.keys(pending).length;
 

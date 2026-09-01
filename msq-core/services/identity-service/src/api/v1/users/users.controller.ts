@@ -16,13 +16,36 @@ import type { ListUsersQuery, GetAssignableQuery } from './users.schema.js';
 // users.repository.ts and packages/db/src/assignment.ts.
 const USER_MGMT_MIN_RANK = 40;
 
+// May this actor send the affected user a notification email for a Team action?
+// The checkbox is opt-out (undefined = the admin left it ticked), ANDed with the
+// admin.team.notify capability. The capability is authoritative for EVERY role,
+// anchor roles included: unlike the admin.team.manage create-gate there is no
+// per-tenant-copy blind spot to work around here — admin.team.notify ships with
+// a back-fill pinned to admin.team.manage (03_roles_and_grants.sql, schema
+// 1.46.0), so every role that can manage the team already holds it, and a tenant
+// that unticks "Notify user by email" writes is_granted = FALSE that must be
+// honoured. Purely an outbound-notification gate: never an RLS boundary, so it
+// does not touch the write path at all — worst case is an email not sent.
+async function mayNotify(
+  sendFlag: boolean | undefined,
+  tenantId: string,
+  roleName: string | null,
+): Promise<boolean> {
+  if (sendFlag === false) return false;
+  return hasCapability(tenantId, roleName ?? '', CAPABILITY.ADMIN_TEAM_NOTIFY);
+}
+
 export class UsersController {
   list = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
     if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to view iam.users');
     const q = request.query as ListUsersQuery;
-    const result = await service.listUsers({ org_id, user_id, role, tenant_id }, rank, q.page, q.page_size, q.org_id);
-    return reply.send({ success: true, data: result.users, total: result.total, page: result.page, page_size: result.page_size });
+    // role_name, not `role`: the scope ladder lives on the tenant-defined role
+    // (iam.user_roles.name), which platform_role collapses to four values.
+    const result = await service.listUsers(
+      { org_id, user_id, role, tenant_id }, rank, q.page, q.page_size, q.org_id, q.scope, role_name,
+    );
+    return reply.send({ success: true, data: result.users, total: result.total, page: result.page, page_size: result.page_size, scope: result.scope });
   };
 
   getById = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -117,21 +140,23 @@ export class UsersController {
   create = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
     const mayManageUsers = rank >= ANCHOR_RANK.ORG_ADMIN
-      || await hasCapability(tenant_id, role_name, CAPABILITY.LMS_USERS_MANAGE);
+      || await hasCapability(tenant_id, role_name, CAPABILITY.ADMIN_TEAM_MANAGE);
     if (!mayManageUsers) {
       throw new ForbiddenError('Insufficient permissions to create iam.users');
     }
     const data = request.body as CreateUserInput;
-    const result = await service.createUser({ org_id, user_id, role, tenant_id }, rank, data);
+    const notify = await mayNotify(data.send_email_notification, tenant_id, role_name);
+    const result = await service.createUser({ org_id, user_id, role, tenant_id }, rank, data, notify);
     return reply.status(201).header('Cache-Control', 'no-store').send({ success: true, data: { id: result.id, email: result.email }, temporary_password: result.temporary_password });
   };
 
   update = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
     if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to update iam.users');
     const { id } = request.params as { id: string };
     const data = request.body as UpdateUserInput;
-    await service.updateUser({ org_id, user_id, role, tenant_id }, rank, id, data);
+    const notify = await mayNotify(data.send_email_notification, tenant_id, role_name);
+    await service.updateUser({ org_id, user_id, role, tenant_id }, rank, id, data, notify);
     return reply.status(204).send();
   };
 
@@ -144,11 +169,12 @@ export class UsersController {
   };
 
   resetPassword = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
     if (rank < RANKS.ADMIN) throw new ForbiddenError('Only admins can reset passwords');
     const { id } = request.params as { id: string };
     const data = request.body as ResetPasswordInput;
-    const result = await service.resetPassword({ org_id, user_id, role, tenant_id }, rank, id, data);
+    const notify = await mayNotify(data.send_email_notification, tenant_id, role_name);
+    const result = await service.resetPassword({ org_id, user_id, role, tenant_id }, rank, id, data, notify);
     return reply.header('Cache-Control', 'no-store').send({ success: true, data: { temporary_password: result.temporary_password } });
   };
 

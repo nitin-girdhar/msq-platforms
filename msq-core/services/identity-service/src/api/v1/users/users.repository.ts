@@ -6,6 +6,7 @@ import {
   usersTable,
   userRolesTable,
   userOrgMappingTable,
+  leadAssignmentWeightsTable,
   organizationsTable,
   vwUserTeamMembers,
   vwUserOrgChart,
@@ -13,7 +14,7 @@ import {
 } from '@platform/db/schema';
 // Auto-assignment eligibility bounds on the iam.user_roles ladder (read_only 0 ..
 // lms_admin 80). Inlined rather than imported so this repository takes no authz
-// dependency; matches packages/db/src/assignment.ts.
+// dependency; matches msq-lms/services/leads-service/src/lib/assignment.ts.
 const RANK_READ_ONLY = 0;
 const RANK_ADMIN = 80;
 import type { AddOrgMappingInput } from '@platform/validation';
@@ -49,15 +50,80 @@ export async function listUsers(
   pageSize: number,
   orgId?: string,
   tenantWide?: boolean,
+  scope: 'reports' | 'org' | 'tenant' = 'org',
 ) {
   const offset = (page - 1) * pageSize;
   const targetOrgId = orgId ?? ctx.org_id;
+  const isReports = scope === 'reports';
+
   // Tenant/super admins with no explicit org_id filter see every user across every
   // branch in their tenant, scoped via entity.organizations.tenant_id rather than a
   // single uom.org_id — same join pattern leads.repository.ts uses for org lookups.
-  const scopeClause = tenantWide
+  //
+  // The 'reports' scope is org-agnostic on purpose: membership of the actor's
+  // subtree IS the scope, and pinning it to a single branch as well would hide the
+  // reports a multi-branch manager holds elsewhere — the exact restriction that
+  // makes getTeamMembers unsuitable here. Tenancy is still enforced: the view is
+  // security_invoker, so RLS applies, and reporting lines never cross an org
+  // boundary (iam.check_reporting_line_membership).
+  const scopeClause = isReports
     ? sql`o.tenant_id = ${ctx.tenant_id}::uuid`
-    : sql`uom.org_id = ${targetOrgId}::uuid`;
+    : tenantWide
+      ? sql`o.tenant_id = ${ctx.tenant_id}::uuid`
+      : sql`uom.org_id = ${targetOrgId}::uuid`;
+
+  // Subtree membership, at any depth. Joined rather than selected from, because
+  // the view carries only name/email/role and this query needs the full row.
+  // Pinning manager_id to the actor keeps the view's LATERAL to a single
+  // fn_subtree_members call instead of one per user in the table.
+  const subtreeJoin = isReports
+    ? sql`JOIN iam.vw_user_team_members tm
+            ON tm.member_id = u.id
+           AND tm.manager_id = ${ctx.user_id}::uuid
+           AND tm.org_id = uom.org_id`
+    : sql``;
+
+  // Deliberately asymmetric, and NOT a bug: under 'reports' the subtree is the
+  // authority for whom the actor may act on, so the band relaxes to `<=` and a
+  // same-rank direct report becomes visible and manageable — which canManageUser
+  // (actorRank >= targetRank) has always permitted. The branch/tenant scopes keep
+  // the strict `<`, so no existing admin's view changes.
+  const rankClause = isReports
+    ? sql`ur.rank <= ${actorRank}`
+    : sql`ur.rank < ${actorRank}`;
+
+  // Every branch this user actually belongs to, not just the home branch that
+  // `o` (joined on u.org_id) resolves. Membership is one row per branch in
+  // iam.user_org_mapping, so a user working two branches came back with a
+  // single org_name — their home one — and the Team screen's branch filter,
+  // which matched on that one id, simply lost them whenever you filtered by
+  // their OTHER branch. org_id/org_name deliberately keep meaning "home
+  // branch"; this is additive, so every existing caller is unaffected.
+  //
+  // A LATERAL rather than an aggregate over the outer join: the outer GROUP BY
+  // keys on uom.role_id, so aggregating there would split a user's branches by
+  // the role they hold in each. Scoped to the row's own tenant (o.tenant_id) so
+  // it can never widen past the tenancy the scope clause already established,
+  // and it reads through the same withRoleTx as everything else — RLS still
+  // decides which mapping rows are visible, so an org-scoped actor sees only
+  // the memberships they are entitled to.
+  const membershipsJoin = sql`
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(
+                 jsonb_build_object(
+                   'org_id',     mm.org_id,
+                   'org_name',   mo.name,
+                   'role_label', mr.label,
+                   'is_home',    mm.org_id = u.org_id
+                 )
+                 ORDER BY (mm.org_id = u.org_id) DESC, mo.name
+               ) AS orgs
+        FROM iam.user_org_mapping mm
+        JOIN entity.organizations mo ON mo.id = mm.org_id AND NOT mo.is_deleted
+        JOIN iam.user_roles       mr ON mr.id = mm.role_id
+        WHERE mm.user_id = u.id AND mm.is_active AND mo.tenant_id = o.tenant_id
+      ) b ON TRUE`;
+
   return withRoleTx(ctx, async (tx) => {
     const rows = (await tx.execute(sql`
       SELECT u.id, u.org_id, u.first_name, u.middle_name, u.last_name, u.full_name,
@@ -68,19 +134,26 @@ export async function listUsers(
              ur.rank,
              m.full_name AS manager_name,
              o.name AS org_name,
+             COALESCE(b.orgs, '[]'::jsonb) AS org_memberships,
+             ${isReports ? sql`MIN(tm.depth)` : sql`NULL::int`} AS report_depth,
              COUNT(*) OVER () AS total_count
       FROM iam.user_org_mapping uom
       JOIN iam.users u       ON u.id   = uom.user_id
       JOIN iam.user_roles ur ON ur.id  = uom.role_id
       JOIN entity.organizations o ON o.id = u.org_id
+      ${subtreeJoin}
       LEFT JOIN iam.users m  ON m.id   = u.manager_id
-      WHERE ${scopeClause} AND uom.is_active AND NOT u.is_deleted AND ur.rank < ${actorRank}
-      GROUP BY u.id, uom.role_id, ur.name, ur.label, ur.rank, m.full_name, o.name
+      ${membershipsJoin}
+      WHERE ${scopeClause} AND uom.is_active AND NOT u.is_deleted AND ${rankClause}
+      GROUP BY u.id, uom.role_id, ur.name, ur.label, ur.rank, m.full_name, o.name, b.orgs
       ORDER BY ur.rank DESC, u.full_name
       LIMIT ${pageSize} OFFSET ${offset}
     `)) as Array<Record<string, unknown>>;
     const total = rows[0] ? Number(rows[0]['total_count'] ?? 0) : 0;
-    return { users: rows, total, page, page_size: pageSize };
+    // `scope` echoed back because the service may have DOWNGRADED what the
+    // client asked for. A switcher that kept showing the requested value would
+    // lie about which roster is on screen.
+    return { users: rows, total, page, page_size: pageSize, scope };
   });
 }
 
@@ -130,13 +203,18 @@ export async function getUserByIdAsService(userId: string) {
 export async function getAssignmentWeights(ctx: RoleTxContext, orgId: string | undefined, tenantId: string) {
   const targetOrgId = orgId ?? ctx.org_id;
 
+  // LEFT JOIN + COALESCE, not an inner join: a member with no weight row is a
+  // member who is simply not in the rotation, and the screen has to show them at
+  // 0% so an admin can put them in it. An inner join would hide exactly the
+  // people the admin opened this screen to add.
   const query = (tx: DrizzleTx) => tx.execute(sql`
       SELECT u.id AS user_id, u.full_name, u.email,
              ur.name AS role_name, ur.label AS role_label, ur.rank,
-             uom.lead_assignment_weight AS weight
+             COALESCE(w.weight, 0) AS weight
       FROM iam.user_org_mapping uom
       JOIN iam.users u       ON u.id  = uom.user_id
       JOIN iam.user_roles ur ON ur.id = uom.role_id
+      LEFT JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = uom.id
       WHERE uom.org_id = ${targetOrgId}::uuid AND uom.is_active AND NOT u.is_deleted AND u.is_active
         AND ur.rank > ${RANK_READ_ONLY} AND ur.rank < ${RANK_ADMIN}
       ORDER BY ur.rank DESC, u.full_name
@@ -184,16 +262,39 @@ export async function updateAssignmentWeights(
       throw new BadRequestError(`Assignment weights must sum to 100 (or 0 to disable auto-assignment), got ${sum}`);
     }
 
-    // Single batch UPDATE ... FROM (VALUES ...) instead of one round-trip per user.
+    // Single batch write instead of one round-trip per user. INSERT ... SELECT
+    // rather than the UPDATE this used to be: the weight now lives in its own
+    // table, where the row may not exist yet for a user being added to the
+    // rotation for the first time. The join to iam.user_org_mapping resolves
+    // (user_id, org_id) to the membership id AND scopes the write to this org —
+    // a user_id in the payload that is not mapped here matches nothing.
     const valueRows = sql.join(
       weights.map((w) => sql`(${w.user_id}::uuid, ${w.weight}::int)`),
       sql`, `,
     );
+    // Non-zero weights are upserted; zeros only ever UPDATE an existing row.
+    // Inserting a zero would put a row on the table to say "not in the
+    // rotation", which is what having no row already means — and a payload of
+    // all zeros (the documented way to disable auto-assignment for a branch) is
+    // otherwise a row per member, permanently.
     await tx.execute(sql`
-      UPDATE iam.user_org_mapping AS m
-      SET lead_assignment_weight = v.weight, updated_at = NOW()
+      INSERT INTO lms.lead_assignment_weights (user_org_mapping_id, weight, updated_by)
+      SELECT m.id, v.weight, ${ctx.user_id}::uuid
       FROM (VALUES ${valueRows}) AS v(user_id, weight)
-      WHERE m.user_id = v.user_id AND m.org_id = ${ctx.org_id}::uuid
+      JOIN iam.user_org_mapping m
+        ON m.user_id = v.user_id AND m.org_id = ${ctx.org_id}::uuid
+      WHERE v.weight > 0
+      ON CONFLICT (user_org_mapping_id) DO UPDATE
+        SET weight = EXCLUDED.weight, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+    `);
+
+    await tx.execute(sql`
+      UPDATE lms.lead_assignment_weights w
+      SET weight = 0, updated_by = ${ctx.user_id}::uuid, updated_at = NOW()
+      FROM (VALUES ${valueRows}) AS v(user_id, weight)
+      JOIN iam.user_org_mapping m
+        ON m.user_id = v.user_id AND m.org_id = ${ctx.org_id}::uuid
+      WHERE w.user_org_mapping_id = m.id AND v.weight = 0 AND w.weight <> 0
     `);
   });
 }
@@ -310,7 +411,14 @@ export async function getAssignableUsers(
     // DISTINCT ON: a user mapped into two of the selected branches joins once
     // per mapping and would otherwise appear twice in the dropdown. The outer
     // ordering is the display order; the inner one only picks which mapping row
-    // survives per user (the most senior, matching the display sort).
+    // survives per user (the most senior).
+    //
+    // Display order is alphabetical by the label the pickers actually render —
+    // the name, falling back to the email when there is no name (see the web
+    // side's displayName). It used to be seniority-first (rank DESC, then name),
+    // which reads as no order at all to someone scanning a branch's roster for a
+    // colleague: the ranks are invisible in the list, so the names simply looked
+    // shuffled. Case-insensitive so "arun" and "Arun" do not split the list.
     const rows = (await tx.execute(sql`
       SELECT * FROM (
         SELECT DISTINCT ON (u.id)
@@ -325,7 +433,7 @@ export async function getAssignableUsers(
           AND ${rankFilter}
         ORDER BY u.id, ur.rank DESC
       ) d
-      ORDER BY d.rank DESC, d.full_name
+      ORDER BY lower(coalesce(nullif(btrim(d.full_name), ''), d.email)) ASC
     `)) as Array<Record<string, unknown>>;
     // A filter gates on lms.leads, NOT on PRODUCT_CAPABILITY's `lms`. That
     // distinction is the whole bug: `lms` is the product ROOT — "may open the
@@ -384,6 +492,83 @@ export interface ResolvedAssignment {
   org_id: string;
   role_id: string;
   lead_assignment_weight?: number | undefined;
+}
+
+/**
+ * Writes one membership's LMS lead-assignment weight.
+ *
+ * A zero is an UPDATE, never an INSERT: no row means weight 0 to the
+ * auto-assignment picker (it filters `weight > 0`), so inserting zeros would
+ * put a row on every membership in the platform to say nothing. An UPDATE that
+ * matches nothing is exactly right for "this member was not in the rotation and
+ * still isn't"; it clears the weight when they were.
+ *
+ * DELETE would be the other way to clear one, but DELETE is revoked from
+ * app_user and tenant_admin on this table (07_grants.sql), mirroring
+ * iam.user_org_mapping.
+ */
+async function writeAssignmentWeight(
+  tx: DrizzleTx,
+  mappingId: string,
+  weight: number,
+  actorUserId: string,
+): Promise<void> {
+  if (weight > 0) {
+    await tx.execute(sql`
+      INSERT INTO lms.lead_assignment_weights (user_org_mapping_id, weight, updated_by)
+      VALUES (${mappingId}::uuid, ${weight}::int, ${actorUserId}::uuid)
+      ON CONFLICT (user_org_mapping_id) DO UPDATE
+        SET weight = EXCLUDED.weight, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+    `);
+    return;
+  }
+  await tx.execute(sql`
+    UPDATE lms.lead_assignment_weights
+    SET weight = 0, updated_by = ${actorUserId}::uuid, updated_at = NOW()
+    WHERE user_org_mapping_id = ${mappingId}::uuid AND weight <> 0
+  `);
+}
+
+/**
+ * Upserts one branch membership and its lead-assignment weight together.
+ *
+ * The two writes have to happen in this order and in one transaction: the
+ * weight's foreign key is the membership's surrogate id, so the mapping row has
+ * to exist first, and `RETURNING id` is what hands it over. `ON CONFLICT DO
+ * UPDATE` returns a row on both the insert and the update path, so this is one
+ * round-trip either way.
+ *
+ * Absent `lead_assignment_weight` resolves to 0, matching the behaviour when
+ * the weight was a NOT NULL DEFAULT 0 column on the mapping itself: a payload
+ * that omits it zeroes the branch's weight. Callers that must NOT do that
+ * (reconcileOrgAssignments' unchanged-row short-circuit) decide before calling.
+ */
+async function upsertOrgAssignment(
+  tx: DrizzleTx,
+  targetUserId: string,
+  assignment: ResolvedAssignment,
+  actorUserId: string,
+): Promise<void> {
+  const [mapping] = await tx
+    .insert(userOrgMappingTable)
+    .values({
+      userId:    targetUserId,
+      orgId:     assignment.org_id,
+      roleId:    assignment.role_id,
+      grantedBy: actorUserId,
+    })
+    .onConflictDoUpdate({
+      target: [userOrgMappingTable.userId, userOrgMappingTable.orgId],
+      set: {
+        roleId:    assignment.role_id,
+        isActive:  true,
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ id: userOrgMappingTable.id });
+
+  if (!mapping) return;
+  await writeAssignmentWeight(tx, mapping.id, assignment.lead_assignment_weight ?? 0, actorUserId);
 }
 
 export interface CreateUserData {
@@ -760,24 +945,7 @@ export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
         : [{ org_id: homeOrgId, role_id: roleId }];
 
     for (const a of rows) {
-      await tx
-        .insert(userOrgMappingTable)
-        .values({
-          userId:               created.id,
-          orgId:                a.org_id,
-          roleId:               a.role_id,
-          leadAssignmentWeight: a.lead_assignment_weight ?? 0,
-          grantedBy:            ctx.user_id,
-        })
-        .onConflictDoUpdate({
-          target: [userOrgMappingTable.userId, userOrgMappingTable.orgId],
-          set: {
-            roleId:               a.role_id,
-            isActive:             true,
-            leadAssignmentWeight: a.lead_assignment_weight ?? 0,
-            updatedAt:            new Date(),
-          },
-        });
+      await upsertOrgAssignment(tx, created.id, a, ctx.user_id);
     }
 
     // After the mapping, never before: iam.check_reporting_line_membership()
@@ -807,9 +975,10 @@ export async function createUser(ctx: RoleTxContext, data: CreateUserData) {
 // admin cannot act on.
 //
 // Granting the mapping is the honest resolution: being someone's manager in a
-// branch IS membership of it. Weight 0 so the grant never silently enters them
-// into that branch's lead rotation. Returns true when a row was actually
-// created, so the caller can tell the admin it happened.
+// branch IS membership of it. No lms.lead_assignment_weights row is written, so
+// the grant never silently enters them into that branch's lead rotation —
+// absence of a weight row IS weight 0 to the picker. Returns true when a row was
+// actually created, so the caller can tell the admin it happened.
 async function ensureManagerMembership(
   tx: DrizzleTx,
   opts: { managerId: string; orgId: string; actorId?: string | undefined },
@@ -826,8 +995,8 @@ async function ensureManagerMembership(
   // The manager keeps their own default role in the new branch — inventing a
   // different one here would silently change what they can do there.
   const granted = (await tx.execute(sql`
-    INSERT INTO iam.user_org_mapping (user_id, org_id, role_id, lead_assignment_weight, granted_by)
-    SELECT ${managerId}::uuid, ${orgId}::uuid, u.role_id, 0, ${actorId ?? null}
+    INSERT INTO iam.user_org_mapping (user_id, org_id, role_id, granted_by)
+    SELECT ${managerId}::uuid, ${orgId}::uuid, u.role_id, ${actorId ?? null}
     FROM iam.users u
     WHERE u.id = ${managerId}::uuid
     ON CONFLICT (user_id, org_id)
@@ -921,9 +1090,12 @@ export async function updateUser(
     // redistributed among whoever covered in the meantime anyway.
     if (rows[0] && fields.is_active === false) {
       await tx.execute(sql`
-        UPDATE iam.user_org_mapping
-        SET lead_assignment_weight = 0, updated_at = NOW()
-        WHERE user_id = ${targetUserId}::uuid AND lead_assignment_weight > 0
+        UPDATE lms.lead_assignment_weights w
+        SET weight = 0, updated_by = ${ctx.user_id}::uuid, updated_at = NOW()
+        FROM iam.user_org_mapping m
+        WHERE m.id = w.user_org_mapping_id
+          AND m.user_id = ${targetUserId}::uuid
+          AND w.weight > 0
       `);
     }
 
@@ -969,7 +1141,11 @@ export async function moveUserBranch(
   oldOrgId: string,
   newOrgId: string,
   roleId: string,
-  reassignLeadsTo?: string,
+  // `string` hands the leads to that user; `null` UNASSIGNS them (the branch has
+  // nobody eligible left); `undefined` means the caller said nothing and no
+  // reassignment runs at all. The three are distinct — see the !== undefined
+  // gate below, and reassignUserLeadsInOrg, which already draws the same line.
+  reassignLeadsTo?: string | null,
 ): Promise<MoveUserBranchResult> {
   const targetOrg = await withServiceTx(async (tx) => {
     const [row] = (await tx.execute(sql`
@@ -983,7 +1159,12 @@ export async function moveUserBranch(
   });
   if (!targetOrg) throw new BadRequestError('Target branch not found or not in this tenant');
 
-  const reassignedLeadsCount = reassignLeadsTo
+  // `!== undefined`, not truthiness: a null is an explicit "unassign these
+  // leads", and gating on truthiness swallowed it, leaving the pipeline pointed
+  // at a user who is no longer in this org — precisely what the saga note above
+  // says must never happen. leads-service already accepts a null `to_user_id`
+  // and logs it as a bulk unassign.
+  const reassignedLeadsCount = reassignLeadsTo !== undefined
     ? await reassignOrgLeadsViaLeadsService({
         orgId: oldOrgId, fromUserId: targetUserId, toUserId: reassignLeadsTo,
         actorId: ctx.user_id, reason: 'branch_transfer',
@@ -1001,6 +1182,26 @@ export async function moveUserBranch(
       WHERE user_id = ${targetUserId}::uuid AND org_id = ${oldOrgId}::uuid
     `);
 
+    // The old branch's weight has to go with the membership. The mapping is
+    // deactivated rather than deleted, so its weight row survives the move; a
+    // later re-activation of that mapping would otherwise resurrect a share of a
+    // rotation this user left, and the branch's weights would silently sum past
+    // 100. Zeroing here rather than deleting matches the deactivation path in
+    // updateUser, and DELETE is revoked on this table anyway.
+    await tx.execute(sql`
+      UPDATE lms.lead_assignment_weights w
+      SET weight = 0, updated_by = ${ctx.user_id}::uuid, updated_at = NOW()
+      FROM iam.user_org_mapping m
+      WHERE m.id = w.user_org_mapping_id
+        AND m.user_id = ${targetUserId}::uuid
+        AND m.org_id  = ${oldOrgId}::uuid
+        AND w.weight > 0
+    `);
+
+    // No weight written for the destination: a transferred user starts out of
+    // the new branch's rotation, which is the pre-existing behaviour (the weight
+    // column defaulted to 0 here and was never set) and the only safe default —
+    // the receiving branch's shares already sum to 100 without them.
     await tx
       .insert(userOrgMappingTable)
       .values({ userId: targetUserId, orgId: newOrgId, roleId, grantedBy: ctx.user_id })
@@ -1031,9 +1232,10 @@ export interface ReconcileResult {
 // carries granted_by/granted_at history that a DELETE would destroy, and a
 // re-grant later flips the same row back rather than losing the audit trail.
 //
-// addOrgMapping is deliberately NOT reused: it defaults lead_assignment_weight
-// to 0 when the field is absent, which would silently zero a branch's weight on
-// any edit that didn't touch it.
+// addOrgMapping is deliberately NOT reused: it defaults the weight to 0 when the
+// field is absent, which would silently zero a branch's weight on any edit that
+// didn't touch it. (Both now go through upsertOrgAssignment, but the decision of
+// WHAT weight to pass still differs, and it is made above, per branch.)
 export async function reconcileOrgAssignments(
   ctx: RoleTxContext,
   targetUserId: string,
@@ -1042,10 +1244,15 @@ export async function reconcileOrgAssignments(
   homeOrgId?: string,
 ): Promise<ReconcileResult> {
   return withServiceTx(async (tx) => {
+    // COALESCE, not a null check: a membership with no weight row is out of the
+    // rotation, which is the same thing as a zero. Comparing NULL against the
+    // incoming 0 below would mark every unweighted branch as "changed" and
+    // rewrite it on every edit.
     const current = (await tx.execute(sql`
-      SELECT org_id, role_id, lead_assignment_weight, is_active
-      FROM iam.user_org_mapping
-      WHERE user_id = ${targetUserId}::uuid
+      SELECT m.org_id, m.role_id, m.is_active, COALESCE(w.weight, 0) AS lead_assignment_weight
+      FROM iam.user_org_mapping m
+      LEFT JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = m.id
+      WHERE m.user_id = ${targetUserId}::uuid
     `)) as Array<{ org_id: string; role_id: string; lead_assignment_weight: number; is_active: boolean }>;
 
     const currentById = new Map(current.map((r) => [r.org_id, r]));
@@ -1066,24 +1273,7 @@ export async function reconcileOrgAssignments(
         continue; // identical — skip the write entirely
       }
 
-      await tx
-        .insert(userOrgMappingTable)
-        .values({
-          userId:               targetUserId,
-          orgId:                a.org_id,
-          roleId:               a.role_id,
-          leadAssignmentWeight: weight,
-          grantedBy:            ctx.user_id,
-        })
-        .onConflictDoUpdate({
-          target: [userOrgMappingTable.userId, userOrgMappingTable.orgId],
-          set: {
-            roleId:               a.role_id,
-            isActive:             true,
-            leadAssignmentWeight: weight,
-            updatedAt:            new Date(),
-          },
-        });
+      await upsertOrgAssignment(tx, targetUserId, { ...a, lead_assignment_weight: weight }, ctx.user_id);
     }
 
     const removed = current
@@ -1235,7 +1425,11 @@ export async function listOrgMappings(userId: string) {
         // role_id the form cannot preselect each branch's role, and without the
         // weight an edit would round-trip every branch back to 0.
         roleId:               userOrgMappingTable.roleId,
-        leadAssignmentWeight: userOrgMappingTable.leadAssignmentWeight,
+        // LEFT JOIN, so COALESCE: a branch the user is not in the rotation for
+        // has no weight row, and the form has to read that as the 0 it means.
+        // A null here would reach the weight input as an empty field and the
+        // next save would send it back as null.
+        leadAssignmentWeight: sql<number>`COALESCE(${leadAssignmentWeightsTable.weight}, 0)`,
         isActive:             userOrgMappingTable.isActive,
       })
       .from(vwUserOrgAccess)
@@ -1245,6 +1439,10 @@ export async function listOrgMappings(userId: string) {
           eq(userOrgMappingTable.userId, vwUserOrgAccess.userId),
           eq(userOrgMappingTable.orgId, vwUserOrgAccess.orgId),
         ),
+      )
+      .leftJoin(
+        leadAssignmentWeightsTable,
+        eq(leadAssignmentWeightsTable.userOrgMappingId, userOrgMappingTable.id),
       )
       .where(eq(vwUserOrgAccess.userId, userId))
       .orderBy(desc(vwUserOrgAccess.grantedAt)),
@@ -1273,13 +1471,14 @@ export async function roleExists(roleId: string): Promise<boolean> {
 
 export async function addOrgMapping(ctx: RoleTxContext, targetUserId: string, data: AddOrgMappingInput) {
   return withServiceTx(async (tx) => {
+    const weight = data.lead_assignment_weight ?? 0;
+
     const [row] = await tx
       .insert(userOrgMappingTable)
       .values({
         userId: targetUserId,
         orgId: data.org_id,
         roleId: data.role_id,
-        leadAssignmentWeight: data.lead_assignment_weight ?? 0,
         grantedBy: ctx.user_id,
       })
       .onConflictDoUpdate({
@@ -1287,12 +1486,18 @@ export async function addOrgMapping(ctx: RoleTxContext, targetUserId: string, da
         set: {
           roleId: data.role_id,
           isActive: true,
-          leadAssignmentWeight: data.lead_assignment_weight ?? 0,
           updatedAt: new Date(),
         },
       })
       .returning();
-    return row;
+    if (!row) return row;
+
+    await writeAssignmentWeight(tx, row.id, weight, ctx.user_id);
+
+    // The weight is no longer a column on the row this returns, but it WAS part
+    // of this endpoint's response body. Put it back so the API contract is
+    // unchanged by the move — callers still get the weight they just set.
+    return { ...row, leadAssignmentWeight: weight };
   });
 }
 

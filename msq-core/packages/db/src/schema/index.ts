@@ -33,6 +33,7 @@ export * from './tables/audit-log.table.js';
 export * from './tables/token-blocklist.table.js';
 export * from './tables/schema-versions.table.js';
 export * from './tables/user-org-mapping.table.js';
+export * from './tables/lead-assignment-weights.table.js';
 export * from './tables/meta-tenant-config.table.js';
 export * from './tables/meta-page-form-org-map.table.js';
 export * from './tables/api-clients.table.js';

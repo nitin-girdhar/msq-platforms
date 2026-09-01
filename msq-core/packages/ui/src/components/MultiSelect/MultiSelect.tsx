@@ -16,10 +16,24 @@ interface Props {
   onChange: (next: SelectOption[]) => void;
   loading?: boolean;
   disabled?: boolean;
+  /**
+   * Rendered in place of the chips when every option is selected. Give it a
+   * value on any filter that defaults to "everything" — a branch or source
+   * filter over 30 options would otherwise open as 30 chips and push the rest
+   * of the filter bar off the row. Without it, a full selection chips out
+   * normally (the pre-existing behaviour).
+   */
+  allLabel?: string;
+  /** Beyond this many chips, collapse to an "N selected" summary. Unbounded by
+   *  default, so existing call sites keep chipping out every selection. */
+  maxChips?: number;
+  /** Adds a "Select all" action beside "Clear all". */
+  selectAllLabel?: string;
 }
 
 export default function MultiSelect({
   label, placeholder, options, selected, onChange, loading = false, disabled = false,
+  allLabel, maxChips = Number.POSITIVE_INFINITY, selectAllLabel,
 }: Props) {
   const { open, setOpen, search, setSearch, rootRef, searchInputRef } = useDropdown();
 
@@ -44,6 +58,15 @@ export default function MultiSelect({
     onChange(selected.filter((o) => o.id !== opt.id));
   };
 
+  // Compared on count alone: `selected` is always built from `options`, so the
+  // two can only match in length when they hold the same ids.
+  const allSelected = options.length > 0 && selected.length === options.length;
+  const summary = allSelected && allLabel
+    ? allLabel
+    : selected.length > maxChips
+      ? `${selected.length} selected`
+      : null;
+
   return (
     <div ref={rootRef} className="relative flex min-w-0 flex-col gap-1">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
@@ -60,6 +83,10 @@ export default function MultiSelect({
       >
         {selected.length === 0 ? (
           <span className="text-xs text-[#94A3B8]">{placeholder}</span>
+        ) : summary ? (
+          <span className="rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-1.5 py-0.5 text-[11px] font-semibold text-[#0b6cbf]">
+            {summary}
+          </span>
         ) : (
           selected.map((opt) => (
             <span
@@ -136,12 +163,23 @@ export default function MultiSelect({
             })}
           </div>
 
-          {selected.length > 0 && (
-            <div className="border-t border-[#F1F5F9] p-2">
+          {(selected.length > 0 || selectAllLabel) && (
+            <div className="flex gap-1 border-t border-[#F1F5F9] p-2">
+              {selectAllLabel && (
+                <button
+                  type="button"
+                  onClick={() => onChange([...options])}
+                  disabled={allSelected}
+                  className="flex-1 rounded-lg py-1 text-center text-[11px] font-semibold text-[#64748B] transition-colors hover:bg-[#F1F5F9] hover:text-[#0F172A] disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[#64748B]"
+                >
+                  {selectAllLabel}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => onChange([])}
-                className="w-full rounded-lg py-1 text-center text-[11px] font-semibold text-[#64748B] transition-colors hover:bg-[#F1F5F9] hover:text-[#0F172A]"
+                disabled={selected.length === 0}
+                className="flex-1 rounded-lg py-1 text-center text-[11px] font-semibold text-[#64748B] transition-colors hover:bg-[#F1F5F9] hover:text-[#0F172A] disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[#64748B]"
               >
                 Clear all
               </button>

@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { can, CAPABILITY } from '@platform/rbac';
 import { getServerSession, GATEWAY_URL } from '@/src/lib/server-session';
 import type { ApiTokenRow } from '@/src/lib/api/client';
-import LoadError from '@/components/team/LoadError';
+import LoadError from '@/components/common/LoadError';
 import ApiTokensShell from '@/components/api-tokens/ApiTokensShell';
 
 export const dynamic = 'force-dynamic';
@@ -18,7 +18,7 @@ export default async function ApiTokensPage() {
 
   const { session, cookieHeader } = result;
 
-  if (!can(session, CAPABILITY.PLATFORM_API_TOKENS_VIEW)) {
+  if (!can(session, CAPABILITY.ADMIN_API_TOKENS_VIEW)) {
     return <LoadError title="API Tokens" status={403} />;
   }
 
@@ -48,7 +48,7 @@ export default async function ApiTokensPage() {
       tokens={body.data}
       orgs={orgs}
       actor={session}
-      canManage={can(session, CAPABILITY.PLATFORM_API_TOKENS_MANAGE)}
+      canManage={can(session, CAPABILITY.ADMIN_API_TOKENS_MANAGE)}
     />
   );
 }

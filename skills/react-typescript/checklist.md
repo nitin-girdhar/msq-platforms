@@ -43,4 +43,5 @@ Run every item before marking a frontend task complete or opening a PR.
 - [ ] Loading, empty, and error states handled for every async view
 - [ ] Mutations show inline errors (from `ApiRequestError.message`, which flattens server details)
 - [ ] Modals use `@platform/ui-kit` `Modal` (Escape-to-close, `role="dialog"`, `aria-modal`)
+- [ ] Form modals leave backdrop-click disabled (the default); `closeOnBackdropClick` is set only on read-only viewers
 - [ ] Icon-only buttons have `aria-label`

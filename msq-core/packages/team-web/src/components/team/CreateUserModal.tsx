@@ -13,7 +13,7 @@ import {
   useUserAssignments,
   branchOptionsForActor,
 } from '@platform/ui-kit';
-import { users as usersApi } from '@/src/lib/api/client';
+import { users as usersApi } from '../../lib/api';
 import TemporaryPasswordPanel from './TemporaryPasswordPanel';
 
 const PHONE_RE = /^(\+91[\s-]?)?[6-9]\d{9}$/;
@@ -31,6 +31,9 @@ interface Props {
   orgs: Array<{ id: string; name: string }>;
   myOrgs: Array<{ id: string; name: string }>;
   branchesFailed: boolean;
+  /** Show the "Notify user by email" checkbox — the actor holds admin.team.notify.
+   *  Advisory: identity-service re-checks the grant before sending. */
+  canNotify: boolean;
 }
 
 interface CreateSuccess {
@@ -38,7 +41,7 @@ interface CreateSuccess {
   temporaryPassword: string;
 }
 
-export default function CreateUserModal({ open, onClose, actorRank, actor, orgs, myOrgs, branchesFailed }: Props) {
+export default function CreateUserModal({ open, onClose, actorRank, actor, orgs, myOrgs, branchesFailed, canNotify }: Props) {
   const router = useRouter();
   const [firstName, setFirstName] = useState('');
   const [middleName, setMiddleName] = useState('');
@@ -47,6 +50,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
   const [mobile, setMobile] = useState('');
   const [mobileError, setMobileError] = useState<string | null>(null);
   const [forcePasswordChange, setForcePasswordChange] = useState(true);
+  const [sendEmailNotification, setSendEmailNotification] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<CreateSuccess | null>(null);
@@ -79,6 +83,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
     setMobile('');
     setMobileError(null);
     setForcePasswordChange(true);
+    setSendEmailNotification(true);
     setError(null);
     setSuccess(null);
     a.reset();
@@ -121,6 +126,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
         first_name: firstName.trim(),
         email: email.trim(),
         force_password_change: forcePasswordChange,
+        ...(canNotify ? { send_email_notification: sendEmailNotification } : {}),
         ...a.payload(),
       };
       if (middleName.trim()) body.middle_name = middleName.trim();
@@ -261,6 +267,19 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
             />
             <span>Require password change on first login</span>
           </label>
+
+          {canNotify && (
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+              <input
+                type="checkbox"
+                checked={sendEmailNotification}
+                onChange={(e) => setSendEmailNotification(e.target.checked)}
+                disabled={pending}
+                className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+              />
+              <span>Email the new user their login details and temporary password</span>
+            </label>
+          )}
 
         </form>
       )}

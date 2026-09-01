@@ -24,6 +24,15 @@ body:json {
     "role_name": "senior_sales_executive",
     "manager_id": null,
     "is_active": true,
-    "force_password_change": false
+    "force_password_change": false,
+    "send_email_notification": true
   }
+}
+
+docs {
+  send_email_notification (optional, default true): only acted on when this PATCH
+  actually changes the user's branch access or home branch (a plain profile edit
+  sends nothing). When true AND the acting admin holds admin.team.notify (or rank
+  >= org_admin), the user is emailed which branches were added/removed and the
+  new home branch. Set false to skip.
 }

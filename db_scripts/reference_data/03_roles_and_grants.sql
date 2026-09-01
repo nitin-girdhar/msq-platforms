@@ -114,7 +114,7 @@ FROM (VALUES
   'lms.history.detail.view',
   'lms.history.view','lms.history.view.own','lms.history.view.team',
   'lms.assignments.view','lms.assignments.edit',
-  'lms.users.view','lms.users.view.team',
+  'admin','admin.team.view','admin.team.view.team',
   'hr.attendance','hr.attendance.view','hr.attendance.view.own',
   'hr.attendance.punch','hr.attendance.photo.view',
   'hr.attendance.regularization.request',
@@ -142,7 +142,7 @@ FROM (VALUES
   'lms.history.detail.view',
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
-  'lms.users.view','lms.users.view.team','lms.users.view.org',
+  'admin','admin.team.view','admin.team.view.team','admin.team.view.org',
   'lms.campaigns.view',
   'lms.analytics','lms.analytics.view',
   'hr.attendance','hr.attendance.view','hr.attendance.view.own','hr.attendance.view.team',
@@ -175,7 +175,7 @@ FROM (VALUES
   'lms.history.detail.view',
   'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
-  'lms.users.view','lms.users.view.team','lms.users.view.org',
+  'admin','admin.team.view','admin.team.view.team','admin.team.view.org',
   'lms.campaigns.view',
   'lms.analytics','lms.analytics.view',
   'hr.attendance','hr.attendance.view','hr.attendance.view.own','hr.attendance.view.team',
@@ -253,8 +253,8 @@ FROM (VALUES
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.analytics.view',
   'lms.campaigns.view','lms.campaigns.manage',
-  'lms.users.view','lms.users.view.team','lms.users.view.org','lms.users.manage',
-  'platform.api_tokens.view','platform.api_tokens.manage',
+  'admin','admin.team.view','admin.team.view.team','admin.team.view.org','admin.team.manage','admin.team.notify',
+  'admin.api_tokens.view','admin.api_tokens.manage',
   'hr.attendance','hr.attendance.view',
   'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
   'hr.attendance.photo.view',
@@ -310,8 +310,8 @@ FROM (VALUES
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.analytics.view','lms.analytics.org.view',
   'lms.campaigns.view','lms.campaigns.manage',
-  'lms.users.view','lms.users.view.team','lms.users.view.org','lms.users.manage',
-  'platform.api_tokens.view','platform.api_tokens.manage',
+  'admin','admin.team.view','admin.team.view.team','admin.team.view.org','admin.team.manage','admin.team.notify',
+  'admin.api_tokens.view','admin.api_tokens.manage',
   'hr.attendance','hr.attendance.view',
   'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
   'hr.attendance.photo.view',
@@ -392,8 +392,8 @@ END $seedcheck$;
 -- `COALESCE(g.is_granted, w.nav_inherited)`). DELETING a grant row therefore
 -- REVEALS a page rather than hiding it. This VALUES list is the one place a
 -- page is taken away; adding the role and the page/tab key here is the whole
--- mechanism. Note what goes with it: denying `lms.users` also prunes
--- lms.users.view, lms.users.manage and their scopes, so the service gates on
+-- mechanism. Note what goes with it: denying `admin.team` also prunes
+-- admin.team.view, admin.team.manage and their scopes, so the service gates on
 -- those start refusing too. That is the intent, but it is not visible from the
 -- key alone.
 --
@@ -408,12 +408,12 @@ END $seedcheck$;
 INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
 SELECT NULL, r.id, c.id, FALSE
 FROM (VALUES
-  ('read_only',              ARRAY['lms.analytics','lms.campaigns','lms.users','platform.api_tokens','hr.attendance.admin','hr.leave.admin','tasks.lists']),
-  ('sales_representative',   ARRAY['lms.analytics','lms.campaigns','lms.users','platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
-  ('senior_sales_executive', ARRAY['lms.analytics','lms.campaigns','platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
-  ('org_manager',            ARRAY['platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
-  ('org_sr_manager',         ARRAY['platform.api_tokens','hr.attendance.admin','hr.leave.admin']),
-  ('org_admin',              ARRAY['admin.lookups'])
+  ('read_only',              ARRAY['lms.analytics','lms.campaigns','admin.team','admin.api_tokens','hr.attendance.admin','hr.leave.admin','tasks.lists']),
+  ('sales_representative',   ARRAY['lms.analytics','lms.campaigns','admin.team','admin.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  ('senior_sales_executive', ARRAY['lms.analytics','lms.campaigns','admin.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  ('org_manager',            ARRAY['admin.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  ('org_sr_manager',         ARRAY['admin.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  ('org_admin',              ARRAY['superadmin.lookups'])
 ) AS d(role_name, cap_keys)
 JOIN iam.user_roles   r ON r.name = d.role_name AND r.tenant_id IS NULL
 JOIN iam.capabilities c ON c.key = ANY(d.cap_keys)
@@ -617,6 +617,39 @@ FROM iam.role_capabilities rc
 JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.assign.any'
 CROSS JOIN iam.capabilities tgt
 WHERE tgt.key = 'lms.leads.assign.bulk'
+  AND rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO NOTHING;
+
+
+-- ── Back-fill: admin.team.notify (schema 1.46.0) ───────────────────
+-- Same trap as the WhatsApp back-fill above: a grant on the global
+-- org_admin/tenant_admin template never reaches a tenant that already holds its
+-- own per-tenant copy of that role. Pinned to admin.team.manage — whoever can
+-- manage the team can also send account/password/branch emails — so it reaches
+-- every copy in every tenant.
+--
+-- DO NOTHING, not DO UPDATE: a tenant that later unticks "Notify user by email"
+-- in the Capability Matrix writes is_granted = FALSE, and a re-seed must not
+-- flip that back on.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'admin.team.manage'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'admin.team.notify'
+  AND rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO NOTHING;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'admin.team.manage'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'admin.team.notify'
   AND rc.is_granted
   AND rc.tenant_id IS NOT NULL
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL

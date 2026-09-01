@@ -1,5 +1,5 @@
 import { toApiRows } from '@platform/db';
-import { ANCHOR_RANK, isPlatformAdminCapability } from '@platform/rbac';
+import { ANCHOR_RANK, isSuperAdminCapability } from '@platform/rbac';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as repo from './capabilities.repository.js';
 import type { PutGrantsInput } from './capabilities.schema.js';
@@ -52,7 +52,7 @@ async function assertGrantsAssignable(roleId: string, data: PutGrantsInput): Pro
 
   const platformAdmin = additions
     .map((g) => keyById.get(g.capability_id))
-    .filter((key): key is string => key !== undefined && isPlatformAdminCapability(key));
+    .filter((key): key is string => key !== undefined && isSuperAdminCapability(key));
   if (platformAdmin.length === 0) return;
 
   const rank = await repo.getRoleRank(roleId);

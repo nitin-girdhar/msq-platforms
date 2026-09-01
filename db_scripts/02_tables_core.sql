@@ -489,18 +489,58 @@ CREATE TABLE IF NOT EXISTS iam.users (
 -- iam.users.role_id remains as the user's DEFAULT role (mirrors the home
 --               org row here; kept for backward-compat during transition).
 CREATE TABLE IF NOT EXISTS iam.user_org_mapping (
+  -- Surrogate identity for this (user, branch) membership. The composite PK
+  -- below is still the real uniqueness rule -- id exists so that
+  -- product-specific extension tables can address ONE membership by a single
+  -- key instead of repeating user_id + org_id. See lms.lead_assignment_weights
+  -- immediately below for the pattern; HR/task equivalents are expected to
+  -- follow it rather than adding another product column to this table.
+  --
+  -- Deliberately NOT the primary key: every upsert in identity-service targets
+  -- ON CONFLICT (user_id, org_id), and "one membership per user per branch"
+  -- belongs on the PK rather than demoted to a secondary constraint.
+  id         UUID        NOT NULL DEFAULT public.gen_uuidv7(),
   user_id    UUID        NOT NULL REFERENCES iam.users(id)         ON DELETE CASCADE,
   org_id     UUID        NOT NULL REFERENCES entity.organizations(id)  ON DELETE CASCADE,
   role_id    UUID        NOT NULL REFERENCES iam.user_roles(id)     ON DELETE RESTRICT,
   is_active  BOOLEAN     NOT NULL DEFAULT TRUE,
-  -- % share of new leads this user should auto-receive within this org.
-  -- Sums to 100 (or all-zero = auto-assignment disabled) across an org's
-  -- mapped rows; enforced at the application layer, not by a DB constraint.
-  lead_assignment_weight SMALLINT NOT NULL DEFAULT 0 CHECK (lead_assignment_weight BETWEEN 0 AND 100),
   granted_by UUID        REFERENCES iam.users(id)                   ON DELETE SET NULL,
   granted_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
-  PRIMARY KEY (user_id, org_id)
+  PRIMARY KEY (user_id, org_id),
+  -- What extension-table foreign keys point at.
+  CONSTRAINT uq_user_org_mapping_id UNIQUE (id)
+);
+
+-- ── lms.lead_assignment_weights ──────────────────────────────────
+-- % share of new leads a user should auto-receive within one branch.
+-- Sums to 100 (or all-zero = auto-assignment disabled) across a branch;
+-- enforced at the application layer, not by a DB constraint. No row for a
+-- membership means weight 0, which the picker already treats as "not in the
+-- rotation" -- so absence and an explicit zero are the same thing.
+--
+-- Was iam.user_org_mapping.lead_assignment_weight (through schema 1.43.0).
+-- Moved here because only LMS ever read it: resolveAutoAssignedUser in
+-- leads-service and its Python port in meta-sync-scripts. Keeping it on the
+-- shared access-control table meant every product wanting a per-branch,
+-- per-user setting would have had to add its own column to the one table
+-- iam.fn_user_active_orgs, the reporting-line checks and most RLS policies
+-- are built on.
+--
+-- Sits in this file next to iam.user_org_mapping rather than with the other
+-- lms.* tables above because the foreign key needs that table to exist first.
+--
+-- Written by identity-service (user create/edit carries the weights in the
+-- same payload as the branch/role assignments) and read by leads-service.
+-- Both reach it: 07_grants.sql grants USAGE ON SCHEMA lms to lead_svc and
+-- lms_svc alike.
+CREATE TABLE IF NOT EXISTS lms.lead_assignment_weights (
+  user_org_mapping_id UUID PRIMARY KEY
+    REFERENCES iam.user_org_mapping(id) ON DELETE CASCADE,
+  weight     SMALLINT    NOT NULL DEFAULT 0 CHECK (weight BETWEEN 0 AND 100),
+  updated_by UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
 );
 
 -- ── iam.reporting_lines ───────────────────────────────────────────

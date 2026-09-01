@@ -68,6 +68,18 @@ export const config = {
   // a lot of leads — but bounded, because until it returns identity is holding
   // the org/role change open. See lib/leads-service-client.ts.
   leadsServiceTimeoutMs: timeoutFromEnv('IDENTITY_LEADS_SERVICE_TIMEOUT_MS', 30_000),
+  // communication-service (SMTP relay) for the Team notification emails — account
+  // created / password reset / branch changed. The call is fire-and-forget: a
+  // failure here only logs, it never fails the admin's request. See
+  // lib/communication-service-client.ts.
+  communicationServiceUrl: process.env['COMMUNICATION_SERVICE_URL'] ?? 'http://localhost:4005',
+  communicationServiceTimeoutMs: timeoutFromEnv('IDENTITY_COMMUNICATION_SERVICE_TIMEOUT_MS', 10_000),
+  // Where the notification emails point the recipient to sign in — the shared
+  // auth-web origin (same var the gateway/apps use for the login redirect).
+  authWebUrl: process.env['AUTH_URL'] ?? process.env['AUTH_WEB_URL'] ?? 'http://localhost:3000',
+  // Product name used in the notification email subjects/bodies. Falls back to
+  // the SMTP sender name communication-service is already configured with.
+  appName: process.env['APP_NAME'] ?? process.env['SMTP_FROM_NAME'] ?? 'MSquare',
   // Profile-photo / avatar storage. Shares one volume with hr-service (which
   // reads the avatar as the biometric reference for face attendance), so both
   // MUST resolve to the same directory — see @platform/blob-storage.

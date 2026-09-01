@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { users as usersApi } from '@/src/lib/api/client';
+import { users as usersApi } from '../../lib/api';
 import { canOverridePasswordPolicy } from '@platform/authz';
 import { Modal, Button } from '@platform/ui-kit';
 import TemporaryPasswordPanel from './TemporaryPasswordPanel';
@@ -16,6 +16,9 @@ interface Props {
   // form, so a reset applies the admin's current choice instead of silently
   // forcing the prompt back on.
   forcePasswordChange: boolean;
+  /** Show the "Notify user by email" checkbox — the actor holds admin.team.notify.
+   *  Advisory: identity-service re-checks the grant before sending. */
+  canNotify: boolean;
 }
 
 const OVERRIDE_MIN_LENGTH = 5;
@@ -40,12 +43,13 @@ type Mode = 'generate' | 'specific';
 // the HTML `form` attribute is what still wires it to this form.
 const FORM_ID = 'reset-password-form';
 
-export default function ResetPasswordModal({ open, onClose, userId, email, actorRole, forcePasswordChange }: Props) {
+export default function ResetPasswordModal({ open, onClose, userId, email, actorRole, forcePasswordChange, canNotify }: Props) {
   const [mode, setMode] = useState<Mode>('generate');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [show, setShow] = useState(false);
   const [overridePolicy, setOverridePolicy] = useState(false);
+  const [sendEmailNotification, setSendEmailNotification] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -58,6 +62,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
     setConfirm('');
     setShow(false);
     setOverridePolicy(false);
+    setSendEmailNotification(true);
     setError(null);
     setResult(null);
   };
@@ -86,6 +91,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
         mode === 'specific' ? password : undefined,
         mode === 'specific' ? useOverrideFloor : undefined,
         forcePasswordChange,
+        canNotify ? sendEmailNotification : undefined,
       );
       setPassword('');
       setConfirm('');
@@ -253,6 +259,22 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
                 </ul>
               )}
             </>
+          )}
+
+          {canNotify && (
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+              <input
+                type="checkbox"
+                checked={sendEmailNotification}
+                onChange={(e) => setSendEmailNotification(e.target.checked)}
+                disabled={submitting}
+                className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+              />
+              <span>
+                Email the user that their password was reset
+                {mode === 'generate' ? ' (includes the temporary password)' : ''}
+              </span>
+            </label>
           )}
 
         </form>

@@ -40,7 +40,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // To genuinely widen this console to a lower rank, relax admin-service's rank
   // check to the capability first, then relax this one. Changing either alone
   // just moves where the 403 lands.
-  if (!can(session, CAPABILITY.ADMIN_LOOKUPS_MANAGE) || session.rank < ANCHOR_RANK.SUPER_ADMIN) {
+  if (!can(session, CAPABILITY.SUPERADMIN_LOOKUPS_MANAGE) || session.rank < ANCHOR_RANK.SUPER_ADMIN) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] px-6">
         <div className="w-full max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8 text-center shadow-sm">

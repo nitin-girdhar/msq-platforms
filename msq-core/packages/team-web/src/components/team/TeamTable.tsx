@@ -1,23 +1,59 @@
 'use client';
 
 import '@platform/ui-kit/ag-grid.css';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import type { ColDef, GridReadyEvent, GridSizeChangedEvent, ICellRendererParams } from 'ag-grid-community';
+import type {
+  ColDef,
+  GridApi,
+  GridReadyEvent,
+  GridSizeChangedEvent,
+  ICellRendererParams,
+  IRowNode,
+} from 'ag-grid-community';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
-import type { SessionUser } from '@platform/types';
+import type { OrgMembership, SessionUser } from '@platform/types';
 import { ROLES, ROLE_LABELS, ROLE_RANK } from '@platform/auth-constants';
 import { RANKS } from '@platform/authz';
-import { useIsMobile, MultiSelect, type SelectOption } from '@platform/ui-kit';
-import { canCreateUser } from '@/src/lib/permissions';
+import {
+  useIsMobile,
+  DownloadButton,
+  MultiSelect,
+  type SelectOption,
+  buildFilename,
+  exportRows,
+  type ExportColumn,
+  type ExportRowsFormat as ExportFormat,
+} from '@platform/ui-kit';
+import { canCreateUser } from '../../lib/permissions';
+import type { TeamRow } from '../../lib/types';
 import UserStatusBadge from './UserStatusBadge';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
+// Wider than the grid on purpose: an export is for working offline, so it
+// carries the columns the screen renders as subtitles or not at all (Role, Last
+// Login). Ported from lms-web's Users table, which had this before the two
+// screens were merged — admin-web's Team never did.
+const USER_EXPORT_COLUMNS: ExportColumn<SessionUser>[] = [
+  { header: 'Name', value: (u) => u.name ?? '' },
+  { header: 'Role', value: (u) => u.role_label ?? ROLE_LABELS[u.role] ?? '' },
+  { header: 'Email', value: (u) => u.email },
+  { header: 'Branch', value: (u) => u.org_name ?? '' },
+  { header: 'Manager', value: (u) => u.manager_name ?? '' },
+  { header: 'Status', value: (u) => (u.is_active ? 'Active' : 'Inactive') },
+  { header: 'Last Login', value: (u) => u.last_login_at ?? '' },
+];
+
 interface Props {
-  users: SessionUser[];
+  users: TeamRow[];
   currentUserId: string;
   actorRank: number;
+  /** Every branch in the tenant, for the Branch filter's option list. */
+  orgs: Array<{ id: string; name: string }>;
+  /** Holds admin.team.manage. Without it every row is read-only, however senior
+   *  the actor — the capability answers "may they write", rank answers "whom". */
+  canManage: boolean;
   onEdit: (user: SessionUser) => void;
 }
 
@@ -25,12 +61,23 @@ function displayName(u: SessionUser): string {
   return (u.name || [u.first_name, u.middle_name, u.last_name].filter(Boolean).join(' ')).trim();
 }
 
+// A user can be mapped into several branches (iam.user_org_mapping); org_id /
+// org_name are only their HOME one. Reading the memberships is what keeps a
+// multi-branch user — a wingman working two sectors, say — visible when the
+// Branch filter names one of their non-home branches. The fallback covers a row
+// from before the API returned the list.
+function branchesOf(u: SessionUser): OrgMembership[] {
+  if (u.org_memberships && u.org_memberships.length > 0) return u.org_memberships;
+  if (!u.org_id) return [];
+  return [{ org_id: u.org_id, org_name: u.org_name || u.org_id, role_label: u.role_label, is_home: true }];
+}
+
 const STATUS_OPTIONS: SelectOption[] = [
   { id: 'active', label: 'Active' },
   { id: 'inactive', label: 'Inactive' },
 ];
 
-export default function TeamTable({ users, currentUserId, actorRank, onEdit }: Props) {
+export default function TeamTable({ users, currentUserId, actorRank, orgs, canManage, onEdit }: Props) {
   const isMobile = useIsMobile();
   const [search, setSearch] = useState('');
   const [roleSelected, setRoleSelected] = useState<SelectOption[]>([]);
@@ -48,13 +95,21 @@ export default function TeamTable({ users, currentUserId, actorRank, onEdit }: P
     [actorRank],
   );
 
+  // The tenant's full branch list, not the branches the loaded rows happen to
+  // call home: a branch staffed only by people whose home is elsewhere had no
+  // option at all before, so it could never be filtered for. The derivation is
+  // kept as a fallback because /orgs/all is fetched non-fatally (branchesFailed)
+  // and can come back empty.
   const orgOptions = useMemo(() => {
+    if (orgs.length > 0) {
+      return orgs.map((o) => ({ id: o.id, label: o.name })).sort((a, b) => a.label.localeCompare(b.label));
+    }
     const seen = new Map<string, string>();
     for (const u of users) {
-      if (u.org_id && !seen.has(u.org_id)) seen.set(u.org_id, u.org_name || u.org_id);
+      for (const b of branchesOf(u)) if (!seen.has(b.org_id)) seen.set(b.org_id, b.org_name || b.org_id);
     }
     return Array.from(seen, ([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [users]);
+  }, [orgs, users]);
 
   const managerOptions = useMemo(() => {
     const seen = new Map<string, string>();
@@ -70,29 +125,48 @@ export default function TeamTable({ users, currentUserId, actorRank, onEdit }: P
     return map;
   }, [users]);
 
+  // Both gates, ANDed. Rank alone used to be enough because the console's rank
+  // floor meant everyone here could write; now a view-only actor can reach this
+  // screen and outrank plenty of rows, and offering them an Edit button the
+  // server would refuse is the render-then-403 shape the capability model
+  // exists to remove.
   const canEditRow = useCallback(
-    (u: SessionUser) => canCreateUser(actorRank, u.rank),
-    [actorRank],
+    (u: SessionUser) => canManage && canCreateUser(actorRank, u.rank),
+    [canManage, actorRank],
   );
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const roleIds = new Set(roleSelected.map((o) => o.id));
-    const statusIds = new Set(statusSelected.map((o) => o.id));
-    const orgIds = new Set(orgSelected.map((o) => o.id));
-    const managerIds = new Set(managerSelected.map((o) => o.id));
-    return users.filter((u) => {
+  // Single source of truth for "does this row match the active filters",
+  // shared by the AG Grid external-filter hooks (desktop) and the plain JS
+  // `filtered` array (mobile list, count badge, CSV export). Keeping AG
+  // Grid's own rowData stable and routing filtering through this predicate
+  // instead of reassigning rowData on every keystroke is what keeps the
+  // grid's sort in sync — see isExternalFilterPresent/doesExternalFilterPass
+  // below.
+  const matchesFilters = useCallback(
+    (u: SessionUser) => {
+      const q = search.trim().toLowerCase();
+      const roleIds = new Set(roleSelected.map((o) => o.id));
+      const statusIds = new Set(statusSelected.map((o) => o.id));
+      const orgIds = new Set(orgSelected.map((o) => o.id));
+      const managerIds = new Set(managerSelected.map((o) => o.id));
       if (statusIds.size > 0 && !statusIds.has(u.is_active ? 'active' : 'inactive')) return false;
       if (roleIds.size > 0 && !roleIds.has(u.role)) return false;
-      if (showCrossOrgFilters && orgIds.size > 0 && !orgIds.has(u.org_id)) return false;
+      if (showCrossOrgFilters && orgIds.size > 0 && !branchesOf(u).some((b) => orgIds.has(b.org_id))) return false;
       if (showCrossOrgFilters && managerIds.size > 0 && !(u.manager_id && managerIds.has(u.manager_id))) return false;
       if (q) {
         const hay = `${u.email} ${displayName(u)}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
-    });
-  }, [users, search, roleSelected, statusSelected, orgSelected, managerSelected, showCrossOrgFilters]);
+    },
+    [search, roleSelected, statusSelected, orgSelected, managerSelected, showCrossOrgFilters],
+  );
+
+  const filtered = useMemo(() => users.filter(matchesFilters), [users, matchesFilters]);
+
+  const exportUsers = (format: ExportFormat) => {
+    exportRows(filtered, USER_EXPORT_COLUMNS, buildFilename(['team']), format);
+  };
 
   const nameCellRenderer = useCallback((params: ICellRendererParams<SessionUser>) => {
     const u = params.data;
@@ -109,6 +183,44 @@ export default function TeamTable({ users, currentUserId, actorRank, onEdit }: P
       </div>
     );
   }, [currentUserId]);
+
+  // Read off the rows rather than taking the scope as a second prop: the server
+  // is the one that decides whether this is a subtree view, and it already says
+  // so by populating report_depth.
+  const showDepth = useMemo(() => users.some((u) => u.report_depth != null), [users]);
+
+  // Direct vs indirect report. Only meaningful under the `reports` scope, where
+  // the roster IS a subtree — report_depth is null everywhere else, so an absent
+  // value renders nothing rather than claiming "direct".
+  const depthCellRenderer = useCallback((params: ICellRendererParams<TeamRow>) => {
+    const d = params.data?.report_depth;
+    if (d === null || d === undefined) return null;
+    return d === 1 ? (
+      <span className="rounded-md bg-[#EFF6FF] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#1E40AF]">
+        Direct
+      </span>
+    ) : (
+      <span className="text-[11px] text-[#94A3B8]">{d} levels down</span>
+    );
+  }, []);
+
+  const branchCellRenderer = useCallback((params: ICellRendererParams<SessionUser>) => {
+    const u = params.data;
+    if (!u) return null;
+    const branches = branchesOf(u);
+    if (branches.length === 0) return <span className="italic text-[#94A3B8]">—</span>;
+    const all = branches.map((b) => b.org_name).join(', ');
+    return (
+      <div className="flex items-center gap-1.5 leading-tight" title={all}>
+        <span className="truncate text-sm text-[#0F172A]">{branches[0]!.org_name}</span>
+        {branches.length > 1 && (
+          <span className="shrink-0 rounded-full bg-[#F1F5F9] px-1.5 py-0.5 text-[10px] font-semibold text-[#475569]">
+            +{branches.length - 1}
+          </span>
+        )}
+      </div>
+    );
+  }, []);
 
   const managerCellRenderer = useCallback((params: ICellRendererParams<SessionUser>) => {
     const u = params.data;
@@ -159,13 +271,28 @@ export default function TeamTable({ users, currentUserId, actorRank, onEdit }: P
     },
     {
       colId: 'org_name', headerName: 'Branch', width: 160, sortable: true, filter: true, editable: false,
-      valueGetter: (p) => p.data?.org_name || '—',
+      // Every branch, so AG Grid's own column filter, sort and CSV export all
+      // see the full membership rather than just the home branch the cell leads
+      // with.
+      valueGetter: (p) => (p.data ? branchesOf(p.data).map((b) => b.org_name).join(', ') : '') || '—',
+      cellRenderer: branchCellRenderer,
+      cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
       colId: 'manager_name', headerName: 'Manager', width: 180, sortable: true, filter: true, editable: false,
       valueGetter: (p) => p.data?.manager_name ?? '',
       cellRenderer: managerCellRenderer,
     },
+    // Only under the `reports` scope: elsewhere every value is null and the
+    // column would be an empty stripe down the grid.
+    ...(showDepth
+      ? [{
+          colId: 'report_depth', headerName: 'Reports', width: 130, sortable: true, filter: false, editable: false,
+          valueGetter: (p: { data?: TeamRow }) => p.data?.report_depth ?? null,
+          cellRenderer: depthCellRenderer,
+          cellStyle: { display: 'flex', alignItems: 'center' },
+        } as ColDef<SessionUser>]
+      : []),
     {
       colId: 'status', headerName: 'Status', width: 130, sortable: true, filter: true, editable: false,
       valueGetter: (p) => (p.data?.is_active ? 'Active' : 'Inactive'),
@@ -178,18 +305,43 @@ export default function TeamTable({ users, currentUserId, actorRank, onEdit }: P
       cellRenderer: actionsCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end' },
     },
-  ], [nameCellRenderer, managerCellRenderer, statusCellRenderer, actionsCellRenderer]);
+  ], [nameCellRenderer, branchCellRenderer, managerCellRenderer, statusCellRenderer, actionsCellRenderer]);
 
   // Flex columns can leave a leftover blank strip after the last column if the
   // grid's own width settles after AG Grid's initial measurement (e.g. sidebar
   // collapses, layout reflows post-hydration). Forcing a fit on ready + on any
   // container resize keeps columns filling the full width with no gap.
+  const [gridApi, setGridApi] = useState<GridApi<SessionUser> | null>(null);
   const onGridReady = useCallback((params: GridReadyEvent<SessionUser>) => {
     params.api.sizeColumnsToFit();
+    setGridApi(params.api);
   }, []);
   const onGridSizeChanged = useCallback((params: GridSizeChangedEvent<SessionUser>) => {
     params.api.sizeColumnsToFit();
   }, []);
+
+  // rowData (below) stays a stable reference to `users` — filtering happens
+  // through these external-filter hooks instead of by swapping rowData on
+  // every keystroke/selection. Reassigning rowData that frequently while a
+  // sort is active is what caused sort to look broken/reverted when filters
+  // were applied; AG Grid's own filter+sort pipeline handles the combination
+  // correctly as long as rowData itself doesn't churn.
+  const isExternalFilterPresent = useCallback(
+    () =>
+      search.trim().length > 0 ||
+      roleSelected.length > 0 ||
+      statusSelected.length > 0 ||
+      orgSelected.length > 0 ||
+      managerSelected.length > 0,
+    [search, roleSelected, statusSelected, orgSelected, managerSelected],
+  );
+  const doesExternalFilterPass = useCallback(
+    (node: IRowNode<SessionUser>) => (node.data ? matchesFilters(node.data) : false),
+    [matchesFilters],
+  );
+  useEffect(() => {
+    gridApi?.onFilterChanged();
+  }, [gridApi, search, roleSelected, statusSelected, orgSelected, managerSelected]);
 
   const defaultColDef: ColDef = useMemo(() => ({
     resizable: true,
@@ -250,6 +402,9 @@ export default function TeamTable({ users, currentUserId, actorRank, onEdit }: P
         <span className="ml-auto text-xs text-[#64748B]">
           {filtered.length} of {users.length}
         </span>
+        {/* Exports what the filters left, not the whole roster — the count beside
+            it is the promise the file has to keep. */}
+        <DownloadButton onExport={exportUsers} rowCount={filtered.length} />
       </div>
 
       {isMobile ? (
@@ -283,6 +438,12 @@ export default function TeamTable({ users, currentUserId, actorRank, onEdit }: P
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <UserStatusBadge active={u.is_active} />
+                {branchesOf(u).length > 0 && (
+                  <span className="text-[11px] text-[#475569]" title={branchesOf(u).map((b) => b.org_name).join(', ')}>
+                    {branchesOf(u)[0]!.org_name}
+                    {branchesOf(u).length > 1 && ` +${branchesOf(u).length - 1}`}
+                  </span>
+                )}
                 {u.manager_name ? (
                   <span className="text-[11px] text-[#475569]">↑ {u.manager_name}</span>
                 ) : (
@@ -300,9 +461,11 @@ export default function TeamTable({ users, currentUserId, actorRank, onEdit }: P
       ) : (
         <div className="ag-theme-alpine" style={{ height: 600, width: '100%' }}>
           <AgGridReact<SessionUser>
-            rowData={filtered}
+            rowData={users}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
+            isExternalFilterPresent={isExternalFilterPresent}
+            doesExternalFilterPass={doesExternalFilterPass}
             pagination
             paginationPageSize={25}
             paginationPageSizeSelector={[25, 50, 100]}

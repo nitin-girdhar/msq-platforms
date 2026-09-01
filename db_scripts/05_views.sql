@@ -463,6 +463,41 @@ JOIN iam.user_roles     ur ON ur.id = uom.role_id
                           AND (ur.tenant_id = o.tenant_id OR ur.tenant_id IS NULL)
 WHERE uom.is_active;
 
+-- Lead-assignment weights in the flat (user, branch, weight) shape they had
+-- while the weight was a column on iam.user_org_mapping.
+--
+-- lms.lead_assignment_weights keys off the membership's surrogate id and so has
+-- no org_id of its own, which would otherwise cost every ad-hoc query in
+-- one_time/ and tools/ its `WHERE org_id = '<branch>'`. This view gives that
+-- shape back. Reporting and operator SQL read it; the write paths address the
+-- base table by id.
+--
+-- LEFT JOIN, and COALESCE to 0: a membership with no weight row is a member who
+-- is simply not in the auto-assignment rotation. Dropping those rows would make
+-- a branch look like it has fewer members than it has, and NULL would read as
+-- "unknown" rather than the "0%" it actually means.
+CREATE OR REPLACE VIEW lms.vw_lead_assignment_weights WITH (security_invoker = true) AS
+SELECT
+  m.id            AS user_org_mapping_id,
+  m.user_id,
+  u.full_name     AS user_full_name,
+  m.org_id,
+  o.name          AS org_name,
+  o.tenant_id,
+  m.role_id,
+  ur.name         AS role_name,
+  ur.label        AS role_label,
+  ur.rank         AS role_rank,
+  m.is_active     AS mapping_is_active,
+  u.is_active     AS user_is_active,
+  COALESCE(w.weight, 0) AS weight,
+  w.updated_at    AS weight_updated_at
+FROM iam.user_org_mapping m
+JOIN      iam.users              u  ON u.id = m.user_id
+JOIN      entity.organizations   o  ON o.id = m.org_id
+JOIN      iam.user_roles        ur  ON ur.id = m.role_id
+LEFT JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = m.id;
+
 -- Ad campaigns with resolved platform and status names (for dropdowns).
 CREATE OR REPLACE VIEW marketing.vw_campaign_lookup WITH (security_invoker = true) AS
 SELECT

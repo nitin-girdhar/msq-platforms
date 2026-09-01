@@ -216,6 +216,12 @@ export default function <Domain>EditModal({ id, onClose, onSaved }: {
 > validate lightly on the client, and rely on the backend Zod schemas for authoritative
 > validation — surface `ApiRequestError.message` (already flattens server `details`).
 
+> **Dismissal:** a form modal like the one above needs no extra props — backdrop click is
+> inert by default, so unsaved input can't be lost to a stray click. Escape and the X
+> button close it (blocked only while `locked`). Add `closeOnBackdropClick` **only** to a
+> read-only viewer (e.g. a lead-history dialog):
+> `<Modal open onClose={onClose} title="Lead History" closeOnBackdropClick>`.
+
 ---
 
 ## 7. Optimistic update inside a hook

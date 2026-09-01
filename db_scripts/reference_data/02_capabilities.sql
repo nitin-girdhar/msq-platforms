@@ -31,24 +31,15 @@ BEGIN;
 INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_order) VALUES
 
 -- ── PLATFORM ────────────────────────────────────────────────────────
+-- Cross-product controls that are NOT a console screen. The dividing line with
+-- the `admin` tool below: `admin.*` is the tenant admin console's screens,
+-- `platform.*` is behaviour that applies everywhere regardless of console.
+-- platform.write is the standing example — it decides whether the account can
+-- write at all, in every app, enforced at the database.
 ('platform',       'tool',      NULL,       'Platform',
  'Cross-product controls that are not tied to one tool.', 0),
 ('platform.write', 'operation', 'platform', 'Write anything',
  'Without this the account is read-only everywhere, enforced at the database.', 1),
-
--- Was lms.apiclients* — API credentials aren't LMS-specific (comms/tasks routes
--- use the same clients), so this moved out from under the CRM tool. Renamed,
--- not just reparented: the old key stays gone rather than kept as an alias, so
--- there is exactly one name for this capability going forward. See
--- tools/rename_apiclients_capability.sql for the one-time UPDATE that migrates
--- existing grants on an already-provisioned database — this INSERT alone only
--- covers a fresh deploy.
-('platform.api_tokens',        'page',      'platform',           'API tokens',
- 'Machine credentials for the public integration API.', 2),
-('platform.api_tokens.view',   'operation', 'platform.api_tokens', 'View API tokens',
- 'Read the client list. Secrets are never shown.', 1),
-('platform.api_tokens.manage', 'operation', 'platform.api_tokens', 'Manage API tokens',
- 'Create clients and rotate their secrets.', 2),
 
 -- ── CRM ─────────────────────────────────────────────────────────────
 ('lms', 'tool', NULL, 'CRM',
@@ -162,17 +153,6 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Read campaigns and their results.', 1),
 ('lms.campaigns.manage', 'operation', 'lms.campaigns', 'Manage campaigns',
  'Create, edit and retire campaigns.', 2),
-
-('lms.users', 'page', 'lms', 'Users',
- 'The CRM people directory and org chart.', 8),
-('lms.users.view', 'operation', 'lms.users', 'View users',
- 'Read the directory and reporting lines. Needs a scope below.', 1),
-('lms.users.view.team', 'scope', 'lms.users.view', 'Their team',
- 'Only people reporting to them.', 1),
-('lms.users.view.org',  'scope', 'lms.users.view', 'Whole branch',
- 'Everyone in the branch.', 2),
-('lms.users.manage', 'operation', 'lms.users', 'Manage users',
- 'Add people, change roles, deactivate accounts.', 2),
 
 -- ── ATTENDANCE ──────────────────────────────────────────────────────
 ('hr.attendance', 'tool', NULL, 'Attendance',
@@ -337,19 +317,67 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
 -- _migrations/22_prune_unused_admin_capabilities.sql. If one of those surfaces
 -- ever grows a real requireCapability gate, re-add the key WITH the gate, in
 -- the same change.
+-- ── ADMIN — the TENANT admin console (admin-web) ────────────────────
+-- Freely assignable, like any product tool. This namespace used to hold the
+-- platform-operator keys, which now live under `superadmin` below; the tenant
+-- console had no namespace of its own and borrowed platform.write, which meant
+-- its screens could not be granted by permission at all.
 ('admin', 'tool', NULL, 'Administration',
- 'Tenant and platform configuration.', 6),
+ 'Tenant administration: people, access and integration credentials.', 6),
 
-('admin.lookups', 'page', 'admin', 'Lookup data',
+-- Was lms.users* — the directory manages fitness, HR-only and every other kind
+-- of user, and the screen is mounted in the admin console rather than the CRM.
+-- Renamed, not aliased, on the platform.api_tokens precedent: exactly one name
+-- going forward. NOTE the RLS coupling — iam.fn_user_can_manage_users (04_)
+-- resolves 'admin.team.manage' against the capability matrix, and the ~9 write
+-- policies in 08_ call it. Rename here and there together, never separately.
+('admin.team', 'page', 'admin', 'Team',
+ 'The people directory and org chart.', 1),
+('admin.team.view', 'operation', 'admin.team', 'View team',
+ 'Read the directory and reporting lines. Needs a scope below.', 1),
+('admin.team.view.team', 'scope', 'admin.team.view', 'Their team',
+ 'Only people reporting to them.', 1),
+('admin.team.view.org',  'scope', 'admin.team.view', 'Whole branch',
+ 'Everyone in the branch.', 2),
+('admin.team.manage', 'operation', 'admin.team', 'Manage team',
+ 'Add people, change roles, deactivate accounts.', 2),
+-- Gates the "Notify user by email" checkbox on the Team create/reset/branch
+-- forms. identity-service checks it before calling communication-service; it is
+-- never an RLS boundary, so this key stands alone (no fn_user_can_manage_users
+-- coupling like admin.team.manage above).
+('admin.team.notify', 'operation', 'admin.team', 'Notify user by email',
+ 'Send account, password and branch-change emails to the affected user.', 3),
+
+-- Was platform.api_tokens* (and lms.apiclients* before that). It is a screen of
+-- the tenant admin console, so it belongs beside the console's other screens
+-- rather than in the cross-product bucket. Same no-alias rule as above.
+('admin.api_tokens',        'page',      'admin',             'API tokens',
+ 'Machine credentials for the public integration API.', 2),
+('admin.api_tokens.view',   'operation', 'admin.api_tokens', 'View API tokens',
+ 'Read the client list. Secrets are never shown.', 1),
+('admin.api_tokens.manage', 'operation', 'admin.api_tokens', 'Manage API tokens',
+ 'Create clients and rotate their secrets.', 2),
+
+-- ── SUPERADMIN — the PLATFORM OPERATOR console (lookup-admin) ───────
+-- Never assignable to a tenant role: admin-service's putGrants refuses it below
+-- super_admin, the Capability Matrix screen does not render it at all, and
+-- super_admin receives it through the `*` wildcard rather than through rows.
+-- superadmin.roles.manage is the reason the lock is absolute — it DEFINES these
+-- grants, so holding it means being able to grant yourself anything.
+-- @platform/rbac's isSuperAdminCapability() is the shared prefix test.
+('superadmin', 'tool', NULL, 'Platform operations',
+ 'Cross-tenant configuration. Platform operator only.', 7),
+
+('superadmin.lookups', 'page', 'superadmin', 'Lookup data',
  'Platform-wide reference tables. Changes affect every tenant.', 3),
 -- No sibling `.view`: lookup-admin is manage-or-nothing. A view-only grant
 -- would light up the sidebar (filterNav wants any granted descendant) and then
 -- hit the layout's "Access restricted" screen — the render-then-403 shape the
 -- capability tree exists to prevent.
-('admin.lookups.manage', 'operation', 'admin.lookups', 'Manage lookup data',
+('superadmin.lookups.manage', 'operation', 'superadmin.lookups', 'Manage lookup data',
  'Edit reference tables. Affects every tenant on the platform.', 2),
 
-('admin.roles.manage', 'operation', 'admin', 'Manage roles',
+('superadmin.roles.manage', 'operation', 'superadmin', 'Manage roles',
  'Define roles, ranks, departments and these capability grants.', 4)
 
 ON CONFLICT (key) DO UPDATE SET

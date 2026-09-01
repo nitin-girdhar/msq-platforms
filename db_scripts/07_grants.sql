@@ -188,11 +188,33 @@ REVOKE DELETE ON TABLE iam.user_org_mapping FROM tenant_admin;
 
 GRANT ALL PRIVILEGES ON TABLE iam.user_org_mapping TO root_service;
 
+-- ── GRANTS: lms.lead_assignment_weights ───────────────────────────────
+-- Mirrors iam.user_org_mapping above, because it is written by the same
+-- identity-service code paths (user create/edit carry the weights in the same
+-- payload as the branch/role assignments) under the same roles. Those paths are
+-- split across both transaction wrappers -- createUser/updateUser/
+-- updateAssignmentWeights run under withRoleTx as app_user or tenant_admin,
+-- while reconcileOrgAssignments/addOrgMapping/moveUserBranch run under
+-- withServiceTx as root_service -- so all three roles need the grant or half
+-- the write paths break.
+GRANT SELECT, INSERT, UPDATE ON TABLE lms.lead_assignment_weights TO app_user;
+REVOKE DELETE ON TABLE lms.lead_assignment_weights FROM app_user;
+
+GRANT SELECT, INSERT, UPDATE ON TABLE lms.lead_assignment_weights TO tenant_admin;
+REVOKE DELETE ON TABLE lms.lead_assignment_weights FROM tenant_admin;
+
+GRANT ALL PRIVILEGES ON TABLE lms.lead_assignment_weights TO root_service;
+
+GRANT SELECT ON TABLE lms.vw_lead_assignment_weights TO app_user, tenant_admin;
+
 -- tenant_admin can also manage entity.organizations
 GRANT INSERT, UPDATE ON TABLE entity.organizations TO tenant_admin;
 
 GRANT EXECUTE ON FUNCTION iam.fn_user_active_orgs(UUID)  TO app_user, tenant_admin;
 GRANT EXECUTE ON FUNCTION iam.fn_org_active_users(UUID)  TO app_user, tenant_admin;
+-- Read by the RLS policies on lms.lead_assignment_weights (08_rls.sql), so
+-- every role that touches that table has to be able to call it.
+GRANT EXECUTE ON FUNCTION iam.fn_mapping_org(UUID)       TO app_user, tenant_admin;
 GRANT EXECUTE ON FUNCTION iam.fn_user_org_rank(UUID,UUID) TO app_user, tenant_admin;
 -- Replaces the bare fn_user_org_rank >= 980 term in the iam.user_org_mapping,
 -- iam.users and iam.reporting_lines WRITE policies. SECURITY DEFINER, so its
@@ -544,6 +566,13 @@ GRANT SELECT ON TABLE
   TO lms_svc;
 
 GRANT SELECT, INSERT, UPDATE ON TABLE lms.lead_links TO lms_svc;
+
+-- Read-only for lms_svc: leads-service only ever READS weights (the
+-- auto-assignment picker); identity-service owns every write. Granted
+-- explicitly rather than left to the ALTER DEFAULT PRIVILEGES below, which
+-- only covers tables created AFTER this script runs.
+GRANT SELECT ON TABLE lms.lead_assignment_weights, lms.vw_lead_assignment_weights TO lms_svc;
+GRANT EXECUTE ON FUNCTION iam.fn_mapping_org(UUID) TO lms_svc;
 -- iam.api_clients / iam.api_client_orgs (N-4, moved from ext) are managed
 -- exclusively by identity-service; lms_svc's blanket `SELECT ON ALL TABLES IN
 -- SCHEMA iam` above already covers any incidental read, no product-specific

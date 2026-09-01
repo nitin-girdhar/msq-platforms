@@ -1,7 +1,7 @@
 # CRM Monorepo — Database Model
 
 > **Database:** PostgreSQL 14+  
-> **Schema version:** 1.2.0  
+> **Schema version:** 1.45.0  
 > **Primary keys:** UUIDv7 (time-ordered) for operational tables; SMALLINT/INTEGER identity for geographic lookups  
 > **Multi-tenancy:** Row Level Security (RLS) on every operational table  
 > **Extensions:** pgcrypto, pg_trgm, btree_gin, vector (optional)
@@ -144,6 +144,7 @@
 | `ext`       | External integrations (Meta Lead Ads / CAPI)     |
 | `hr`        | Employee profiles, leave, attendance |
 | `task`      | To-do lists, tasks, comments                     |
+| `comms`     | Cross-product WhatsApp/email message templates (org > tenant > global resolution) |
 
 ---
 
@@ -152,6 +153,7 @@
 | Role              | Type         | RLS       | Purpose                                      |
 | ----------------- | ------------ | --------- | --------------------------------------------- |
 | `app_user`        | NOLOGIN      | Subject   | Standard app role — DML on operational tables |
+| `readonly_user`   | NOLOGIN, INHERIT | Subject | Selected via `withRoleTx`'s `ctx.readOnly` on the app path (`SET LOCAL ROLE readonly_user` + `transaction_read_only = on`) — makes a read path physically incapable of writing, independent of the query it runs |
 | `tenant_admin`    | NOLOGIN      | Subject   | Cross-org admin within a tenant               |
 | `root_service`     | LOGIN        | BYPASSRLS | Service superuser — unrestricted DML          |
 | `lead_svc`        | LOGIN        | via app_user | Shared/legacy login — identity-service, notifications-service, admin-service (unrestricted; not yet re-plumbed to a per-product role) |
@@ -342,31 +344,29 @@ Per-tenant **product/module entitlements** (D6). Gates which products a tenant h
 
 ### iam.user_roles
 
-Role definitions with rank-based hierarchy.
+Role definitions with rank-based hierarchy. **Current shape (schema 1.45.0):** this single ladder is now authoritative platform-wide. The per-product ladders it was once slated to be replaced by (`lms.roles`, `hr.roles`, `task.roles`) plus their grant tables (`<product>.member_roles`) were **dropped at schema 1.40.0** (`db_scripts/one_time/drop_per_product_role_tables.sql`) — the rollback direction won, not the migration described below. Role/rank resolution now runs solely through `iam.fn_user_org_role`/`iam.fn_role_capability_matrix` against this table. See "Retired: per-product role tables" further down for what existed in between and why it was rolled back.
 
-> **Legacy (P1.1):** this single global ladder is being replaced by per-product ladders (`lms.roles`, `hr.roles`, `task.roles`) plus per-product grants (`<product>.member_roles`). During the migration it stays authoritative (Phases A–C); the Phase E contract deprecates it. See those sections below.
+| Column         | Type    | Constraints                                              |
+| -------------- | ------- | --------------------------------------------------------- |
+| id             | UUID    | PK (UUIDv7)                                                |
+| tenant_id      | UUID    | FK → entity.tenants(id) ON DELETE CASCADE; NULL = global platform-anchor role, non-NULL = a tenant's own copy/custom role |
+| department_id  | UUID    | FK → iam.departments(id) ON DELETE RESTRICT                |
+| name           | TEXT    | NOT NULL, UNIQUE                                           |
+| label          | TEXT    | NOT NULL                                                   |
+| description    | TEXT    |                                                             |
+| rank           | INT     | NOT NULL, DEFAULT 0 (range **0-1000**, widened from 0-100 to leave headroom for tenant-custom roles between the anchors) |
+| is_active      | BOOLEAN | NOT NULL, DEFAULT TRUE                                     |
 
-| Column      | Type | Constraints                       |
-| ----------- | ---- | --------------------------------- |
-| id          | UUID    | PK (UUIDv7)                       |
-| name        | TEXT    | NOT NULL, UNIQUE                  |
-| label       | TEXT    | NOT NULL                          |
-| description | TEXT    |                                   |
-| rank        | INT     | NOT NULL, DEFAULT 0 (range 0-100) |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE            |
+**Seed values (anchor roles, by rank):**
 
-**Seed values (by rank):**
+| rank | name         | label        | tenant_id             |
+| ---- | ------------ | ------------ | ---------------------- |
+| 0    | read_only    | Read Only    | NULL (global anchor)   |
+| 980  | org_admin    | Admin        | NULL (global anchor)   |
+| 990  | tenant_admin | Tenant Admin | NULL (global anchor)   |
+| 1000 | super_admin  | Super Admin  | NULL (global anchor)   |
 
-| rank | name                     | label                   |
-| ---- | ------------------------ | ----------------------- |
-| 0    | read_only                | Read Only               |
-| 20   | sales_representative     | Sales Representative    |
-| 40   | senior_sales_executive   | Senior Sales Executive  |
-| 60   | org_manager              | Manager                 |
-| 70   | org_sr_manager           | Senior Manager          |
-| 80   | org_admin                | Admin                   |
-| 90   | tenant_admin             | Tenant Admin            |
-| 100  | super_admin              | Super Admin             |
+Tenant-defined and tenant-copied roles (e.g. `sales_representative`, `senior_sales_executive`, `org_manager`, `org_sr_manager`, `pre_sales_captain`) sit at ranks between the anchors and carry a non-NULL `tenant_id`. `iam.fn_role_capability_matrix` resolves one row per role `name` per tenant, with the per-tenant copy winning over the global template.
 
 ---
 
@@ -418,6 +418,10 @@ Role → capability grants (Tier C3), resolved per tenant by `iam.fn_role_capabi
 
 > **`lms.leads.view.tenant` is what makes the branch picker work.** It is granted to `tenant_admin` only (plus `super_admin` via `'*'`). identity-service's `GET /orgs` widens the branch list to the whole tenant exactly when `resolveScope(actor, 'lms.leads.view')` is `tenant`/`all`, and leads-service reads the picked branch under the tenant Postgres role on the same condition (`RoleTxContext.tenantWide`). It was defined in `iam.capabilities` but granted to **no role at all**, which left every user with a single-option branch picker and the LMS Bulk Assign screen unusable.
 
+> **Capability namespace split (schema 1.45.0, `db_scripts/one_time/apply_capability_namespace_split.sql`).** Introduced a dedicated `admin.*` capability namespace for cross-product administrative concerns, splitting them out of the product namespaces they used to live under — e.g. `lms.users.manage` → `admin.team.manage`, `platform.api_tokens` → `admin.api_tokens`. If a role/capability key you're looking for isn't where an older note in this doc says, check the `admin.*` namespace first — the rename is key-only (same `iam.capabilities` row, `key` updated in place), so `iam.role_capabilities` grants carried over automatically and did not need a back-fill pass.
+
+> **`admin.team.notify` (schema 1.46.0, `db_scripts/one_time/apply_admin_team_notify_capability.sql`).** Operation node under `admin.team`, default-granted to `org_admin`/`tenant_admin` and back-filled per-tenant pinned to `admin.team.manage`. Gates the "Notify user by email" checkbox on the Team create / reset-password / branch-change forms: `identity-service`'s `users.controller` checks it (`hasCapability` alone — authoritative for every role, no `rank ≥ org_admin` short-circuit, since the back-fill already grants it wherever `admin.team.manage` is held) before `users.service` fires a fire-and-forget email through `communication-service` for `user_created` / `password_reset_by_admin` / branch changes. **Authorization for an outbound notification only** — no `iam.fn_user_can_manage_users` or `08_rls.sql` coupling like `admin.team.manage`, and no schema change.
+
 ---
 
 ### iam.users
@@ -459,13 +463,21 @@ User accounts. `full_name` is a GENERATED STORED column.
 
 Multi-org access control. Source of truth for which orgs a user can access.
 
+> `iam.users.org_id` is **not** that source — it is only the user's *home*
+> branch, the one they were created in. A user working several branches holds one
+> row here per branch, so any read that answers "which branches is this user in"
+> must come from this table. `listUsers` aggregates it per user into the
+> `org_memberships` array on each roster row (see Architecture.md, *Multi-branch
+> users on the roster*); reading `org_id` instead is what made multi-branch users
+> disappear from the Admin → Team branch filter.
+
 | Column     | Type        | Constraints                              |
 | ---------- | ----------- | ---------------------------------------- |
+| id         | UUID        | NOT NULL, DEFAULT gen_uuidv7(), UNIQUE (`uq_user_org_mapping_id`). Surrogate identity for the membership, for product extension tables to key off — **not** the PK |
 | user_id    | UUID        | NOT NULL, FK → iam.users(id), PK (composite) |
 | org_id     | UUID        | NOT NULL, FK → entity.organizations(id), PK (composite) |
 | role_id    | UUID        | NOT NULL, FK → iam.user_roles(id)        |
 | is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                   |
-| lead_assignment_weight | SMALLINT | NOT NULL, DEFAULT 0, CHECK 0-100; % share of new leads auto-routed to this user within this org. Sum across an org's rows must be 100 (or all 0 to disable), enforced at the application layer — see `PUT /users/assignment-weights` |
 | granted_by | UUID        | FK → iam.users(id)                       |
 | granted_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
 | updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
@@ -473,6 +485,71 @@ Multi-org access control. Source of truth for which orgs a user can access.
 **PK:** `(user_id, org_id)`  
 **RLS:** Users can read own rows; org admins (rank >= 80) manage within their org; any user rank >= 40 (SSE, matches `minRankToAssignLeads`) can read other rows within their own org (`assignable_read_policy`, needed for the lead "Assigned To" picker); tenant_admin manages across tenant  
 **Triggers:** `set_updated_at`, `auto_grant_all_orgs_on_tenant_admin`
+
+#### Per-product settings on a membership — the extension pattern
+
+`lead_assignment_weight` used to be a column on this table. It was pure LMS: only
+leads-service's `resolveAutoAssignedUser` and its Python port in
+`meta-sync-scripts` read it, no SQL object touched it, and `iam.vw_user_org_access`
+did not expose it. Meanwhile this table is what `iam.fn_user_active_orgs`, the
+reporting-line membership check and most RLS policies are built on — so every
+product that wanted a per-branch, per-user setting would have added its own
+column to the one table the whole platform depends on.
+
+Schema 1.44.0 replaced that with a pattern. **Do not add another product column
+here.** Instead:
+
+1. The setting lives in a table in the **owning product's schema**
+   (`lms.*`, `hr.*`, `task.*`) — never in `iam`.
+2. It is keyed by `user_org_mapping_id UUID PRIMARY KEY REFERENCES
+   iam.user_org_mapping(id) ON DELETE CASCADE`. That is what `id` exists for.
+3. Its RLS resolves the branch through `iam.fn_mapping_org(user_org_mapping_id)`
+   — the extension table has no `org_id`, and an inline subquery into
+   `iam.user_org_mapping` would be re-filtered by that table's own `FORCE`d
+   policies and return NULL, turning the policy silently FALSE. Copy the four
+   policies from `lms.lead_assignment_weights` (`08_rls.sql`); they are this
+   table's own policies with `org_id` replaced by that call, so the extension row
+   is reachable exactly when the membership row is.
+4. **No row means the default.** Do not write rows that only say "nothing set" —
+   read with `COALESCE`.
+
+`lms.lead_assignment_weights` below is the reference implementation.
+
+---
+
+### lms.lead_assignment_weights
+
+% share of new leads a user auto-receives within one branch. The first table
+built on the extension pattern above.
+
+| Column              | Type        | Constraints                              |
+| ------------------- | ----------- | ---------------------------------------- |
+| user_org_mapping_id | UUID        | PK, FK → iam.user_org_mapping(id) ON DELETE CASCADE |
+| weight              | SMALLINT    | NOT NULL, DEFAULT 0, CHECK 0-100         |
+| updated_by          | UUID        | FK → iam.users(id) ON DELETE SET NULL    |
+| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
+| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
+
+**No row means weight 0** — the picker filters `weight > 0`, so absence and an
+explicit zero mean the same thing and only non-zero weights are stored. An
+existing row *can* hold 0: deactivating a user zeroes it rather than deleting it
+(DELETE is revoked from `app_user`/`tenant_admin`, mirroring
+`iam.user_org_mapping`).
+
+The sum across a branch must be 100 (or all 0 to disable auto-assignment), and
+that is enforced **only** in identity-service's `PUT /users/assignment-weights`.
+`createUser`, `addOrgMapping`, `reconcileOrgAssignments` and every `one_time/`
+onboarding script bypass it — a pre-existing gap the move preserved rather than
+changed.
+
+**Written by** identity-service (the user create/edit payload carries weights
+alongside branch/role assignments, so the API field name is still
+`lead_assignment_weight`). **Read by** leads-service's `resolveAutoAssignedUser`.
+**RLS:** `org_admin_read/insert/update_policy` + `tenant_isolation_policy`, all
+via `iam.fn_mapping_org`.  
+**Triggers:** `set_updated_at`  
+**View:** `lms.vw_lead_assignment_weights` restores the flat
+`(user_id, org_id, weight)` shape for reporting and operator SQL.
 
 ---
 
@@ -529,68 +606,19 @@ for authority.
 
 ---
 
-### lms.roles / hr.roles / task.roles
+### Retired: per-product role tables (`lms.roles`/`hr.roles`/`task.roles`, `<product>.member_roles`)
 
-Per-product role **catalogs** (P1.1, `17_init-per-product-roles.sql`). Each product owns its own ladder; **ranks are only comparable within a product**. Machine key is `name` (stable), display is `label`.
+**These tables no longer exist.** They were introduced at P1.1 (`17_init-per-product-roles.sql`) as per-product role catalogs + `(user, product, role)` grant tables, each with its own ladder (`lms.roles` rank 0-100: read_only/sales_representative/senior_sales_executive/org_manager/org_sr_manager/lms_admin; similarly for `hr.roles`/`task.roles`), tenant-scoped by `22_tenant-scope-lookups.sql`, with resolver functions `<product>.fn_member_rank`/`<product>.fn_member_role` and a `<product>.vw_member_roles` view.
 
-> **Tenant-scoped (`22_tenant-scope-lookups.sql`):** originally global reference data; now carries `tenant_id NOT NULL` and RLS. Every tenant starts with an identical copy of the seeded ladder below. **P3.3** added the per-tenant customization API; **N-6 (Half A)** then moved that API from admin-service to the **owning product service** (`{lms,hr,task}-roles` → leads/hr/tasks-service), each `GET/POST /lookups/{…}-roles` + `PATCH …/:id` requiring a `tenant_id` query param (super_admin JWTs carry no tenant). The write runs as the product-scoped login via `withTenantConfigTx` (pins `app.current_tenant_id` to the selected tenant); `25_lookup-admin-write-rls.sql` adds the tenant-pinned admin write policy (`FOR ALL TO app_user` keyed on `app.current_tenant_id`) + `INSERT,UPDATE` GRANTs to the product role — **no `root_service`/BYPASSRLS**. `apps/lookup-admin` gates editing behind a tenant selector. See "Lookup table administration" in Architecture.md.
+**Dropped at schema 1.40.0** (`db_scripts/one_time/drop_per_product_role_tables.sql`, with a `_dryrun` companion): `lms/hr/task.roles`, `lms/hr/task.member_roles`, the `fn_member_rank`/`fn_member_role` functions, `vw_member_roles`, and `public.set_member_role_tenant_id()`. The migration's own direction reversed — rather than each product owning an independent ladder, the platform consolidated back onto the single `iam.user_roles` table (see above) resolved per-org via `iam.fn_user_org_role`/`iam.fn_role_capability_matrix`. If you find code or Drizzle definitions still referencing `<product>.member_roles` or `fn_member_rank`, it is stale and should be removed — the current Drizzle schema (`msq-core/packages/db/src/schema/tables/*.ts`) already carries no `*-roles.table.ts` / `*-member-roles.table.ts` files, confirming the drop was carried through the ORM layer.
 
-| Column      | Type    | Constraints                                          |
-| ----------- | ------- | ----------------------------------------------------- |
-| id          | UUID    | PK (UUIDv7)                                           |
-| tenant_id   | UUID    | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE   |
-| name        | TEXT    | NOT NULL, UNIQUE per `(tenant_id, name)`              |
-| label       | TEXT    | NOT NULL                                              |
-| description | TEXT    |                                                        |
-| rank        | INT     | NOT NULL, DEFAULT 0 (range 0-100)                     |
-| sort_order  | INT     | NOT NULL, DEFAULT 0                                   |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                |
-
-**Seeded ladders** (per tenant):
-
-| `lms.roles` (rank) | `hr.roles` (rank) | `task.roles` (rank) |
-| ------------------ | ----------------- | ------------------- |
-| read_only (0)      | hr_viewer (0)     | task_member (20)    |
-| sales_representative (20) | hr_staff (40) | task_lead (40)   |
-| senior_sales_executive (40) | hr_manager (70) | task_admin (80) |
-| org_manager (60)   | hr_admin (80)     |                     |
-| org_sr_manager (70)|                   |                     |
-| lms_admin (80)     |                   |                     |
-
-**RLS:** app_user `SELECT`s rows for the tenant owning its current org (`org_isolation_policy`); tenant_admin `SELECT`s rows for its own tenant directly (`tenant_isolation_policy`). Matches the `hr.leave_policies`/`hr.hr_settings` read-only-tenant-data pattern.
-**Grants:** `SELECT` to app_user/tenant_admin (unchanged — no write access added); `ALL` to root_service.
-**Known follow-up:** tenant provisioning doesn't auto-seed these rows for a brand-new tenant yet (same gap as `hr.hr_settings`).
-
----
-
-### lms.member_roles / hr.member_roles / task.member_roles
-
-The `(user, product, role)` **grant** (P1.1, `17_init-per-product-roles.sql`). Org-grained (preserves multi-org users), tenant-isolated via RLS. Shape mirrors `iam.user_org_mapping`. Backfilled from the old ladder in `18_backfill-per-product-roles.sql`.
-
-| Column     | Type        | Constraints                                              |
-| ---------- | ----------- | ------------------------------------------------------- |
-| user_id    | UUID        | NOT NULL, FK → iam.users(id) ON DELETE CASCADE, PK (composite) |
-| org_id     | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE, PK (composite) |
-| tenant_id  | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE; **set by trigger from org_id** — never written directly |
-| role_id    | UUID        | NOT NULL, FK → `<product>`.roles(id) ON DELETE RESTRICT  |
-| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                   |
-| granted_by | UUID        | FK → iam.users(id) ON DELETE SET NULL                   |
-| granted_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                     |
-| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                     |
-
-**PK:** `(user_id, org_id)` — one role per user per org per product.  
-**RLS:** `FORCE`d. app_user: `org_id = app.current_org_id` (ALL, incl. `WITH CHECK`); tenant_admin: `tenant_id = app.current_tenant_id`; root_service bypasses.  
-**Grants:** `SELECT, INSERT, UPDATE` to app_user/tenant_admin (revoke = `is_active=false`, no DELETE grant); `ALL` to root_service.  
-**Triggers:** `set_member_role_tenant_id` (BEFORE INSERT/UPDATE, derives `tenant_id` from `org_id` so a client cannot spoof it), `set_updated_at`.  
-**Helper:** `<product>.fn_member_rank(user, org)` — SECURITY DEFINER, returns the user's active rank in that product+org or **-1** if no grant (how "no product access" is encoded); safe to call inside other tables' RLS policies.  
-**Helper (P1.3, `20_member-role-resolver-fn.sql`):** `<product>.fn_member_role(user, org)` — SECURITY DEFINER, returns `(role TEXT, rank INT)` for the active grant, or `(NULL, -1)` if none. Sibling of `fn_member_rank` that also returns the role **name** the authz packages need. Each product service resolves the acting user's product role/rank through this (via `@platform/db`'s `resolveMemberRole`) instead of trusting a JWT/header rank. `GRANT EXECUTE` to `app_user`, `tenant_admin`, and the product's `*_svc` login (+ `lead_svc` for lms).  
-**View:** `<product>.vw_member_roles` (`security_invoker`) resolves `role`/`role_label`/`rank` + `org_name` + user.
+Architecture.md's "Permissions" section (`LMS_RANKS`/`HR_RANKS`/`TASK_RANKS` from `lms.member_roles`/`hr.member_roles`/`task.member_roles`) predates this drop and needs the same correction — those ladders now resolve from `iam.user_roles`/`iam.fn_user_org_role`, not a product-specific grant table.
 
 ---
 
 ### Tenant-scoped lookups — task.task_statuses / task.task_priorities / hr.leave_types / hr.employment_types / hr.attendance_statuses
 
-Originally global lookups (`10_init-hr-task-schemas.sql`, `14_init-tasks.sql`), converted to tenant-scoped by `22_tenant-scope-lookups.sql`. Every tenant starts with an identical seeded catalog, but **P3.3** added the per-tenant customization API, and **N-6 (Half A)** moved it from admin-service to the **owning product service**: `GET/POST /lookups/{task-statuses,task-priorities}` (tasks-service) and `/lookups/{leave-types,employment-types,attendance-statuses}` (hr-service), plus the matching `PATCH .../:id`, each requiring a `tenant_id` query param. Instead of the old super_admin→BYPASSRLS path (which needed an explicit `WHERE tenant_id`), the write now runs as the product-scoped login via `withTenantConfigTx`, pinning `app.current_tenant_id` to the selected tenant; `25_lookup-admin-write-rls.sql` adds a tenant-pinned admin write policy (`FOR ALL TO app_user` keyed on `app.current_tenant_id`) + `INSERT,UPDATE` GRANTs to `hr_svc`/`task_svc`, so a write physically cannot touch another tenant's rows (the explicit `WHERE tenant_id` is kept as defense-in-depth). `apps/lookup-admin` gates editing behind a tenant selector. See "Lookup table administration" in Architecture.md. `hr.leave_request_statuses` was deliberately **not** converted and remains global.
+Originally global lookups (`10_init-hr-task-schemas.sql`, `14_init-tasks.sql`), converted to tenant-scoped by `22_tenant-scope-lookups.sql`. Every tenant starts with an identical seeded catalog, but **P3.3** added the per-tenant customization API, and **N-6 (Half A)** moved it from admin-service to the **owning product service**: `GET/POST /lookups/{task-statuses,task-priorities}` (tasks-service) and `/lookups/{leave-types,employment-types,attendance-statuses}` (hr-service), plus the matching `PATCH .../:id`, each requiring a `tenant_id` query param. Instead of the old super_admin→BYPASSRLS path (which needed an explicit `WHERE tenant_id`), the write now runs as the product-scoped login via `withTenantConfigTx`, pinning `app.current_tenant_id` to the selected tenant; `25_lookup-admin-write-rls.sql` adds a tenant-pinned admin write policy (`FOR ALL TO app_user` keyed on `app.current_tenant_id`) + `INSERT,UPDATE` GRANTs to `hr_svc`/`task_svc`, so a write physically cannot touch another tenant's rows (the explicit `WHERE tenant_id` is kept as defense-in-depth). `apps/lookup-admin` gates editing behind a tenant selector. See "Lookup table administration" in Architecture.md. `hr.leave_request_statuses` was deliberately held back at that pass, but was itself converted to tenant-scoped at schema **1.26.0** — it now carries `tenant_id NOT NULL` and follows the same shape/RLS as its siblings; it is no longer global.
 
 | Column      | Type    | Constraints                                          |
 | ----------- | ------- | ----------------------------------------------------- |
@@ -703,6 +731,69 @@ DB-backed JWT revocation supporting multiple scope levels.
 | expires_at | TIMESTAMPTZ | NOT NULL                                     |
 
 **Check:** At least one of jti, user_id, org_id, tenant_id must be non-null
+
+---
+
+### iam.departments
+
+Org-level department catalog. Required parent of `iam.user_roles.department_id`, and referenced by `hr.employee_profiles.department_id`.
+
+| Column      | Type        | Constraints                                     |
+| ----------- | ----------- | ------------------------------------------------ |
+| id          | UUID        | PK (UUIDv7)                                       |
+| tenant_id   | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
+| org_id      | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT  |
+| name        | TEXT        | NOT NULL                                          |
+| label       | TEXT        | NOT NULL                                          |
+| description | TEXT        |                                                    |
+| is_active   | BOOLEAN     | NOT NULL, DEFAULT TRUE                            |
+| is_deleted  | BOOLEAN     | NOT NULL, DEFAULT FALSE                           |
+| deleted_at  | TIMESTAMPTZ |                                                    |
+| deleted_by  | UUID        |                                                    |
+| created_by  | UUID        |                                                    |
+| created_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()               |
+| updated_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()               |
+
+**Check:** `NOT (is_active AND is_deleted)`. Writable from the app since schema **1.39.0** (was list-only before). Read via `GET /departments?tenant_id=` (admin-service, super_admin only); written by hr-service.
+
+---
+
+### iam.api_clients
+
+Machine-to-machine API credentials for the Public API (tenant-issued keys, not user sessions).
+
+| Column              | Type        | Constraints                                              |
+| ------------------- | ----------- | ---------------------------------------------------------- |
+| id                  | UUID        | PK, DEFAULT gen_uuidv7()                                    |
+| tenant_id           | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE          |
+| name                | VARCHAR(120)| NOT NULL                                                     |
+| key_prefix          | TEXT        | NOT NULL — display-only, e.g. `crmk_live_Ab12Cd`             |
+| key_hash            | TEXT        | NOT NULL, UNIQUE — HMAC-SHA256(pepper, raw key); the raw key is never stored |
+| scopes              | TEXT[]      | NOT NULL, DEFAULT '{}'                                       |
+| rate_limit_per_min  | INTEGER     | NOT NULL, DEFAULT 60                                         |
+| scope_all_orgs      | BOOLEAN     | NOT NULL, DEFAULT FALSE — TRUE = tenant-wide, ignores `iam.api_client_orgs` |
+| is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                                       |
+| expires_at          | TIMESTAMPTZ |                                                               |
+| last_used_at        | TIMESTAMPTZ |                                                               |
+| revoked_at          | TIMESTAMPTZ |                                                               |
+| created_by          | UUID        | FK → iam.users(id) ON DELETE SET NULL                        |
+| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                       |
+| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                       |
+
+Managed from `admin-web`'s API tokens screen (`app/dashboard/api-tokens`).
+
+---
+
+### iam.api_client_orgs
+
+Per-org scoping for an API client that is not tenant-wide.
+
+| Column        | Type | Constraints                                                          |
+| ------------- | ---- | ---------------------------------------------------------------------- |
+| api_client_id | UUID | NOT NULL, FK → iam.api_clients(id) ON DELETE CASCADE, PK (composite)   |
+| org_id        | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE, PK (composite) |
+
+Zero rows for a client means tenant-wide — but that shape is only valid when the client's `scope_all_orgs = TRUE`; a non-tenant-wide client with zero rows here has access to nothing.
 
 ---
 
@@ -1221,6 +1312,28 @@ own many rows here (multiple Pages and/or multiple Forms across campaigns).
 
 ---
 
+### ext.meta_forms
+
+Synced catalog of a tenant's Meta lead forms (from the Graph API), independent of the org-attribution mapping above — this is what the form lives *on*, not who it's routed *to*.
+
+| Column            | Type        | Constraints                          |
+| ----------------- | ----------- | -------------------------------------- |
+| id                | UUID        | PK (UUIDv7)                            |
+| tenant_id         | UUID        | NOT NULL, FK → entity.tenants(id)      |
+| page_id           | BIGINT      | NOT NULL                               |
+| form_id           | BIGINT      | NOT NULL, UNIQUE                       |
+| name              | TEXT        |                                        |
+| status            | TEXT        |                                        |
+| leads_count       | INT         |                                        |
+| meta_created_time | TIMESTAMPTZ |                                        |
+| last_synced_at    | TIMESTAMPTZ |                                        |
+| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                |
+| updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                |
+
+**View:** `ext.vw_meta_forms`
+
+---
+
 ### ext.meta_leads
 
 Raw Meta lead data linked to CRM marketing leads.
@@ -1399,6 +1512,42 @@ Seeded mapping (`db_scripts/01_init-lookup-data.sql`):
 
 ---
 
+### comms.message_templates
+
+Cross-product WhatsApp/email message templates, shared by every product service that sends notifications. Resolved by `(module, channel, name)` with most-specific audience winning: **org > tenant > global**.
+
+| Column                  | Type        | Constraints                                              |
+| ----------------------- | ----------- | ----------------------------------------------------------- |
+| id                      | UUID        | PK (UUIDv7)                                                  |
+| tenant_id               | UUID        | FK → entity.tenants(id) ON DELETE CASCADE; NULL = global template |
+| org_id                  | UUID        | FK → entity.organizations(id) ON DELETE CASCADE; NULL = tenant-wide |
+| module                  | TEXT        | NOT NULL — owning product (`lms`/`hr`/`task`/...)            |
+| channel                 | TEXT        | NOT NULL, CHECK IN (`whatsapp`,`email`)                       |
+| name                    | TEXT        | NOT NULL                                                      |
+| label                   | TEXT        | NOT NULL                                                      |
+| description             | TEXT        |                                                                |
+| provider_template_name  | TEXT        | WhatsApp only — the name registered with the messaging provider |
+| language_code           | TEXT        | NOT NULL, DEFAULT 'en'                                        |
+| subject                 | TEXT        | Email only                                                    |
+| body_template           | TEXT        | Email only                                                    |
+| preview_text            | TEXT        |                                                                |
+| header_fields           | TEXT[]      | NOT NULL, DEFAULT '{}'                                        |
+| body_fields             | TEXT[]      | NOT NULL, DEFAULT '{}'                                        |
+| sort_order              | INT         | NOT NULL, DEFAULT 0                                           |
+| is_active               | BOOLEAN     | NOT NULL, DEFAULT TRUE                                        |
+| is_deleted              | BOOLEAN     | NOT NULL, DEFAULT FALSE                                       |
+| deleted_at              | TIMESTAMPTZ |                                                                |
+| deleted_by              | UUID        |                                                                |
+| created_by              | UUID        |                                                                |
+| created_at              | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                           |
+| updated_at              | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                           |
+
+**Checks:** `org_id IS NULL OR tenant_id IS NOT NULL` (an org-scoped row must also be tenant-scoped); per-channel shape checks — a `whatsapp` row requires `provider_template_name` and forbids `subject`/`body_template`; an `email` row requires `subject`+`body_template` and forbids `provider_template_name`.
+**Read by:** communication-service, the stateless send relay described in Architecture.md's "Meta Conversion API"/permissions notes — it resolves the most specific matching row for a given `(module, channel, name)` and the caller's org/tenant.
+**Seed data:** `reference_data/05_comms_templates.sql`.
+
+---
+
 ### public.schema_versions
 
 Schema migration tracking.
@@ -1408,6 +1557,499 @@ Schema migration tracking.
 | version     | TEXT        | PK                                  |
 | description | TEXT        |                                     |
 | applied_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
+
+---
+
+## HR Schema (`hr.*`)
+
+Employee lifecycle, leave, attendance, shifts, and face verification. All tables follow the standard soft-delete recipe (`is_active`/`is_deleted`/`deleted_at`/`deleted_by`/`created_by`/`created_at`/`updated_at`, check `NOT (is_active AND is_deleted)`) unless noted otherwise. `org_id` FKs are `ON DELETE RESTRICT` throughout hr — a branch cannot be deleted while it still owns HR records.
+
+### hr.employment_types / hr.leave_types / hr.leave_request_statuses / hr.attendance_statuses
+
+Tenant-scoped lookups (see "Tenant-scoped lookups" above for the admin-CRUD/RLS pattern shared with `task.*`).
+
+| Column      | Type    | Constraints                                            |
+| ----------- | ------- | -------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                |
+| tenant_id   | UUID    | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE        |
+| name        | TEXT    | NOT NULL, UNIQUE per `(tenant_id, name)`                    |
+| label       | TEXT    | NOT NULL                                                    |
+| description | TEXT    |                                                              |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                      |
+
+Extra columns: `hr.leave_types.is_paid` (BOOLEAN, NOT NULL DEFAULT TRUE), `hr.leave_types.sort_order` (INT).
+
+---
+
+### hr.designations
+
+Job-title catalog, org-scoped (not tenant-scoped — a designation is defined per branch).
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| name | TEXT | NOT NULL |
+| *(+ standard soft-delete columns)* | | |
+
+---
+
+### hr.employee_profiles
+
+1:1 HR extension of `iam.users` — everything HR needs that identity doesn't carry.
+
+| Column               | Type         | Constraints                                                        |
+| -------------------- | ------------ | --------------------------------------------------------------------- |
+| user_id               | UUID         | PK, FK → iam.users(id) ON DELETE RESTRICT                             |
+| org_id                | UUID         | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT             |
+| tenant_id             | UUID         | NOT NULL, FK → entity.tenants(id) ON DELETE RESTRICT — **set by trigger** from `org_id`; used to enforce `employee_code` uniqueness per tenant |
+| employee_code         | TEXT         |                                                                        |
+| date_of_joining       | DATE         | NOT NULL                                                               |
+| date_of_exit          | DATE         | CHECK `date_of_exit >= date_of_joining`                                |
+| employment_type_id    | UUID         | FK → hr.employment_types(id) ON DELETE RESTRICT                        |
+| department_id         | UUID         | FK → iam.departments(id) ON DELETE RESTRICT                            |
+| designation_id        | UUID         | FK → hr.designations(id) ON DELETE RESTRICT                            |
+| probation_end_date    | DATE         |                                                                        |
+| weekly_off_pattern    | SMALLINT[]   | NOT NULL, DEFAULT '{0,6}' — 0=Sunday..6=Saturday                       |
+| metadata              | JSONB        | NOT NULL, DEFAULT '{}'                                                 |
+| reference_photo_url   | TEXT         | Face verification — **dormant**, superseded by the shared avatar (`iam.users.photo_key`); see Architecture.md → "Face verification" |
+| face_subject_id       | TEXT         | dormant, same note                                                     |
+| face_enrolled_at      | TIMESTAMPTZ  | dormant, same note                                                     |
+| face_consent_at       | TIMESTAMPTZ  | dormant, same note                                                     |
+| *(+ standard soft-delete columns)* |  |                                                                        |
+
+**Triggers:** `hr.set_employee_profile_tenant_id()` (derives `tenant_id` from `org_id`), `hr.soft_delete_employee_profile()`.
+
+---
+
+### hr.holiday_calendars
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| name | TEXT | NOT NULL |
+| year | INT | NOT NULL |
+| *(+ standard soft-delete columns)* | | |
+
+---
+
+### hr.holidays
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| calendar_id | UUID | FK → hr.holiday_calendars(id) ON DELETE CASCADE |
+| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| holiday_date | DATE | NOT NULL |
+| name | TEXT | NOT NULL |
+| is_optional | BOOLEAN | NOT NULL, DEFAULT FALSE |
+| *(+ standard soft-delete columns)* | | |
+
+**Unique:** `(calendar_id, holiday_date)`
+
+---
+
+### hr.leave_policies
+
+Accrual/entitlement rules per leave type, tenant-wide or org-specific.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| tenant_id | UUID | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE CASCADE; NULL = tenant-wide default |
+| leave_type_id | UUID | FK → hr.leave_types(id) ON DELETE RESTRICT |
+| accrual_frequency | TEXT | CHECK IN (`monthly`,`quarterly`,`yearly`,`none`), DEFAULT `none` |
+| accrual_amount | NUMERIC(5,2) | DEFAULT 0 |
+| max_balance | NUMERIC(5,2) | |
+| carry_forward | BOOLEAN | NOT NULL, DEFAULT FALSE |
+| max_carry_forward | NUMERIC(5,2) | |
+| max_consecutive_days | SMALLINT | |
+| min_notice_days | SMALLINT | DEFAULT 0 |
+| allow_half_day | BOOLEAN | NOT NULL, DEFAULT TRUE |
+| requires_document_after_days | SMALLINT | |
+| approval_levels | SMALLINT | NOT NULL, DEFAULT 1, CHECK >= 1 |
+| applicable_from | DATE | NOT NULL |
+| *(+ standard soft-delete columns)* | | |
+
+**Known follow-up (shared with `hr.hr_settings` and the per-product role catalogs before they were dropped):** tenant provisioning does not auto-seed these rows for a brand-new tenant yet.
+
+---
+
+### hr.hr_settings
+
+Per-tenant/org HR configuration (currently just the leave-cycle anchor month).
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| tenant_id | UUID | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE CASCADE; NULL = tenant-wide |
+| leave_cycle_start_month | SMALLINT | NOT NULL, DEFAULT 4, CHECK 1-12 |
+| created_at / updated_at | TIMESTAMPTZ | |
+
+---
+
+### hr.leave_requests
+
+Core leave-request entity.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| leave_type_id | UUID | FK → hr.leave_types(id) ON DELETE RESTRICT |
+| start_date / end_date | DATE | NOT NULL, CHECK `end_date >= start_date` |
+| start_half / end_half | TEXT | CHECK IN (`full`,`first_half`,`second_half`), DEFAULT `full` |
+| days_count | NUMERIC(5,2) | CHECK > 0 |
+| reason | TEXT | |
+| status_id | UUID | FK → hr.leave_request_statuses(id) ON DELETE RESTRICT |
+| document_url | TEXT | |
+| is_open | BOOLEAN | NOT NULL, DEFAULT TRUE — **trigger-maintained** from `status_id` |
+| *(+ standard soft-delete columns)* | | |
+
+**Constraint (exclusion):** no two open, non-deleted requests for the same user with overlapping `[start_date, end_date]` ranges (GiST).
+**Trigger:** `hr.set_leave_request_is_open()`.
+
+---
+
+### hr.leave_request_status_log
+
+Append-only transition log, mirrors `lms.lead_status_log`.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| request_id | UUID | FK → hr.leave_requests(id) ON DELETE CASCADE |
+| changed_by_id | UUID | FK → iam.users(id) ON DELETE SET NULL |
+| old_status_id | UUID | FK → hr.leave_request_statuses(id) |
+| new_status_id | UUID | NOT NULL, FK → hr.leave_request_statuses(id) |
+| note | TEXT | |
+| changed_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
+
+**Trigger:** `hr.log_leave_status_change()`.
+
+---
+
+### hr.leave_ledger
+
+Append-only source of truth for leave balances — the only way a balance changes.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| leave_type_id | UUID | FK → hr.leave_types(id) ON DELETE RESTRICT |
+| entry_type | TEXT | CHECK IN (`accrual`,`consumption`,`adjustment`,`carry_forward`,`encashment`,`lapse`) |
+| amount | NUMERIC(6,2) | CHECK <> 0 |
+| leave_request_id | UUID | FK → hr.leave_requests(id) ON DELETE SET NULL |
+| period | TEXT | |
+| effective_date | DATE | NOT NULL |
+| note | TEXT | |
+| created_by / created_at | | |
+
+**View:** `hr.vw_leave_balances` sums this table per user/leave-type into a current balance.
+
+---
+
+### hr.leave_request_approvals
+
+One row per approval level in a request's chain, materialized at apply time from `iam.reporting_lines` (see Architecture.md → "The single reporting hierarchy" — this is what keeps an in-flight request stable across a re-org).
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| leave_request_id | UUID | FK → hr.leave_requests(id) ON DELETE CASCADE |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| level | SMALLINT | NOT NULL |
+| approver_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| action | TEXT | CHECK IN (`pending`,`approved`,`rejected`), DEFAULT `pending` |
+| acted_at | TIMESTAMPTZ | |
+| comment | TEXT | |
+| created_at | TIMESTAMPTZ | |
+
+**Unique:** `(leave_request_id, level)`
+**Function:** `hr.can_approve_leave(...)` resolves whether an actor may act on a given level; `resolveApprovers`/`buildApproverChain` (hr-service) build the chain from `iam.fn_manager_chain`.
+
+---
+
+### hr.attendance_rules
+
+Per-org (or tenant-default) attendance policy — geofencing, photo requirements, face-match config, half/full-day thresholds. This is the table Architecture.md's "Face verification" section documents behaviorally; it had no Table Details entry until now.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| tenant_id | UUID | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT; NULL = tenant default |
+| geofence_enabled | BOOLEAN | NOT NULL, DEFAULT TRUE |
+| geofence_radius_meters | INT | DEFAULT 200, CHECK > 0 |
+| require_photo | BOOLEAN | NOT NULL, DEFAULT TRUE |
+| require_geo | BOOLEAN | NOT NULL, DEFAULT TRUE |
+| allow_wfh_checkin | BOOLEAN | NOT NULL, DEFAULT FALSE |
+| require_face_match | BOOLEAN | NOT NULL, DEFAULT FALSE — off by default |
+| face_match_threshold | NUMERIC(5,2) | DEFAULT 85, CHECK 50-100 |
+| face_match_action | TEXT | CHECK IN (`flag`,`block`), DEFAULT `flag` |
+| photo_change_cooldown_days | INT | DEFAULT 30, CHECK >= 0 |
+| image_retention_days | INT | DEFAULT 90, CHECK >= 1 |
+| min_half_day_minutes | SMALLINT | DEFAULT 240, CHECK 0-1440 |
+| min_full_day_minutes | SMALLINT | DEFAULT 480, CHECK 0-1440; CHECK `min_half_day_minutes <= min_full_day_minutes` |
+| regularization_approval_levels | SMALLINT | DEFAULT 1, CHECK >= 1 |
+| regularization_max_backdate_days | SMALLINT | DEFAULT 30, CHECK 0-365 |
+| *(+ standard soft-delete columns)* | | |
+
+**Trigger:** `hr.set_attendance_rules_tenant_id()`.
+
+---
+
+### hr.shifts / hr.shift_segments / hr.shift_assignments
+
+**hr.shifts** — one row per named shift definition, org-scoped.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| name | TEXT | NOT NULL |
+| start_time / end_time | TIME | NOT NULL |
+| grace_minutes | SMALLINT | DEFAULT 10 |
+| min_half_day_minutes / min_full_day_minutes | SMALLINT | DEFAULT 240 / 480 |
+| is_night_shift | BOOLEAN | NOT NULL, DEFAULT FALSE |
+| is_split | BOOLEAN | NOT NULL, DEFAULT FALSE |
+| *(+ standard soft-delete columns)* | | |
+
+**hr.shift_segments** — for split shifts, the individual on/off windows within one shift.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| shift_id | UUID | FK → hr.shifts(id) ON DELETE CASCADE |
+| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| seq | SMALLINT | NOT NULL, CHECK >= 1 |
+| start_time / end_time | TIME | NOT NULL |
+| *(+ standard soft-delete columns)* | | |
+
+**hr.shift_assignments** — which user works which shift, effective-dated.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| shift_id | UUID | FK → hr.shifts(id) ON DELETE RESTRICT |
+| effective_from | DATE | NOT NULL |
+| effective_to | DATE | CHECK >= effective_from |
+| *(+ standard soft-delete columns)* | | |
+
+**Constraint (exclusion):** no overlapping non-deleted assignments per user (GiST) — mirrors `iam.reporting_lines`' one-open-line pattern.
+
+---
+
+### hr.attendance_geo_exceptions
+
+Per-user carve-out from geofencing (remote role or approved WFH), effective-dated.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| exception_type | TEXT | CHECK IN (`remote_role`,`wfh`) |
+| effective_from | DATE | NOT NULL |
+| effective_to | DATE | |
+| reason | TEXT | NOT NULL, CHECK length >= 3 |
+| *(+ standard soft-delete columns)* | | |
+
+**Constraint (exclusion):** no overlap per `(user_id, org_id, exception_type)` (GiST).
+
+---
+
+### hr.attendance_events
+
+Append-only raw punch log — the source `hr.attendance_days` resolves from. See Architecture.md → "Punch integration" for the face-verification write path.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| event_type | TEXT | CHECK IN (`check_in`,`check_out`) |
+| occurred_at | TIMESTAMPTZ | DEFAULT CLOCK_TIMESTAMP() |
+| source | TEXT | CHECK IN (`web`,`mobile`,`biometric`,`api`) |
+| geo_lat / geo_lng | NUMERIC(9,6) | |
+| distance_from_org_m | NUMERIC(10,2) | |
+| is_within_geofence | BOOLEAN | |
+| is_wfh | BOOLEAN | DEFAULT FALSE |
+| geo_exception_type | TEXT | CHECK IN (`remote_role`,`wfh`) |
+| photo_url | TEXT | |
+| face_match_score | NUMERIC(5,2) | dormant — see Face verification |
+| face_match_passed | BOOLEAN | dormant |
+| face_review_status | TEXT | CHECK IN (`pending`,`cleared`,`rejected`), dormant |
+| is_off_segment | BOOLEAN | |
+| ip | TEXT | |
+| device_info | JSONB | |
+| created_at | TIMESTAMPTZ | |
+
+---
+
+### hr.attendance_days
+
+One resolved row per `(user, work_date)` — the daily rollup screens read from.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| work_date | DATE | NOT NULL |
+| first_in / last_out | TIMESTAMPTZ | |
+| worked_minutes | INT | |
+| status_id | UUID | FK → hr.attendance_statuses(id) ON DELETE RESTRICT |
+| is_late / is_early_exit | BOOLEAN | DEFAULT FALSE |
+| has_off_window_punch / has_open_session / has_pending_face_review | BOOLEAN | DEFAULT FALSE |
+| leave_request_id | UUID | FK → hr.leave_requests(id) ON DELETE SET NULL |
+| resolved_at | TIMESTAMPTZ | |
+| resolution_source | TEXT | CHECK IN (`events`,`leave`,`holiday`,`weekly_off`,`regularization`,`job`) |
+| created_at / updated_at | TIMESTAMPTZ | |
+
+**Unique:** `(user_id, work_date)`
+**Computed by:** the shared `computeDayResolution` (`lib/attendance/day-resolution.ts`), called both from the nightly job and from the face-review clear/reject actions — see Architecture.md → "Review queue".
+
+---
+
+### hr.attendance_regularizations / hr.attendance_regularization_approvals
+
+**hr.attendance_regularizations** — a user's request to correct a resolved day.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| work_date | DATE | NOT NULL |
+| requested_status_id | UUID | FK → hr.attendance_statuses(id) ON DELETE RESTRICT |
+| requested_in / requested_out | TIMESTAMPTZ | |
+| reason | TEXT | NOT NULL |
+| status | TEXT | CHECK IN (`pending`,`approved`,`rejected`,`cancelled`), DEFAULT `pending` |
+| approver_id | UUID | FK → iam.users(id) ON DELETE SET NULL |
+| acted_at | TIMESTAMPTZ | |
+| approver_comment | TEXT | |
+| *(+ standard soft-delete columns)* | | |
+
+**hr.attendance_regularization_approvals** — per-level approval chain, same shape as `hr.leave_request_approvals`. **Not yet reflected in Drizzle** (`msq-core/packages/db/src/schema/tables/*.ts` has an `attendance-regularizations.table.ts` but no corresponding `-approvals` file — a follow-up for the ORM layer, not just this doc).
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| regularization_id | UUID | FK → hr.attendance_regularizations(id) ON DELETE CASCADE |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| level | SMALLINT | NOT NULL |
+| approver_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| action | TEXT | CHECK IN (`pending`,`approved`,`rejected`), DEFAULT `pending` |
+| acted_at | TIMESTAMPTZ | |
+| comment | TEXT | |
+| created_at | TIMESTAMPTZ | |
+
+**Unique:** `(regularization_id, level)`
+**Function:** `hr.can_approve(...)` — approver-scope check shared with the review queue (same authority as leave: manager subtree, `hr_admin`, `org_admin`).
+
+---
+
+## Task Schema (`task.*`)
+
+### task.task_statuses / task.task_priorities
+
+Tenant-scoped lookups (same shape/RLS/admin-CRUD pattern as `hr.*`'s tenant-scoped lookups above).
+
+| Column      | Type    | Constraints                                            |
+| ----------- | ------- | -------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                |
+| tenant_id   | UUID    | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE        |
+| name        | TEXT    | NOT NULL, UNIQUE per `(tenant_id, name)`                    |
+| label       | TEXT    | NOT NULL                                                    |
+| description | TEXT    |                                                              |
+| sort_order  | INT     | NOT NULL, DEFAULT 0                                          |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                       |
+
+`task.task_statuses` additionally has `is_terminal` (BOOLEAN, NOT NULL DEFAULT FALSE) — mirrors `lms.lead_stage.is_terminated`'s role in the weighted-assignment deficit calc, but for task screens that need to distinguish "done" from "open" statuses generically.
+
+---
+
+### task.task_lists
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| name | TEXT | NOT NULL |
+| description | TEXT | |
+| owner_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| visibility | TEXT | CHECK IN (`private`,`team`,`org`), DEFAULT `private` |
+| *(+ standard soft-delete columns)* | | |
+
+---
+
+### task.tasks
+
+Core task entity. Supports subtasks (self-FK) and a polymorphic soft link to another product's record (e.g. a task tied to a lead or a leave request).
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| list_id | UUID | FK → task.task_lists(id) ON DELETE SET NULL |
+| title | TEXT | NOT NULL |
+| description | TEXT | |
+| assignee_id | UUID | FK → iam.users(id) ON DELETE SET NULL |
+| due_at | TIMESTAMPTZ | |
+| priority_id | UUID | FK → task.task_priorities(id) ON DELETE RESTRICT |
+| status_id | UUID | NOT NULL, FK → task.task_statuses(id) ON DELETE RESTRICT |
+| parent_task_id | UUID | self-FK ON DELETE SET NULL, CHECK <> id |
+| related_entity_type / related_entity_id | TEXT / UUID | polymorphic soft link — CHECK both-or-neither present |
+| tags | TEXT[] | NOT NULL, DEFAULT '{}' |
+| completed_at | TIMESTAMPTZ | |
+| recurrence_rule | TEXT | RFC 5545 recurrence string — **stored but not yet expanded**; no job materializes recurring instances today |
+| *(+ standard soft-delete columns)* | | |
+
+**Trigger:** `task.set_task_completion()` (syncs `completed_at` ↔ a terminal `status_id`, mirroring `lms.lead_follow_ups`' completion sync).
+
+---
+
+### task.task_status_log
+
+Append-only transition log.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| task_id | UUID | FK → task.tasks(id) ON DELETE CASCADE |
+| changed_by_id | UUID | FK → iam.users(id) ON DELETE SET NULL |
+| old_status_id | UUID | FK → task.task_statuses(id) |
+| new_status_id | UUID | NOT NULL, FK → task.task_statuses(id) |
+| note | TEXT | |
+| changed_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
+
+**Trigger:** `task.log_task_status_change()`.
+
+---
+
+### task.task_comments
+
+Append-only.
+
+| Column | Type | Constraints |
+| --- | --- | --- |
+| id | UUID | PK |
+| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
+| task_id | UUID | FK → task.tasks(id) ON DELETE CASCADE |
+| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
+| body | TEXT | NOT NULL |
+| created_at | TIMESTAMPTZ | |
 
 ---
 
@@ -1431,6 +2073,19 @@ Schema migration tracking.
 | `marketing.vw_campaign_lookup`               | marketing | yes              | Campaigns with resolved platform/status                    |
 | `marketing.vw_tenant_campaign_summary`       | marketing | yes              | Campaign performance by tenant                             |
 | `ext.view_meta_leads_complete`               | ext       | yes              | Meta leads joined to CRM marketing_leads, address, professional, demographics |
+| `lms.vw_lead_assignment_weights`             | lms       | yes              | Flat `(user_id, org_id, weight)` shape over `lms.lead_assignment_weights` — see that table's entry above |
+| `audit.vw_password_spray_alerts`             | audit     | yes              | Surfaces suspected password-spray patterns for the security dashboard |
+| `ext.vw_meta_forms`                          | ext       | yes              | Resolved view over `ext.meta_forms`                         |
+| `ext.vw_meta_capi_event_types`               | ext       | yes              | Active-rows-only view over `ext.meta_capi_event_types`      |
+| `ext.vw_lead_stage_capi_event_map`           | ext       | yes              | Resolves `stage_code`/`stage_label` + `capi_event_code`/`capi_event_label` over `ext.lead_stage_capi_event_map` |
+| `hr.vw_leave_balances`                       | hr        | yes              | Current leave balance per (user, leave_type), summed from `hr.leave_ledger` |
+| `hr.vw_leave_requests_enriched`              | hr        | yes              | Leave requests with resolved user/leave-type/status display fields |
+| `hr.vw_team_leave_calendar`                  | hr        | yes              | Team leave calendar for a manager's subtree                 |
+| `hr.vw_attendance_monthly_summary`           | hr        | yes              | Per-user monthly attendance rollup                          |
+| `hr.vw_org_attendance_today`                 | hr        | yes              | Today's resolved attendance for an org                      |
+| `task.vw_tasks_enriched`                     | task      | yes              | Tasks with resolved assignee/status/priority/list display fields |
+
+> `<product>.vw_member_roles` (previously listed here) was **dropped at schema 1.40.0** along with the per-product role/grant tables — see "Retired: per-product role tables" above.
 
 ---
 
@@ -1475,8 +2130,33 @@ Schema migration tracking.
 | `iam.fn_org_active_users(UUID)`          | iam    | Returns array of user UUIDs with active access to org   |
 | `iam.fn_user_org_rank(UUID,UUID)`        | iam    | Returns user's role rank in a specific org              |
 | `iam.purge_expired_token_blocklist()`    | iam    | Cleanup: removes expired token blocklist entries        |
-| `<product>.fn_member_rank(UUID,UUID)`    | lms/hr/task | Returns user's active product rank in an org, or -1 |
-| `<product>.fn_member_role(UUID,UUID)`    | lms/hr/task | Returns `(role, rank)` of the user's active product grant in an org, or `(NULL,-1)` — per-service role resolver (P1.3) |
+| `iam.fn_mapping_org(UUID)`               | iam    | Resolves a `user_org_mapping_id` to its `org_id` — the required indirection for RLS on per-product membership-extension tables (see "Per-product settings on a membership" above); a direct subquery into `iam.user_org_mapping` is re-filtered by that table's own FORCE'd policies and silently returns NULL |
+| `iam.fn_user_can_manage_users(UUID,UUID)`| iam    | SECURITY DEFINER — may this actor create/manage users in *that* org; added 1.43.0, drives the 5 write policies under "User management is a capability, per branch" |
+| `iam.fn_user_org_role(UUID,UUID)`        | iam    | Resolves a user's effective `iam.user_roles` row for a given org (tenant-copy-wins resolution) |
+| `iam.fn_role_capability_matrix(UUID)`    | iam    | Resolves the full effective (tenant override → platform default → deny) capability grant matrix for a tenant, walking `iam.capabilities`' tree with ancestor-denial cascade — see "A denied parent silently kills its whole subtree" in Architecture.md |
+| `iam.fn_actor_can_act_in_org(UUID,UUID)` | iam    | The user-row eligibility check mirrored by `lms.check_lead_fk_org_scope()` on insert — see "Weighted auto-assignment" in Architecture.md |
+| `iam.fn_notify_capability_change()`      | iam    | Trigger support for capability-change notifications |
+| `iam.set_user_platform_role()`           | iam    | Trigger: maintains `iam.users.platform_role` |
+| `audit.fn_detect_password_spray(...)`    | audit  | Backs `audit.vw_password_spray_alerts` |
+| `hr.set_employee_profile_tenant_id()`    | hr     | Trigger: derives `hr.employee_profiles.tenant_id` from `org_id` |
+| `hr.soft_delete_employee_profile()`      | hr     | Trigger: soft-delete for `hr.employee_profiles` |
+| `hr.set_leave_request_is_open()`         | hr     | Trigger: maintains `hr.leave_requests.is_open` from `status_id` |
+| `hr.log_leave_status_change()`           | hr     | Trigger: writes `hr.leave_request_status_log` |
+| `hr.can_approve_leave(...)`              | hr     | Approver-scope check for `hr.leave_request_approvals` — manager subtree, hr_admin, org_admin |
+| `hr.set_attendance_rules_tenant_id()`    | hr     | Trigger: derives `hr.attendance_rules.tenant_id` from `org_id` |
+| `hr.can_approve(...)`                    | hr     | Approver-scope check shared by regularizations and the face-review queue |
+| `task.set_task_completion()`             | task   | Trigger: syncs `task.tasks.completed_at` with a terminal `status_id` |
+| `task.log_task_status_change()`          | task   | Trigger: writes `task.task_status_log` |
+| `entity.seed_tenant_defaults(UUID)`      | entity | Provisioning entry point — copies each licensed catalog's current version into a new tenant (see "Tenant default catalogs") |
+| `entity.reset_tenant_catalog(UUID,TEXT,INT?)` | entity | Restores one catalog to a default version, FK-safe (preserves row ids) |
+| `entity._apply_catalog_rows(...)`        | entity | Shared per-catalog copy helper behind the two functions above |
+| `entity.provision_tenant(...)`           | entity | Documented end-to-end tenant-provisioning entry point (`10_tenant_provisioning.sql`) — calls the `seed_tenant_*` family below |
+| `entity.seed_tenant_lms_catalogs(...)`   | entity | Mechanism-2 template-row cloning for the 7 LMS/marketing lookups — see "Two provisioning mechanisms" above |
+| `entity.seed_tenant_rbac(...)`           | entity | Mechanism-2 cloning for RBAC template rows |
+| `entity.seed_tenant_comms(...)`          | entity | Mechanism-2 cloning for `comms.message_templates` |
+| `entity.seed_tenant_geo(...)`            | entity | Mechanism-2 cloning for geo defaults |
+
+> `<product>.fn_member_rank(UUID,UUID)` / `<product>.fn_member_role(UUID,UUID)` (previously listed here) were **dropped at schema 1.40.0** along with the per-product role/grant tables — see "Retired: per-product role tables" above. Role/rank resolution now goes through `iam.fn_user_org_role` instead.
 
 ---
 

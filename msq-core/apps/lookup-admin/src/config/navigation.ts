@@ -23,14 +23,14 @@ export const ADMIN_NAV: NavGroup[] = [
             id: m.key,
             label: m.label,
             href: `/dashboard/m/${m.key}`,
-            capability: CAPABILITY.ADMIN_ROLES_MANAGE,
+            capability: CAPABILITY.SUPERADMIN_ROLES_MANAGE,
             exact: true,
           }
         : {
             id: m.key,
             label: m.label,
             href: `/dashboard/m/${m.key}`,
-            capability: CAPABILITY.ADMIN_LOOKUPS,
+            capability: CAPABILITY.SUPERADMIN_LOOKUPS,
           },
     ),
   },

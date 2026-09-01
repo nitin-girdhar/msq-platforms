@@ -137,7 +137,7 @@ Two details in that script are load-bearing and are commented in place:
   triggers that write to `audit.audit_log`, so clearing it early leaves behind
   the ~17k rows the cleanup itself generated.
 
-Verified: after cleanup, all 84 tables hold exactly the row counts of a fresh
+Verified: after cleanup, all 85 tables hold exactly the row counts of a fresh
 `reference_data`-only deploy.
 
 ## tools/

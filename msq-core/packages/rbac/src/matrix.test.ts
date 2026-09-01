@@ -5,7 +5,7 @@ import {
   type CapabilityKind,
   type CapabilityNode,
 } from './matrix.js';
-import { isPlatformAdminCapability } from './capabilities.js';
+import { isSuperAdminCapability, canOpenAdminConsole } from './capabilities.js';
 
 // A miniature of the real seed's shape (db_scripts/07_seed_lookup_data.sql):
 // two tools, pages beneath them, a tab under a page, and operations/scopes at
@@ -154,21 +154,31 @@ describe('ownGrantsByKey', () => {
 });
 
 // Guards the rule admin-service enforces on write and the Capability Matrix
-// screen renders as a locked row. Both call this one function, so a divergence
-// here is a screen that offers a save the server refuses.
-describe('isPlatformAdminCapability', () => {
-  it('claims the admin tool and its whole subtree', () => {
-    for (const key of ['admin', 'admin.lookups', 'admin.lookups.manage', 'admin.roles.manage']) {
-      expect(isPlatformAdminCapability(key)).toBe(true);
+// screen now hides outright. Both call this one function, so a divergence here
+// is a screen that offers a save the server refuses.
+describe('isSuperAdminCapability', () => {
+  it('claims the superadmin tool and its whole subtree', () => {
+    for (const key of [
+      'superadmin',
+      'superadmin.lookups',
+      'superadmin.lookups.manage',
+      'superadmin.roles.manage',
+    ]) {
+      expect(isSuperAdminCapability(key)).toBe(true);
     }
   });
 
-  // The reason this is a named predicate and not an inline `startsWith('admin')`
-  // at each call site. HR and Tasks both have "admin" surfaces that are ordinary
-  // tenant capabilities — sweeping them in would lock a tenant out of assigning
-  // its own leave policies and shift rules.
-  it('does not claim the HR or Tasks admin surfaces', () => {
+  // The whole point of the namespace split: `admin.*` is the TENANT admin
+  // console and must stay freely assignable, alongside the HR and Tasks admin
+  // surfaces which have always been ordinary tenant capabilities. Sweeping any
+  // of them in would lock a tenant out of managing its own team, API tokens,
+  // leave policies or shift rules.
+  it('does not claim the tenant admin console or the HR/Tasks admin surfaces', () => {
     for (const key of [
+      'admin',
+      'admin.team',
+      'admin.team.manage',
+      'admin.api_tokens.manage',
       'hr.attendance.admin',
       'hr.attendance.admin.shifts.manage',
       'hr.leave.admin',
@@ -176,16 +186,47 @@ describe('isPlatformAdminCapability', () => {
       'tasks.lists',
       'tasks.lists.manage',
       'lms',
-      'platform.api_tokens.manage',
+      'platform.write',
     ]) {
-      expect(isPlatformAdminCapability(key)).toBe(false);
+      expect(isSuperAdminCapability(key)).toBe(false);
     }
   });
 
   // The dot guard: a sibling tool whose name merely starts with the same letters
   // is a different root, not a descendant.
   it('requires a dot boundary, not a bare string prefix', () => {
-    expect(isPlatformAdminCapability('administration')).toBe(false);
-    expect(isPlatformAdminCapability('admin_console')).toBe(false);
+    expect(isSuperAdminCapability('superadministration')).toBe(false);
+    expect(isSuperAdminCapability('superadmin_console')).toBe(false);
+  });
+});
+
+// The cross-product "Admin" pill must appear for exactly the users admin-web's
+// own dashboard guard admits — a non-empty filtered ADMIN_NAV — so this predicate
+// and that guard have to agree.
+describe('canOpenAdminConsole', () => {
+  it('admits any actor holding a capability under the admin tool', () => {
+    for (const caps of [
+      ['admin.team', 'admin.team.view', 'admin.team.view.team'],
+      ['admin.team.view.team'],
+      ['admin.api_tokens', 'admin.api_tokens.view'],
+      ['lms.leads', 'admin.team', 'admin.team.manage'],
+    ]) {
+      expect(canOpenAdminConsole({ capabilities: caps })).toBe(true);
+      expect(canOpenAdminConsole({ capabilities: new Set(caps) })).toBe(true);
+    }
+  });
+
+  it('denies an actor with no admin.* grant, whatever their rank implies', () => {
+    expect(canOpenAdminConsole({ capabilities: ['lms', 'lms.leads', 'lms.leads.view.org'] })).toBe(false);
+    expect(canOpenAdminConsole({ capabilities: [] })).toBe(false);
+    expect(canOpenAdminConsole(null)).toBe(false);
+    expect(canOpenAdminConsole(undefined)).toBe(false);
+  });
+
+  it('does not treat the bare admin root or a look-alike tool as openable', () => {
+    // Grants cascade downward, so a real console user always has admin.<something>;
+    // the bare root alone is the "no screens enabled" state admin-web rejects.
+    expect(canOpenAdminConsole({ capabilities: ['admin'] })).toBe(false);
+    expect(canOpenAdminConsole({ capabilities: ['administration.things'] })).toBe(false);
   });
 });

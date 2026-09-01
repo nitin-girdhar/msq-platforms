@@ -14,6 +14,8 @@ import { logActivity } from '@platform/audit-log';
 import { revokeAllUserSessions } from '../../../lib/jwt.js';
 import { clearLockout } from '../auth/auth.repository.js';
 import { config } from '../../../config/index.js';
+import { sendUserEmail } from '../../../lib/communication-service-client.js';
+import { buildAccountCreatedEmail, buildPasswordResetEmail, buildBranchChangedEmail } from './user-emails.js';
 import * as repo from './users.repository.js';
 import type { UpdateUserFields } from './users.repository.js';
 
@@ -230,23 +232,81 @@ async function assertCanManageTarget(
   return { targetRank, targetOrgId };
 }
 
+export type UserListScope = 'reports' | 'org' | 'tenant';
+
+/**
+ * The widest slice of the roster this actor may read, and therefore the default
+ * when the client asks for none.
+ *
+ * The ladder is NOT invented here — `lms.users.view.team` ("Only people reporting
+ * to them") and `lms.users.view.org` ("Everyone in the branch") already exist in
+ * the capability tree and are already granted per role, and `canOpenTeam` in
+ * @lms/authz already gates the Team route on the team rung. This reads the same
+ * ladder rather than adding a second, parallel notion of scope.
+ *
+ * Two sources, widest wins, for the reason getAssignableUsers documents below:
+ * the platform tiers do not sit on the lms.* ladder — tenant_admin holds no
+ * `lms.users.view.*` scope at all — so the capability answer alone would narrow
+ * an admin to nothing. `canSeeOrgFilter` is the platform-tier half.
+ *
+ * Widest-not-narrowest is deliberate: a tenant admin who also has direct reports
+ * still opens on the whole tenant, so existing admins see no change, and the UI's
+ * scope switcher is what narrows.
+ */
+async function widestScopeFor(ctx: RoleTxContext, roleName: string | null): Promise<UserListScope> {
+  if (canSeeOrgFilter(ctx.role)) return 'tenant';
+
+  const tenantId = await resolveTenantId(ctx);
+  const held = resolveScope(
+    { capabilities: await capabilitiesFor(tenantId, roleName) },
+    CAPABILITY.ADMIN_TEAM_VIEW,
+  );
+  // 'all' and 'tenant' both mean cross-branch reach; 'own' has no roster meaning
+  // (a directory of yourself), so it floors at the subtree like 'team'.
+  switch (held) {
+    case 'all':
+    case 'tenant': return 'tenant';
+    case 'org':    return 'org';
+    default:       return 'reports';
+  }
+}
+
 export async function listUsers(
   ctx: RoleTxContext,
   actorRank: number,
   page: number,
   pageSize: number,
   orgId?: string,
+  requestedScope?: UserListScope,
+  roleName: string | null = null,
 ) {
   // Only actors whose scope actually crosses orgs (tenant admin+) may look up another
   // org's users — same threshold as the Leads History org filter. Anyone else's org_id
   // param is ignored and they get their own org, same as before this param existed.
   const canQueryOtherOrg = canSeeOrgFilter(ctx.role);
   const effectiveOrgId = orgId && canQueryOtherOrg ? orgId : undefined;
-  // Tenant admin+ with no explicit org_id sees every branch in the tenant, not just
-  // their own — mirrors the Leads History "tenant" scope instead of silently
-  // defaulting to a single org.
-  const tenantWide = canQueryOtherOrg && !effectiveOrgId;
-  return repo.listUsers(ctx, actorRank, page, pageSize, effectiveOrgId, tenantWide);
+
+  // The requested scope is a REQUEST, never an authority — a branch-level actor
+  // asking for 'tenant' is silently downgraded rather than refused, matching how
+  // `org_id` above is ignored for the same actor. 'reports' and 'org' need no
+  // gate: both are already inside whatever the actor can reach.
+  const widest = await widestScopeFor(ctx, roleName);
+  const RANKED: UserListScope[] = ['reports', 'org', 'tenant'];
+  // Downgrade anything above what the actor holds, rather than refusing it —
+  // same posture as `org_id` above, which is ignored for an actor who may not
+  // use it. Narrowing is always allowed: asking for your own team is never a
+  // widening of reach.
+  const scope: UserListScope =
+    requestedScope && RANKED.indexOf(requestedScope) <= RANKED.indexOf(widest)
+      ? requestedScope
+      : widest;
+
+  // An explicit org_id is a branch filter, so it pins the listing to that branch
+  // whatever the scope says — asking for one branch and getting the whole tenant
+  // back would be the more surprising outcome.
+  const tenantWide = scope === 'tenant' && !effectiveOrgId;
+
+  return repo.listUsers(ctx, actorRank, page, pageSize, effectiveOrgId, tenantWide, scope);
 }
 
 export async function getUserById(ctx: RoleTxContext, targetUserId: string) {
@@ -409,7 +469,7 @@ export async function getOrgChart(ctx: RoleTxContext) {
   return repo.getOrgChart(ctx);
 }
 
-export async function createUser(ctx: RoleTxContext, actorRank: number, data: CreateUserInput) {
+export async function createUser(ctx: RoleTxContext, actorRank: number, data: CreateUserInput, notify = false) {
   // Multi-branch path: every branch/role pair is validated against the tenant
   // and the actor's ceiling before anything is written.
   const resolved = data.org_assignments
@@ -476,6 +536,26 @@ export async function createUser(ctx: RoleTxContext, actorRank: number, data: Cr
       },
     });
 
+    // Welcome email with the temp password. Fire-and-forget — a mail failure
+    // must not fail user creation (the temp password is still returned in the
+    // response for the admin to relay by hand). Gated on admin.team.notify in
+    // the controller; `notify` is already the ANDed decision.
+    if (notify) {
+      const mail = buildAccountCreatedEmail({
+        firstName: data.first_name,
+        email: data.email,
+        tempPassword: temporaryPassword,
+        forcePasswordChange: data.force_password_change ?? true,
+      });
+      void sendUserEmail({
+        orgId: ctx.org_id,
+        userId: ctx.user_id,
+        tenantId: ctx.tenant_id,
+        to: data.email,
+        ...mail,
+      });
+    }
+
     return {
       id: result.id,
       email: data.email,
@@ -487,9 +567,46 @@ export async function createUser(ctx: RoleTxContext, actorRank: number, data: Cr
   }
 }
 
-export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUserId: string, data: UpdateUserInput) {
+export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUserId: string, data: UpdateUserInput, notify = false) {
   const beforeUser = await repo.getUserByIdAsService(targetUserId);
   if (!beforeUser) throw new NotFoundError('User not found');
+
+  // Recipient details for the optional branch-change notification. Read once
+  // here from the pre-change row; the send itself is fire-and-forget below.
+  const targetEmail = (beforeUser as Record<string, unknown>)['email'] as string | undefined;
+  const targetFirstName = (beforeUser as Record<string, unknown>)['first_name'] as string | undefined;
+
+  // Resolve a set of org ids to display names for the email. Fire-and-forget
+  // context — a lookup miss just drops that name from the list.
+  const branchNames = async (orgIds: string[]): Promise<string[]> => {
+    const unique = [...new Set(orgIds.filter(Boolean))];
+    if (unique.length === 0) return [];
+    try {
+      const rows = await repo.getOrgsInTenant(unique, ctx.tenant_id);
+      const byId = new Map(rows.map((r) => [r.id, r.name]));
+      return unique.map((id) => byId.get(id) ?? id);
+    } catch {
+      return unique;
+    }
+  };
+
+  const notifyBranchChange = (added: string[], removed: string[], newHomeBranch: string | null) => {
+    if (!notify || !targetEmail) return;
+    if (added.length === 0 && removed.length === 0 && !newHomeBranch) return;
+    const mail = buildBranchChangedEmail({
+      firstName: targetFirstName ?? null,
+      added,
+      removed,
+      newHomeBranch,
+    });
+    void sendUserEmail({
+      orgId: ctx.org_id,
+      userId: ctx.user_id,
+      tenantId: ctx.tenant_id,
+      to: targetEmail,
+      ...mail,
+    });
+  };
 
   // Cannot modify a user who currently outranks the actor.
   const currentRank = Number((beforeUser as Record<string, unknown>)['rank'] ?? 0);
@@ -666,6 +783,15 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
       },
     });
 
+    if (notify && targetEmail && (reconcile.added.length || reconcile.removed.length || homeMoved)) {
+      const [addedNames, removedNames, homeNames] = await Promise.all([
+        branchNames(reconcile.added),
+        branchNames(reconcile.removed),
+        homeMoved ? branchNames([newHomeOrgId]) : Promise.resolve([]),
+      ]);
+      notifyBranchChange(addedNames, removedNames, homeNames[0] ?? null);
+    }
+
     // Same contract as the legacy path: rank and org_id are baked into the JWT,
     // so a branch or role change must not survive in an unrevoked token.
     if (homeMoved || reconcile.updated.length > 0 || reconcile.removed.length > 0) {
@@ -748,6 +874,10 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
         reassigned_leads: branchMove?.reassignedLeadsCount ?? 0,
       },
     });
+
+    const [fromNames] = await Promise.all([branchNames([targetOrgId])]);
+    const toName = branchMove?.newOrgName ?? null;
+    notifyBranchChange(toName ? [toName] : [], fromNames, toName);
   }
 }
 
@@ -763,6 +893,7 @@ export async function resetPassword(
   actorRank: number,
   targetUserId: string,
   data: ResetPasswordInput,
+  notify = false,
 ) {
   const { targetOrgId } = await assertCanManageTarget(actorRank, targetUserId);
   const targetCtx: RoleTxContext = { ...ctx, org_id: targetOrgId };
@@ -811,6 +942,28 @@ export async function resetPassword(
     org_id: ctx.org_id,
     ...(useOverrideFloor ? { new_value: { policy_override: true } } : {}),
   });
+
+  // Tell the user their password changed. Fire-and-forget; the temp password is
+  // included only when the SYSTEM generated it — when the admin typed a specific
+  // one (data.new_password) the value is never emailed. Gated on
+  // admin.team.notify in the controller.
+  if (notify) {
+    const target = await repo.getUserByIdAsService(targetUserId);
+    const to = (target as Record<string, unknown> | null)?.['email'] as string | undefined;
+    if (to) {
+      const mail = buildPasswordResetEmail({
+        firstName: ((target as Record<string, unknown>)['first_name'] as string | undefined) ?? null,
+        tempPassword: data.new_password ? null : temporaryPassword,
+      });
+      void sendUserEmail({
+        orgId: ctx.org_id,
+        userId: ctx.user_id,
+        tenantId: ctx.tenant_id,
+        to,
+        ...mail,
+      });
+    }
+  }
 
   return { temporary_password: temporaryPassword };
 }

@@ -74,10 +74,11 @@ export const users = {
     new_password?: string,
     override_policy?: boolean,
     force_password_change?: boolean,
+    send_email_notification?: boolean,
   ) =>
     request<{ success: true; data: { temporary_password: string } }>(`/users/${id}/reset-password`, {
       method: 'POST',
-      body: JSON.stringify({ new_password, override_policy, force_password_change }),
+      body: JSON.stringify({ new_password, override_policy, force_password_change, send_email_notification }),
     }),
 
   // `product` is required: it gates candidates on that product's CAPABILITY

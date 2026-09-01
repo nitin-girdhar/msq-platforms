@@ -303,6 +303,11 @@ Import generic building blocks from `@platform/ui-kit` rather than re-implementi
 
 - `Modal` — controlled (`open`, `onClose`, `title`, `maxWidth`, `locked`); Escape-to-close,
   `role="dialog"` + `aria-modal`. See `packages/ui/src/components/Modal/Modal.tsx`.
+  **Backdrop click does NOT close by default** — form modals must not discard input on a
+  stray click or a text-selection drag that ends outside. Pass `closeOnBackdropClick` only
+  on read-only viewers (detail/history dialogs); even then the modal closes only when the
+  press and release both land on the backdrop. Escape and the X button always close
+  (subject to `locked` during an in-flight submit).
 - `Pagination`, `DownloadButton`, `MonthGrid`, `Placeholder`.
 - Hooks: `useDropdown`, `useIsMobile`.
 - `createApiClient` (fetch wrapper).

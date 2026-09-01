@@ -20,6 +20,7 @@
     "@platform/auth-constants": "workspace:*",
     "@platform/authz": "workspace:*",
     "@platform/rbac": "workspace:*",
+    "@platform/team-web": "workspace:*",
     "@platform/types": "workspace:*",
     "@platform/ui-kit": "workspace:*",
     "ag-grid-community": "^35.3.0",

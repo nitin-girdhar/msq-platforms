@@ -19,6 +19,15 @@ html, body {
 
 html, body { min-height: 100%; }
 
+/* At lg+, the dashboard shell (app/dashboard/layout.tsx) caps itself at the
+   viewport with `lg:h-full lg:overflow-hidden` so the left rail and main scroll
+   independently. `h-full` only resolves against a definite height, so the
+   viewport height has to be pinned here — without it the rail stretches to the
+   full page content and its bottom-pinned collapse button drifts off-screen. */
+@media (min-width: 1024px) {
+  html, body { height: 100%; }
+}
+
 /* Modal / bottom sheet content scrollbar */
 .sheet-scroll {
   scrollbar-width: thin;

@@ -4,6 +4,18 @@ export const listUsersQuerySchema = z.object({
   page:      z.coerce.number().int().positive().default(1),
   page_size: z.coerce.number().int().positive().max(500).default(100),
   org_id:    z.string().uuid().optional(),
+  // Which slice of the roster to return.
+  //   'reports' — the actor's reporting subtree (iam.vw_user_team_members), at
+  //               any depth. Available to everyone; a manager with no reports
+  //               legitimately gets an empty list.
+  //   'org'     — the actor's branch. Today's behaviour for a branch-level actor.
+  //   'tenant'  — every branch in the tenant. Tenant-wide actors only.
+  // Deliberately NOT defaulted here: the default is the widest scope the ACTOR
+  // qualifies for, which the schema cannot know. The service resolves it and
+  // downgrades any scope the actor may not have — a client-supplied 'tenant'
+  // from a branch-level actor is ignored, never honoured. Same rule
+  // getAssignableQuerySchema states for its own `scope`.
+  scope:     z.enum(['reports', 'org', 'tenant']).optional(),
 });
 
 export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;

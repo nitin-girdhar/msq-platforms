@@ -479,7 +479,7 @@ CREATE POLICY tenant_isolation_policy ON audit.activities AS PERMISSIVE FOR SELE
 -- ----------------------------------------
 -- The predicate is iam.fn_user_can_manage_users(actor, THE ROW'S org_id), which
 -- is TRUE for org_admin/tenant_admin/super_admin (verbatim as before) or for any
--- role the tenant granted `lms.users.manage` in the Capability Matrix screen.
+-- role the tenant granted `admin.team.manage` in the Capability Matrix screen.
 -- It replaced a bare `fn_user_org_rank(...) >= 980`, under which granting that
 -- capability to a tenant-defined role changed nothing: the UI showed the button,
 -- identity-service passed the request, and the INSERT was refused here — so the
@@ -536,6 +536,70 @@ CREATE POLICY assignable_read_policy ON iam.user_org_mapping AS PERMISSIVE FOR S
       NULLIF(current_setting('app.current_user_id', true), '')::uuid,
       NULLIF(current_setting('app.current_org_id',  true), '')::uuid
     ) >= 40
+  );
+
+-- ── LMS.LEAD_ASSIGNMENT_WEIGHTS ───────────────────────────────────
+-- The weight row is an extension of ONE iam.user_org_mapping row, so it is
+-- reachable exactly when that membership row is: the three app_user policies
+-- below are org_admin_read/insert/update_policy above with the row's own org_id
+-- replaced by iam.fn_mapping_org(user_org_mapping_id), and the tenant policy is
+-- tenant_isolation_policy with the same substitution. Keeping them
+-- byte-comparable to the originals is deliberate — if the membership policies
+-- change, these must change with them, and a reader has to be able to see that
+-- at a glance.
+--
+-- The table has no org_id of its own (that is the point of keying off the
+-- membership id), and an inline subquery into iam.user_org_mapping would be
+-- re-filtered by that table's own FORCE'd policies, so the org has to be
+-- resolved through the SECURITY DEFINER helper.
+--
+-- No self_read_policy: a user is never shown their own lead-assignment weight,
+-- only the admins who manage the branch's rotation are.
+ALTER TABLE lms.lead_assignment_weights ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lms.lead_assignment_weights FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS org_admin_read_policy   ON lms.lead_assignment_weights;
+DROP POLICY IF EXISTS org_admin_insert_policy ON lms.lead_assignment_weights;
+DROP POLICY IF EXISTS org_admin_update_policy ON lms.lead_assignment_weights;
+DROP POLICY IF EXISTS tenant_isolation_policy ON lms.lead_assignment_weights;
+
+CREATE POLICY org_admin_read_policy ON lms.lead_assignment_weights AS PERMISSIVE FOR SELECT TO app_user
+  USING (
+    iam.fn_mapping_org(user_org_mapping_id) = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, iam.fn_mapping_org(user_org_mapping_id))
+  );
+
+CREATE POLICY org_admin_insert_policy ON lms.lead_assignment_weights AS PERMISSIVE FOR INSERT TO app_user
+  WITH CHECK (
+    iam.fn_mapping_org(user_org_mapping_id) = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, iam.fn_mapping_org(user_org_mapping_id))
+  );
+
+CREATE POLICY org_admin_update_policy ON lms.lead_assignment_weights AS PERMISSIVE FOR UPDATE TO app_user
+  USING (
+    iam.fn_mapping_org(user_org_mapping_id) = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, iam.fn_mapping_org(user_org_mapping_id))
+  )
+  WITH CHECK (
+    iam.fn_mapping_org(user_org_mapping_id) = ANY(iam.fn_user_active_orgs(NULLIF(current_setting('app.current_user_id', true), '')::uuid))
+    AND iam.fn_user_can_manage_users(NULLIF(current_setting('app.current_user_id', true), '')::uuid, iam.fn_mapping_org(user_org_mapping_id))
+  );
+
+-- tenant_admin manages the rotation across every branch in their tenant.
+CREATE POLICY tenant_isolation_policy ON lms.lead_assignment_weights AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (
+    iam.fn_mapping_org(user_org_mapping_id) IN (
+      SELECT id FROM entity.organizations
+      WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid
+        AND NOT is_deleted
+    )
+  )
+  WITH CHECK (
+    iam.fn_mapping_org(user_org_mapping_id) IN (
+      SELECT id FROM entity.organizations
+      WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid
+        AND NOT is_deleted
+    )
   );
 
 ALTER TABLE ext.meta_tenant_config ENABLE ROW LEVEL SECURITY;

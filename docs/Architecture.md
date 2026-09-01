@@ -16,6 +16,8 @@ Browser
                           ├─→ identity-service       (4001)  (auth + users + orgs)
                           ├─→ leads-service          (4002)  (leads + assignments + analytics + activities)
                           ├─→ meta-conversion-api    (4003)
+                          ├─→ notifications-service  (4004)  (LMS lead-event visibility notifications)
+                          ├─→ communication-service  (4005)  (stateless send relay; no rank authz — enforced at gateway; also called service-to-service by identity-service for Team notification emails)
                           ├─→ admin-service          (4006)  (super_admin-only CRUD for system lookup tables)
                           ├─→ hr-service             (4007)  (leave + attendance + shifts + face verification)
                           └─→ tasks-service          (4008)
@@ -26,13 +28,22 @@ Browser
                           │ compreface-ui(nginx, admin UI ops-only) → compreface-api ↔ compreface-core (ML) │
                           │ compreface-admin        ── all backed by compreface-postgres-db (its OWN DB,     │
                           │                            NOT the app cluster)                                  │
+                          │ Defined in msq-hrms/docker-compose.yml (nested repo), not the root compose file  │
                           └────────────────────────────────────────────────────────────────────────────────┘
 
-lookup-admin (port 3005) ─→ API Gateway (port 4000) ─→ admin-service (4006)
-  (super_admin-only web UI for managing lookup tables)
+admin-web    (port 3004) ─→ API Gateway (port 4000) ─→ identity-service / hr-service / etc.
+  (org/tenant-admin console — Team, API tokens, HR leave/attendance admin; capability-gated per screen,
+   not a single "admin" capability. Distinct from lookup-admin: this is for tenant/org admins, not super_admin.)
+
+lookup-admin (port 3005) ─→ API Gateway (port 4000) ─→ admin-service (4006) / leads-service / hr-service / tasks-service
+  (super_admin-only web UI for managing lookup tables, tenants, organizations, users, capabilities)
 
 Meta (Facebook) ─→ API Gateway /meta/webhook/:integrationId ─→ meta-conversion-api  (per-tenant app)
 Meta (Facebook) ─→ API Gateway /meta/webhook                ─→ meta-conversion-api  (shared app, multi-tenant)
+
+caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) — reverse-proxies
+  *.app.com subdomains to the per-product apps locally, simulating the production SSO cookie-domain
+  topology described under JWT & auth below. Optional; only relevant when testing cross-product SSO.
 ```
 
 ## API endpoints (via Gateway — port 4000)
@@ -144,7 +155,7 @@ Three postgres.js pools exist, all with `transform: { column: { from: postgres.t
 ### Transaction helpers
 
 - **`withRoleTx(ctx, fn)`** — Dispatches based on `ctx.role`: `super_admin` uses serviceDb, `tenant_admin` uses tenantDb, others use appDb with `SET LOCAL ROLE app_user` + GUCs.
-  - **`ctx.tenantWide`** — opt-in flag that selects the `tenant_admin` Postgres role for an actor whose *capability* reaches every branch in the tenant, even when `platform_role` is not literally `tenant_admin`. Cross-branch reach in this platform is a capability (`lms.leads.view.tenant`), but `platform_role` is a four-value denormalisation that collapses any tenant-defined role — a regional manager, say — to `member`. Without the flag such an actor passes every app-layer gate and then reads **zero** rows, because RLS is still pinned to `app.current_org_id`. This is not an RLS bypass: `tenant_isolation_policy` still fences every row to `app.current_tenant_id`, taken from the verified session, so it widens *branch* reach inside one tenant and can never cross tenants. Like `readOnly`, it is a caller assertion — whoever sets it must already have resolved the capability. Set today by `leads.repository.listLeads`, `orgs.repository.getOrgs`, `users.service.getAssignableUsers` and the bulk-assign write.
+  - **`ctx.tenantWide`** — opt-in flag that selects the `tenant_admin` Postgres role for an actor whose *capability* reaches every branch in the tenant, even when `platform_role` is not literally `tenant_admin`. Cross-branch reach in this platform is a capability (`lms.leads.view.tenant`), but `platform_role` is a four-value denormalisation that collapses any tenant-defined role — a regional manager, say — to `member`. Without the flag such an actor passes every app-layer gate and then reads **zero** rows, because RLS is still pinned to `app.current_org_id`. This is not an RLS bypass: `tenant_isolation_policy` still fences every row to `app.current_tenant_id`, taken from the verified session, so it widens *branch* reach inside one tenant and can never cross tenants. Like `readOnly`, it is a caller assertion — whoever sets it must already have resolved the capability. Set today by `leads.repository.listLeads`, `orgs.repository.getOrgs`, `users.service.getAssignableUsers` and the assignment writes. On the assignment paths (single assign/reassign/unassign and bulk) the flag is gated by **coverage**, not by the capability ladder: `writeCtxForOrg(ctx, leadOrgId)` in `assignments.service` asserts the lead's branch is one of `getCoveredOrgIds(ctx)` and otherwise throws 403. Gating on the ladder instead (`lms.leads.view` = tenant/all) is what broke Bulk Assign for multi-branch `org`-scope roles: they resolve to `org`, so picking any branch other than the one they were switched into read back zero leads and failed as "One or more leads were not found".
   - **`ctx.readOnly`** — adds `SET LOCAL transaction_read_only = on` (and `SET LOCAL ROLE readonly_user` on the app path) so a read path is physically incapable of writing. Applied on every `tenantWide` read.
 - **`withServiceTx(fn)`** — No role switch, BYPASSRLS. Used for auth lookups, seed scripts, activity logging, and webhook ingestion.
 
@@ -169,11 +180,19 @@ Assignments are **not** a separate table. The assignment is stored as `lms.marke
 
 When a new lead is created without an explicit `assigned_user_id` (Meta sync, manual lead creation), `resolveAutoAssignedUser(tx, orgId)` in leads-service (`services/leads-service/src/lib/assignment.ts` — moved out of `@platform/db` in P-1, it is LMS business logic) picks who receives it. Applies uniformly across every lead-creation path — both `services/meta-conversion-api/.../lead-sync.service.ts` and `services/leads-service/.../leads.repository.ts createLead()` call it.
 
-**Eligibility:** active `iam.user_org_mapping` row for the org, an **active, non-deleted `iam.users` row**, `lead_assignment_weight > 0`, a role rank strictly between `READ_ONLY` and `ADMIN` (org admins and read-only users are never auto-assigned leads), and a role holding the `LMS` capability.
+**Eligibility:** active `iam.user_org_mapping` row for the org, an **active, non-deleted `iam.users` row**, an `lms.lead_assignment_weights` row with `weight > 0`, a role rank strictly between `READ_ONLY` and `ADMIN` (org admins and read-only users are never auto-assigned leads), and a role holding the `LMS` capability.
 
-The user-row condition mirrors `iam.fn_actor_can_act_in_org`, which `lms.check_lead_fk_org_scope()` re-runs on insert. **The two predicates must stay identical.** When they drifted, a user deactivated via edit-user (which sets `iam.users.is_active = false` but leaves the mapping and its weight untouched — unlike `softDeleteUser`, which cascades) stayed selectable: the picker chose them, the trigger rejected them, and the insert RAISEd. Because a user who can never receive a lead keeps an open-lead count of 0, their deficit stays maximal and they win *every* pick — so the branch fails 100% of the time, not intermittently. Via the Meta webhook that surfaced as a 404 from intake and every inbound lead for that branch was silently dropped (Gurugram - Sector 104, Aug 13-24 2026).
+Since `1.44.0` the weight lives in `lms.lead_assignment_weights`, keyed by the membership's surrogate `iam.user_org_mapping.id`, rather than in a `lead_assignment_weight` column on the mapping itself — the mapping is shared by every product and only LMS ever read that column. **No row means weight 0**, so the picker's join to the weights table does the `> 0` filtering that the column's `NOT NULL DEFAULT 0` used to require an explicit predicate for. See *Per-product settings on a membership* in `docs/DB_model.md` for the pattern other products should follow instead of adding a column here.
 
-Deactivating a user now zeroes `lead_assignment_weight` across all their org mappings in the same transaction as the `is_active` write (identity-service `updateUser`). The mappings stay active so reactivation restores membership; weights are not restored, since the share has to be redistributed while the user is away.
+The user-row condition mirrors `iam.fn_actor_can_act_in_org`, which `lms.check_lead_fk_org_scope()` re-runs on insert. **The two predicates must stay identical.** When they drifted, a user deactivated via edit-user (which sets `iam.users.is_active = false` but leaves the mapping untouched — unlike `softDeleteUser`, which cascades) stayed selectable: the picker chose them, the trigger rejected them, and the insert RAISEd. Because a user who can never receive a lead keeps an open-lead count of 0, their deficit stays maximal and they win *every* pick — so the branch fails 100% of the time, not intermittently. Via the Meta webhook that surfaced as a 404 from intake and every inbound lead for that branch was silently dropped (Gurugram - Sector 104, Aug 13-24 2026).
+
+Deactivating a user now zeroes the weight on every one of their memberships in the same transaction as the `is_active` write (identity-service `updateUser`). The mappings stay active so reactivation restores membership; weights are not restored, since the share has to be redistributed while the user is away. `moveUserBranch` does the same for the branch being left — before `1.44.0` it handled the weight not at all, orphaning it on the deactivated mapping.
+
+**Who owns the leads a departing user leaves behind.** Both flows that remove a user from a branch — deactivation and a branch move — carry an optional `reassign_leads_to` on `PATCH /users/:id`, and the field is deliberately **three-valued**: a uuid hands the open leads to that user, `null` **unassigns** them (`lms.marketing_leads.assigned_user_id = NULL`), and `undefined` means the caller said nothing, so no reassignment runs at all. Identity-service forwards all three to leads-service's `POST /internal/leads/reassign-org`, which accepts a null `to_user_id` and stamps the run as a bulk unassign.
+
+Both server paths therefore gate on `!== undefined`, never on truthiness — `reassignUserLeadsInOrg` (deactivation) always did; `moveUserBranch` did not until this change, so a null branch move was indistinguishable from an omitted one and silently skipped the reassign, leaving the pipeline pointed at a user no longer in that org. That is precisely what the reassign-then-move saga exists to prevent, so the two paths now draw the same line.
+
+The UI never omits the key while the reassign panel is open: it requires a successor whenever the branch still has anyone eligible (`/users/assignable`, which gates on real branch membership and the LMS capability, not the rank ladder), and sends `null` only when it does not. Leads are never left owned by a login that can no longer act on them. The reassign only fires when the user actually **leaves** the branch — `homeMoved && !stillHoldsOldOrg` — so moving home between branches they keep strands nothing and is correctly a no-op.
 
 **Algorithm — deficit-based weighted round-robin:**
 1. Count each eligible user's current *open* workload: leads assigned to them in this org where the lead's stage has `is_terminated = false` (no hardcoded stage names — picks up `new`/`contacting`/`on_hold`/`qualified`, and any future non-terminal stage, automatically)
@@ -183,6 +202,28 @@ Deactivating a user now zeroes `lead_assignment_weight` across all their org map
 This deterministically converges to each user's target %, self-corrects as leads resolve (convert/reject/transfer), and is not retroactive — changing weights only affects future unassigned leads. If no users in the org have a weight set, `resolveAutoAssignedUser` returns `null` and the lead stays unassigned (today's default behavior, unchanged).
 
 **Managing weights:** `GET/PUT /users/assignment-weights` (identity-service, org-admin rank required for PUT). The PUT endpoint validates every `user_id` is actually eligible and that weights sum to exactly 100 (or all 0, disabling auto-assignment for the org) — both checked at the application layer inside the same transaction as the write, not via a DB constraint.
+
+### Multi-branch users on the roster (`GET /users`)
+
+Membership is one row per branch in `iam.user_org_mapping`, but a roster row's
+`org_id`/`org_name` resolve `iam.users.org_id` — the user's **home** branch only.
+Every row therefore also carries **`org_memberships`**: a JSON array of
+`{ org_id, org_name, role_label, is_home }`, home branch first, aggregated by a
+`LEFT JOIN LATERAL` in `listUsers` and scoped to the row's own tenant.
+
+`org_id`/`org_name` keep their old meaning, so this is additive for every
+existing caller. The rule for new code is the one the Team screen got wrong: any
+question of the form *"is this user in branch X"* must read `org_memberships`,
+never `org_id`. Filtering the Admin → Team grid on a single home id silently
+dropped everyone whose second branch was the one being filtered for — a wingman
+working two sectors vanished from the branch he actually works.
+
+The aggregate runs inside the same `withRoleTx` as the listing, so RLS decides
+which mapping rows are visible: an org-scoped actor sees only the memberships
+they are entitled to, and the array can never widen past the tenancy the scope
+clause already established. Admin → Team's Branch filter is gated on
+`RANKS.TENANT_ADMIN` regardless, and its option list comes from `/orgs/all` so a
+branch staffed only by non-home members is still selectable.
 
 ### Assignee picker vs. Assigned-To filter (`GET /users/assignable`)
 
@@ -242,6 +283,23 @@ actor covers is genuinely assignable. What differs is what the caller should pas
 
 The rank ceiling and the product-capability gate are unchanged on both paths: coverage decides
 *which branches*, never *who* within them.
+
+**Every picker sends a branch.** The Assignments page, the leads grid's edit modal and the
+walk-in/edit modal all resolve candidates for the org of the lead in hand (`useAssignableCandidates`
+in `@lms/web`, keyed on the lead's `org_id`); Bulk Assign sends the branch selected in its own
+dropdown. Passing nothing is reserved for callers with genuinely no single lead in context.
+
+**Membership is a mapping, not a home org.** The write side asks the same branch question the
+picker does: `getUserForAssignment(ctx, targetUserId, orgId)` resolves the target through
+`iam.user_org_mapping` **in the lead's branch**, so the returned rank is their rank there and a null
+row means "not an active member of that branch". Comparing the lead's org against `iam.users.org_id`
+— the target's *home* branch — is what rejected valid assignees with "The assignee must belong to
+the org the leads live in" whenever someone was mapped into one branch and homed in another.
+
+**Rows come back alphabetically** — `lower(coalesce(nullif(btrim(full_name),''), email))` — which is
+the label the pickers render. The previous seniority-first order (`rank DESC`) sorted on a field no
+picker displays, so the lists read as unordered. The web side sorts again in `toAssignableUsers`, so
+a caller that merges lists cannot undo it.
 
 ## Face verification (attendance)
 
@@ -367,17 +425,28 @@ Note: the webhook still returns 200 after a per-lead failure, so Meta does not r
 
 ## Permissions
 
+> **Stale since schema 1.40.0:** the per-product rank tables this section originally described
+> (`lms.member_roles`/`hr.member_roles`/`task.member_roles`, each backing its own `*_RANKS` scale)
+> were **dropped** — see `docs/DB_model.md` → "Retired: per-product role tables". Role/rank
+> resolution now runs through the single `iam.user_roles` table (rank range widened to 0-1000,
+> global anchors `read_only`=0 / `org_admin`=980 / `tenant_admin`=990 / `super_admin`=1000, with
+> tenant-defined roles occupying ranks between them) via `iam.fn_user_org_role`. The `*_RANKS`
+> constant objects in `@lms/authz`/`@hr/authz`/`@task/authz` may still exist as in-memory display
+> scales, but they no longer read from a `<product>.member_roles` table — verify against current
+> package source before relying on the specific numeric values below; they are left here as the
+> last-known ladder pending a source-code re-check.
+
 Since P1.3 there is no single global rank. Each product owns its own rank scale
 (comparable only within that product), and `@platform/authz` keeps only the coarse
 platform tiers. Rank is resolved **from the DB per request** (see JWT & auth above), never a header.
 
 **Platform tiers** (`@platform/authz` `RANKS`; from `platform_role`): `member` 0 · `org_admin` 80 · `tenant_admin` 90 · `super_admin` 100.
 
-**LMS** (`@lms/authz` `LMS_RANKS`, from `lms.member_roles`): read_only 0 · sales_representative 20 · senior_sales_executive 40 · org_manager 60 · org_sr_manager 70 · lms_admin 80.
+**LMS** (`@lms/authz` `LMS_RANKS`, last known): read_only 0 · sales_representative 20 · senior_sales_executive 40 · org_manager 60 · org_sr_manager 70 · lms_admin 80.
 
-**HR** (`@hr/authz` `HR_RANKS`, from `hr.member_roles`): hr_viewer 0 · hr_staff 40 · hr_manager 70 · hr_admin 80.
+**HR** (`@hr/authz` `HR_RANKS`, last known): hr_viewer 0 · hr_staff 40 · hr_manager 70 · hr_admin 80.
 
-**Tasks** (`@task/authz` `TASK_RANKS`, from `task.member_roles`): task_member 20 · task_lead 40 · task_admin 80.
+**Tasks** (`@task/authz` `TASK_RANKS`, last known): task_member 20 · task_lead 40 · task_admin 80.
 
 Cross-org / tenant-wide capabilities (e.g. Leads History "tenant"/"all" scope, moving a user's branch, tenant leave-admin) are **platform** concerns keyed on `platform_role` (`tenant_admin`/`super_admin`), not a product rank — a product rank tops out per-org at its admin tier (80) and cannot express "sees every org in the tenant".
 
@@ -407,6 +476,10 @@ and `canOpenAssignments` redirected the role away from both pages. Repaired by
 `db_scripts/one_time/fix_pre_sales_captain_page_grants.sql`. **When granting an operation,
 grant its ancestors too** — and when auditing a role, read
 `iam.fn_role_capability_matrix(tenant)`, never `iam.role_capabilities` alone.
+(The keys above are the ones that incident used; `lms.users*` is `admin.team*` since
+`1.45.0` — see *Capability namespace split* below. The failure mode is unchanged, and the
+namespace split is itself an instance of it: every role granted an `admin.*` child had to be
+granted the `admin` tool in the same migration, or the child would have resolved to nothing.)
 
 Note the asymmetry: a `page`/`tab` child with no explicit row *inherits* its parent
 (`COALESCE(g.is_granted, w.nav_inherited)`), while an `operation`/`scope` child with no row
@@ -429,9 +502,130 @@ while the identical `LeadEditModal` reached from Follow-ups was populated, becau
 This is advisory UI gating only, as always: `GET /users/assignable`, `iam.can_assign_to` and
 RLS remain the enforcement boundary.
 
+### Team is one shared module, scoped to the reporting line (`1.45.0`)
+
+The people directory used to exist twice — `lms-web`'s Users and `admin-web`'s Team, forks of one
+screen that had drifted (only one had export, only one had the password-policy override, they
+disagreed about who could set a password). It is now a single module, `@platform/team-web`,
+following `@hr/web`'s pattern: the package exports the page-level `TeamShell`, its capability
+predicates and a server loader, and a host mounts it with a workspace dep, a `transpilePackages`
+entry and a thin `page.tsx`. Mounted today in admin-web only; lms-web's `/dashboard/users`
+redirects to it and its `/dashboard/team` stays a `Placeholder`, so adding a second mount later is
+those same three lines rather than a third fork.
+
+**The roster follows the org chart, not the rank ladder.** `GET /users` previously scoped by
+branch or tenant and then filtered `ur.rank < actorRank` — "everyone below me in my branch", which
+is not the same thing as "my team": a manager saw their peers' reports, and a manager with no
+reports saw a full branch roster. It now takes `scope=reports|org|tenant`:
+
+| scope | source | rank band |
+|---|---|---|
+| `reports` | joins `iam.vw_user_team_members` (the actor's subtree at any depth) | `ur.rank <= actorRank` |
+| `org` | the actor's branch | `ur.rank < actorRank` |
+| `tenant` | every branch in the tenant | `ur.rank < actorRank` |
+
+The subtree was already there and unused by this screen: `iam.reporting_lines` is the hierarchy,
+`iam.fn_subtree_members` walks it, and `iam.vw_user_team_members` wraps that with the user/role
+joins and a `depth`. (`iam.users.manager_id` is a display mirror — its own trigger comment says
+never to read it for authority.) Note `getTeamMembers` is **not** a substitute: it hard-filters
+`org_id = ctx.org_id`, so a multi-branch manager's reports elsewhere are invisible to it.
+
+The band relaxing to `<=` under `reports` only is deliberate and worth not "fixing": inside the
+subtree, membership is the authority for whom the actor may act on, and `canManageUser` has always
+permitted a peer at the same rank — so a same-rank direct report should be visible and manageable.
+The branch and tenant scopes keep the strict `<`, so no existing admin's view changed.
+
+Scope is resolved **server-side** from the actor's `admin.team.view.*` rung
+(`resolveScope`), with `canSeeOrgFilter` as the platform-tier half because tenant_admin holds no
+`admin.team.view.*` scope at all. The default is the WIDEST rung held, so admins saw no change on
+deploy. A client may only narrow: a requested scope above what the actor holds is silently
+downgraded, and the response echoes the scope actually run so the switcher cannot mislabel what is
+on screen.
+
+**Departments give no isolation.** A user has no department; it reaches them through the role
+(`iam.user_roles.department_id`) and is a UI filter over the role dropdown. A sales manager sees
+their sales subtree because those people report to them — so if a fitness trainer's reporting line
+points at a sales manager, that manager sees them. Correct, but it means the feature is only as
+good as the reporting-line data: where `iam.reporting_lines` is sparse, `reports` is an empty
+screen.
+
+### Capability namespace split: `admin.*` is the tenant console (`1.45.0`)
+
+Two consoles with confusingly similar names, and the namespace belonged to the wrong one.
+
+| console | origin | port | what it is |
+|---|---|---|---|
+| `lookup-admin` | `admin.app.com` | 3005 | the **platform operator** console — cross-tenant lookups, role/grant definition |
+| `admin-web` | `admin-web.app.com` | 3004 | the **tenant admin** console — Team, API tokens, Leave, Attendance |
+
+`admin.*` belonged to lookup-admin and was never assignable to a tenant role: admin-service's
+`putGrants` refuses it below `super_admin`, because `admin.roles.manage` **defines capability
+grants** — holding it means being able to grant yourself anything. Meanwhile admin-web, which
+tenants actually use, had **no namespace at all**: Team borrowed `platform.write` for its nav
+entry and sat behind a `rank >= ORG_ADMIN` floor on the whole console, so its screens could not
+be delegated by permission. A role granted the directory capability still could not reach it.
+
+The split gives each console its own root:
+
+- **`superadmin.*`** — the operator keys, unchanged in meaning (`superadmin.lookups`,
+  `superadmin.lookups.manage`, `superadmin.roles.manage`). `@platform/rbac`'s
+  `isSuperAdminCapability()` (was `isPlatformAdminCapability`) is the shared prefix test that
+  `putGrants` and the Capability Matrix both call. The matrix now **hides** that subtree for a
+  role that cannot hold it rather than rendering it locked — a visible control invites the click,
+  and the one beneath it hands out the ability to grant anything. The hide is an affordance; the
+  server-side refusal remains the boundary and was not relaxed.
+- **`admin.*`** — the tenant console, freely assignable like any product tool, holding
+  `admin.team` (was `lms.users` — the directory manages fitness, HR-only and every other user,
+  and is mounted outside the CRM) and `admin.api_tokens` (was `platform.api_tokens` — a console
+  screen, so it sits with the console's others).
+- **`platform.*`** keeps only `platform.write`. The dividing line: `admin.*` is a console's
+  screens, `platform.*` is behaviour that applies everywhere regardless of console.
+  `platform.write` must **not** move — it decides whether an account can write at all, in every
+  app, and as `admin.write` every role needing to write anything would also need the `admin`
+  tool, putting the console in everyone's nav.
+
+Renames, not aliases, following `platform.api_tokens`' own move out of `lms.apiclients*`: exactly
+one name per capability, the old key stays gone.
+
+**One deny did not survive the move.** Grants are repointed with `is_granted` carried through
+unchanged, because an explicit `FALSE` is a deny and losing one silently *grants* access. That
+holds for operations and scopes. It does **not** hold for the page node: a `lms.users` deny meant
+"hide the Users page from the CRM sidebar", and tenants set them freely — they were never the gate
+on admin-web's Team, which ran on rank + `platform.write`. Carried onto `admin.team` they hard-prune
+the subtree, and on UAT that left `tenant_admin` and `org_admin` unable to open Team in either
+tenant (and `super_admin` locked out in one) while their `admin.team.view`/`.manage` rows all read
+as granted — the *stored grants disagree with effective permission* failure again. The migration
+now drops page-level denies, which cannot widen access because opening Team still requires an
+affirmative `admin.team.view` grant plus a scope; `fix_admin_team_page_denies.sql` repairs a
+database migrated before that correction.
+
+**The coupling that makes this delicate.** `iam.fn_user_can_manage_users` resolves its capability
+key *by name*, and the write policies in the section below call it. Move the grants without the
+function, or the reverse, and every tenant-defined role loses the ability to write users — so
+`db_scripts/one_time/apply_capability_namespace_split.sql` does the whole thing in one
+transaction. The function short-circuits `super_admin`/`tenant_admin`/`org_admin` to TRUE before
+the lookup, so anchor roles are never at risk — **and therefore prove nothing**: only a
+tenant-defined role below rank 980 holding `admin.team.manage` can verify the migration.
+
+Two further rules the migration encodes. Grants are repointed by capability id with `is_granted`
+carried through **unchanged**, because an explicit `FALSE` is a deny and losing one silently
+*grants* access. And every role receiving an `admin.*` child is granted the `admin` tool in the
+same statement — without it the child resolves to nothing, the failure documented under
+*Denying a page prunes its subtree* above.
+
+With the namespace in place, admin-web's rank floor became a capability question: the console
+opens if `filterNavGroups(ADMIN_NAV, session)` returns anything, so a `senior_sales_executive`
+granted `admin.team.view.team` gets in and sees only Team.
+
+The cross-product **"Admin" pill** in `AppNavbar` (the LMS/HRMS switcher row) was still gated on
+`rank >= ANCHOR_RANK.ORG_ADMIN`, so that same user could reach the console only by typing its
+URL — the pill never appeared. It now uses `canOpenAdminConsole(actor)` from `@platform/rbac`
+(holds any `admin.*` capability), the shell-side equivalent of the `filterNavGroups` guard, so
+the affordance and the guard admit the same people.
+
 ### User management is a capability, per branch (`1.43.0`)
 
-Creating a user is authorized by **`lms.users.manage`, evaluated against the target branch** — not by a rank floor and not by the session's `org_id`.
+Creating a user is authorized by **`admin.team.manage`, evaluated against the target branch** — not by a rank floor and not by the session's `org_id`. (The key was `lms.users.manage` until `1.45.0`; the mechanism below is unchanged.)
 
 Before `1.43.0` four layers gated one `POST /users` and disagreed with each other: the UI showed the button to whoever held the capability, identity-service required `rank >= 40`, the service layer required `platform_role` ∈ {`tenant_admin`, `super_admin`} to touch any branch but the session's, and the RLS policies underneath required `iam.fn_user_org_rank(...) >= 980`. Granting `lms.users.manage` to a tenant-defined role was therefore inert — the request passed every application gate and the `iam.user_org_mapping` INSERT was refused by the database, surfacing as *"You do not have permission to grant access in this organisation."* The only way to delegate user creation was to hand out `org_admin`.
 
@@ -454,6 +648,16 @@ Rank did not go away; it answers a different question. `canGrantRole` / `canMana
 The branch picker follows the same rule: tenant-wide actors choose from `GET /orgs/all`, everyone else from `GET /auth/my-orgs` (their own mapping rows), merged by `branchOptionsForActor` in `@platform/ui-kit`.
 
 Existing databases: `db_scripts/one_time/apply_user_create_capability_authz.sql` (with a `_dryrun` that reports which roles gain the ability, and an `_ON_SERVER.sh` for UAT/prod).
+
+### Emailing the affected user on a Team action (`admin.team.notify`, `1.46.0`)
+
+Creating a user, resetting a password, or moving someone between branches from the **Team** modals can now email that person directly. Each modal carries a **"Notify user by email"** checkbox, ticked by default; unticking it skips the send.
+
+- **Gate**: a new operation capability `admin.team.notify` under `admin.team`. `identity-service`'s `users.controller` computes `notify = checkbox-not-unticked AND hasCapability(admin.team.notify)` and passes it to the service. The capability is authoritative for **every** role — anchor roles included, no `rank ≥ org_admin` short-circuit — because `admin.team.notify` ships with a per-tenant back-fill pinned to `admin.team.manage` (`03_roles_and_grants.sql`), so every role that can manage the team already holds it, and a tenant that unticks it in the Capability Matrix (`is_granted = FALSE`) genuinely turns the emails off. The checkbox is hidden in the UI (`canNotifyUser` in `team-web`) when the actor lacks the grant, but the controller is the real enforcement: a forged `send_email_notification: true` from a role without the capability sends nothing. This is **authorization for an outbound notification only** — unlike `admin.team.manage` it has no `iam.fn_user_can_manage_users` / RLS coupling and touches no write path, so removing the short-circuit can never lock anyone out (worst case: an email not sent).
+- **Transport**: `users.service` calls `lib/communication-service-client.ts` → `communication-service` `POST /api/v1/communications/public-send` with `X-Internal-Secret` (bypassing the gateway's `read_only` send-guard, which is correct — the controller already authorized). The call is **fire-and-forget**, same posture as `logActivity`: a mail failure only `console.error`s, it never fails the admin's request, and the temporary password is still returned in the HTTP response for manual relay. Bodies are built inline in `api/v1/users/user-emails.ts` (no `comms.message_templates` renderer yet).
+- **Content**: account-created (login URL + temp password), password-reset (temp password included only when system-generated — never when the admin typed a specific one), branch-changed (added/removed branch names + new home branch). `APP_NAME` / `AUTH_URL` drive the product name and sign-in link.
+
+Existing databases: `db_scripts/one_time/apply_admin_team_notify_capability.sql` (+ `_dryrun`).
 
 ## The single reporting hierarchy (P4, `1.27.0`)
 
@@ -509,18 +713,35 @@ Defaults are **versioned and immutable**: `entity.catalog_defaults` holds the ro
 
 All packages live in `packages/` and are consumed via workspace references (`@crm/*`). They compile to ESM via `tsc` (`"module": "NodeNext"`). Services import from them; they never import from each other (no circular deps).
 
-| Package | Purpose |
-|---|---|
-| `@platform/db` | Connection pools, Drizzle schema, transaction helpers, blocklist |
-| `@platform/types` | Shared TypeScript interfaces |
-| `@crm/validation` | Zod schemas for request validation |
-| `@platform/authz` | Identity/tenancy checks (`hasRole`, `hasMinimumRole`, `hasAnyRole`), org-scope resolution, user-management rank gates, product-grant primitive (`hasProduct`/`assertProduct`), and the coarse platform-tier `RANKS` + `platformRank()` (the shared cross-product ladder was dissolved in P1.3) |
-| `@lms/authz` | Sales roles + LMS business rules (`leads`, `assignments`, tenant business rules) + the `LMS_RANKS` scale |
-| `@hr/authz` | HR authority helpers (leave/attendance/employee management) |
-| `@task/authz` | Task scope gates |
-| `@crm/permissions` | **Deprecated compat barrel** — re-exports the four `*/authz` packages so existing imports keep working; being migrated away and then removed |
-| `@platform/auth-constants` | AUTH_COOKIE_NAME and other auth constants |
-| `@crm/internal-client` | HTTP client for inter-service calls |
+### Platform packages (`msq-core/packages/`)
+
+| Package | Folder | Purpose |
+|---|---|---|
+| `@platform/db` | `db` | Connection pools, Drizzle schema, transaction helpers, blocklist |
+| `@platform/types` | `types` | Shared TypeScript interfaces |
+| `@platform/validation` | `platform-validation` | Zod schemas for request validation (folder is `platform-validation`; package name is `@platform/validation`, not `@crm/validation`) |
+| `@platform/authz` | `platform-authz` | Identity/tenancy checks (`hasRole`, `hasMinimumRole`, `hasAnyRole`), org-scope resolution, user-management rank gates, product-grant primitive (`hasProduct`/`assertProduct`), and the coarse platform-tier `RANKS` + `platformRank()` (the shared cross-product ladder was dissolved in P1.3) |
+| `@platform/rbac` | `rbac` | The capability primitive — `can(actor, CAPABILITY.…)` — read by the gateway, every service, `@platform/db`, and `@platform/ui-kit` for UI gating (see "UI gating reads capabilities" below) |
+| `@platform/ui-kit` | `ui` | Shared Next.js shell/middleware for every product app — `AppSidebar`, `MobileSidebar`, `UserMenu`, `ProductSwitcher`, `createProductMiddleware()` (SSO cookie verification + redirect), `shell/nav` (`NavGroup`/`filterNavGroups`), `branchOptionsForActor` |
+| `@platform/audit-log` | `audit-log` | `logActivity()` — fire-and-forget writer to `audit.activities`, called in-process by every service (see "Activity logging") |
+| `@platform/blob-storage` | `blob-storage` | Avatar/photo byte storage driver — backs `iam.users.photo_key` and the punch-selfie store used by face verification |
+| `@platform/http` | `http` | Shared HTTP client helpers for inter-service calls |
+| `@platform/logger` | `logger` | Shared `pino` logger wrapper |
+| `@platform/service-auth` | `service-auth` | Internal-service-secret auth — verifies the gateway-injected `X-Internal-Secret` header |
+| `@platform/auth-constants` | `auth-constants` | `AUTH_COOKIE_NAME` and other auth constants |
+| `@platform/team-web` | `team-web` | Shared team-management UI (`TeamShell`, `TeamTable`, `CreateUserModal`, `EditUserModal`, `ResetPasswordModal`) — extracted out of `admin-web` for reuse |
+| `@crm/permissions` | — | **Deprecated compat barrel** — re-exports the four `*/authz` packages so existing imports keep working; being migrated away and then removed |
+| `@crm/internal-client` | — | HTTP client for inter-service calls (superseded by `@platform/http` in newer services) |
+
+### Per-product packages (nested repos: `msq-lms`, `msq-hrms`, `msq-todo`)
+
+Each product repo carries the same three-package shape, plus a web-component package consumed by that product's own app (and cross-linked from `admin-web`/`lookup-admin` where relevant):
+
+| Product | Authz | Validation | Web components |
+|---|---|---|---|
+| LMS (`msq-lms/packages/`) | `@lms/authz` — sales roles + LMS business rules (`leads`, `assignments`, tenant business rules) + `LMS_RANKS` | `@lms/validation` | `@lms/web` |
+| HR (`msq-hrms/packages/`) | `@hr/authz` — leave/attendance/employee management authority | `@hr/validation` | `@hr/web` |
+| Tasks (`msq-todo/packages/`) | `@task/authz` — task scope gates | `@task/validation` | `@task/web` |
 
 ## Lookup table administration
 
@@ -573,3 +794,18 @@ All packages live in `packages/` and are consumed via workspace references (`@cr
 - `ext.meta_lead_professional` — job/company fields from Meta lead forms (1:1)
 - `ext.meta_lead_demographics` — demographic fields from Meta lead forms (1:1)
 - `ext.meta_capi_outbound_logs` — CAPI event audit trail with idempotency index
+
+## Tooling & operations
+
+Operational tooling that sits outside the request-flow diagram — not user-facing products, but part of "every tool we have."
+
+| Tool | Location | Purpose |
+|---|---|---|
+| **msq-e2e-validation** | own nested git repo (gitignored) | Playwright-based E2E validation harness that crawls every UI tool with every role, cross-checks results directly against Postgres, and produces severity-ranked findings (`results/SUMMARY.md`). Suites: `core` (auth-web + lookup-admin), `lms`, `hr`, `todo`, `capability`, `concurrency`, `visual`, `admin`, `tenant`. |
+| **msq-deploy/** | repo root | Deployment tooling — `build-deploy.ps1` builds/ships images; `artifacts/` bundles compose files + `db_scripts/` + `bootstrap-db.sh`/`deploy.sh` for target servers; `pg-backup/`/`pg-restore/` are cron-driven DB backup/restore scripts; `reports/` runs the daily lead-report job (`send-lead-report.sh` + cron setup, the job behind `lms.lead_report_snapshot`); `retention/retention-cleanup.sh` + `setup-cron.sh` install the daily punch-selfie retention job referenced in "Face verification" above. |
+| **scripts/** | repo root | `setup-env.js` (env scaffolding), `docker-ship.sh`/`docker-load.md` (image build/transfer between environments), `clean.js` (workspace clean). |
+| **db_scripts/tools/** | repo root | One-off tenant/org operational SQL scripts (branch onboarding, lead redistribution, deactivation), each paired with a `_dryrun` variant. |
+| **db_scripts/apply_schema.ps1 / db_deploy.ps1** | repo root | Schema apply/deploy runners — see `db_scripts/README.md` for file ordering (`00`–`10` base files, then `reference_data/`, then any pending `one_time/` scripts). |
+| **infra/** | repo root | `Caddyfile` (the local SSO reverse-proxy config, see the `caddy` service in the request-flow diagram above) and `maintenance.html`. |
+
+Also see "Database pools" above for the three postgres.js connection pools, and `docs/DB_model.md` for the full schema reference.

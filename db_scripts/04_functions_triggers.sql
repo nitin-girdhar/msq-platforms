@@ -141,6 +141,11 @@ CREATE TRIGGER trg_user_org_mapping_updated_at
   BEFORE UPDATE ON iam.user_org_mapping
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+DROP TRIGGER IF EXISTS trg_lead_assignment_weights_updated_at ON lms.lead_assignment_weights;
+CREATE TRIGGER trg_lead_assignment_weights_updated_at
+  BEFORE UPDATE ON lms.lead_assignment_weights
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
 -- ── RLS HELPER FUNCTIONS (SECURITY DEFINER) ───────────────────────
 -- These bypass RLS on iam.user_org_mapping so they can be used safely
 -- inside RLS policies on OTHER tables without recursive infinite loops.
@@ -155,6 +160,27 @@ DROP FUNCTION IF EXISTS iam.fn_org_active_users(UUID) CASCADE;
 CREATE FUNCTION iam.fn_org_active_users(p_org_id UUID)
 RETURNS UUID[] LANGUAGE sql STABLE SECURITY DEFINER AS $$
   SELECT ARRAY(SELECT user_id FROM iam.user_org_mapping WHERE org_id = p_org_id AND is_active)
+$$;
+
+-- Resolves the branch a membership belongs to, for RLS on the product
+-- extension tables that key off iam.user_org_mapping.id and therefore have no
+-- org_id column of their own (lms.lead_assignment_weights today; the HR/task
+-- equivalents when they arrive). Those tables' policies wrap this and then
+-- apply the SAME predicate iam.user_org_mapping's own policies use, so the
+-- extension row is reachable exactly when its membership row is.
+--
+-- SECURITY DEFINER for the reason stated above this block, and it matters more
+-- here than usual: iam.user_org_mapping is FORCE ROW LEVEL SECURITY, so an
+-- invoker-rights lookup would be filtered by that table's own policies and
+-- return NULL rather than raise -- turning every extension-table policy
+-- silently FALSE and making the weights invisible instead of erroring.
+--
+-- Leaks nothing on its own: it maps an id the caller must already hold to an
+-- org id, and every caller then has to prove reach into that org.
+DROP FUNCTION IF EXISTS iam.fn_mapping_org(UUID) CASCADE;
+CREATE FUNCTION iam.fn_mapping_org(p_mapping_id UUID)
+RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT org_id FROM iam.user_org_mapping WHERE id = p_mapping_id
 $$;
 
 -- The EFFECTIVE role a user acts with in one org — the single place the
@@ -1091,7 +1117,7 @@ END; $$;
 --
 -- Replaces the bare `fn_user_org_rank(...) >= 980` term the user_org_mapping,
 -- users and reporting_lines write policies used to carry. That floor meant a
--- tenant-defined role granted lms.users.manage in the Capability Matrix screen
+-- tenant-defined role granted admin.team.manage in the Capability Matrix screen
 -- passed every application gate and was then refused by RLS: the capability
 -- promised something the database would not honour, and the operator's only
 -- recourse was to hand out org_admin. Rank still answers "who outranks whom"
@@ -1128,7 +1154,7 @@ BEGIN
   SELECT bool_or(m.granted) INTO v_granted
   FROM iam.fn_role_capability_matrix(v_tenant) m
   WHERE m.role_name = v_role
-    AND m.capability_key = 'lms.users.manage';
+    AND m.capability_key = 'admin.team.manage';
 
   RETURN COALESCE(v_granted, FALSE);
 END; $$;

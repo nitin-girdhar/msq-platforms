@@ -11,6 +11,15 @@ export type { PlatformRole };
  */
 export type ProductKey = 'lms' | 'hr' | 'task';
 
+/** One (user, branch) membership row, as returned alongside a roster listing. */
+export interface OrgMembership {
+  org_id: string;
+  org_name: string;
+  /** The role this user holds IN THAT BRANCH, which need not be their home role. */
+  role_label: string;
+  is_home: boolean;
+}
+
 export interface SessionUser {
   id: string;
   email: string;
@@ -26,6 +35,18 @@ export interface SessionUser {
    */
   home_org_id: string;
   org_name: string;
+  /**
+   * Every active branch this user belongs to (iam.user_org_mapping), home
+   * branch first. `org_id`/`org_name` above are only ONE of these — the home
+   * branch — so any screen that answers "is this user in branch X" has to read
+   * this list instead, or it silently loses everyone who works more than one
+   * branch.
+   *
+   * Populated by the roster listing (GET /users) only; a real session carries
+   * no memberships, hence optional. Consumers must tolerate it being absent and
+   * fall back to the single home branch.
+   */
+  org_memberships?: OrgMembership[];
   tenant_id: string;
   tenant_name: string;
   role_label: string;

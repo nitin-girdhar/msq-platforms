@@ -23,6 +23,15 @@ body:json {
     "role_name": "sales_executive",
     "mobile": "9876543210",
     "manager_id": "{{userId}}",
-    "force_password_change": true
+    "force_password_change": true,
+    "send_email_notification": true
   }
+}
+
+docs {
+  send_email_notification (optional, default true): when true AND the acting
+  admin holds admin.team.notify (or rank >= org_admin), identity-service emails
+  the new user their login URL + temporary password via communication-service.
+  Set false to skip the email. Ignored — no email — if the actor lacks the
+  capability, whatever the flag says.
 }

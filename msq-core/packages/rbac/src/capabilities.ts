@@ -11,17 +11,22 @@
 // rows it may touch.
 
 export const CAPABILITY = {
-  // ── Tools (7) ──
+  // ── Tools (8) ──
+  // `admin` is the TENANT admin console (admin-web). `superadmin` is the
+  // platform operator console (lookup-admin) and is never assignable to a
+  // tenant role — see isSuperAdminCapability below.
   ADMIN:          'admin',
   HR_ATTENDANCE:  'hr.attendance',
   HR_EMPLOYEES:   'hr.employees',
   HR_LEAVE:       'hr.leave',
   LMS:            'lms',
   PLATFORM:       'platform',
+  SUPERADMIN:     'superadmin',
   TASKS:          'tasks',
 
   // ── Pages (13) ──
-  ADMIN_LOOKUPS:        'admin.lookups',
+  ADMIN_API_TOKENS:     'admin.api_tokens',
+  ADMIN_TEAM:           'admin.team',
   HR_ATTENDANCE_ADMIN:  'hr.attendance.admin',
   HR_LEAVE_ADMIN:       'hr.leave.admin',
   LMS_ANALYTICS:        'lms.analytics',
@@ -31,8 +36,7 @@ export const CAPABILITY = {
   LMS_FOLLOWUPS:        'lms.followups',
   LMS_HISTORY:          'lms.history',
   LMS_LEADS:            'lms.leads',
-  LMS_USERS:            'lms.users',
-  PLATFORM_API_TOKENS:  'platform.api_tokens',
+  SUPERADMIN_LOOKUPS:   'superadmin.lookups',
   TASKS_LISTS:          'tasks.lists',
 
   // ── Tabs (9) ──
@@ -46,9 +50,12 @@ export const CAPABILITY = {
   HR_LEAVE_ADMIN_HOLIDAYS:          'hr.leave.admin.holidays',
   HR_LEAVE_ADMIN_POLICIES:          'hr.leave.admin.policies',
 
-  // ── Operations (69) ──
-  ADMIN_LOOKUPS_MANAGE:                    'admin.lookups.manage',
-  ADMIN_ROLES_MANAGE:                      'admin.roles.manage',
+  // ── Operations (70) ──
+  ADMIN_API_TOKENS_MANAGE:                 'admin.api_tokens.manage',
+  ADMIN_API_TOKENS_VIEW:                   'admin.api_tokens.view',
+  ADMIN_TEAM_MANAGE:                       'admin.team.manage',
+  ADMIN_TEAM_NOTIFY:                       'admin.team.notify',
+  ADMIN_TEAM_VIEW:                         'admin.team.view',
   HR_ATTENDANCE_ADMIN_ASSIGNMENTS_MANAGE:  'hr.attendance.admin.assignments.manage',
   HR_ATTENDANCE_ADMIN_ASSIGNMENTS_VIEW:    'hr.attendance.admin.assignments.view',
   HR_ATTENDANCE_ADMIN_GEO_EXCEPTIONS_MANAGE: 'hr.attendance.admin.geo_exceptions.manage',
@@ -102,11 +109,9 @@ export const CAPABILITY = {
   LMS_LEADS_UNASSIGNED_VIEW:               'lms.leads.unassigned.view',
   LMS_LEADS_VIEW:                          'lms.leads.view',
   LMS_LEADS_WHATSAPP_SEND:                 'lms.leads.whatsapp.send',
-  LMS_USERS_MANAGE:                        'lms.users.manage',
-  LMS_USERS_VIEW:                          'lms.users.view',
-  PLATFORM_API_TOKENS_MANAGE:              'platform.api_tokens.manage',
-  PLATFORM_API_TOKENS_VIEW:                'platform.api_tokens.view',
   PLATFORM_WRITE:                          'platform.write',
+  SUPERADMIN_LOOKUPS_MANAGE:               'superadmin.lookups.manage',
+  SUPERADMIN_ROLES_MANAGE:                 'superadmin.roles.manage',
   TASKS_ASSIGN:                            'tasks.assign',
   TASKS_COMMENT:                           'tasks.comment',
   TASKS_CREATE:                            'tasks.create',
@@ -119,6 +124,8 @@ export const CAPABILITY = {
   TASKS_VIEW:                              'tasks.view',
 
   // ── Scopes — read with resolveScope(), not can() (30) ──
+  ADMIN_TEAM_VIEW_ORG:       'admin.team.view.org',
+  ADMIN_TEAM_VIEW_TEAM:      'admin.team.view.team',
   HR_ATTENDANCE_VIEW_ORG:    'hr.attendance.view.org',
   HR_ATTENDANCE_VIEW_OWN:    'hr.attendance.view.own',
   HR_ATTENDANCE_VIEW_TEAM:   'hr.attendance.view.team',
@@ -142,8 +149,6 @@ export const CAPABILITY = {
   LMS_LEADS_VIEW_OWN:        'lms.leads.view.own',
   LMS_LEADS_VIEW_TEAM:       'lms.leads.view.team',
   LMS_LEADS_VIEW_TENANT:     'lms.leads.view.tenant',
-  LMS_USERS_VIEW_ORG:        'lms.users.view.org',
-  LMS_USERS_VIEW_TEAM:       'lms.users.view.team',
   TASKS_EDIT_ANY:            'tasks.edit.any',
   TASKS_EDIT_OWN:            'tasks.edit.own',
   TASKS_EDIT_TEAM:           'tasks.edit.team',
@@ -172,35 +177,40 @@ function holds(actor: CapabilityHolder, key: string): boolean {
 }
 
 /**
- * Is `key` part of the PLATFORM ADMINISTRATION subtree — the `admin` tool and
+ * Is `key` part of the PLATFORM OPERATOR subtree — the `superadmin` tool and
  * everything under it?
  *
  * That subtree gates exactly one surface: the lookup-admin console, which is
  * super_admin-only and stays that way. Every route behind it re-checks
  * `rank >= SUPER_ADMIN` in admin-service on its own, and super_admin receives
- * these capabilities through the `*` wildcard grant in db_scripts/07 rather than
+ * these capabilities through the `*` wildcard grant in the seed rather than
  * through per-key rows. So granting one of these keys to a tenant role is never
  * something an operator wants: it cannot make the console work, only make it
- * open onto a screen where every call 403s. This predicate is what lets both
- * sides refuse that.
+ * open onto a screen where every call 403s. `superadmin.roles.manage` is worse
+ * than useless — it DEFINES capability grants, so holding it means being able to
+ * grant yourself anything. This predicate is what lets both sides refuse that.
  *
  * A prefix test, for the same reason holdsUsableNode() is one: keys nest by
  * construction, so the subtree IS the prefix. The dot guard matters — a future
- * tool named `administration` must not be swept in.
+ * tool named `superadmin_tools` must not be swept in.
  *
- * NOT to be confused with the HR and Tasks admin surfaces. `hr.leave.admin.*`,
- * `hr.attendance.admin.*` and `tasks.lists.*` are ordinary tenant capabilities,
- * enforced route-by-route in hr-service and tasks-service, and are freely
- * assignable. Only the `admin` ROOT is platform administration.
+ * Named for `superadmin`, NOT `admin`: since the namespace split, `admin.*` is
+ * the TENANT admin console (admin-web — Team, API tokens) and is freely
+ * assignable, exactly like the HR and Tasks admin surfaces (`hr.leave.admin.*`,
+ * `hr.attendance.admin.*`, `tasks.lists.*`), which are ordinary tenant
+ * capabilities enforced route-by-route in their own services. Only the
+ * `superadmin` ROOT is platform operation.
  *
  * Lives here rather than in admin-service for the reason holdsUsableNode() lives
  * here: it is asked on BOTH sides of one decision — the write validation in
- * admin-service's putGrants, and the row state on the Capability Matrix screen.
- * If those two ever disagree the screen offers a save the server rejects, which
- * is the same render-then-403 shape this package exists to prevent.
+ * admin-service's putGrants, and the row state on the Capability Matrix screen
+ * (which now hides the subtree outright rather than rendering it locked). If
+ * those two ever disagree the screen offers a save the server rejects, which is
+ * the same render-then-403 shape this package exists to prevent. The hide is an
+ * affordance; this predicate plus putGrants remains the boundary.
  */
-export function isPlatformAdminCapability(key: string): boolean {
-  return key === CAPABILITY.ADMIN || key.startsWith(`${CAPABILITY.ADMIN}.`);
+export function isSuperAdminCapability(key: string): boolean {
+  return key === CAPABILITY.SUPERADMIN || key.startsWith(`${CAPABILITY.SUPERADMIN}.`);
 }
 
 /**
@@ -247,6 +257,32 @@ export function holdsUsableNode(
     : (actor.capabilities as readonly string[]);
 
   return can(actor, key) && held.some((k) => k.startsWith(`${key}.`));
+}
+
+/**
+ * May this actor open the TENANT admin console (admin-web) at all?
+ *
+ * The console has no single spanning capability — each screen owns its own node
+ * under the `admin` tool and re-checks independently — so admin-web's own guard
+ * (app/dashboard/layout.tsx) admits anyone whose filtered ADMIN_NAV is non-empty.
+ * This is the shell-side equivalent for the cross-product "Admin" pill, which
+ * must appear for exactly the users that guard lets in.
+ *
+ * Capability, NOT `rank >= ORG_ADMIN`: a lower-ranked role (e.g. a
+ * senior_sales_executive granted `admin.team.view.team`) genuinely reaches a
+ * screen in the console, and rank-gating the pill hid the only in-app way there —
+ * the URL still worked, which is the bug this fixes.
+ *
+ * A prefix test over `admin.*` rather than the bare `admin` root: nav grants
+ * cascade DOWNWARD, so a role scoped to one subtree holds `admin.team…` without
+ * ever holding `admin` itself. The dot guard keeps a future `admin_*` tool out.
+ */
+export function canOpenAdminConsole(actor: CapabilityHolder | null | undefined): boolean {
+  if (!actor) return false;
+  const held = actor.capabilities instanceof Set
+    ? [...actor.capabilities]
+    : (actor.capabilities as readonly string[]);
+  return held.some((k) => k.startsWith(`${CAPABILITY.ADMIN}.`));
 }
 
 /**

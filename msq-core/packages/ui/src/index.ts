@@ -55,6 +55,7 @@ export {
 
 export { useIsMobile } from './hooks/useIsMobile';
 export { useDismissible, useDropdown } from './hooks/useDropdown';
+export { useAnchoredPanel, type AnchoredPanelRect } from './hooks/useAnchoredPanel';
 
 export { createApiClient, type ApiRequestError } from './api/http';
 // `auth` is exported for myOrgs() — the covered-branches list that drives the

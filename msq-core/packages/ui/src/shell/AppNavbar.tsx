@@ -1,7 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import type { SessionUser, ProductKey } from '@platform/types';
-import { ANCHOR_RANK } from '@platform/rbac';
+import { canOpenAdminConsole } from '@platform/rbac';
 import { buildLoginUrl, buildChangePasswordUrl } from '../auth/sso';
 import UserMenu from './UserMenu';
 import BranchSwitcher from './BranchSwitcher';
@@ -23,10 +23,10 @@ interface Props {
   notificationSlot?: React.ReactNode;
   // admin-web's origin (adminWebOrigin()), for the standalone "Admin" link.
   // Deliberately NOT plumbed through ProductSwitcher/licensedProducts: admin-web
-  // is rank-gated (org_admin+), not a licensed product, so it must never be
-  // chosen as a landing target or compete with LMS/HR/Task in that switcher —
-  // see adminWebOrigin()'s doc comment in auth/sso.ts. Omitted/empty hides the
-  // link entirely (e.g. single-host local dev with no ADMIN_WEB_URL set).
+  // is capability-gated (canOpenAdminConsole), not a licensed product, so it must
+  // never be chosen as a landing target or compete with LMS/HR/Task in that
+  // switcher — see adminWebOrigin()'s doc comment in auth/sso.ts. Omitted/empty
+  // hides the link entirely (e.g. single-host local dev with no ADMIN_WEB_URL set).
   adminWebUrl?: string;
 }
 
@@ -42,7 +42,10 @@ export default function AppNavbar({
   notificationSlot,
   adminWebUrl,
 }: Props) {
-  const showAdminLink = !!adminWebUrl && user.rank >= ANCHOR_RANK.ORG_ADMIN;
+  // Same question admin-web's own dashboard guard asks (a non-empty filtered
+  // ADMIN_NAV): the pill must show for exactly the users that guard admits, or a
+  // capability-granted, lower-ranked user reaches Admin only by typing the URL.
+  const showAdminLink = !!adminWebUrl && canOpenAdminConsole(user);
   const extraLinks = showAdminLink
     ? [{ key: 'admin', href: adminWebUrl!, label: 'Admin' }]
     : [];
@@ -65,6 +68,13 @@ export default function AppNavbar({
           {title}
         </span>
         <div className="flex-1" />
+        {/* Branch pill BEFORE the product tabs, not after: admin-web renders no
+            BranchSwitcher at all (its header is hand-rolled), so with the tabs
+            first they shifted sideways by the pill's width the moment you
+            switched to Admin. Anchoring the tabs against the user menu keeps
+            them in the same place on every app, whether or not the pill (which
+            also self-hides for single-branch and non-switching actors) shows. */}
+        <BranchSwitcher user={user} homeHref={homeHref} />
         {/* Inline on sm+; on mobile the switcher drops to its own full-width row
             below so it doesn't get squeezed out by the rest of the bar. */}
         <div className="hidden items-center gap-2 sm:flex">
@@ -76,7 +86,6 @@ export default function AppNavbar({
             extraLinks={extraLinks}
           />
         </div>
-        <BranchSwitcher user={user} homeHref={homeHref} />
         {notificationSlot}
         <UserMenu user={user} loginUrl={buildLoginUrl()} changePasswordUrl={buildChangePasswordUrl()} />
       </div>

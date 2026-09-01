@@ -5,7 +5,7 @@
 const config = {
   // @hr/web ships no build output (types/main point at src) — same
   // transpile-from-source pattern hr-web itself uses for its own copy.
-  transpilePackages: ['@platform/ui-kit', '@hr/web'],
+  transpilePackages: ['@platform/ui-kit', '@hr/web', '@platform/team-web'],
   async rewrites() {
     const apiGateway = process.env['API_GATEWAY_INTERNAL_URL'] ?? 'http://localhost:4000';
     return [

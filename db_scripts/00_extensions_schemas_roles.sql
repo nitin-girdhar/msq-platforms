@@ -40,6 +40,11 @@ CREATE SCHEMA IF NOT EXISTS ext;
 -- live in lms/hr/task: 04_roles_and_grants.sql revokes each product schema from
 -- the other products' logins, which would wall the catalog off from them.
 CREATE SCHEMA IF NOT EXISTS comms;
+-- Cross-product Web Push subscriptions (notify.push_subscriptions). Shared
+-- tier, like comms above: notifications-service is the first consumer
+-- (follow-up due), with hr-service (leave approved/rejected) and tasks-service
+-- (task assigned) expected to follow, so it must not live under lms.
+CREATE SCHEMA IF NOT EXISTS notify;
 
 -- ── Roles (idempotent) ─────────────────────────────────────────────
 DO $$

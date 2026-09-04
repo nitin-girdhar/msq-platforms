@@ -145,6 +145,7 @@
 | `hr`        | Employee profiles, leave, attendance |
 | `task`      | To-do lists, tasks, comments                     |
 | `comms`     | Cross-product WhatsApp/email message templates (org > tenant > global resolution) |
+| `notify`    | Cross-product Web Push subscriptions (one row per installed PWA/device) |
 
 ---
 
@@ -1545,6 +1546,35 @@ Cross-product WhatsApp/email message templates, shared by every product service 
 **Checks:** `org_id IS NULL OR tenant_id IS NOT NULL` (an org-scoped row must also be tenant-scoped); per-channel shape checks — a `whatsapp` row requires `provider_template_name` and forbids `subject`/`body_template`; an `email` row requires `subject`+`body_template` and forbids `provider_template_name`.
 **Read by:** communication-service, the stateless send relay described in Architecture.md's "Meta Conversion API"/permissions notes — it resolves the most specific matching row for a given `(module, channel, name)` and the caller's org/tenant.
 **Seed data:** `reference_data/05_comms_templates.sql`.
+
+---
+
+### notify.push_subscriptions
+
+Web Push subscriptions — one row per installed PWA + browser + device that has granted the Notification permission. Platform-wide, not LMS-owned: notifications-service is the first consumer (follow-up due), with hr-service (leave approved/rejected) and tasks-service (task assigned) expected to follow.
+
+| Column       | Type        | Constraints                                                  |
+| ------------ | ----------- | ------------------------------------------------------------ |
+| id           | UUID        | PK (UUIDv7)                                                   |
+| user_id      | UUID        | NOT NULL, FK → iam.users(id) ON DELETE CASCADE                |
+| org_id       | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE     |
+| tenant_id    | UUID        | NOT NULL — no FK, denormalized at subscribe time for the tenant_admin RLS predicate (same shape as `iam.token_blocklist`) |
+| endpoint     | TEXT        | NOT NULL, **UNIQUE** — push service URL, the natural key      |
+| p256dh       | TEXT        | NOT NULL — client public key (`PushSubscription.keys.p256dh`) |
+| auth         | TEXT        | NOT NULL — client auth secret (`PushSubscription.keys.auth`)  |
+| user_agent   | TEXT        | Debugging aid for "why did my phone stop getting these"       |
+| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                           |
+| last_used_at | TIMESTAMPTZ | Stamped on each successful send                               |
+
+**Index:** `idx_push_subscriptions_user_org (user_id, org_id)` — the sender's lookup on every notification. `endpoint`'s own UNIQUE index backs the upsert.
+
+**Upsert, never accumulate.** The client re-registers on every launch (deleting the Home Screen icon destroys the subscription and a fresh install issues a new endpoint), so the subscribe path must be `INSERT ... ON CONFLICT (endpoint) DO UPDATE`.
+
+**Hard delete, not soft.** Rows are removed on unsubscribe and when the push service answers 404/410 Gone. A dead device registration has nothing to audit, so the `is_deleted`/`soft_delete_row` recipe used by the domain tables is deliberately not applied.
+
+**RLS.** ENABLE + FORCE, with a deliberate departure from the org-only pattern used elsewhere: the `app_user` policy constrains **`user_id` as well as `org_id`**. A push subscription is personal, not org-shared — with org isolation alone any colleague in the branch could read the endpoint/p256dh/auth triple (everything needed to push to that person's locked phone) or delete the row and silently stop their alerts. `tenant_admin` stays tenant-scoped so admins can prune dead registrations across branches.
+
+**Written by:** notifications-service via `root_service` (`DATABASE_URL_SERVICE` / `withServiceTx`), which bypasses RLS — a send fans out to every device of the target user with no app session to scope it. The policies guard incidental access from authenticated app sessions, the same reasoning as `lms.lead_report_snapshot`.
 
 ---
 

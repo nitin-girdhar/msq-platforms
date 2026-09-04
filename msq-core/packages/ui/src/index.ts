@@ -12,6 +12,7 @@ export { Placeholder } from './components/Placeholder';
 export { MonthGrid, type MonthGridBar, type MonthGridMarker } from './components/MonthGrid';
 export { UserPicker, type PickerUser } from './components/UserPicker';
 export { MultiSelect, type SelectOption } from './components/MultiSelect';
+export { FilterField } from './components/FilterField';
 export { PhotoUploadModal, PhotoAvatar, type PhotoUploadGate } from './components/PhotoUpload';
 
 // Create/Edit user form fields. Shared because admin-web "Team" and lms-web
@@ -58,9 +59,10 @@ export { useDismissible, useDropdown } from './hooks/useDropdown';
 export { useAnchoredPanel, type AnchoredPanelRect } from './hooks/useAnchoredPanel';
 
 export { createApiClient, type ApiRequestError } from './api/http';
+export { appBasePath, withBasePath } from './api/base-path';
 // `auth` is exported for myOrgs() — the covered-branches list that drives the
 // Leads History branch picker, and the same source BranchSwitcher uses.
-export { orgs, users, auth } from './api/resources';
+export { orgs, users, auth, push } from './api/resources';
 
 export {
   exportRows,
@@ -72,6 +74,23 @@ export {
 } from './export/export';
 
 export { NotificationProvider, useNotifications, type AppNotification } from './providers/NotificationProvider';
+
+// PWA — installability + service worker registration shared by all six root
+// layouts. See docs/Architecture.md → Web push & PWA.
+export { ServiceWorkerRegistrar } from './pwa/ServiceWorkerRegistrar';
+export { InstallPrompt } from './pwa/InstallPrompt';
+export { NotificationOptIn } from './pwa/NotificationOptIn';
+export {
+  usePushSubscription,
+  type PushStatus,
+  type UsePushSubscriptionReturn,
+} from './pwa/usePushSubscription';
+export {
+  viewport as pwaViewport,
+  appleWebApp as pwaAppleWebApp,
+  icons as pwaIcons,
+  appleCapableMeta as pwaAppleCapableMeta,
+} from './pwa/metadata';
 
 // SSO origin helpers — client-safe (no jose, no next/headers). Server Components
 // call productOrigins()/authOrigin() and pass results down to client chrome.

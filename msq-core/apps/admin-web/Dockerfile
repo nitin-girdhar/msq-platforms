@@ -16,6 +16,25 @@ ARG NEXT_PUBLIC_API_URL=http://localhost:4000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG API_GATEWAY_INTERNAL_URL=http://api-gateway:4000
 ENV API_GATEWAY_INTERNAL_URL=$API_GATEWAY_INTERNAL_URL
+# SSO base URLs baked into the client bundle (NEXT_PUBLIC_*) at build time.
+# LEGACY FALLBACK ONLY: sso.ts prefers the UNPREFIXED runtime names (AUTH_URL,
+# ADMIN_URL, ADMIN_WEB_URL, ...) so an image can be repointed without a rebuild
+# — a real deployment sets those in .env and never relies on these defaults.
+# Single-origin dev values: one host, one path prefix per app.
+#   ADMIN_URL     = lookup-admin (super admin)        -> /sa
+#   ADMIN_WEB_URL = admin-web (org/tenant console)    -> /admin
+ARG NEXT_PUBLIC_AUTH_URL=http://app.localhost
+ENV NEXT_PUBLIC_AUTH_URL=$NEXT_PUBLIC_AUTH_URL
+ARG NEXT_PUBLIC_LMS_URL=http://app.localhost/lms
+ENV NEXT_PUBLIC_LMS_URL=$NEXT_PUBLIC_LMS_URL
+ARG NEXT_PUBLIC_HR_URL=http://app.localhost/hrms
+ENV NEXT_PUBLIC_HR_URL=$NEXT_PUBLIC_HR_URL
+ARG NEXT_PUBLIC_TASK_URL=http://app.localhost/todo
+ENV NEXT_PUBLIC_TASK_URL=$NEXT_PUBLIC_TASK_URL
+ARG NEXT_PUBLIC_ADMIN_URL=http://app.localhost/sa
+ENV NEXT_PUBLIC_ADMIN_URL=$NEXT_PUBLIC_ADMIN_URL
+ARG NEXT_PUBLIC_ADMIN_WEB_URL=http://app.localhost/admin
+ENV NEXT_PUBLIC_ADMIN_WEB_URL=$NEXT_PUBLIC_ADMIN_WEB_URL
 COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @crm/admin-web... build

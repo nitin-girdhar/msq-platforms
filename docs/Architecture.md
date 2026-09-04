@@ -4,10 +4,12 @@
 
 ```
 Browser
-  └─→ Per-product Next.js apps (P4.3) — one image each, shared SSO cookie on .app.com:
-        auth-web (3000, auth.app.com) · lms-web (3001) · hr-web (3002) · todo-web (3003)
+  └─→ Per-product Next.js apps (P4.3) — one image each, ONE ORIGIN, one path prefix each,
+      sharing a host-only SSO cookie (path=/). Each app sets a matching Next `basePath`:
+        /  auth-web (3000) · /lms lms-web (3001) · /hrms hr-web (3002) · /todo todo-web (3003)
+        /admin admin-web (3004) · /sa lookup-admin (3005)
         ├─ Server Components: reads JWT from cookie server-side for SSR
-        └─ Client Components: fetch /api/* (rewritten to API Gateway)
+        └─ Client Components: fetch <basePath>/api/* (rewritten to API Gateway)
               └─→ API Gateway (port 4000)
                     ├─ Public: /auth/login, /auth/logout, /intake/webhook
                     │          /meta/webhook/:integrationId (per-tenant app, HMAC-verified)
@@ -16,7 +18,7 @@ Browser
                           ├─→ identity-service       (4001)  (auth + users + orgs)
                           ├─→ leads-service          (4002)  (leads + assignments + analytics + activities)
                           ├─→ meta-conversion-api    (4003)
-                          ├─→ notifications-service  (4004)  (LMS lead-event visibility notifications)
+                          ├─→ notifications-service  (4004)  (LMS lead-event visibility notifications over SSE; Web Push device registration + follow-up push)
                           ├─→ communication-service  (4005)  (stateless send relay; no rank authz — enforced at gateway; also called service-to-service by identity-service for Team notification emails)
                           ├─→ admin-service          (4006)  (super_admin-only CRUD for system lookup tables)
                           ├─→ hr-service             (4007)  (leave + attendance + shifts + face verification)
@@ -28,7 +30,8 @@ Browser
                           │ compreface-ui(nginx, admin UI ops-only) → compreface-api ↔ compreface-core (ML) │
                           │ compreface-admin        ── all backed by compreface-postgres-db (its OWN DB,     │
                           │                            NOT the app cluster)                                  │
-                          │ Defined in msq-hrms/docker-compose.yml (nested repo), not the root compose file  │
+                          │ Defined in msq-hrms/docker-compose.yml (nested repo), pulled into the root      │
+                          │ compose project by its `include:` block — see "One compose project" below       │
                           └────────────────────────────────────────────────────────────────────────────────┘
 
 admin-web    (port 3004) ─→ API Gateway (port 4000) ─→ identity-service / hr-service / etc.
@@ -41,9 +44,17 @@ lookup-admin (port 3005) ─→ API Gateway (port 4000) ─→ admin-service (40
 Meta (Facebook) ─→ API Gateway /meta/webhook/:integrationId ─→ meta-conversion-api  (per-tenant app)
 Meta (Facebook) ─→ API Gateway /meta/webhook                ─→ meta-conversion-api  (shared app, multi-tenant)
 
-caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) — reverse-proxies
-  *.app.com subdomains to the per-product apps locally, simulating the production SSO cookie-domain
-  topology described under JWT & auth below. Optional; only relevant when testing cross-product SSO.
+caddy (ports 80/443, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) — fronts ALL
+  six web apps on ONE host, dispatching by path prefix (`@lms path /lms /lms/*` + `handle @lms` ->
+  lms-web, ... and a final bare `handle` -> auth-web for the root). Uses `handle`, never
+  `handle_path`: each app is compiled with a matching `basePath` and expects to receive its own
+  prefix. Each prefix is matched via a NAMED matcher listing both the bare path and the wildcard —
+  `/lms/*` alone does not match a bare `/lms`, which fell through to auth-web and 404'd, and
+  `handle` accepts only one matcher token so the two paths cannot be written inline. The site
+  address comes from
+  CADDY_SITE_ADDRESS (`http://app.localhost` locally — the explicit scheme suppresses ACME;
+  `apps.fitclass.in` in production, where Caddy issues the certificate). A single origin is what
+  makes the platform installable as one PWA holding one push subscription.
 ```
 
 ## API endpoints (via Gateway — port 4000)
@@ -132,9 +143,10 @@ caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) �
 
 ## JWT & auth
 
-- **Cookie**: `fc_session` (httpOnly, sameSite=lax, secure in production). When `COOKIE_DOMAIN` is set (`.app.com`), identity-service scopes the cookie to the parent domain so every product subdomain (`lms.`/`hr.`/`todo.`/`auth.`) shares one SSO session — one login at `auth.app.com` authenticates all. Unset in single-host dev → host-only cookie (on `localhost` the cookie is still shared across ports because cookies ignore the port).
+- **Cookie**: `fc_session` (httpOnly, sameSite=lax, `path=/`, secure in production). `COOKIE_DOMAIN` is now **host-only** (`app.localhost` / `apps.fitclass.in`, no leading dot): all six apps share one origin and differ only by path prefix, so `path=/` alone carries the session across `/lms`, `/hrms`, `/todo`, `/admin` and `/sa` — one login authenticates all. Dropping the leading dot is a **tightening**: the cookie is no longer offered to any sibling subdomain. Moving to a new host logs everyone out once, by design, since the old parent-domain cookie is not sent to it.
 - **Algorithm**: HS256 with `JWT_SECRET` by default; RS256 when `JWT_PRIVATE_KEY`/`JWT_KID` are configured (public key served via JWKS). Verifiers — gateway, identity-service, and every web app's Edge middleware + server session helpers (`@platform/ui-kit`) — select the key by the token's `alg` header, so both coexist during migration. In the split topology (P4.3) product apps carry **only** `JWT_PUBLIC_KEY` (verify); identity-service alone holds the signing key. Issuer `fitclass-crm`, audience `fitclass-crm:web`.
-- **SSO across product apps (P4.3)**: each product app's `middleware.ts` is `createProductMiddleware()` from `@platform/ui-kit/middleware` — it verifies the shared cookie and, when absent/invalid, redirects to `NEXT_PUBLIC_AUTH_URL/login?callbackUrl=<full-url>`. Because the cookie is already present on `.app.com`, a user switching products via the in-navbar `ProductSwitcher` (cross-origin links to sibling product origins) lands authenticated with no re-login. `auth-web` validates the post-login `callbackUrl` against an origin allowlist (`allowedRedirectOrigins()`) before redirecting — an off-allowlist or attacker-supplied origin falls back to the LMS dashboard (open-redirect guard).
+- **SSO across product apps (P4.3)**: each product app's `middleware.ts` is `createProductMiddleware()` from `@platform/ui-kit/middleware` — it verifies the shared cookie and, when absent/invalid, redirects to `<AUTH_URL>/login?callbackUrl=<full-url>`. The `sso.ts` helpers (`authOrigin()`, `productOrigins()`, `adminOrigin()`, `adminWebOrigin()`) resolve **base URLs**, not bare origins: a value may carry a path prefix (`https://apps.app.com/lms`) so all six apps can sit behind one host — one PWA scope, one push subscription. Every URL is therefore built by CONCATENATION (`${base}/login`); `new URL('/login', base)` would discard the prefix. Because the cookie is already present on the auth host, a user switching products via the in-navbar `ProductSwitcher` lands authenticated with no re-login. `auth-web` validates the post-login `callbackUrl` against `allowedRedirectOrigins()`, each entry normalized to its origin, before redirecting; an attacker-supplied host is rejected and the user falls back to the session-derived landing (`sessionDestination()`, or `/no-access`) rather than a hardcoded product. Under one host that check accepts any path on that host — deliberate and correct, since every internal path is then our own app; see the comment on `resolveCallback`.
+- **`basePath` and what Next does *not* prefix**: each product app compiles a `basePath` (`/lms`, `/hrms`, `/todo`, `/admin`, `/sa`) into its image — changing a prefix is a rebuild and redeploy, never an env flip. Next applies it automatically to `<Link>`/router navigation, `next/image`, `/_next/*` assets, `rewrites()` **sources**, and middleware **matchers**; it deliberately leaves absolute rewrite destinations alone, which is why `/hrms/api/leave` reaches the gateway as `/leave`. Two consequences are easy to get wrong: (1) `config.matcher` and `protectedPrefixes` are **app-relative** — Next prepends the prefix at build time and `request.nextUrl.pathname` arrives with it already stripped, so spelling it out yourself yields `/hrms/hrms/...`, which matches nothing and silently leaves routes unauthenticated; (2) `fetch()` gets **no** prefixing, so a bare `fetch('/api/…')` under one origin would hit auth-web at the root instead of the calling app. `createApiClient()` resolves its mount through `withBasePath()` (`packages/ui/src/api/base-path.ts`), which reads the value Next compiles in — so all call sites keep passing `'/api'`, and a shared package built into two apps gets the right prefix in each.
 - **Password watermark**: `pwd_iat = floor(password_changed_at / 1000)`. `/auth/me` rejects any session where `payload.pwd_iat < db.passwordChangedAt`.
 - **Session revocation**: the `iam.token_blocklist` (via `@platform/db`) backs both single-session logout (per-`jti` row) and bulk revocation (jti-less row scoped to `user_id`). Password change/self, admin reset, deactivation, role change, and soft-delete all insert a jti-less **user-scoped** row so every prior token for that user is rejected at the gateway and `/auth/me` — not only at `/auth/me` via the watermark. Self-change scopes the revocation to the freshly issued token's `iat` so the new session survives. Note: a user-scoped bulk row must set **only** `user_id` (never `org_id`/`tenant_id`), otherwise it would match the org-/tenant-level bulk branches and log out the whole org/tenant.
 - **Shrunk token (P1.3)**: the JWT carries identity (`sub`, `email`), the coarse `platform_role` (`super_admin` | `tenant_admin` | `org_admin` | `member`), `org_id`/`tenant_id`, `licensed_products`, and `pwd_iat`/`jti` — but **no** global product role/rank. Product authority is resolved per request from each product's own `<product>.member_roles` table, so a stolen or stale token can never assert a product rank it wasn't granted. `platform_role` drives which Postgres role `withRoleTx` selects (RLS) and platform-level gates; `licensed_products` is a UX convenience (the gateway's DB-backed entitlement gate remains authoritative).
@@ -155,7 +167,7 @@ Three postgres.js pools exist, all with `transform: { column: { from: postgres.t
 ### Transaction helpers
 
 - **`withRoleTx(ctx, fn)`** — Dispatches based on `ctx.role`: `super_admin` uses serviceDb, `tenant_admin` uses tenantDb, others use appDb with `SET LOCAL ROLE app_user` + GUCs.
-  - **`ctx.tenantWide`** — opt-in flag that selects the `tenant_admin` Postgres role for an actor whose *capability* reaches every branch in the tenant, even when `platform_role` is not literally `tenant_admin`. Cross-branch reach in this platform is a capability (`lms.leads.view.tenant`), but `platform_role` is a four-value denormalisation that collapses any tenant-defined role — a regional manager, say — to `member`. Without the flag such an actor passes every app-layer gate and then reads **zero** rows, because RLS is still pinned to `app.current_org_id`. This is not an RLS bypass: `tenant_isolation_policy` still fences every row to `app.current_tenant_id`, taken from the verified session, so it widens *branch* reach inside one tenant and can never cross tenants. Like `readOnly`, it is a caller assertion — whoever sets it must already have resolved the capability. Set today by `leads.repository.listLeads`, `orgs.repository.getOrgs`, `users.service.getAssignableUsers` and the assignment writes. On the assignment paths (single assign/reassign/unassign and bulk) the flag is gated by **coverage**, not by the capability ladder: `writeCtxForOrg(ctx, leadOrgId)` in `assignments.service` asserts the lead's branch is one of `getCoveredOrgIds(ctx)` and otherwise throws 403. Gating on the ladder instead (`lms.leads.view` = tenant/all) is what broke Bulk Assign for multi-branch `org`-scope roles: they resolve to `org`, so picking any branch other than the one they were switched into read back zero leads and failed as "One or more leads were not found".
+  - **`ctx.tenantWide`** — opt-in flag that selects the `tenant_admin` Postgres role for an actor whose *capability* reaches every branch in the tenant, even when `platform_role` is not literally `tenant_admin`. Cross-branch reach in this platform is a capability (`lms.leads.view.tenant`), but `platform_role` is a four-value denormalisation that collapses any tenant-defined role — a regional manager, say — to `member`. Without the flag such an actor passes every app-layer gate and then reads **zero** rows, because RLS is still pinned to `app.current_org_id`. This is not an RLS bypass: `tenant_isolation_policy` still fences every row to `app.current_tenant_id`, taken from the verified session, so it widens *branch* reach inside one tenant and can never cross tenants. Like `readOnly`, it is a caller assertion — whoever sets it must already have resolved the capability. Set today by `leads.repository.listLeads`, `orgs.repository.getOrgs`, `users.service.getAssignableUsers` and the assignment writes. On the assignment paths (single assign/reassign/unassign and bulk) the flag is gated by **coverage**, not by the capability ladder: `writeCtxForOrg(ctx, leadOrgId)` in `assignments.service` asserts the lead's branch is one of `getCoveredOrgIds(ctx)` and otherwise throws 403. Gating on the ladder instead (`lms.leads.view` = tenant/all) is what broke Bulk Assign for multi-branch `org`-scope roles: they resolve to `org`, so picking any branch other than the one they were switched into read back zero leads and failed as "One or more leads were not found". The **lead edit and delete** paths (`PATCH`/`DELETE /leads/:id`) now use the same coverage gate, shared as `leadWriteCtx(ctx, leadOrgId)` in `leads-service/src/lib/lead-write-scope.ts` (which also owns `resolveLeadOrgId` and the single `getCoveredOrgIds`, re-exported by `assignments.repository`). Before that, both writes were pinned to `ctx.org_id` while `listLeads` showed the whole tenant, so editing or reassigning a lead in any other branch matched zero rows and surfaced as **"Lead not found"** — and the delete silently changed nothing while answering 204. The write now runs in the lead's own branch (`{ ...ctx, org_id: leadOrgId }`, so audit triggers stamp the right org), every statement keeps an explicit `org_id = leadOrgId` predicate rather than leaning on the widened RLS fence, and a branch the actor neither administers nor is mapped to is a 403 instead of a misleading 404. Cross-branch reach here is deliberately **not** taken from the `lms.leads.edit` ladder: its widest rung is `.any`, which `resolveScope` reports as `all` but which means org-wide, so a branch admin holding it must not become tenant-wide.
   - **`ctx.readOnly`** — adds `SET LOCAL transaction_read_only = on` (and `SET LOCAL ROLE readonly_user` on the app path) so a read path is physically incapable of writing. Applied on every `tenantWide` read.
 - **`withServiceTx(fn)`** — No role switch, BYPASSRLS. Used for auth lookups, seed scripts, activity logging, and webhook ingestion.
 
@@ -169,6 +181,18 @@ Some tables also have:
 - `tenant_isolation_policy` (TO tenant_admin): restricts rows to orgs belonging to `current_setting('app.current_tenant_id')::uuid`
 
 `root_service` has `BYPASSRLS` and is unaffected by these policies.
+
+### Soft-deleted branches are RLS's job — except under `withServiceTx`
+
+Both policies on `entity.organizations` carry `NOT is_deleted`, so on the `withRoleTx` path a
+`security_invoker` view that joins organizations drops a soft-deleted branch's rows without any
+query saying so. `withServiceTx` (`root_service`, `BYPASSRLS`) gets no such help, and **every
+reporting path that runs without a user context is service-tx**: the public report page, the daily
+`send-lead-report` cron, and the `lms.lead_report_snapshot` rows it persists. Those queries must
+spell out `AND NOT o.is_deleted` themselves — including inside a CTE whose rows a rollup later sums.
+The source report's ALL BRANCHES total was wrong for exactly this reason: the per-branch join
+filtered, the `counters` CTE behind the rollup did not, so a deleted branch's leads vanished from
+every branch row and still landed in the tenant total.
 
 The `iam` write policies are the exception to the `org_id = app.current_org_id` shape: since `1.43.0` the user-management policies on `iam.users`, `iam.user_org_mapping` and `iam.reporting_lines` scope to the actor's **membership** (`iam.fn_user_active_orgs`) and ask `iam.fn_user_can_manage_users` per row. See *User management is a capability, per branch* under Permissions.
 
@@ -288,6 +312,15 @@ The rank ceiling and the product-capability gate are unchanged on both paths: co
 walk-in/edit modal all resolve candidates for the org of the lead in hand (`useAssignableCandidates`
 in `@lms/web`, keyed on the lead's `org_id`); Bulk Assign sends the branch selected in its own
 dropdown. Passing nothing is reserved for callers with genuinely no single lead in context.
+
+Bulk Assign's own **Stage** and **Assigned To** filters are the exception to that picker rule: they
+narrow the table, they do not choose a target, so their options are derived from the fetched rows
+(plus the response's `stage_options` for label and pipeline order) rather than from
+`/users/assignable`. Deriving them is what makes every name in the CURRENTLY ASSIGNED column
+selectable — the assignable list answers "who may I assign *to*", which can omit a lead's current
+owner — and it gives the *Unassigned* bucket, which `/leads` cannot express (`assigned_to` is a
+single UUID there). Both filters are client-side over the one 5000-row fetch the page already
+makes, and both reset when the branch changes.
 
 **Membership is a mapping, not a home org.** The write side asks the same branch question the
 picker does: `getUserForAssignment(ctx, targetUserId, orgId)` resolves the target through
@@ -555,8 +588,8 @@ Two consoles with confusingly similar names, and the namespace belonged to the w
 
 | console | origin | port | what it is |
 |---|---|---|---|
-| `lookup-admin` | `admin.app.com` | 3005 | the **platform operator** console — cross-tenant lookups, role/grant definition |
-| `admin-web` | `admin-web.app.com` | 3004 | the **tenant admin** console — Team, API tokens, Leave, Attendance |
+| `lookup-admin` | `/sa` (`ADMIN_URL`) | 3005 | the **platform operator** console — cross-tenant lookups, role/grant definition |
+| `admin-web` | `/admin` (`ADMIN_WEB_URL`) | 3004 | the **tenant admin** console — Team, API tokens, Leave, Attendance |
 
 `admin.*` belonged to lookup-admin and was never assignable to a tenant role: admin-service's
 `putGrants` refuses it below `super_admin`, because `admin.roles.manage` **defines capability
@@ -701,7 +734,116 @@ See `docs/DB_model.md#iamreporting_lines` for the table shape and `msq-hrms/serv
 | `hr` | `/hr/*` **except** `/hr/employees*` and `/hr/modules` (ungated) | `leave` OR `attendance` |
 | `task` | `/tasks*`, `/task-lists*` | `tasks` |
 
-Everything else (users, orgs, api-clients, lookups, meta, communications, auth, notifications) is ungated. Per-service `require-module` middleware in **leads-service** (`lms`), **hr-service** (`leave`/`attendance`), and **tasks-service** (`tasks`) stays as **defense-in-depth** — a call that bypasses the gateway is still rejected. `@platform/authz.hasProduct()`/`assertProduct()` (async) resolve entitlement via a 60s per-tenant cached read; the DB source is injected at gateway startup (`configureProductSource`) so the package stays free of `@platform/db` and safe to import from the Next.js apps. The lead product's key is `lms` (renamed from legacy `crm`; the `crm`→`lms` schema rename landed in P1.0). Every tenant is backfilled with an active `lms` row, so the rollout is non-breaking.
+Everything else (users, orgs, api-clients, lookups, meta, communications, auth, notifications) is ungated. `/notifications/*` covers `/notifications/stream` (SSE) **and** the Web Push registration routes (`POST`/`DELETE /notifications/push/subscribe`, `GET /notifications/push/public-key`); those are ungated on purpose — registering your own device to receive your own notifications is self-service, the same category as `/users/me/photo`, and no capability could meaningfully gate "may this user be told about their own work". They are still authenticated (JWT at the gateway, HMAC-signed headers at the service) and identity is never read from the request body. See the Web push & PWA section below and `msq-core/packages/web-push/README.md`. Per-service `require-module` middleware in **leads-service** (`lms`), **hr-service** (`leave`/`attendance`), and **tasks-service** (`tasks`) stays as **defense-in-depth** — a call that bypasses the gateway is still rejected. `@platform/authz.hasProduct()`/`assertProduct()` (async) resolve entitlement via a 60s per-tenant cached read; the DB source is injected at gateway startup (`configureProductSource`) so the package stays free of `@platform/db` and safe to import from the Next.js apps. The lead product's key is `lms` (renamed from legacy `crm`; the `crm`→`lms` schema rename landed in P1.0). Every tenant is backfilled with an active `lms` row, so the rollout is non-breaking.
+
+## Web push & PWA
+
+The platform is installable as a single Progressive Web App from a unified origin, with one push subscription covering every product.
+
+### Unified origin topology
+
+All six product apps run behind one host (`apps.fitclass.in` in production, `app.localhost` in development) with path-based routing, each compiled with its own `basePath`:
+
+| URL prefix | App |
+|---|---|
+| `/` | auth-web |
+| `/lms` | lms-web |
+| `/hrms` | hr-web |
+| `/todo` | todo-web |
+| `/admin` | admin-web |
+| `/sa` | lookup-admin |
+
+**Caddy** (reverse proxy) dispatches by path prefix using a named matcher per app — `@lms path /lms /lms/*` followed by `handle @lms` — with a final bare `handle` for the root. Both the bare path and the wildcard must be listed: `/lms/*` does not match a bare `/lms` (nothing for `*` to match), so a hand-typed `apps.fitclass.in/lms` would fall through to auth-web and 404. Each app's `basePath` is compiled into its Docker image — changing a prefix is a rebuild, not an env flip.
+
+### One compose project across four repos
+
+The product apps and services live in the nested `msq-lms/`, `msq-hrms/` and `msq-todo/` repos, each with its own `docker-compose.yml`. The root `docker-compose.yml` pulls all three in with an **`include:`** block, and because all four files declare the same project name (`name: msq`), every service lands in one project on one default network (`msq_default`), addressable by container name. `docker compose --profile sso-proxy up --build` from the platform root therefore starts the whole platform — Caddy reaches `lms-web`/`hr-web`/`todo-web`, and the gateway reaches the product services (its `*_SERVICE_URL` values are hardcoded to those container names, because the `.env` values are `http://localhost:<port>` for native `pnpm turbo dev` and would point a container at itself).
+
+Two rejected alternatives, both of which fail concretely:
+
+- **`COMPOSE_FILE=a;b;c`** resolves every merged file's relative paths against the *project* directory, so each product repo's `context: ..` climbs one level above the platform root and the build dies on `GetFileAttributesEx …\msq-lms: The system cannot find the file specified`. `include:` resolves paths against each file's own directory, which is what these files were written for.
+- **`docker network create platform-net` + `external: true`** needs an out-of-band setup step before anything works and leaves four separate projects whose `up`/`down` lifecycles drift apart.
+
+Running a product repo standalone from its own directory still works unchanged; it then needs `DB_CONTAINER_NAME` / `API_GATEWAY_INTERNAL_URL` in its own `.env` pointing at msq-core's containers. Note that Compose interpolates `${VARS}` from the **project** `.env` — the platform root's — so the product repos' variables (`DB_LMS_SVC_USER`, `LEADS_SERVICE_PORT`, the `COMPREFACE_*` set, …) must exist there too; the per-repo `.env` files remain the source for the standalone path.
+
+This single origin is **mandatory for push to work**: a PWA's scope and push subscription are per-origin. On iOS, navigating cross-origin drops the user out of the installed standalone mode into a separate storage jar, breaking the shared session cookie — so every unauthenticated bounce must stay within the same origin. The unified topology eliminates that failure mode and gives every user one install, one icon, one push subscription covering every product.
+
+The **`COOKIE_DOMAIN` is host-only** (`apps.fitclass.in`, no leading dot) rather than the parent domain — all six apps share one origin and differ only by path prefix, so `path=/` alone carries the session across every product. The cookie is no longer offered to sibling subdomains, tightening the surface. Moving to a new host logs everyone out once, by design.
+
+### Push delivery path
+
+Follow-up due notifications flow through two channels:
+
+1. **SSE (Server-Sent Events)** — for users with an open tab. `followup-checker` polls `lms.marketing_leads.scheduled_at` on an interval and delivers overdue/due-soon events via `connectionManager.sendToUser()` as `followup:due` / `followup:missed`.
+2. **Web Push (device notifications)** — for users with the app closed or in the background. Push is a second delivery channel hung off the same call site. When no SSE stream is open, `followup-checker` sends the same events to Web Push instead. The client re-subscribes on every app launch (reconciling if the Home Screen icon was deleted), so the subscription is always live.
+
+**Notification deep link.** The push payload's `url` is `/lms/dashboard/follow-ups?leadId=<id>`. lms-web has no per-lead detail *route* — `/dashboard/leads` carries no `[id]` segment, so `/lms/dashboard/leads/<id>` would open a 404 on the user's phone. The follow-ups grid accepts `?leadId=` instead and opens that lead's history on arrival (`FollowUpsShell`'s `focusLeadId`), so tapping a notification lands on the lead it is about. The id is a **hint, not an authorization**: the shell matches it against the follow-ups the API already scoped to the acting user and ignores anything it does not find, so the parameter can never be used to pull another user's lead. It is consumed once, so dismissing the modal does not re-open it.
+
+Both channels **dedupe per lead+schedule** and reset daily in the tenant's timezone, preventing notification spam across restarts or deploys.
+
+### Push subscriptions (`notify.push_subscriptions`)
+
+The table holds WebPush subscriptions — one row per device per user. RLS enforces isolation:
+- `org_id` and `tenant_id` for organization and tenant scope
+- **`user_id` for personal scope** — a subscription belongs to one user and is never org-shared
+
+The table is referenced only by the notifications-service for push sends; it never leaves the platform and is not synced elsewhere.
+
+### Ungated registration routes (`/notifications/push/*`)
+
+Push subscription routes are deliberately ungated like `/users/me/photo` — self-service, authenticated but not capability-gated. Registering your own device to receive your own notifications is not something that could meaningfully be blocked by a capability: the JWT already carries the user's identity, and no role should gate "may this user hear about their own work". The routes remain guarded by JWT verification at the gateway and identity is never read from the request body.
+
+### Service worker caching & tenant isolation
+
+The service worker implements a security rule from `.claude/CLAUDE.md`:
+
+- **`/api/*` is never cached.** A cached API response writes tenant data to device storage that survives logout and outlives the session — a direct violation of the "no data leakage across tenant" rule. The service worker returns a network-only passthrough for any `/api/*` request.
+- **`/_next/static/*` is cached** for fast app-shell loads on return visits (cache-first strategy).
+- **`/`**, `/manifest.webmanifest`, `/icons/*`, `/offline` are cached on install.
+
+This ensures that switching tenants/orgs, logging out, or uninstalling completely purges all persistent device storage belonging to the previous user.
+
+### Icon set (`auth-web/public/icons/`)
+
+All icons are generated from `auth-web/public/fitclass-logo-white.webp` by
+`scripts/generate-pwa-icons.py` (needs Pillow; re-run it if the branding
+changes). They live in auth-web's `public/` because auth-web owns the root
+origin — the paths are origin-absolute, so every product path under the
+single-origin topology resolves them without its own copy.
+
+| File | Size | Artwork | Used by |
+|---|---|---|---|
+| `icon-192.png` | 192x192 | emblem only | manifest; also the notification `icon`/`badge` in `sw.js` |
+| `icon-512.png` | 512x512 | full lockup | manifest; splash screen |
+| `icon-512-maskable.png` | 512x512 | full lockup, 60% content box | manifest `purpose: 'maskable'` |
+| `apple-touch-icon.png` | 180x180 | emblem only | iOS Home Screen, via `pwa/metadata.ts` |
+| `favicon.png` | 256x256 | emblem on transparency | browser tab, via `pwa/metadata.ts` |
+
+Three constraints are baked into the generator and are easy to regress:
+
+- **Every file is opaque RGB, backed with `#0F172A`.** The source artwork is
+  white on transparency, so a transparent icon vanishes on light surfaces —
+  and iOS does not composite alpha at all, rendering a transparent
+  `apple-touch-icon` as a solid black square.
+- **The maskable icon keeps its artwork inside the centred 80% safe zone**
+  (the generator uses a 60% content box). Android launchers crop maskable
+  icons to a circle/squircle and anything outside that zone is clipped.
+- **The small sizes use the emblem alone, not the full lockup.** The
+  "A Series of Luxury Gyms" tagline is illegible below ~256px, and
+  `icon-192.png` renders as small as 24px as a notification badge.
+
+`favicon.png` is a copy of the `app/icon.png` each product app already ships,
+not a regenerated asset — it is the emblem on transparency rather than on
+navy, so it reads on both light and dark browser chrome.
+
+Declaring `icons` in `pwa/metadata.ts` **suppresses Next's `app/icon.png`
+file convention** for every app that spreads it, which is why the favicon has
+to be listed there explicitly — omitting it drops the tab icon platform-wide.
+Next does not basePath-prefix metadata icon hrefs (verified against
+lookup-admin's `/sa`), so both entries stay origin-absolute and resolve
+against auth-web at the root. The per-app `app/icon.png` files are now
+unreferenced; they are harmless and still served at `<basePath>/icon.png`,
+but `public/icons/favicon.png` is the one the browser actually loads.
 
 ## Tenant provisioning & default catalogs (P3B)
 
@@ -722,7 +864,7 @@ All packages live in `packages/` and are consumed via workspace references (`@cr
 | `@platform/validation` | `platform-validation` | Zod schemas for request validation (folder is `platform-validation`; package name is `@platform/validation`, not `@crm/validation`) |
 | `@platform/authz` | `platform-authz` | Identity/tenancy checks (`hasRole`, `hasMinimumRole`, `hasAnyRole`), org-scope resolution, user-management rank gates, product-grant primitive (`hasProduct`/`assertProduct`), and the coarse platform-tier `RANKS` + `platformRank()` (the shared cross-product ladder was dissolved in P1.3) |
 | `@platform/rbac` | `rbac` | The capability primitive — `can(actor, CAPABILITY.…)` — read by the gateway, every service, `@platform/db`, and `@platform/ui-kit` for UI gating (see "UI gating reads capabilities" below) |
-| `@platform/ui-kit` | `ui` | Shared Next.js shell/middleware for every product app — `AppSidebar`, `MobileSidebar`, `UserMenu`, `ProductSwitcher`, `createProductMiddleware()` (SSO cookie verification + redirect), `shell/nav` (`NavGroup`/`filterNavGroups`), `branchOptionsForActor` |
+| `@platform/ui-kit` | `ui` | Shared Next.js shell/middleware for every product app — `AppSidebar`, `MobileSidebar`, `UserMenu`, `ProductSwitcher`, `createProductMiddleware()` (SSO cookie verification + redirect), `shell/nav` (`NavGroup`/`filterNavGroups`), `branchOptionsForActor`; plus the filter-toolbar primitives every screen's filter bar is built from — `MultiSelect`, `UserPicker`, `FilterField` (the label-over-control wrapper that keeps a bare input on the same baseline as a `MultiSelect`) and `useAnchoredPanel` (fixed-position geometry for a dropdown that must escape a dialog; anchors by `bottom` when it flips upward) |
 | `@platform/audit-log` | `audit-log` | `logActivity()` — fire-and-forget writer to `audit.activities`, called in-process by every service (see "Activity logging") |
 | `@platform/blob-storage` | `blob-storage` | Avatar/photo byte storage driver — backs `iam.users.photo_key` and the punch-selfie store used by face verification |
 | `@platform/http` | `http` | Shared HTTP client helpers for inter-service calls |

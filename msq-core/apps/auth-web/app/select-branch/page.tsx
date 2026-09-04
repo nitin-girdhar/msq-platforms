@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Image from 'next/image';
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@platform/ui-kit/server';
-import { buildLoginUrl } from '@platform/ui-kit';
+import { buildLoginUrl, InstallPrompt } from '@platform/ui-kit';
 import SelectBranchList from '@/components/auth/SelectBranchList';
 import { resolveCallback, sessionDestination } from '@/src/lib/callback';
 
@@ -51,6 +51,10 @@ export default async function SelectBranchPage({ searchParams }: SelectBranchPag
             switch anytime from the top bar.
           </p>
         </header>
+
+        <div className="mb-5">
+          <InstallPrompt />
+        </div>
 
         <SelectBranchList callbackUrl={destination} />
       </div>

@@ -236,6 +236,28 @@ app.get('/notifications/stream', { ...withAuth }, async (req, reply) => {
   return proxySSE(config.notificationsServiceUrl, '/api/v1/notifications/stream', req, reply, req.userCtx);
 });
 
+// Web Push device registration. Ordinary request/response, so proxyTo, not
+// proxySSE.
+//
+// Deliberately UNGATED in product-map.ts — `/notifications` is already listed
+// there as ungated platform/shared surface, and these routes are self-service:
+// registering your own device to receive your own notifications is the same
+// category as /users/me/photo. They are authenticated (identity comes from the
+// verified JWT via authPreHandler → req.userCtx, and notifications-service
+// re-derives it from the HMAC-signed headers), but no capability could
+// meaningfully gate "may this user be told about their own work" — gating it
+// would only mean some users silently stop being alerted about leads they
+// already own. Do not "fix" this into a gated route.
+app.post('/notifications/push/subscribe', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.notificationsServiceUrl, '/api/v1/notifications/push/subscribe', req, reply, req.userCtx);
+});
+app.delete('/notifications/push/subscribe', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.notificationsServiceUrl, '/api/v1/notifications/push/subscribe', req, reply, req.userCtx);
+});
+app.get('/notifications/push/public-key', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.notificationsServiceUrl, '/api/v1/notifications/push/public-key', req, reply, req.userCtx);
+});
+
 // Auth
 app.post('/auth/change-password', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/auth/change-password', req, reply, req.userCtx);

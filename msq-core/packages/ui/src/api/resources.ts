@@ -21,6 +21,28 @@ export const auth = {
     }),
 };
 
+// Web Push device registration. Ungated, self-service platform surface — see
+// msq-lms/services/notifications-service/src/routes/push.ts for why identity is
+// always server-derived and never taken from the posted body.
+export const push = {
+  publicKey: () =>
+    request<{ success: true; data: { public_key: string } }>('/notifications/push/public-key'),
+
+  // Body is the raw browser PushSubscription JSON (`subscription.toJSON()`).
+  // Zod on the server strips anything that is not `endpoint` / `keys`.
+  subscribe: (subscription: PushSubscriptionJSON) =>
+    request<{ success: true; data: { registered: boolean } }>('/notifications/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify(subscription),
+    }),
+
+  unsubscribe: (endpoint: string) =>
+    request<void>('/notifications/push/subscribe', {
+      method: 'DELETE',
+      body: JSON.stringify({ endpoint }),
+    }),
+};
+
 export const orgs = {
   list: (params: { cityIds?: string; stateIds?: string; countryIds?: string } = {}) => {
     const qs = new URLSearchParams(

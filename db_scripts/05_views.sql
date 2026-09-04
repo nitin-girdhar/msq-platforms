@@ -619,11 +619,17 @@ GROUP BY ml.org_id, o.name, u.id, u.full_name, u.email, ur.name;
 -- Neither view joins entity.tenants, and neither exposes tenant_name, even
 -- though tenant_id is right there. Under security_invoker the CALLER's grants
 -- apply, and neither app_user nor tenant_admin has SELECT on entity.tenants --
--- adding the join would make both views fail with "permission denied for table
--- tenants" for every HTTP caller on the tenant_admin path. (This is not
--- hypothetical: lms.vw_tenant_full_dashboard above does exactly that and is
--- unreadable by the tenant_admin role it is granted to.) The report's tenant
--- name is resolved separately, by the caller, which does hold that privilege.
+-- adding the join would have made both views fail with "permission denied for
+-- table tenants" for every HTTP caller on the tenant_admin path. The report's
+-- tenant name is resolved separately, by the caller.
+--
+-- FIXED 2026-09-04: tenant_admin now HOLDS `SELECT ON entity.tenants`
+-- (07_grants.sql), so the constraint above no longer applies and joining
+-- entity.tenants is safe -- RLS on that table confines it to the caller's own
+-- tenant. The grant was missing while lms.vw_tenant_full_dashboard already
+-- joined entity.tenants, which made that view unreadable by the very role it is
+-- granted to and 500'd /analytics/dashboard. These two views are left
+-- join-free regardless, since the caller already resolves the name.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Per-branch report counters. One row per non-deleted org -- a branch with no

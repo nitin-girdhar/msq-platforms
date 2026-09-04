@@ -14,7 +14,7 @@ deploy, all four products (core/LMS, HR, tasks, Meta integration).
 |---|---|
 | `00_extensions_schemas_roles.sql` | Extensions, schemas, every database role |
 | `01_functions_shared.sql` | Functions used in column `DEFAULT`s |
-| `02_tables_core.sql` | `geo` `entity` `iam` `lms` `marketing` `audit` `ext` `comms` |
+| `02_tables_core.sql` | `geo` `entity` `iam` `lms` `marketing` `audit` `ext` `comms` `notify` |
 | `03_tables_product.sql` | `hr` `task`, per-product RBAC, catalog engine |
 | `04_functions_triggers.sql` | Business logic, resolvers, every trigger |
 | `05_views.sql` | All views |

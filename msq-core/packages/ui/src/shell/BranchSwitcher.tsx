@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { SessionUser, UserOrgOption } from '@platform/types';
 import { RANKS, isTenantWideRole } from '@platform/authz';
 import { auth } from '../api/resources';
+import { appBasePath, withBasePath } from '../api/base-path';
 import { useDropdown } from '../hooks/useDropdown';
 
 interface Props {
@@ -73,8 +74,17 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
       // selected branch. Reload the current page so the user stays where they
       // were; homeHref is only a fallback for when that page doesn't exist
       // (root path) rather than the default landing spot.
-      const current = window.location.pathname + window.location.search;
-      window.location.assign(current === '/' ? homeHref : current);
+      // location.pathname carries this app's basePath ('/hrms/attendance'),
+      // while homeHref is app-relative ('/attendance') because it is normally
+      // consumed by <Link>, which prefixes it for us. Compare on the stripped
+      // path so "am I at this app's root?" still answers true at '/hrms', and
+      // prefix homeHref by hand because a raw location.assign() gets none of
+      // Next's basePath handling.
+      const base = appBasePath();
+      const path = window.location.pathname;
+      const appPath = base && path.startsWith(base) ? path.slice(base.length) || '/' : path;
+      const current = path + window.location.search;
+      window.location.assign(appPath === '/' ? withBasePath(homeHref) : current);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not switch branch');
       setSwitching(null);

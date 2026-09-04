@@ -75,6 +75,62 @@ CREATE POLICY tenant_isolation_policy ON lms.lead_report_snapshot
   AS PERMISSIVE FOR SELECT TO tenant_admin
   USING (tenant_id = (NULLIF(current_setting('app.current_tenant_id', true), ''))::uuid);
 
+-- RLS: notify.push_subscriptions
+-- Same reasoning as lms.lead_report_snapshot above -- notifications-service
+-- reaches this table through root_service (DATABASE_URL_SERVICE /
+-- withServiceTx), which bypasses RLS entirely, because a send has to fan out to
+-- every device of the target user with no app session to scope it. These
+-- policies therefore guard only incidental access from authenticated app
+-- sessions (the subscribe/unsubscribe route under withRoleTx). FORCE is set as
+-- well so the policies still apply if the table's owner ever queries it.
+ALTER TABLE notify.push_subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notify.push_subscriptions FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS org_isolation_policy    ON notify.push_subscriptions;
+DROP POLICY IF EXISTS tenant_isolation_policy ON notify.push_subscriptions;
+
+-- DO NOT SIMPLIFY THIS TO org_id ALONE.
+-- A push subscription is PERSONAL, not org-shared: the row is a specific
+-- handset belonging to a specific person. Every other table in this file is
+-- org-scoped because its rows describe org data that colleagues legitimately
+-- share; these rows do not. With only the org_id predicate, any app_user in the
+-- branch could SELECT a colleague's endpoint/p256dh/auth -- which is everything
+-- needed to push a notification to their locked phone -- or DELETE the row and
+-- silently stop their alerts. The user_id term is the actual boundary here;
+-- org_id stays alongside it so a stale registration from a previous branch
+-- cannot be read or reused after the user moves.
+CREATE POLICY org_isolation_policy ON notify.push_subscriptions
+  AS PERMISSIVE FOR ALL TO app_user
+  USING (
+        user_id = (NULLIF(current_setting('app.current_user_id', true), ''))::uuid
+    AND org_id  = (NULLIF(current_setting('app.current_org_id',  true), ''))::uuid
+  )
+  WITH CHECK (
+        user_id = (NULLIF(current_setting('app.current_user_id', true), ''))::uuid
+    AND org_id  = (NULLIF(current_setting('app.current_org_id',  true), ''))::uuid
+  );
+
+-- tenant_admin is scoped by tenant only -- same subquery shape as
+-- lms.lead_links -- so a tenant admin can prune dead registrations across their
+-- branches. Deliberately not narrowed to the acting user: this is an
+-- administrative surface, not the personal one above.
+CREATE POLICY tenant_isolation_policy ON notify.push_subscriptions
+  AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (
+    org_id IN (
+      SELECT id FROM entity.organizations
+      WHERE tenant_id = (NULLIF(current_setting('app.current_tenant_id', true), ''))::uuid
+        AND NOT is_deleted
+    )
+  )
+  WITH CHECK (
+    org_id IN (
+      SELECT id FROM entity.organizations
+      WHERE tenant_id = (NULLIF(current_setting('app.current_tenant_id', true), ''))::uuid
+        AND NOT is_deleted
+    )
+  );
+
 ALTER TABLE iam.api_clients ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS tenant_isolation_policy ON iam.api_clients;

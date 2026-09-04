@@ -7,25 +7,63 @@ x-db-env: &db-env
   DATABASE_URL_TENANT: postgres://${DB_TENANT_SVC_USER}:${DB_TENANT_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
   DATABASE_URL_SERVICE: postgres://${DB_SERVICE_USER}:${DB_SERVICE_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
 
-# Browser-facing build args for the shared web images (auth-web, lookup-admin).
+# Browser-facing build args for the shared web images (auth-web, admin-web,
+# lookup-admin). Defaults are the single-origin dev topology: one host, one path
+# prefix per app, matching each app's compiled `basePath` and infra/Caddyfile.
+# These are a legacy build-time fallback only — the unprefixed AUTH_URL/LMS_URL/
+# ... in .env are what sso.ts actually reads at runtime.
 x-web-public-args: &web-public-args
   NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
   API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
   NEXT_PUBLIC_PASSWORD_MIN_LENGTH: ${NEXT_PUBLIC_PASSWORD_MIN_LENGTH:-12}
-  NEXT_PUBLIC_AUTH_URL: ${NEXT_PUBLIC_AUTH_URL:-http://localhost:3000}
-  NEXT_PUBLIC_LMS_URL: ${NEXT_PUBLIC_LMS_URL:-http://localhost:3001}
-  NEXT_PUBLIC_HR_URL: ${NEXT_PUBLIC_HR_URL:-http://localhost:3002}
-  NEXT_PUBLIC_TASK_URL: ${NEXT_PUBLIC_TASK_URL:-http://localhost:3003}
+  NEXT_PUBLIC_AUTH_URL: ${NEXT_PUBLIC_AUTH_URL:-http://app.localhost}
+  NEXT_PUBLIC_LMS_URL: ${NEXT_PUBLIC_LMS_URL:-http://app.localhost/lms}
+  NEXT_PUBLIC_HR_URL: ${NEXT_PUBLIC_HR_URL:-http://app.localhost/hrms}
+  NEXT_PUBLIC_TASK_URL: ${NEXT_PUBLIC_TASK_URL:-http://app.localhost/todo}
+  # lookup-admin -> /sa, admin-web -> /admin. Not interchangeable.
+  NEXT_PUBLIC_ADMIN_URL: ${NEXT_PUBLIC_ADMIN_URL:-http://app.localhost/sa}
+  NEXT_PUBLIC_ADMIN_WEB_URL: ${NEXT_PUBLIC_ADMIN_WEB_URL:-http://app.localhost/admin}
 
-# ── Cross-repo networking (NOT solved here — tracked follow-up) ─────────────
+# ── Cross-repo networking (SOLVED — via `include:`, not an external net) ────
 # api-gateway proxies to product services (leads-service, hr-service,
-# tasks-service, notifications-service, meta-conversion-api) that now live in
-# msq-lms/msq-hrms/msq-todo, not this repo. The *_SERVICE_URL vars below are
-# still env-driven so this compose file stays valid once the parent workspace
-# wires an external Docker network joining every repo's containers together
-# (D5 Stage 1: pnpm-workspace.yaml already does this for code; compose needs
-# the equivalent `docker network create platform-net` + `external: true` on
-# each repo's compose file). That wiring is not done in this pass.
+# tasks-service, notifications-service, meta-conversion-api) that live in
+# msq-lms/msq-hrms/msq-todo, not this repo, and Caddy proxies to their web apps.
+#
+# All four repos' compose files declare the SAME project name (`name: msq`), so
+# the `include:` block below pulls the other three in and every service lands in
+# one project on one default network (msq_default), reachable by container name.
+# `docker compose up` from this directory therefore starts the whole platform,
+# and the *_SERVICE_URL values below are hardcoded to those container names.
+#
+# `include:`, NOT COMPOSE_FILE. COMPOSE_FILE resolves every merged file's
+# relative paths against the PROJECT directory, so each product repo's
+# `context: ..` climbed one level ABOVE the platform root and the build died on
+# "GetFileAttributesEx ...\msq-lms: The system cannot find the file specified".
+# `include:` resolves each file's paths against that file's own directory, which
+# is what these compose files were written for and what keeps them runnable
+# standalone.
+#
+# This replaces the previously-planned `docker network create platform-net` +
+# `external: true` approach: an external network needs creating out-of-band
+# before anything works and leaves four separate projects whose `up`/`down`
+# lifecycles drift apart. Merging needs no setup step and keeps one lifecycle.
+# Running a product repo standalone still works from its own directory with its
+# own .env — that path is unchanged.
+
+# `env_file: .env` on each entry is REQUIRED, not decorative. By default an
+# included file is interpolated with the .env sitting next to IT
+# (msq-lms/.env, …), which holds that repo's STANDALONE values — a
+# `localhost` database host and the pre-single-origin `localhost:3000/3001`
+# app URLs. Those silently won a merged run: the product apps redirected to a
+# dead origin and leads-service dialled ::1:5432. Pointing every include at
+# the platform root's .env makes one file the single source of truth.
+include:
+  - path: msq-lms/docker-compose.yml
+    env_file: .env
+  - path: msq-hrms/docker-compose.yml
+    env_file: .env
+  - path: msq-todo/docker-compose.yml
+    env_file: .env
 
 services:
   postgres:
@@ -134,14 +172,21 @@ services:
       IDENTITY_SERVICE_URL: http://identity-service:${IDENTITY_SERVICE_PORT}
       COMMUNICATION_SERVICE_URL: http://communication-service:${COMMUNICATION_SERVICE_PORT}
       ADMIN_SERVICE_URL: http://admin-service:${ADMIN_SERVICE_PORT}
-      # Product service URLs — resolved against the shared Docker network once
-      # the parent workspace wires it (see note above). Point these at
-      # msq-lms/msq-hrms/msq-todo's containers in your .env.
-      LEADS_SERVICE_URL: ${LEADS_SERVICE_URL}
-      META_SERVICE_URL: ${META_SERVICE_URL}
-      NOTIFICATIONS_SERVICE_URL: ${NOTIFICATIONS_SERVICE_URL}
-      HR_SERVICE_URL: ${HR_SERVICE_URL}
-      TASKS_SERVICE_URL: ${TASKS_SERVICE_URL}
+      # Product services live in msq-lms/msq-hrms/msq-todo, merged into this
+      # same compose project via COMPOSE_FILE in .env, so they resolve by
+      # container name on the shared default network — exactly as the core
+      # services above do.
+      #
+      # Hardcoded here rather than read from ${LEADS_SERVICE_URL} and friends:
+      # those .env values are `http://localhost:<port>` for local `pnpm turbo
+      # dev`, which inside a container means the container itself. Taking them
+      # from .env pointed the gateway at its own empty ports and every product
+      # API call failed with ECONNREFUSED.
+      LEADS_SERVICE_URL: http://leads-service:${LEADS_SERVICE_PORT}
+      META_SERVICE_URL: http://meta-conversion-api:${META_SERVICE_PORT}
+      NOTIFICATIONS_SERVICE_URL: http://notifications-service:${NOTIFICATIONS_SERVICE_PORT}
+      HR_SERVICE_URL: http://hr-service:${HR_SERVICE_PORT}
+      TASKS_SERVICE_URL: http://tasks-service:${TASKS_SERVICE_PORT}
     ports:
       - "${GATEWAY_PORT}:${GATEWAY_PORT}"
     depends_on:
@@ -173,9 +218,7 @@ services:
     build:
       context: .
       dockerfile: msq-core/apps/lookup-admin/Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
-        API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+      args: *web-public-args
     restart: unless-stopped
     env_file: .env
     environment:
@@ -195,9 +238,7 @@ services:
     build:
       context: .
       dockerfile: msq-core/apps/admin-web/Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
-        API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+      args: *web-public-args
     restart: unless-stopped
     env_file: .env
     environment:
@@ -212,17 +253,46 @@ services:
     depends_on:
       - api-gateway
 
-  # Optional reverse proxy simulating the *.app.com SSO topology. Depends on
-  # product web apps (lms-web/hr-web/todo-web) that live in the product repos
-  # — only meaningful when run from the parent workspace with all repos
-  # networked together, not standalone from this repo alone.
+  # Reverse proxy for the SINGLE-ORIGIN topology: one host, one path prefix per
+  # app (see infra/Caddyfile). This is what makes the platform installable as a
+  # single PWA with one service-worker scope and one push subscription.
+  #
+  # Depends on the product web apps (lms-web/hr-web/todo-web) that live in the
+  # product repos — only meaningful when run from the parent workspace with all
+  # repos networked together, not standalone from this repo alone. Started
+  # without them, `/lms`, `/hrms` and `/todo` return 502 while `/`, `/admin` and
+  # `/sa` work.
   caddy:
     image: caddy:2-alpine
     profiles: ["sso-proxy"]
     restart: unless-stopped
     ports:
       - "80:80"
+      # 443 is for the production `apps.fitclass.in` block: Caddy needs it to
+      # complete the TLS-ALPN challenge and serve HTTPS. Unused by the local
+      # `http://app.localhost` block, which is plain HTTP on purpose.
+      - "443:443"
+    environment:
+      # Selects the site address in infra/Caddyfile. Default is the local
+      # `http://app.localhost` (explicit http:// => no ACME attempt). Production
+      # sets CADDY_SITE_ADDRESS=apps.fitclass.in in .env so Caddy issues a real
+      # certificate. Do NOT point this at a name without a live A record: the
+      # failed ACME challenges count against Let's Encrypt's per-host limit.
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-http://app.localhost}
     volumes:
       - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Persist issued certificates and ACME account keys — without these the
+      # container re-requests a certificate on every recreate and will hit
+      # Let's Encrypt rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
       - auth-web
+      - admin-web
+      - lookup-admin
+
+# Named volumes for Caddy's certificate store (sso-proxy profile only). Losing
+# /data means re-issuing every certificate, which Let's Encrypt rate-limits.
+volumes:
+  caddy_data:
+  caddy_config:

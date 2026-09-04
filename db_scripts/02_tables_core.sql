@@ -1059,6 +1059,51 @@ COMMENT ON COLUMN comms.message_templates.body_template IS
 COMMENT ON COLUMN comms.message_templates.body_fields IS
   'Ordered placeholder tokens. Token NAMES only — each product service owns its own whitelist and resolver.';
 
+-- ── NOTIFY.PUSH_SUBSCRIPTIONS ────────────────────────────────
+-- One row per installed PWA + browser + device that has granted the Notification
+-- permission. Platform-wide, not LMS-owned: notifications-service is the first
+-- consumer (follow-up due), hr-service (leave approved/rejected) and
+-- tasks-service (task assigned) are expected to follow, so it sits in its own
+-- shared-tier schema rather than under lms.
+--
+-- endpoint is the push service URL issued by the browser vendor (FCM/Mozilla/
+-- Apple) and is the NATURAL KEY, hence UNIQUE. The client re-registers on every
+-- launch — deleting the Home Screen icon destroys the subscription and a fresh
+-- install issues a new endpoint — so the subscribe path must upsert
+-- (ON CONFLICT (endpoint) DO UPDATE) rather than accumulate a row per launch.
+--
+-- p256dh/auth are the client's public key and auth secret from the browser's
+-- PushSubscription; both are required to encrypt a payload for that endpoint.
+--
+-- Rows are hard-deleted, not soft-deleted: on unsubscribe, and when the push
+-- service answers 404/410 Gone (the endpoint no longer exists and never will
+-- again). There is nothing to audit in a dead device registration, so the
+-- is_deleted/deleted_at/soft_delete_row recipe used by the domain tables is
+-- deliberately not applied here.
+--
+-- tenant_id is a plain UUID with no FK, matching iam.token_blocklist: it is
+-- carried for the tenant_admin RLS predicate and denormalized from the org at
+-- subscribe time.
+CREATE TABLE IF NOT EXISTS notify.push_subscriptions (
+  id           UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  user_id      UUID        NOT NULL REFERENCES iam.users(id)            ON DELETE CASCADE,
+  org_id       UUID        NOT NULL REFERENCES entity.organizations(id) ON DELETE CASCADE,
+  tenant_id    UUID        NOT NULL,
+  endpoint     TEXT        NOT NULL UNIQUE,   -- push service URL; natural key, makes re-subscribe idempotent
+  p256dh       TEXT        NOT NULL,          -- client public key   (PushSubscription.keys.p256dh)
+  auth         TEXT        NOT NULL,          -- client auth secret  (PushSubscription.keys.auth)
+  user_agent   TEXT,                          -- debugging aid: "why did my phone stop getting these"
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  last_used_at TIMESTAMPTZ                    -- stamped on each successful send
+);
+
+COMMENT ON TABLE notify.push_subscriptions IS
+  'Web Push subscriptions, one row per installed PWA/browser/device. Platform-wide: notifications-service today, hr-service and tasks-service next. Upsert on endpoint.';
+COMMENT ON COLUMN notify.push_subscriptions.endpoint IS
+  'Push service URL issued by the browser vendor. Natural key (UNIQUE) — the client re-registers on every launch and must upsert, not accumulate rows.';
+COMMENT ON COLUMN notify.push_subscriptions.last_used_at IS
+  'Stamped on each successful send. Lets a pruning job find registrations that have gone quiet without waiting for a 410.';
+
 -- ===================================================================
 -- SECURITY HARDENING BLOCK
 -- (Issues: #4 JWT blocklist, #15 audit.activities RLS, #19 view

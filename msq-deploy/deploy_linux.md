@@ -220,6 +220,17 @@ and then re-run the post-schema sequence:
 sudo INSTALL_DIR=/opt/msq bash /opt/msq/bootstrap-db.sh --no-seed
 ```
 
+### Release checklist for PWA deployments
+
+If the push notification or PWA implementation has changed (manifest, service worker, icons, or web-push backend):
+
+- **Bump `SW_VERSION` in `msq-core/apps/auth-web/public/sw.js`.** This is the most critical step. Browsers cache `sw.js` aggressively by path alone; without a byte change in the file or a version bump as a comment, clients keep running the old service worker and serving stale app-shell assets from cache. Every PWA deploy that goes silent is usually a stale worker — so always increment this counter and commit it alongside any service-worker change.
+- **`VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` env vars** (required for Web Push, already in `.env.example`) are long-lived secrets. **Never regenerate them casually.** Rotating them invalidates every existing subscription on every device — every user must re-grant notification permission and re-subscribe. If you must rotate them (e.g., after a suspected compromise), be prepared for every installed user to lose notifications until they re-install or manually re-subscribe.
+  - Generate fresh keys with: `npx web-push generate-vapid-keys`
+  - `VAPID_SUBJECT` is a contact URL (mailto: or https:) for push providers to reach you if your push server is misbehaving.
+- **`basePath` is compiled into each web app image.** Changing a product's path prefix (e.g., `/lms` → `/crm`) requires rebuilding that app's Docker image — it is not an env flip. Pick prefixes once and leave them stable.
+- **HTTPS is mandatory.** Service workers and Web Push do not register over plain HTTP (except `localhost` in development). Production must use a valid TLS certificate. Caddy in the stack handles this automatically with ACME if DNS is configured; `http://` schemes will silently fail to register the service worker, making the app uninstallable and push unreachable.
+
 ---
 
 ## 7. Removing the demo data
@@ -269,6 +280,33 @@ whole script — every step is idempotent.
 Expected. The stock `postgres:18.4` image has no pgvector;
 `00_extensions_schemas_roles.sql` catches it and raises a warning rather than
 failing. AI embedding features stay disabled.
+
+**A service crash-loops with `unable to determine transport target for "pino-pretty"`.**
+Every `/api/*` call then fails in a way that looks like a routing or gateway bug
+and is not — check the container logs first:
+```bash
+cd /opt/msq && docker compose ps -a && docker compose logs api-gateway --tail 20
+```
+The images set `NODE_ENV=production` and are built with `pnpm deploy --prod`, but
+compose's `env_file: .env` overrides `NODE_ENV` back to `development`, so
+`@platform/logger` attaches its `pino-pretty` transport inside the container.
+`pino-pretty` is therefore a **runtime dependency** of `msq-core/packages/logger`
+and must stay one. If this reappears, confirm it is still under `dependencies`
+(not `devDependencies`) and that `pnpm-lock.yaml` agrees.
+
+Do **not** "fix" it by forcing `NODE_ENV=production` in the compose service
+blocks: that trips api-gateway's `PUBLIC_API_KEY_PEPPER` strong-secret gate and
+starts emitting HSTS on `app.localhost`, which Chrome treats as a secure context
+— so the header sticks and poisons the host for later plain-HTTP dev.
+
+**A path prefix 404s without its trailing slash** (`/lms` fails, `/lms/` works).
+`infra/Caddyfile` must match each prefix with a named matcher listing both forms
+(`@lms path /lms /lms/*`), because `/lms/*` alone does not match a bare `/lms`.
+Note `handle` accepts only one matcher token, so `handle /lms /lms/*` is a config
+error that makes Caddy fail to load **any** config — every route on the host then
+404s, which looks identical to a routing mistake. Always run
+`docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
+--adapter caddyfile` after editing it.
 
 **Blank Status / Outcome / Source / Follow-up in the LMS UI.**
 The user's tenant has no catalog rows — it was never provisioned. See the

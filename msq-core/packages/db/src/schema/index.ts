@@ -11,6 +11,7 @@ export * from './tables/lead-stage-outcome.table.js';
 export * from './tables/interaction-types.table.js';
 export * from './tables/follow-up-statuses.table.js';
 export * from './tables/message-templates.table.js';
+export * from './tables/push-subscriptions.table.js';
 export * from './tables/marketing-platforms.table.js';
 export * from './tables/campaign-statuses.table.js';
 export * from './tables/lead-sources.table.js';

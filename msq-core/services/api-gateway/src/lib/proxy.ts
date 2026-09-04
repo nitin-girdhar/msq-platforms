@@ -74,7 +74,13 @@ export async function proxyTo(
   }
 
   const method = request.method.toUpperCase();
-  const hasBody = ['POST', 'PUT', 'PATCH'].includes(method);
+  // DELETE is included because DELETE /notifications/push/subscribe identifies
+  // the registration to remove by its endpoint in the body (the endpoint is a
+  // ~500-char URL; putting it in the query string is the worse option). This is
+  // safe for every other DELETE route: Fastify only populates `request.body`
+  // when the client actually sent a parseable one, so a body-less DELETE still
+  // forwards nothing and sets no Content-Type — see the note below.
+  const hasBody = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
 
   let body: string | undefined;
   if (hasBody && request.body !== undefined) {

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { SessionUser, ProductKey } from '@platform/types';
 import { canOpenAdminConsole } from '@platform/rbac';
 import { buildLoginUrl, buildChangePasswordUrl } from '../auth/sso';
+import { withBasePath } from '../api/base-path';
 import UserMenu from './UserMenu';
 import BranchSwitcher from './BranchSwitcher';
 import HamburgerButton from './HamburgerButton';
@@ -54,8 +55,18 @@ export default function AppNavbar({
       <div className="flex h-14 items-center gap-2 px-2 sm:gap-4 sm:px-5">
         <HamburgerButton />
         <Link href={homeHref} className="shrink-0" aria-label="Home">
+          {/*
+            withBasePath() is REQUIRED here — `next/image` does not add the
+            prefix for us. The generated markup is
+            `/lms/_next/image?url=%2Ffitclass-logo-white.webp`: the optimizer
+            ENDPOINT is prefixed, but the `url` parameter is passed through
+            verbatim and then resolved against the server root, where this app
+            serves nothing. The optimizer answered 400 "The requested resource
+            isn't a valid image" and the navbar rendered a broken-image icon in
+            every product app. `url=%2Flms%2F…` returns 200.
+          */}
           <Image
-            src="/fitclass-logo-white.webp"
+            src={withBasePath('/fitclass-logo-white.webp')}
             alt="FitClass"
             width={220}
             height={50}

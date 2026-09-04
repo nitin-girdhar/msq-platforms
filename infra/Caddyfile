@@ -1,31 +1,107 @@
-# Local SSO topology — fronts the four product web images on *.app.localhost
-# subdomains so the shared parent-domain (.app.localhost) session cookie is
-# exercised exactly as the production *.app.com deployment would.
+# Single-origin topology — all six web apps behind ONE host, each under its own
+# path prefix. This is what lets the platform install as one PWA with one
+# service-worker scope and one push subscription (docs/Architecture.md → Web push & PWA).
 #
-# Used by the compose `caddy` service (profile: sso-proxy). Pair with:
-#   COOKIE_DOMAIN=.app.localhost   COOKIE_SECURE=false
-#   NEXT_PUBLIC_AUTH_URL=http://auth.app.localhost
-#   NEXT_PUBLIC_LMS_URL=http://lms.app.localhost
-#   NEXT_PUBLIC_HR_URL=http://hr.app.localhost
-#   NEXT_PUBLIC_TASK_URL=http://todo.app.localhost
-# then rebuild the web images so the NEXT_PUBLIC_* origins bake in.
+# It REPLACES the previous one-subdomain-per-app blocks, which are deleted
+# outright with no redirect layer: a second live origin means a second SW scope
+# and a second push subscription, which is the exact problem this change
+# removes. Announce the new URL rather than bridging it, and retire the old DNS
+# records once the cutover is verified.
+#
+#   /            -> auth-web      :3000   (login, change-password, no-access,
+#                                          select-branch — and the PWA manifest,
+#                                          sw.js and icons added in step 3)
+#   /lms, /lms/*     -> lms-web       :3001
+#   /hrms, /hrms/*   -> hr-web        :3002
+#   /todo, /todo/*   -> todo-web      :3003
+#   /admin, /admin/* -> admin-web     :3004   (org/tenant console)
+#   /sa, /sa/*       -> lookup-admin  :3005   (super-admin platform tooling)
+#
+# `handle`, NOT `handle_path`. Each product app is compiled with a matching Next
+# `basePath`, so it EXPECTS to receive its own prefix and generates its assets
+# and links under it. `handle_path` strips the prefix before proxying, and every
+# route then 404s.
+#
+# Each block matches the BARE prefix as well as the wildcard, and both are
+# needed. `/admin/*` does not match `/admin` — with no trailing slash there is
+# nothing for `*` to match — so a bare-prefix request fell through to the
+# auth-web fallback below, which has no such route, and returned 404. That is
+# the form a user types by hand (`apps.fitclass.in/lms`), so it was the most
+# likely way anyone would first reach the platform.
+#
+# Hence the NAMED matchers (`@lms path /lms /lms/*`) rather than two paths
+# written inline: `handle` takes at most ONE matcher token, so `handle /lms
+# /lms/*` is a config-adapter error ("wrong argument count"). Caddy then fails
+# to load ANY config and every route on the host 404s — a strictly worse failure
+# than the bug being fixed, and it looks identical to a routing mistake. Run
+# `caddy validate --config infra/Caddyfile` after touching this block.
+#
+# ── One site address, both environments ──────────────────────────────────────
+# The routing is identical in dev and production, so it is written ONCE and the
+# HOST is injected. CADDY_SITE_ADDRESS selects which:
+#
+#   local (default)  http://app.localhost   explicit http:// scheme, so Caddy
+#                                           does NOT attempt automatic HTTPS
+#   production       apps.fitclass.in       no scheme, so Caddy issues and
+#                                           renews the certificate itself and
+#                                           redirects :80 -> :443
+#
+# Set it in .env (compose passes it through). Production ALSO requires an A
+# record for the host with 80 and 443 reachable — Web Push needs a secure
+# context, so no HTTPS means no push and no install prompt.
+#
+# Why parameterised rather than two literal site blocks in this file: a
+# production block sitting in the dev-mounted Caddyfile makes every local
+# `docker compose up` attempt an ACME challenge against a name that does not
+# resolve. Those failures count against Let's Encrypt's per-host failed-
+# validation limit, so local development would burn the real domain's quota.
+#
+# ── Pairing ──────────────────────────────────────────────────────────────────
+#   local:       COOKIE_DOMAIN=app.localhost        COOKIE_SECURE=false
+#                AUTH_URL=http://app.localhost      (+ /lms /hrms /todo /admin /sa)
+#   production:  COOKIE_DOMAIN=apps.fitclass.in     COOKIE_SECURE=true
+#                AUTH_URL=https://apps.fitclass.in  (+ the same prefixes)
+#
+# COOKIE_DOMAIN is HOST-ONLY (no leading dot). The dotted form existed to share
+# the session across product subdomains; with one host there are none left to
+# share with, so dropping the dot is a TIGHTENING — the cookie stops being
+# offered to any sibling subdomain. `path=/` (set by identity-service) is what
+# carries it across the product prefixes.
+#
+# `basePath` is compiled into each image, so changing a prefix here must be
+# paired with a rebuild and redeploy of that product — it is not an env flip.
 
-{
-	auto_https off
-}
+{$CADDY_SITE_ADDRESS:http://app.localhost} {
+	@lms path /lms /lms/*
+	handle @lms {
+		reverse_proxy lms-web:3001
+	}
 
-auth.app.localhost:80 {
-	reverse_proxy auth-web:3000
-}
+	@hrms path /hrms /hrms/*
+	handle @hrms {
+		reverse_proxy hr-web:3002
+	}
 
-lms.app.localhost:80 {
-	reverse_proxy lms-web:3001
-}
+	@todo path /todo /todo/*
+	handle @todo {
+		reverse_proxy todo-web:3003
+	}
 
-hr.app.localhost:80 {
-	reverse_proxy hr-web:3002
-}
+	@admin path /admin /admin/*
+	handle @admin {
+		reverse_proxy admin-web:3004
+	}
 
-todo.app.localhost:80 {
-	reverse_proxy todo-web:3003
+	@sa path /sa /sa/*
+	handle @sa {
+		reverse_proxy lookup-admin:3005
+	}
+
+	# auth-web owns everything else, including the root. Must stay LAST:
+	# `handle` blocks are mutually exclusive and evaluated most-specific-first,
+	# so this is the fallback, and it is also what serves the PWA manifest,
+	# sw.js and icons at the origin root.
+	handle {
+		reverse_proxy auth-web:3000
+	}
 }

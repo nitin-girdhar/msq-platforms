@@ -3,6 +3,8 @@
 // (see apps/web/src/lib/api/client.ts for the CRM example). Never add
 // domain-specific endpoints here.
 
+import { withBasePath } from './base-path';
+
 export interface ApiRequestError extends Error {
   status: number;
   body: unknown;
@@ -40,8 +42,20 @@ export interface ApiClientOptions {
   redirectOnUnauthorized?: boolean;
 }
 
+/**
+ * `basePath` is the app-relative API mount, in practice always '/api' — the
+ * Next route/rewrite that proxies to the gateway.
+ *
+ * It is resolved through withBasePath() because `fetch()` is the one thing Next
+ * does NOT apply the app's `basePath` to. Under the single-origin topology a
+ * bare '/api' would leave every product's API traffic hitting auth-web at the
+ * root instead of this app's own proxy — see api/base-path.ts for the full
+ * reasoning. Resolved ONCE here, so all nine call sites keep passing '/api'
+ * and none of them has to know which prefix its app was built with.
+ */
 export function createApiClient(basePath: string, options: ApiClientOptions = {}) {
   const redirectOnUnauthorized = options.redirectOnUnauthorized ?? true;
+  const mount = withBasePath(basePath);
 
   async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
@@ -49,7 +63,7 @@ export function createApiClient(basePath: string, options: ApiClientOptions = {}
       headers['Content-Type'] = 'application/json';
     }
 
-    const res = await fetch(`${basePath}${path}`, {
+    const res = await fetch(`${mount}${path}`, {
       ...options,
       headers,
       credentials: 'include',

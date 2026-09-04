@@ -39,6 +39,20 @@ GRANT SELECT ON TABLE comms.message_templates TO app_user, tenant_admin;
 REVOKE INSERT, UPDATE, DELETE ON TABLE comms.message_templates FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES ON TABLE comms.message_templates TO root_service;
 
+-- ── notify.push_subscriptions ─────────────────────────────────────
+-- notifications-service reads and writes this table through root_service
+-- (DATABASE_URL_SERVICE / withServiceTx), which bypasses RLS: it fans out to
+-- every device of a target user without an app session to scope it. It needs
+-- the full four -- INSERT on subscribe, DELETE on unsubscribe and on
+-- 404/410-pruning, UPDATE for last_used_at, SELECT to find the endpoints.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE notify.push_subscriptions TO root_service;
+
+-- The same four for the app-session roles, so the subscribe/unsubscribe route
+-- can also run under withRoleTx. RLS -- not the grant -- is what confines those
+-- sessions to the acting user's own registrations; see 08_rls.sql.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE notify.push_subscriptions TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE notify.push_subscriptions TO tenant_admin;
+
 -- Vector similarity stub — uncomment after pgvector confirmed and embedding column added
 -- CREATE INDEX IF NOT EXISTS idx_marketing_leads_embedding_ivfflat
 --   ON lms.marketing_leads USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
@@ -59,6 +73,7 @@ GRANT  USAGE  ON SCHEMA marketing TO app_user, tenant_admin, root_service;
 GRANT  USAGE  ON SCHEMA audit     TO app_user, tenant_admin, root_service;
 GRANT  USAGE  ON SCHEMA ext       TO app_user, tenant_admin, root_service;
 GRANT  USAGE  ON SCHEMA comms     TO app_user, tenant_admin, root_service;
+GRANT  USAGE  ON SCHEMA notify    TO app_user, tenant_admin, root_service;
 
 -- app_user: DML on operational tables; SELECT-only on audit + lookups
 GRANT SELECT, INSERT, UPDATE ON TABLE
@@ -111,6 +126,22 @@ REVOKE DELETE ON TABLE
 
 GRANT SELECT ON TABLE
   entity.organizations, lms.lead_assignment_log, lms.lead_status_log, audit.marketing_leads_history TO tenant_admin;
+
+-- entity.tenants: REQUIRED, and safe because RLS is the boundary here.
+-- lms.vw_tenant_full_dashboard and iam.vw_user_org_access both join it and are
+-- granted to tenant_admin below, but every view is `security_invoker = true`
+-- (so RLS evaluates as the querying user), which means the CALLER needs this
+-- grant. Without it both views were unreadable by the very role they are
+-- granted to, and /analytics/dashboard 500'd with "permission denied for table
+-- tenants" for every tenant_admin/super_admin caller.
+--
+-- This does NOT widen tenant visibility: entity.tenants has RLS ENABLED and
+-- FORCED, and `tenant_admin_self_policy` names tenant_admin and tenant_dash_svc
+-- explicitly (naming the service login matters -- both roles are NOINHERIT)
+-- restricting rows to `id = app.current_tenant_id`. Verified: as tenant_admin
+-- with the GUC set, 1 of 2 tenant rows is visible. SELECT only -- the policy is
+-- FOR ALL, but nothing here needs to write the tenant registry.
+GRANT SELECT ON TABLE entity.tenants TO tenant_admin;
 GRANT SELECT ON TABLE audit.audit_log TO tenant_admin;
 REVOKE INSERT, UPDATE, DELETE ON TABLE audit.audit_log FROM tenant_admin;
 GRANT SELECT ON TABLE
@@ -172,7 +203,7 @@ END; $$;
 DO $$
 DECLARE s TEXT;
 BEGIN
-  FOREACH s IN ARRAY ARRAY['public','geo','entity','iam','lms','marketing','audit','ext','comms'] LOOP
+  FOREACH s IN ARRAY ARRAY['public','geo','entity','iam','lms','marketing','audit','ext','comms','notify'] LOOP
     EXECUTE format('GRANT USAGE ON SCHEMA %I TO lead_svc, campaign_svc, user_mgmt_svc, notif_svc, intake_svc, tenant_dash_svc, analytics_svc', s);
   END LOOP;
 END; $$;

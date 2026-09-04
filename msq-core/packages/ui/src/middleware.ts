@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
 import { verifySessionJwt } from './auth/verify-edge';
-import { authOrigin } from './auth/sso';
+import { authOrigin, buildChangePasswordUrl, buildLoginUrl } from './auth/sso';
 
 // Re-exported so an app's middleware.ts can resolve its own public origin for
 // `selfOrigin` without importing the package root (React chrome) into the Edge
@@ -11,8 +11,8 @@ export { authOrigin, adminOrigin, adminWebOrigin, productOrigins } from './auth/
 // Reusable auth gate for a product web app (lms/hr/todo). Each app's
 // `middleware.ts` is a one-liner over this factory. Behavior mirrors the
 // original apps/web middleware but redirects unauthenticated users to the
-// shared auth origin (auth.app.com) instead of a local /login, and verifies
-// RS256/HS256 via the shared edge verifier. Runs in the Edge runtime.
+// shared auth app instead of a local /login, and verifies RS256/HS256 via the
+// shared edge verifier. Runs in the Edge runtime.
 //
 // The DB-backed session liveness + entitlement checks still happen downstream
 // (identity-service /auth/me via requireSession, and the gateway's per-request
@@ -40,6 +40,28 @@ export interface ProductMiddlewareOptions {
   selfOrigin?: string;
 }
 
+// Prefixes are APP-RELATIVE and must stay that way — do NOT add the product's
+// basePath here.
+//
+// Verified empirically against next@15.5.20 rather than assumed, because both
+// ways of getting this wrong are expensive: prefixing would leave every
+// protected route UNAUTHENTICATED, and the reverse would 500 on every request.
+//
+//   * `request.nextUrl.pathname` arrives with the basePath ALREADY STRIPPED.
+//     NextURL.analyze() runs getNextPathnameInfo(), which removes the prefix
+//     from `pathname` and parks it on `nextUrl.basePath`. Observed:
+//         GET /hrms/attendance        -> pathname '/attendance'  basePath '/hrms'
+//         GET /hrms/api/leave/balance -> pathname '/api/leave/balance'
+//         GET /hrms                   -> pathname '/'
+//   * Each app's `config.matcher` is likewise authored WITHOUT the prefix:
+//     getMiddlewareMatchers() prepends `nextConfig.basePath` at build time
+//     (`/attendance/:path*` compiles to `^\/hrms...\/attendance...`). Writing
+//     `/hrms/attendance/:path*` yourself yields `/hrms/hrms/...`, which matches
+//     nothing — middleware silently never runs and the route is left open.
+//
+// `nextUrl.href` is the exception: its getter re-formats through
+// formatPathname(), so the basePath IS present there. That is what makes the
+// callbackUrl below come out right either way.
 const DEFAULT_PROTECTED = ['/dashboard', '/api/'];
 
 export function createProductMiddleware(options: ProductMiddlewareOptions = {}) {
@@ -66,8 +88,13 @@ export function createProductMiddleware(options: ProductMiddlewareOptions = {}) 
     // Force password change: send interactive traffic to the auth origin's
     // change-password screen; leave API calls to fail at the service layer.
     if (payload.force_password_change && !pathname.startsWith('/api/')) {
-      const origin = authOrigin();
-      const url = origin ? `${origin}/change-password` : new URL('/change-password', request.url).toString();
+      // buildChangePasswordUrl() concatenates onto the auth BASE URL, which may
+      // carry a path prefix (https://apps.app.com is auth's, /lms /hrms /todo
+      // are the products'). `new URL('/change-password', base)` would drop that
+      // prefix. Empty base = single-host dev → resolve against this request.
+      const url = authOrigin()
+        ? buildChangePasswordUrl()
+        : new URL('/change-password', request.url).toString();
       return NextResponse.redirect(url);
     }
 
@@ -75,23 +102,31 @@ export function createProductMiddleware(options: ProductMiddlewareOptions = {}) 
   };
 }
 
-// Redirect to the shared auth origin's login, preserving the full URL the user
-// was trying to reach so login can return them here (no re-login when they
-// arrived via a product switch — the cookie is already shared on .app.com).
+// Redirect to the shared auth app's login, preserving the full URL the user was
+// trying to reach so login can return them here. A product switch needs no
+// re-login: every app is now one origin under its own path prefix, so the
+// host-only session cookie (path '/') is already present.
 function bounce(request: NextRequest, pathname: string, selfOrigin: string): NextResponse {
   const isApiRoute = pathname.startsWith('/api/');
   if (isApiRoute) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const origin = authOrigin();
   // Prefer the configured public origin: nextUrl reports the port this process
   // listens on, which is the container-internal one behind a port mapping.
+  //
+  // Both halves of this are basePath-correct, from opposite directions:
+  // `selfOrigin` is this app's BASE URL and already carries the prefix
+  // (`http://app.localhost/hrms`), while `path` has had it stripped
+  // (`/attendance`) — so the two concatenate back to the full public URL. The
+  // `nextUrl.href` fallback needs no help: its getter re-adds the prefix.
   const { pathname: path, search } = request.nextUrl;
   const callbackUrl = selfOrigin ? `${selfOrigin}${path}${search}` : request.nextUrl.href;
-  if (origin) {
-    const loginUrl = new URL('/login', origin);
-    loginUrl.searchParams.set('callbackUrl', callbackUrl);
-    return NextResponse.redirect(loginUrl);
+  if (authOrigin()) {
+    // buildLoginUrl() concatenates onto the auth BASE URL rather than resolving
+    // '/login' against it: the base may carry a path prefix, and a root-relative
+    // `new URL('/login', base)` would silently discard it and bounce the user to
+    // a /login this app does not serve.
+    return NextResponse.redirect(buildLoginUrl(callbackUrl));
   }
   // Single-host dev fallback: same-origin /login with a path-only callback.
   const loginUrl = new URL('/login', request.url);

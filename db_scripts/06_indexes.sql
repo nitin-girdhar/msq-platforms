@@ -558,4 +558,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_marketing_platforms_global_name
 CREATE UNIQUE INDEX IF NOT EXISTS uix_campaign_statuses_global_name
   ON marketing.campaign_statuses (name) WHERE tenant_id IS NULL;
 
+-- ── notify.push_subscriptions ─────────────────────────────────────
+-- The sender's only lookup: "every device registered by this user in this org".
+-- endpoint's own UNIQUE constraint already backs the upsert path, so no second
+-- index is needed for it.
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_org
+  ON notify.push_subscriptions (user_id, org_id);
+
 COMMIT;

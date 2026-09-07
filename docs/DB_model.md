@@ -437,7 +437,7 @@ User accounts. `full_name` is a GENERATED STORED column.
 | middle_name           | TEXT        |                                            |
 | last_name             | TEXT        | NOT NULL, DEFAULT ''                       |
 | full_name             | TEXT        | GENERATED ALWAYS AS STORED (computed)      |
-| email                 | TEXT        | NOT NULL, UNIQUE                           |
+| email                 | TEXT        | NOT NULL, UNIQUE, CHECK `email = lower(email)`. The login credential. Always stored **trimmed + lowercase** — see *Canonical email* below |
 | mobile                | TEXT        |                                            |
 | password_hash         | TEXT        | NOT NULL                                   |
 | role_id               | UUID        | NOT NULL, FK → iam.user_roles(id)          |
@@ -454,9 +454,44 @@ User accounts. `full_name` is a GENERATED STORED column.
 | created_at            | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()        |
 | updated_at            | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()        |
 
-**Checks:** `id <> manager_id`, `NOT (is_active AND is_deleted)`  
+**Checks:** `id <> manager_id`, `NOT (is_active AND is_deleted)`, `email = lower(email)` (`chk_users_email_lowercase`)  
 **RLS:** app_user sees users with active mapping to current org; tenant_admin sees all within tenant  
 **Triggers:** `set_updated_at`, `soft_delete_row`, `set_org_id`, `set_created_by`, `check_user_hierarchy_no_cycle`, `audit_row_changes`
+
+> **Canonical email (schema 1.48.0, `db_scripts/one_time/apply_email_lowercase.sql`).**
+> `email` is the primary login credential and the `UNIQUE` above is
+> case-**sensitive**, so the column is only meaningful if every writer stores the
+> same spelling. Two defects came from it not doing so: a user created as
+> `John.Doe@x.com` could not sign in as `john.doe@x.com` (`getUserByEmail` is an
+> equality test, `u.email = $1`, so a different casing matched no row), and both
+> spellings could be created as **separate accounts** — the `UNIQUE` did not
+> collide, so no 409 fired and one person got two identities.
+>
+> `normalizeEmail()` / `emailInputSchema` in `@platform/validation`
+> (`packages/platform-validation/src/email.ts`) is the single normalizer, applied
+> by `createUserSchema`/`updateUserSchema` on the write path and by
+> `resolveLoginUser` before the login lookup — the same shape `mobile` has via
+> `normalizeMobile()`. One transform covers every writer because there is only
+> one: api-gateway proxies all `/users` writes to identity-service,
+> `/api/v1/public/users` is GET-only, and there is no self-service signup,
+> invite-accept, forgot-password or email-verification flow.
+>
+> `chk_users_email_lowercase` is the database half — a CHECK rather than `citext`
+> (not enabled in this database) or a `UNIQUE INDEX ON lower(email)` (redundant
+> once every value is lowercase, and it would break the `ON CONFLICT (email)`
+> upserts in `dummy_data/`). It makes an un-normalized writer — an operator
+> script, a psql session — fail loudly instead of silently forking an identity.
+> `idx_users_org_email` therefore stays a plain-value index and is directly
+> usable by the login lookup.
+>
+> Normalization is case + whitespace **only**: no dot-stripping or plus-tag
+> removal, which are Gmail-specific and would merge genuinely distinct addresses.
+> The identifier recorded in `audit.audit_log` on a failed login stays **raw** —
+> it is the record of what was actually typed, and
+> `audit.fn_detect_password_spray` groups on it.
+>
+> **Still open:** `lms.marketing_leads.email` and `ext.meta_leads.email` carry the
+> identical case-sensitive dedup bug and were deliberately left out of this change.
 
 ---
 

@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
-import { buildLoginUrl, buildChangePasswordUrl, productOrigins } from '@platform/ui-kit';
+import { canOpenLookupAdmin } from '@platform/rbac';
+import { buildLoginUrl, buildChangePasswordUrl, productOrigins, adminOrigin } from '@platform/ui-kit';
 import { AppSidebar, MobileSidebar, HamburgerButton, ProductSwitcher, UserMenu, BranchSwitcher, filterNavGroups } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { ADMIN_NAV } from '@/src/config/navigation';
@@ -29,6 +30,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // AppSidebar/MobileSidebar — the guard and the rail must agree on what is
   // visible, and computing it twice is how they drift apart.
   const navGroups = filterNavGroups(ADMIN_NAV, session);
+
+  // The SA pill, on the same terms every other app shows it: gated by
+  // lookup-admin's own guard predicate, and hidden outright when ADMIN_URL is
+  // unset (single-host dev with no /sa deployed).
+  const lookupAdminUrl = adminOrigin();
+  const saLinks = lookupAdminUrl && canOpenLookupAdmin(session)
+    ? [{ key: 'sa', href: lookupAdminUrl, label: 'SA' }]
+    : [];
 
   if (navGroups.length === 0) {
     return (
@@ -72,7 +81,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
             licensedProducts={licensedProducts}
             actor={session}
             origins={productOrigins()}
-            extraLinks={[{ key: 'admin', href: '/dashboard', label: 'Admin', active: true }]}
+            extraLinks={[
+              { key: 'admin', href: '/dashboard', label: 'Admin', active: true },
+              ...saLinks,
+            ]}
           />
           <UserMenu user={session} loginUrl={buildLoginUrl()} changePasswordUrl={buildChangePasswordUrl()} />
         </div>

@@ -656,6 +656,32 @@ URL — the pill never appeared. It now uses `canOpenAdminConsole(actor)` from `
 (holds any `admin.*` capability), the shell-side equivalent of the `filterNavGroups` guard, so
 the affordance and the guard admit the same people.
 
+### The "SA" pill: lookup-admin joins the switcher row
+
+`lookup-admin` (`/sa`) was reachable only by typing its URL, and once there a super admin had no
+way back out to any product — the console rendered no switcher at all. It now appears as an **"SA"
+pill** in the same unified group as LMS / HRMS / Tasks / Admin, on every app, and carries the full
+switcher itself so the hop works in both directions.
+
+Like Admin, SA is **not a product**. It stays out of `productOrigins()`, `usableProducts()` and
+`PRODUCT_LANDING`, riding in through `ProductSwitcher`'s `extraLinks` instead, so it can never be
+chosen as a post-login landing target by `sessionDestination()` nor compete for the active chip.
+Its URL is `adminOrigin()` (`ADMIN_URL`), newly re-exported from `@platform/ui-kit`'s main barrel —
+it was previously reachable only from the `/middleware` entrypoint, which Server Components do not
+import. An unset `ADMIN_URL` hides the pill outright.
+
+The gate is **`canOpenLookupAdmin(actor)`** in `@platform/rbac`: `superadmin.lookups.manage` **and**
+`rank >= SUPER_ADMIN`. That pair already existed, inlined in lookup-admin's own dashboard layout;
+it moved into the shared package precisely because a second caller appeared. The pill and the
+console must ask one question, or the pill renders a link into the console's own "Access
+restricted" page — the render-then-403 shape the capability tree exists to remove. The rank half
+is not belt-and-braces: admin-service re-checks `rank >= SUPER_ADMIN` on every route behind the
+console independently of any capability, so the capability alone was only ever enough to make the
+console *open*, never to make it *work*.
+
+Sizing note: `ProductSwitcher`'s grid is capped at 5 columns, which is now exactly the full set
+(LMS + HRMS + Tasks + Admin + SA). A sixth pill requires raising that cap or it wraps on mobile.
+
 ### User management is a capability, per branch (`1.43.0`)
 
 Creating a user is authorized by **`admin.team.manage`, evaluated against the target branch** — not by a rank floor and not by the session's `org_id`. (The key was `lms.users.manage` until `1.45.0`; the mechanism below is unchanged.)
@@ -874,6 +900,21 @@ All packages live in `packages/` and are consumed via workspace references (`@cr
 | `@platform/team-web` | `team-web` | Shared team-management UI (`TeamShell`, `TeamTable`, `CreateUserModal`, `EditUserModal`, `ResetPasswordModal`) — extracted out of `admin-web` for reuse |
 | `@crm/permissions` | — | **Deprecated compat barrel** — re-exports the four `*/authz` packages so existing imports keep working; being migrated away and then removed |
 | `@crm/internal-client` | — | HTTP client for inter-service calls (superseded by `@platform/http` in newer services) |
+
+### Grids share one column-filter config (`@platform/ui-kit/grid`)
+
+Every grid in the platform is a bare `AgGridReact` (AG Grid 35.3 Community) — there is no wrapper component, and each of the six grid files used to declare its own copy of `defaultColDef` with no `filterParams` at all, so column filtering ran entirely on undocumented AG Grid defaults.
+
+`@platform/ui-kit/grid` is now the single source of truth for that config: `GRID_DEFAULT_COL_DEF` (assign it straight to the grid's `defaultColDef`), `TEXT_FILTER_PARAMS`, and `normalizeFilterText`. `normalizeFilterText` is wired in as the text filter's `textFormatter`, which AG Grid applies to **both** the cell value and the text typed into the filter box — NFD-normalise, strip combining marks, trim, lowercase — so a column filter matches regardless of case, accents or stray whitespace, and stays that way across AG Grid upgrades rather than depending on `caseSensitive` happening to default to `false`.
+
+Two rules when adding a grid:
+
+- **Assign `GRID_DEFAULT_COL_DEF`; never re-declare the literal.** It is a module-level constant, so no `useMemo` is needed. The shared default deliberately does **not** set `filter` — columns opting out with `filter: false` (the pinned action columns, FollowUpGrid's "Due In") must stay off, and number/date columns must keep resolving to their own filter type instead of being forced to text.
+- **A column whose `cellRenderer` shows a label must have a `valueGetter` returning that same label.** The filter matches the column value, so a Status column rendering a `StatusBadge` reading "Call Attempted" while its `valueGetter` returned the raw stage `contacting` made typing the on-screen text return nothing (fixed in `LeadsTable`).
+
+The module is exposed on the `./grid` subpath, not the root barrel, and imports nothing from `ag-grid-community` — apps with no grid (`auth-web`, hr-web, todo-web) import `@platform/ui-kit` and must not be made to resolve AG Grid.
+
+Current grids: `TeamTable` (`@platform/team-web`), `LookupTable` + `UsersTable` (lookup-admin), `LeadsTable` + `FollowUpGrid` + `LeadsHistoryShell` (`@lms/web`).
 
 ### Per-product packages (nested repos: `msq-lms`, `msq-hrms`, `msq-todo`)
 

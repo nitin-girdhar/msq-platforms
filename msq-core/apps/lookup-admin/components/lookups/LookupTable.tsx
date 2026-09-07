@@ -6,6 +6,7 @@ import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, GridReadyEvent, GridSizeChangedEvent, ICellRendererParams } from 'ag-grid-community';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
 import type { LookupTableDef } from '@/src/lib/lookupTableConfig';
+import { GRID_DEFAULT_COL_DEF } from '@platform/ui-kit/grid';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -151,11 +152,9 @@ export default function LookupTable({ config, rows, onEdit }: Props) {
     params.api.sizeColumnsToFit();
   }, []);
 
-  const defaultColDef: ColDef = useMemo(() => ({
-    resizable: true,
-    suppressMovable: false,
-    cellStyle: { fontSize: '13px', color: '#0F172A' },
-  }), []);
+  // Shared across every grid in the platform — case/accent-insensitive column
+  // filtering lives in @platform/ui-kit/grid, not in a per-file literal.
+  const defaultColDef: ColDef = GRID_DEFAULT_COL_DEF;
 
   return (
     <div className="overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-sm">

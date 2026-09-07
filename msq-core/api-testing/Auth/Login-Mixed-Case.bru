@@ -1,0 +1,44 @@
+meta {
+  name: Login Mixed Case
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "identifier": "  ADMIN@Example.COM  ",
+    "password": "Admin@123"
+  }
+}
+
+script:post-response {
+  // Regression guard for schema 1.48.0. The stored address is lowercase
+  // (chk_users_email_lowercase); this sends it upper-cased and padded and must
+  // still authenticate, because resolveLoginUser runs the identifier through
+  // normalizeEmail() before the lookup. A 401 here means that call was lost.
+  test("mixed-case email authenticates", function () {
+    expect(res.status).to.equal(200);
+  });
+  test("resolves to the same account as the canonical spelling", function () {
+    expect(res.body.data.email).to.equal("admin@example.com");
+  });
+}
+
+docs {
+  Email is case-insensitive for login. iam.users.email is stored trimmed and
+  lowercase -- normalizeEmail() in @platform/validation is applied by
+  createUserSchema/updateUserSchema on write and by resolveLoginUser before the
+  lookup -- so any casing the user types resolves to the one account.
+
+  Before schema 1.48.0 this request returned 401: the lookup was an exact
+  equality test (u.email = $1) against a column whose UNIQUE is case-sensitive.
+
+  Uses `identifier`, the current field name. `email` is a deprecated alias kept
+  for client repos released separately; both are normalized the same way.
+}

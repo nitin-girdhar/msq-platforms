@@ -35,4 +35,9 @@ docs {
   sends nothing). When true AND the acting admin holds admin.team.notify (or rank
   >= org_admin), the user is emailed which branches were added/removed and the
   new home branch. Set false to skip.
+
+  email, when supplied, is normalized to lowercase and trimmed before it is
+  stored (schema 1.48.0) -- the same rule as create. Editing a user's email to a
+  mixed-case value lands the canonical spelling; the database refuses anything
+  else (chk_users_email_lowercase).
 }

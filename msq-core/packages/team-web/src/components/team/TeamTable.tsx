@@ -29,6 +29,7 @@ import {
 import { canCreateUser } from '../../lib/permissions';
 import type { TeamRow } from '../../lib/types';
 import UserStatusBadge from './UserStatusBadge';
+import { GRID_DEFAULT_COL_DEF } from '@platform/ui-kit/grid';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -344,11 +345,9 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
     gridApi?.onFilterChanged();
   }, [gridApi, search, roleSelected, statusSelected, orgSelected, managerSelected]);
 
-  const defaultColDef: ColDef = useMemo(() => ({
-    resizable: true,
-    suppressMovable: false,
-    cellStyle: { fontSize: '13px', color: '#0F172A' },
-  }), []);
+  // Shared across every grid in the platform — case/accent-insensitive column
+  // filtering lives in @platform/ui-kit/grid, not in a per-file literal.
+  const defaultColDef: ColDef = GRID_DEFAULT_COL_DEF;
 
   if (users.length === 0) {
     return (

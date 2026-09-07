@@ -12,6 +12,7 @@ export { Placeholder } from './components/Placeholder';
 export { MonthGrid, type MonthGridBar, type MonthGridMarker } from './components/MonthGrid';
 export { UserPicker, type PickerUser } from './components/UserPicker';
 export { MultiSelect, type SelectOption } from './components/MultiSelect';
+export { SearchableSelect, type SearchableOption } from './components/SearchableSelect';
 export { FilterField } from './components/FilterField';
 export { PhotoUploadModal, PhotoAvatar, type PhotoUploadGate } from './components/PhotoUpload';
 
@@ -89,12 +90,13 @@ export {
   viewport as pwaViewport,
   appleWebApp as pwaAppleWebApp,
   icons as pwaIcons,
+  manifest as pwaManifest,
   appleCapableMeta as pwaAppleCapableMeta,
 } from './pwa/metadata';
 
 // SSO origin helpers — client-safe (no jose, no next/headers). Server Components
 // call productOrigins()/authOrigin() and pass results down to client chrome.
-export { authOrigin, adminWebOrigin, buildLoginUrl, buildChangePasswordUrl, productOrigins, allowedRedirectOrigins } from './auth/sso';
+export { authOrigin, adminOrigin, adminWebOrigin, buildLoginUrl, buildChangePasswordUrl, productOrigins, allowedRedirectOrigins } from './auth/sso';
 
 // Product entitlement resolution — tenant license INTERSECT user capability, plus
 // the landing target derived from it. Pure and env-free (no React, no jose), so

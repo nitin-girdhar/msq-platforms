@@ -33,6 +33,8 @@ Run every item before marking a frontend task complete or opening a PR.
 - [ ] No new `*.module.css` files or token/theme layer introduced
 - [ ] Conditional classes composed with template strings (no `clsx`)
 - [ ] Reused generic primitives come from `@platform/ui-kit` (`Modal`, `Pagination`, …), not re-implemented
+- [ ] AG Grid `defaultColDef` is `GRID_DEFAULT_COL_DEF` from `@platform/ui-kit/grid`, not a local literal
+- [ ] Every badge/label column has a `valueGetter` returning the displayed label so filters match it
 
 ## Auth & access
 - [ ] Session resolved server-side via `getServerSession()` and passed down as props

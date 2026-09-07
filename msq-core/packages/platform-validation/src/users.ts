@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { emailInputSchema } from './email.js';
 import { mobileInputSchema } from './phone.js';
 
 // One branch a user works in: which org, in which role, at what share of that
@@ -45,7 +46,7 @@ export const createUserSchema = refineOrgAssignments(
     first_name: z.string().min(1).max(50),
     middle_name: z.string().max(50).optional(),
     last_name: z.string().max(50).optional(),
-    email: z.string().email(),
+    email: emailInputSchema,
     mobile: mobileInputSchema.optional(),
     // Legacy single-branch path: the user lands in the actor's own org with this
     // role. Superseded by org_assignments when that is present — kept because
@@ -70,7 +71,7 @@ export const updateUserSchema = refineOrgAssignments(
     first_name: z.string().min(1).max(50).optional(),
     middle_name: z.string().max(50).optional(),
     last_name: z.string().max(50).optional(),
-    email: z.string().email().optional(),
+    email: emailInputSchema.optional(),
     mobile: mobileInputSchema.optional(),
     role_name: z.string().optional(),
     manager_id: z.string().uuid().nullable().optional(),

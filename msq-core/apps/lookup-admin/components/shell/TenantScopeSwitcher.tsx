@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useTransition } from 'react';
 // From tenant-cookie, NOT tenant-scope — the latter imports `next/headers`,
 // which cannot be pulled into a client component.
+import { SearchableSelect } from '@platform/ui-kit';
 import { TENANT_COOKIE, ORG_COOKIE, type TenantOption } from '@/src/lib/tenant-cookie';
 
 interface Props {
@@ -33,24 +34,20 @@ export default function TenantScopeSwitcher({ tenants, selectedTenantId }: Props
 
   return (
     <div className="flex items-center gap-2">
-      <label htmlFor="tenant-scope" className="hidden text-xs font-semibold text-[#64748B] sm:block">
-        Tenant
-      </label>
-      <select
-        id="tenant-scope"
+      <span className="hidden text-xs font-semibold text-[#64748B] sm:block">Tenant</span>
+      {/* SearchableSelect, not a native <select>: this list grows with every
+          tenant onboarded and a <select> cannot be typed into. Trigger keeps the
+          Button `sm` scale (px-3 py-1.5 text-xs) so the navbar control sits at
+          the same density as every other chrome button. */}
+      <SearchableSelect
+        ariaLabel="Tenant scope"
         value={selectedTenantId ?? ''}
-        onChange={(e) => handleChange(e.target.value)}
-        aria-busy={pending}
-        // Pinned to the Button `sm` scale (px-3 py-1.5 text-xs) so the navbar
-        // control sits at the same density as every other chrome button.
-        className="max-w-[200px] rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-xs font-semibold text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:opacity-60"
+        onChange={handleChange}
+        options={tenants.map((t) => ({ id: t.id, label: t.name }))}
+        emptyLabel="— All / select tenant —"
         disabled={pending}
-      >
-        <option value="">— All / select tenant —</option>
-        {tenants.map((t) => (
-          <option key={t.id} value={t.id}>{t.name}</option>
-        ))}
-      </select>
+        className="w-[200px]"
+      />
     </div>
   );
 }

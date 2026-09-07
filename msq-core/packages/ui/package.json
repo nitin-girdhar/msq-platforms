@@ -12,6 +12,7 @@
     "./server": "./src/server/index.ts",
     "./middleware": "./src/middleware.ts",
     "./shell": "./src/shell/index.ts",
+    "./grid": "./src/grid/index.ts",
     "./ag-grid.css": "./src/styles/ag-grid.css"
   },
   "scripts": {

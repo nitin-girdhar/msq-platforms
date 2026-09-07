@@ -224,7 +224,12 @@ export default function LeadDashboardShell({ actor, enabledModules }: {
   re-exports its primitives as *named* exports from the barrel, so consume them as
   `import { Modal } from '@platform/ui-kit'`.)
 - Keep mutation error handling in the Shell (or hook) and show it inline near the action.
-- Tables are **AG Grid** (`ag-grid-react`) configured in the Shell/Table component.
+- Tables are **AG Grid** (`ag-grid-react`) configured in the Shell/Table component. Assign
+  `GRID_DEFAULT_COL_DEF` from `@platform/ui-kit/grid` to `defaultColDef` — never re-declare the
+  literal. It carries the shared case-/accent-insensitive column-filter params, and it
+  intentionally leaves `filter` to each column so `filter: false` and number/date columns are
+  unaffected. A column with a label-rendering `cellRenderer` (a status/source badge) must have a
+  `valueGetter` returning that same label, or its filter won't match the text on screen.
 
 ---
 
@@ -311,6 +316,8 @@ Import generic building blocks from `@platform/ui-kit` rather than re-implementi
 - `Pagination`, `DownloadButton`, `MonthGrid`, `Placeholder`.
 - Hooks: `useDropdown`, `useIsMobile`.
 - `createApiClient` (fetch wrapper).
+- `@platform/ui-kit/grid` (subpath): `GRID_DEFAULT_COL_DEF`, `TEXT_FILTER_PARAMS`,
+  `normalizeFilterText` — the one AG Grid column-filter configuration every grid shares.
 
 Build a component in `@platform/ui-kit` when it has **zero CRM domain knowledge** and is reused across
 apps/modules. Otherwise build it under `apps/web/components/<domain>/`.

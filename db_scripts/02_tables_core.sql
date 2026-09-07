@@ -477,7 +477,24 @@ CREATE TABLE IF NOT EXISTS iam.users (
   photo_uploaded_by     UUID,
   photo_consent_at      TIMESTAMPTZ,
   CONSTRAINT chk_user_not_own_manager    CHECK (id <> manager_id),
-  CONSTRAINT chk_users_active_deleted    CHECK (NOT (is_active AND is_deleted))
+  CONSTRAINT chk_users_active_deleted    CHECK (NOT (is_active AND is_deleted)),
+  -- Case is not part of the address: one person typing John@x.com and
+  -- john@x.com means one account. The UNIQUE on email above is case-SENSITIVE,
+  -- so without this the second spelling becomes a SECOND ACCOUNT instead of a
+  -- 409, and whoever was stored as John@x.com cannot sign in as john@x.com --
+  -- email is the primary login credential and the lookup is an equality test.
+  --
+  -- A CHECK rather than a UNIQUE INDEX on lower(email): the index would be
+  -- redundant once every stored value is already lowercase, and it would break
+  -- the ON CONFLICT (email) upserts in dummy_data/. This instead makes an
+  -- un-normalized writer -- an operator script, a psql session -- fail loudly at
+  -- the point of the mistake rather than silently forking an identity.
+  --
+  -- Every application write goes through normalizeEmail() in @platform/validation
+  -- (packages/platform-validation/src/email.ts), which the login lookup also
+  -- calls. Keep the two in sync. Same contract as mobile / normalizeMobile(),
+  -- documented above uix_users_mobile in 06_indexes.sql.
+  CONSTRAINT chk_users_email_lowercase   CHECK (email = lower(email))
 );
 
 -- ── iam.user_org_mapping ─────────────────────────────────────────

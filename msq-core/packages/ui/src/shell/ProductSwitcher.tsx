@@ -66,9 +66,11 @@ export default function ProductSwitcher({
   // product and there are no extra links (e.g. Admin) to show either.
   if (products.length <= 1 && extraLinks.length === 0) return null;
 
-  // Capped at 5 columns — the widest we expect PRODUCT_LABELS + Admin to grow
-  // to. Fewer items still get one column each (no empty cells) via the inline
-  // template, and the grid collapses to an inline row once sm: kicks in.
+  // Capped at 5 columns — exactly what the full set costs today: LMS + HRMS +
+  // Tasks + the Admin pill + the super-admin-only SA pill. Fewer items still get
+  // one column each (no empty cells) via the inline template, and the grid
+  // collapses to an inline row once sm: kicks in. Adding a sixth pill means
+  // raising this, or the extra one wraps under the first column on mobile.
   const columns = Math.min(products.length + extraLinks.length, 5);
 
   return (

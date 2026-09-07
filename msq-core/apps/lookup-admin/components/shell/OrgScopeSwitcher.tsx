@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useTransition } from 'react';
+import { SearchableSelect } from '@platform/ui-kit';
 import { ORG_COOKIE, type OrgOption } from '@/src/lib/tenant-cookie';
 
 interface Props {
@@ -32,22 +33,19 @@ export default function OrgScopeSwitcher({ orgs, selectedTenantId, selectedOrgId
 
   return (
     <div className="flex items-center gap-2">
-      <label htmlFor="org-scope" className="hidden text-xs font-semibold text-[#64748B] sm:block">
-        Org
-      </label>
-      <select
-        id="org-scope"
+      <span className="hidden text-xs font-semibold text-[#64748B] sm:block">Org</span>
+      {/* Type-to-filter for the same reason as the tenant control, and more
+          acutely: a large tenant's branch list is the longest dropdown in the
+          app. */}
+      <SearchableSelect
+        ariaLabel="Org scope"
         value={selectedTenantId ? (selectedOrgId ?? '') : ''}
-        onChange={(e) => handleChange(e.target.value)}
-        aria-busy={pending}
-        className="max-w-[200px] rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-xs font-semibold text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:opacity-60"
+        onChange={handleChange}
+        options={options.map((o) => ({ id: o.id, label: o.name }))}
+        emptyLabel={selectedTenantId ? '— All / select org —' : '— Select a tenant first —'}
         disabled={pending || !selectedTenantId}
-      >
-        <option value="">{selectedTenantId ? '— All / select org —' : '— Select a tenant first —'}</option>
-        {options.map((o) => (
-          <option key={o.id} value={o.id}>{o.name}</option>
-        ))}
-      </select>
+        className="w-[200px]"
+      />
     </div>
   );
 }

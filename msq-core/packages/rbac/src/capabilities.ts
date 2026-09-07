@@ -10,6 +10,8 @@
 // `resolveScope()` too — `can()` alone says the action is permitted, not whose
 // rows it may touch.
 
+import { isSuperAdmin } from './predicates.js';
+
 export const CAPABILITY = {
   // ── Tools (8) ──
   // `admin` is the TENANT admin console (admin-web). `superadmin` is the
@@ -304,4 +306,37 @@ export function resolveScope(
     if (holds(actor, `${operationKey}.${name}`)) return name;
   }
   return null;
+}
+
+/**
+ * May this actor open the PLATFORM console (lookup-admin, the `/sa` app)?
+ *
+ * The shell-side twin of lookup-admin's own guard, for the cross-product "SA"
+ * pill. Both must ask the identical question or the pill appears for someone
+ * the console then refuses — the render-then-403 shape this package exists to
+ * remove — so `apps/lookup-admin/app/dashboard/layout.tsx` calls THIS function
+ * rather than repeating the pair below.
+ *
+ * BOTH conditions, deliberately, and not belt-and-braces:
+ *
+ *   * the capability, because the Capability Matrix screen can tick
+ *     `superadmin.lookups.manage` onto any role, and
+ *   * the rank floor, because admin-service re-checks `rank >= SUPER_ADMIN` on
+ *     every route behind the console independently of any capability.
+ *
+ * So the capability alone was never enough to make the console WORK — only
+ * enough to make it OPEN. Matching the server's floor here means a mis-tick
+ * grants nothing rather than a console where every data call 403s.
+ *
+ * To widen this console to a lower rank, relax admin-service's rank check
+ * first, then this one. Changing either alone just moves where the 403 lands.
+ *
+ * Takes rank alongside capabilities, unlike its `canOpenAdminConsole` sibling:
+ * the tenant console is capability-only by design, this one is not.
+ */
+export function canOpenLookupAdmin(
+  actor: (CapabilityHolder & { rank: number }) | null | undefined,
+): boolean {
+  if (!actor) return false;
+  return can(actor, CAPABILITY.SUPERADMIN_LOOKUPS_MANAGE) && isSuperAdmin(actor.rank);
 }

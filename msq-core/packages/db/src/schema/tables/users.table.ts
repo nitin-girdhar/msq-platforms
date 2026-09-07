@@ -13,6 +13,11 @@ export const usersTable = iamSchema.table('users', {
   fullName:            text('full_name').generatedAlwaysAs(
     sql`TRIM(first_name || COALESCE(' ' || NULLIF(middle_name, ''), '') || COALESCE(' ' || NULLIF(last_name, ''), ''))`,
   ),
+  // Always stored trimmed + lowercase. The UNIQUE here is case-SENSITIVE, so
+  // the canonical spelling is what makes it mean anything; chk_users_email_lowercase
+  // enforces it in the database and normalizeEmail() in @platform/validation
+  // produces it on every write and before every login lookup. Never write this
+  // column with a raw user-supplied string.
   email:               text('email').notNull().unique(),
   mobile:              text('mobile'),
   passwordHash:        text('password_hash').notNull(),

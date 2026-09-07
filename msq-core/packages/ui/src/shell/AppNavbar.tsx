@@ -1,7 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import type { SessionUser, ProductKey } from '@platform/types';
-import { canOpenAdminConsole } from '@platform/rbac';
+import { canOpenAdminConsole, canOpenLookupAdmin } from '@platform/rbac';
 import { buildLoginUrl, buildChangePasswordUrl } from '../auth/sso';
 import { withBasePath } from '../api/base-path';
 import UserMenu from './UserMenu';
@@ -29,6 +29,11 @@ interface Props {
   // switcher — see adminWebOrigin()'s doc comment in auth/sso.ts. Omitted/empty
   // hides the link entirely (e.g. single-host local dev with no ADMIN_WEB_URL set).
   adminWebUrl?: string;
+  // lookup-admin's base URL (adminOrigin()), for the standalone "SA" link —
+  // super_admin-only platform tooling. Same reasoning as adminWebUrl above: not
+  // a licensed product, so it stays out of ProductSwitcher/licensedProducts and
+  // rides in as an extra link. Omitted/empty hides it entirely.
+  lookupAdminUrl?: string;
 }
 
 // Shared top bar for every product app. Product-agnostic: identity, nav targets,
@@ -42,14 +47,20 @@ export default function AppNavbar({
   title,
   notificationSlot,
   adminWebUrl,
+  lookupAdminUrl,
 }: Props) {
   // Same question admin-web's own dashboard guard asks (a non-empty filtered
   // ADMIN_NAV): the pill must show for exactly the users that guard admits, or a
   // capability-granted, lower-ranked user reaches Admin only by typing the URL.
   const showAdminLink = !!adminWebUrl && canOpenAdminConsole(user);
-  const extraLinks = showAdminLink
-    ? [{ key: 'admin', href: adminWebUrl!, label: 'Admin' }]
-    : [];
+  // Same contract one tier up: canOpenLookupAdmin() is the exact pair
+  // lookup-admin's own layout guards on, so the pill shows for precisely the
+  // accounts that console admits and never renders a link into its denial page.
+  const showLookupAdminLink = !!lookupAdminUrl && canOpenLookupAdmin(user);
+  const extraLinks = [
+    ...(showAdminLink ? [{ key: 'admin', href: adminWebUrl!, label: 'Admin' }] : []),
+    ...(showLookupAdminLink ? [{ key: 'sa', href: lookupAdminUrl!, label: 'SA' }] : []),
+  ];
   return (
     <header className="sticky top-0 z-30 shrink-0 border-b border-[#E2E8F0] bg-white">
       <div className="flex h-14 items-center gap-2 px-2 sm:gap-4 sm:px-5">

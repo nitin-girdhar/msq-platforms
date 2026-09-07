@@ -2,7 +2,7 @@ import { UnauthorizedError, BadRequestError, ForbiddenError } from '../../../lib
 import type { JwtPayload, UserOrgOption, PlatformRole, ProductKey } from '@platform/types';
 import { getActiveTenantModulesByTenantId } from '@platform/db';
 import { modulesToProducts, isTenantWideRole } from '@platform/authz';
-import { normalizeMobile, isMobileLike } from '@platform/validation';
+import { normalizeEmail, normalizeMobile, isMobileLike } from '@platform/validation';
 import { comparePassword, hashPassword } from '../../../lib/password.js';
 import { signJwt, verifyJwt, revokeJti, isJtiRevoked, revokeAllUserSessions, decodeJwtUnchecked } from '../../../lib/jwt.js';
 import { logActivity } from '@platform/audit-log';
@@ -57,7 +57,7 @@ async function resolveLoginUser(
       identifier_type: 'mobile',
     };
   }
-  return { user: await repo.getUserByEmail(identifier, org_id), identifier_type: 'email' };
+  return { user: await repo.getUserByEmail(normalizeEmail(identifier), org_id), identifier_type: 'email' };
 }
 
 export async function login(input: LoginInput): Promise<LoginResult> {

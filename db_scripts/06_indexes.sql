@@ -241,6 +241,11 @@ CREATE INDEX IF NOT EXISTS idx_organizations_tenant_id
 -- iam.users
 CREATE INDEX IF NOT EXISTS idx_users_org_role
   ON iam.users (org_id, role_id) WHERE NOT is_deleted;
+-- Plain-value, not lower(email): every stored address is ALREADY lowercase,
+-- guaranteed by chk_users_email_lowercase (02_tables_core.sql) and produced by
+-- normalizeEmail() in @platform/validation, which the login lookup calls before
+-- comparing. An equality lookup can therefore use this index directly -- a
+-- functional lower(email) index would be redundant. Keep the three in sync.
 CREATE INDEX IF NOT EXISTS idx_users_org_email
   ON iam.users (org_id, email) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_users_email_trgm

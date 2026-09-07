@@ -47,3 +47,17 @@ export const icons: Metadata['icons'] = {
   icon: '/icons/favicon.png',
   apple: '/icons/apple-touch-icon.png',
 };
+
+// Every product app must link the manifest, not just auth-web. auth-web owns
+// app/manifest.ts and therefore emits this tag on its own, but its /login
+// server-redirects any request that already carries a session — so for a
+// signed-in user there is no auth-web page left to land on, and without this
+// constant the whole origin has no page linking a manifest. Chrome/Edge show
+// the install affordance only on a page that links one, which made the
+// platform uninstallable for exactly the users who had signed in.
+//
+// Origin-absolute for the same reason as `icons` above: auth-web serves
+// /manifest.webmanifest for every product path, and Next does not
+// basePath-prefix metadata URLs. Do NOT add this to auth-web — app/manifest.ts
+// already emits the tag there and setting both renders it twice.
+export const manifest: Metadata['manifest'] = '/manifest.webmanifest';

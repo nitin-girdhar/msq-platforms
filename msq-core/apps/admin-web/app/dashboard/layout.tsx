@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
-import { canOpenLookupAdmin } from '@platform/rbac';
-import { buildLoginUrl, buildChangePasswordUrl, productOrigins, adminOrigin } from '@platform/ui-kit';
-import { AppSidebar, MobileSidebar, HamburgerButton, ProductSwitcher, UserMenu, BranchSwitcher, filterNavGroups } from '@platform/ui-kit/shell';
+import { productOrigins, adminOrigin } from '@platform/ui-kit';
+import { AppNavbar, AppSidebar, MobileSidebar, filterNavGroups } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { ADMIN_NAV } from '@/src/config/navigation';
 import LogoutButton from '@/components/auth/LogoutButton';
@@ -31,14 +30,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // visible, and computing it twice is how they drift apart.
   const navGroups = filterNavGroups(ADMIN_NAV, session);
 
-  // The SA pill, on the same terms every other app shows it: gated by
-  // lookup-admin's own guard predicate, and hidden outright when ADMIN_URL is
-  // unset (single-host dev with no /sa deployed).
-  const lookupAdminUrl = adminOrigin();
-  const saLinks = lookupAdminUrl && canOpenLookupAdmin(session)
-    ? [{ key: 'sa', href: lookupAdminUrl, label: 'SA' }]
-    : [];
-
   if (navGroups.length === 0) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] px-6">
@@ -61,34 +52,23 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-[#F8FAFC] lg:h-full lg:min-h-0 lg:overflow-hidden">
-      <header className="flex shrink-0 items-center gap-3 border-b border-[#E2E8F0] bg-white px-4 py-3 sm:px-6">
-        <HamburgerButton />
-        <span className="text-base font-bold tracking-tight text-[#0F172A]">Admin</span>
-        <div className="ml-auto flex items-center gap-3">
-          {/* Branch pill before the product tabs, matching AppNavbar's order.
-              The console is server-rendered per request (force-dynamic +
-              getServerSession), so switching branch re-mints the session cookie
-              and the full reload rebuilds the sidebar and every screen (Team,
-              API Tokens, HR admin) for the selected branch. Self-hides for
-              single-branch and non-switching actors. */}
-          <BranchSwitcher user={session} homeHref="/dashboard" />
-          {/* No activeProduct: admin-web isn't a licensed product itself, so
-              every LMS/HR/Task link here is cross-origin back out. The Admin
-              pill itself is passed as an active extraLink instead, so it gets
-              the same "current page" highlight LMS/HR/Task get on their own
-              headers. */}
-          <ProductSwitcher
-            licensedProducts={licensedProducts}
-            actor={session}
-            origins={productOrigins()}
-            extraLinks={[
-              { key: 'admin', href: '/dashboard', label: 'Admin', active: true },
-              ...saLinks,
-            ]}
-          />
-          <UserMenu user={session} loginUrl={buildLoginUrl()} changePasswordUrl={buildChangePasswordUrl()} />
-        </div>
-      </header>
+      {/* The shared navbar, not a hand-rolled one: it is the only place the
+          responsive rules live (product pills inline on sm+, full-width row on
+          mobile), and this console's own copy of that header used to squeeze
+          the pills off-screen on a phone. activeExtra marks the Admin pill as
+          the current page — this console is capability-gated chrome, not a
+          licensed product, so it can never be the activeProduct. The SA pill
+          rides along on lookup-admin's own guard predicate, hidden outright
+          when ADMIN_URL is unset (single-host dev with no /sa deployed). */}
+      <AppNavbar
+        user={session}
+        licensedProducts={licensedProducts}
+        productOrigins={productOrigins()}
+        activeExtra="admin"
+        homeHref="/dashboard"
+        title="Admin"
+        lookupAdminUrl={adminOrigin()}
+      />
       <MobileSidebar actor={session} items={navGroups} />
       <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">
         <AppSidebar actor={session} items={navGroups} />

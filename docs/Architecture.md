@@ -682,6 +682,52 @@ console *open*, never to make it *work*.
 Sizing note: `ProductSwitcher`'s grid is capped at 5 columns, which is now exactly the full set
 (LMS + HRMS + Tasks + Admin + SA). A sixth pill requires raising that cap or it wraps on mobile.
 
+### One navbar for all five apps
+
+`AppNavbar` (`@platform/ui-kit/shell`) is now the **only** header. LMS / HRMS / Tasks always used
+it; `admin-web` and `lookup-admin` each hand-rolled their own, and that is precisely why the pill
+row broke on a phone: `AppNavbar` mounts `ProductSwitcher` **twice** — inline inside a
+`hidden … sm:flex` wrapper, and again in a `sm:hidden` full-width second row under the bar — while
+the consoles mounted it once, inline, at every breakpoint. `ProductSwitcher`'s root is
+`w-full sm:w-auto` around the 5-column grid, so inside a console's single non-wrapping flex row it
+was pushed off the right edge of the screen. The PWA's `viewport-fit=cover` + safe-area padding
+narrows the usable width further, making it worse on an installed app than in the browser.
+
+Two props let the consoles drop their copies:
+
+- **`activeExtra: 'admin' | 'sa'`** — says *this app is that console*. The pill gets the
+  current-page treatment and points at `homeHref` instead of the cross-origin URL. It cannot be
+  expressed as `activeProduct` (which is now optional) because neither console is a licensed
+  product — see the two sections above. No capability check is applied on this arm: the console's
+  own layout already ran the identical guard to render the page at all.
+- **`scopeSlot`** — the same slot contract as the LMS-only `notificationSlot`, carrying
+  lookup-admin's tenant + org selectors. It renders inline on `sm:+` and in the mobile second row
+  below, where the selects go full-width (`w-full sm:w-[200px]`) instead of a fixed 200px that
+  would overflow.
+
+The mobile strip's `has-[nav]:border-t` trick — which collapses it to zero height when
+`ProductSwitcher` returns `null` for a single-product user — does not apply when a `scopeSlot` is
+passed, since that always renders; `AppNavbar` swaps to an unconditional border/padding in that
+case. Both consoles also gained the FitClass logo (a copy of `fitclass-logo-white.webp` now sits in
+each app's `public/`, as `lms-web` already did), the branch pill, and a sticky header.
+
+#### The active chip needs `withBasePath()`
+
+`ProductSwitcher` renders raw `<a>` elements because most of its chips are cross-origin. Next
+applies `basePath` to `<Link>`, router navigation and `/_next/*` — **never to a raw anchor** — so
+the ACTIVE chip, which is the only same-app link in the group, must go through `withBasePath()`.
+Un-prefixed, `/attendance` resolves against the origin root, which under the single-origin topology
+is auth-web, and 404s. That was a live bug: clicking HRMS while already on HR sent the user to
+`https://<host>/attendance`. The rule now lives in one place, `productHref()` in
+`shell/products.ts`, whose two arms are deliberately asymmetric — inactive concatenates
+`origins[p]` (the prefix is already in the base URL), active prefixes the landing path. Extra links
+(Admin/SA) run through `withBasePath()` directly, which returns an absolute URL untouched, so only
+the active console's own `homeHref` is affected.
+
+The same rule applies to `AppErrorBoundary`'s "Back to …" button, which each app feeds an
+app-relative `homeHref`. Its sibling "Sign in again" anchor stays `href="/"` un-prefixed on
+purpose: that root is auth-web, which resolves the session and redirects.
+
 ### User management is a capability, per branch (`1.43.0`)
 
 Creating a user is authorized by **`admin.team.manage`, evaluated against the target branch** — not by a rank floor and not by the session's `org_id`. (The key was `lms.users.manage` until `1.45.0`; the mechanism below is unchanged.)

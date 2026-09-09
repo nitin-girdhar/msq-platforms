@@ -112,8 +112,14 @@ export function usePushSubscription(): UsePushSubscriptionReturn {
           // Permission is already granted — re-subscribe with no prompt, no UI.
           await createSubscription(reg);
         }
-      } catch {
-        // Reconcile is best-effort; the user can still subscribe from the button.
+      } catch (err) {
+        // Reconcile is best-effort; the user can still subscribe from the
+        // button. Logged rather than swallowed outright: a bare `catch {}` here
+        // is what let a completely broken subscribe endpoint look healthy on
+        // every browser that had already granted permission, so the failure was
+        // only ever reported from the one handset where someone pressed the
+        // button.
+        console.debug('[push] subscription reconcile failed', err);
       }
     })();
 

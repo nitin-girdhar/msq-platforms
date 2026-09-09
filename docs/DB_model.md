@@ -1611,6 +1611,8 @@ Web Push subscriptions — one row per installed PWA + browser + device that has
 
 **Written by:** notifications-service via `root_service` (`DATABASE_URL_SERVICE` / `withServiceTx`), which bypasses RLS — a send fans out to every device of the target user with no app session to scope it. The policies guard incidental access from authenticated app sessions, the same reasoning as `lms.lead_report_snapshot`.
 
+**Existing databases:** `db_scripts/one_time/apply_notify_push_subscriptions.sql` (preview with the `_dryrun`). Schema 1.47.0 originally shipped without one, so every server seeded before it had no table at all and every `POST /notifications/push/subscribe` answered 500 with `42P01 relation "notify.push_subscriptions" does not exist` — no device could register and no notification was ever delivered. Run the dryrun on any environment whose push has never worked.
+
 ---
 
 ### public.schema_versions

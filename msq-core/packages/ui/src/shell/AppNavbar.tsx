@@ -15,13 +15,27 @@ interface Props {
   // Absolute origin per product (from productOrigins()) + which product this
   // app is, for the cross-origin switcher.
   productOrigins: Record<ProductKey, string>;
-  activeProduct: ProductKey;
+  // Omitted by the Admin / Super Admin consoles: neither is a licensed product,
+  // so no product chip is "current" there — they mark themselves via activeExtra
+  // instead. ProductSwitcher already treats this as optional.
+  activeProduct?: ProductKey;
+  // Which non-product console this app IS, when it is one. Renders that pill
+  // with the current-page treatment and points it at homeHref instead of the
+  // cross-origin URL, so admin-web/lookup-admin don't hand-roll their own
+  // extraLinks (and their own headers) just to say "you are here".
+  activeExtra?: 'admin' | 'sa';
   // This app's home (logo link + branch-switch landing) and navbar title.
   homeHref: string;
   title: string;
   // LMS-only notification bell (imports @lms/web) is injected as a slot so the
   // shared navbar carries no product knowledge. Omitted by hr/todo.
   notificationSlot?: React.ReactNode;
+  // Extra chrome controls for apps that scope the whole console from the bar —
+  // lookup-admin's tenant + org selectors. Same slot contract as
+  // notificationSlot: the shared navbar carries no knowledge of what's inside.
+  // Rendered inline on sm+ and in the mobile second row below, so wide controls
+  // never squeeze the top bar off-screen.
+  scopeSlot?: React.ReactNode;
   // admin-web's origin (adminWebOrigin()), for the standalone "Admin" link.
   // Deliberately NOT plumbed through ProductSwitcher/licensedProducts: admin-web
   // is capability-gated (canOpenAdminConsole), not a licensed product, so it must
@@ -43,27 +57,45 @@ export default function AppNavbar({
   licensedProducts,
   productOrigins,
   activeProduct,
+  activeExtra,
   homeHref,
   title,
   notificationSlot,
+  scopeSlot,
   adminWebUrl,
   lookupAdminUrl,
 }: Props) {
   // Same question admin-web's own dashboard guard asks (a non-empty filtered
   // ADMIN_NAV): the pill must show for exactly the users that guard admits, or a
   // capability-granted, lower-ranked user reaches Admin only by typing the URL.
-  const showAdminLink = !!adminWebUrl && canOpenAdminConsole(user);
+  // The activeExtra arm needs no capability question: that console's own layout
+  // already ran the identical guard to render this page at all, and it is the
+  // page you are standing on.
+  const adminActive = activeExtra === 'admin';
+  const saActive = activeExtra === 'sa';
+  const showAdminLink = adminActive || (!!adminWebUrl && canOpenAdminConsole(user));
   // Same contract one tier up: canOpenLookupAdmin() is the exact pair
   // lookup-admin's own layout guards on, so the pill shows for precisely the
   // accounts that console admits and never renders a link into its denial page.
-  const showLookupAdminLink = !!lookupAdminUrl && canOpenLookupAdmin(user);
+  const showLookupAdminLink = saActive || (!!lookupAdminUrl && canOpenLookupAdmin(user));
   const extraLinks = [
-    ...(showAdminLink ? [{ key: 'admin', href: adminWebUrl!, label: 'Admin' }] : []),
-    ...(showLookupAdminLink ? [{ key: 'sa', href: lookupAdminUrl!, label: 'SA' }] : []),
+    ...(showAdminLink
+      ? [{ key: 'admin', href: adminActive ? homeHref : adminWebUrl!, label: 'Admin', active: adminActive }]
+      : []),
+    ...(showLookupAdminLink
+      ? [{ key: 'sa', href: saActive ? homeHref : lookupAdminUrl!, label: 'SA', active: saActive }]
+      : []),
   ];
+  // The mobile strip collapses to nothing when ProductSwitcher returns null
+  // (single product, no extra links) — that's what has-[nav]: buys. A scopeSlot
+  // has no such escape hatch: it always renders, so the row's border and padding
+  // must be unconditional whenever one is passed.
+  const mobileRowClass = scopeSlot
+    ? 'flex flex-col gap-2 border-t border-[#E2E8F0] px-2 py-1.5 sm:hidden'
+    : 'flex flex-col gap-2 sm:hidden has-[nav]:border-t has-[nav]:border-[#E2E8F0] has-[nav]:px-2 has-[nav]:py-1.5';
   return (
     <header className="sticky top-0 z-30 shrink-0 border-b border-[#E2E8F0] bg-white">
-      <div className="flex h-14 items-center gap-2 px-2 sm:gap-4 sm:px-5">
+      <div className="flex h-14 min-w-0 items-center gap-2 px-2 sm:gap-4 sm:px-5">
         <HamburgerButton />
         <Link href={homeHref} className="shrink-0" aria-label="Home">
           {/*
@@ -86,7 +118,7 @@ export default function AppNavbar({
           />
         </Link>
         <div className="hidden h-5 w-px shrink-0 bg-[#E2E8F0] sm:block" />
-        <span className="hidden text-sm font-bold tracking-tight text-[#0F172A] sm:block">
+        <span className="hidden truncate text-sm font-bold tracking-tight text-[#0F172A] sm:block">
           {title}
         </span>
         <div className="flex-1" />
@@ -97,8 +129,13 @@ export default function AppNavbar({
             whether or not the pill (which self-hides for single-branch and
             non-switching actors) shows. */}
         <BranchSwitcher user={user} homeHref={homeHref} />
-        {/* Inline on sm+; on mobile the switcher drops to its own full-width row
-            below so it doesn't get squeezed out by the rest of the bar. */}
+        {/* Inline on sm+; on mobile both the scope controls and the switcher drop
+            to their own full-width rows below so they don't get squeezed out by
+            the rest of the bar. Rendering each twice (rather than reflowing one
+            instance) is what lets the mobile copy be full-width while the
+            desktop copy stays a compact inline group — only one is ever
+            visible, the other is display:none. */}
+        {scopeSlot && <div className="hidden items-center gap-2 sm:flex">{scopeSlot}</div>}
         <div className="hidden items-center gap-2 sm:flex">
           <ProductSwitcher
             licensedProducts={licensedProducts}
@@ -111,8 +148,9 @@ export default function AppNavbar({
         {notificationSlot}
         <UserMenu user={user} loginUrl={buildLoginUrl()} changePasswordUrl={buildChangePasswordUrl()} />
       </div>
-      {/* Collapses to zero height when nothing renders (single product, no admin link). */}
-      <div className="flex items-center gap-2 sm:hidden has-[nav]:border-t has-[nav]:border-[#E2E8F0] has-[nav]:px-2 has-[nav]:py-1.5">
+      {/* Collapses to zero height when nothing renders (single product, no admin
+          link, no scope slot) — see mobileRowClass. */}
+      <div className={mobileRowClass}>
         <ProductSwitcher
           licensedProducts={licensedProducts}
           actor={user}
@@ -120,6 +158,9 @@ export default function AppNavbar({
           activeProduct={activeProduct}
           extraLinks={extraLinks}
         />
+        {scopeSlot && (
+          <div className="flex min-w-0 flex-wrap items-center gap-2">{scopeSlot}</div>
+        )}
       </div>
     </header>
   );

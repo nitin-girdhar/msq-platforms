@@ -32,7 +32,7 @@ export default function OrgScopeSwitcher({ orgs, selectedTenantId, selectedOrgId
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
       <span className="hidden text-xs font-semibold text-[#64748B] sm:block">Org</span>
       {/* Type-to-filter for the same reason as the tenant control, and more
           acutely: a large tenant's branch list is the longest dropdown in the
@@ -44,7 +44,7 @@ export default function OrgScopeSwitcher({ orgs, selectedTenantId, selectedOrgId
         options={options.map((o) => ({ id: o.id, label: o.name }))}
         emptyLabel={selectedTenantId ? '— All / select org —' : '— Select a tenant first —'}
         disabled={pending || !selectedTenantId}
-        className="w-[200px]"
+        className="w-full sm:w-[200px]"
       />
     </div>
   );

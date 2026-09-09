@@ -1,6 +1,7 @@
 import type { ProductKey } from "@platform/types";
 import type { CapabilityHolder } from "@platform/rbac";
-import { PRODUCT_LANDING, usableProducts } from "./products";
+import { withBasePath } from "../api/base-path";
+import { productHref, usableProducts } from "./products";
 
 const PRODUCT_LABELS: Record<ProductKey, string> = {
   lms: "LMS",
@@ -35,7 +36,7 @@ interface Props {
   // non-product shells (e.g. admin-web) that render the switcher purely to
   // link back out — no chip is "current" there, so every product link is
   // cross-origin.
-  activeProduct?: ProductKey;
+  activeProduct?: ProductKey | undefined;
   // Non-product links (e.g. the rank-gated "Admin" link) rendered as trailing
   // pills in this same unified group, purely for visual consistency. They are
   // NOT products: they never factor into usableProducts/PRODUCT_LANDING, so
@@ -81,13 +82,10 @@ export default function ProductSwitcher({
       >
         {products.map((p) => {
           const active = p === activeProduct;
-          const href = active
-            ? PRODUCT_LANDING[p]
-            : `${origins[p]}${PRODUCT_LANDING[p]}`;
           return (
             <a
               key={p}
-              href={href}
+              href={productHref(p, origins, active)}
               aria-current={active ? "page" : undefined}
               className={
                 active
@@ -100,9 +98,13 @@ export default function ProductSwitcher({
           );
         })}
         {extraLinks.map((link) => (
+          // Same basePath rule as productHref(): an ACTIVE extra link is this
+          // console's own homeHref, and a raw <a> gets no prefix from Next.
+          // Applied blindly because withBasePath() returns an absolute URL
+          // untouched, so the cross-origin Admin/SA links are unchanged.
           <a
             key={link.key}
-            href={link.href}
+            href={withBasePath(link.href)}
             aria-current={link.active ? "page" : undefined}
             className={
               link.active

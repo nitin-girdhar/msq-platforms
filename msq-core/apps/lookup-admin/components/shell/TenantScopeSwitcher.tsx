@@ -33,7 +33,7 @@ export default function TenantScopeSwitcher({ tenants, selectedTenantId }: Props
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
       <span className="hidden text-xs font-semibold text-[#64748B] sm:block">Tenant</span>
       {/* SearchableSelect, not a native <select>: this list grows with every
           tenant onboarded and a <select> cannot be typed into. Trigger keeps the
@@ -46,7 +46,7 @@ export default function TenantScopeSwitcher({ tenants, selectedTenantId }: Props
         options={tenants.map((t) => ({ id: t.id, label: t.name }))}
         emptyLabel="— All / select tenant —"
         disabled={pending}
-        className="w-[200px]"
+        className="w-full sm:w-[200px]"
       />
     </div>
   );

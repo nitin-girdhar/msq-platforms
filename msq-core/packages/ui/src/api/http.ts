@@ -75,6 +75,7 @@ export function createApiClient(basePath: string, options: ApiClientOptions = {}
       }
       const err = (await res.json().catch(() => ({ error: res.statusText }))) as {
         error?: string;
+        message?: string;
         details?: unknown;
       };
       const detailMessages =
@@ -83,7 +84,15 @@ export function createApiClient(basePath: string, options: ApiClientOptions = {}
               .flat()
               .filter((v): v is string => typeof v === 'string')
           : [];
-      const message = detailMessages.length > 0 ? detailMessages.join(' ') : (err.error ?? res.statusText);
+      // `error` is our services' own field. `message` is where FASTIFY's default
+      // handler puts the cause, under a generic `error: 'Internal Server Error'`
+      // — a service that has not set an error handler reports itself only there.
+      // Reading `error` alone is how a Web Push outage showed up in the UI as a
+      // bare "Internal Server error" with the real reason (a missing table)
+      // discarded, findable only by reading the server log.
+      const generic = !err.error || err.error === 'Internal Server Error';
+      const fallback = (generic && err.message) || err.error || res.statusText;
+      const message = detailMessages.length > 0 ? detailMessages.join(' ') : fallback;
       throw Object.assign(new Error(message), {
         status: res.status,
         body: err,

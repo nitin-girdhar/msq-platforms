@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
-import { canOpenAdminConsole, canOpenLookupAdmin } from '@platform/rbac';
-import { buildLoginUrl, buildChangePasswordUrl, productOrigins, adminWebOrigin } from '@platform/ui-kit';
-import { AppSidebar, MobileSidebar, HamburgerButton, ProductSwitcher, UserMenu } from '@platform/ui-kit/shell';
+import { canOpenLookupAdmin } from '@platform/rbac';
+import { productOrigins, adminWebOrigin } from '@platform/ui-kit';
+import { AppNavbar, AppSidebar, MobileSidebar } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { fetchTenants, fetchOrgs, getSelectedTenantId, getSelectedOrgId } from '@/src/lib/tenant-scope';
 import { ADMIN_NAV } from '@/src/config/navigation';
@@ -64,38 +64,28 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-[#F8FAFC] lg:h-full lg:min-h-0 lg:overflow-hidden">
-      <header className="flex shrink-0 items-center gap-3 border-b border-[#E2E8F0] bg-white px-4 py-3 sm:px-6">
-        <HamburgerButton />
-        {/* "Super Admin", not "Admin": admin-web's header renders the identical
-            span with the identical styling, so the two consoles were
-            indistinguishable at a glance — and now that the SA and Admin pills
-            sit side by side in the switcher, you can land on either in one
-            click. The title is the only thing on screen that says which one
-            you're in. */}
-        <span className="text-base font-bold tracking-tight text-[#0F172A]">Super Admin</span>
-        <div className="ml-auto flex items-center gap-3">
-          {/* No activeProduct: lookup-admin isn't a licensed product, so every
-              LMS/HR/Task link here is cross-origin back out. SA rides in as an
-              active extraLink to get the same "current page" highlight the
-              products get on their own headers — the identical arrangement
-              admin-web uses for its own Admin pill. Admin is shown alongside it
-              only when that console would actually admit this user. */}
-          <ProductSwitcher
-            licensedProducts={licensedProducts}
-            actor={session}
-            origins={productOrigins()}
-            extraLinks={[
-              ...(adminWebOrigin() && canOpenAdminConsole(session)
-                ? [{ key: 'admin', href: adminWebOrigin(), label: 'Admin' }]
-                : []),
-              { key: 'sa', href: '/dashboard', label: 'SA', active: true },
-            ]}
-          />
-          <TenantScopeSwitcher tenants={tenants} selectedTenantId={selectedTenantId} />
-          <OrgScopeSwitcher orgs={orgs} selectedTenantId={selectedTenantId} selectedOrgId={selectedOrgId} />
-          <UserMenu user={session} loginUrl={buildLoginUrl()} changePasswordUrl={buildChangePasswordUrl()} />
-        </div>
-      </header>
+      {/* The shared navbar, not a hand-rolled one — the responsive rules
+          (product pills inline on sm+, full-width row on mobile) live there and
+          nowhere else. activeExtra="sa" gives the SA pill the current-page
+          highlight the products get on their own headers; Admin rides alongside
+          it only when that console would actually admit this user, which
+          AppNavbar asks canOpenAdminConsole() for. The title is still the only
+          thing on screen that says which of the two consoles you are in. */}
+      <AppNavbar
+        user={session}
+        licensedProducts={licensedProducts}
+        productOrigins={productOrigins()}
+        activeExtra="sa"
+        homeHref="/dashboard"
+        title="Super Admin"
+        adminWebUrl={adminWebOrigin()}
+        scopeSlot={
+          <>
+            <TenantScopeSwitcher tenants={tenants} selectedTenantId={selectedTenantId} />
+            <OrgScopeSwitcher orgs={orgs} selectedTenantId={selectedTenantId} selectedOrgId={selectedOrgId} />
+          </>
+        }
+      />
       <MobileSidebar actor={session} items={ADMIN_NAV} />
       <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">
         <AppSidebar actor={session} items={ADMIN_NAV} />

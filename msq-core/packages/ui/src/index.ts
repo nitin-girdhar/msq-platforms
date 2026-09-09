@@ -102,4 +102,4 @@ export { authOrigin, adminOrigin, adminWebOrigin, buildLoginUrl, buildChangePass
 // the landing target derived from it. Pure and env-free (no React, no jose), so
 // auth-web's redirect logic can import it from this barrel rather than ./shell,
 // which would drag in the chrome components.
-export { usableProducts, landingFor, PRODUCT_LANDING } from './shell/products';
+export { usableProducts, landingFor, productHref, PRODUCT_LANDING } from './shell/products';

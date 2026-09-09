@@ -101,18 +101,28 @@ export default function AppNavbar({
           {/*
             withBasePath() is REQUIRED here — `next/image` does not add the
             prefix for us. The generated markup is
-            `/lms/_next/image?url=%2Ffitclass-logo-white.webp`: the optimizer
+            `/lms/_next/image?url=%2Ffitclass-emblem.png`: the optimizer
             ENDPOINT is prefixed, but the `url` parameter is passed through
             verbatim and then resolved against the server root, where this app
             serves nothing. The optimizer answered 400 "The requested resource
             isn't a valid image" and the navbar rendered a broken-image icon in
             every product app. `url=%2Flms%2F…` returns 200.
           */}
+          {/*
+            The emblem alone, not the fitclass-logo-white.webp LOCKUP (emblem +
+            FITCLASS wordmark + tagline stacked in a square canvas). That file
+            is square (1:1) while width/height below only set next/image's
+            aspect-ratio hint — h-9 w-auto forced a squeezed wide box from the
+            old 220x50 hint, and object-contain then shrank the real 1:1
+            content to fit its height, crushing the stacked wordmark/tagline
+            into an illegible ~36px smudge. The emblem is a circle: it reads
+            fine at nav-bar height with no wordmark to lose.
+          */}
           <Image
-            src={withBasePath('/fitclass-logo-white.webp')}
+            src={withBasePath('/fitclass-emblem.png')}
             alt="FitClass"
-            width={220}
-            height={50}
+            width={160}
+            height={160}
             priority
             className="h-9 w-auto object-contain sm:h-10"
           />

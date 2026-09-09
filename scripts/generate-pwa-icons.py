@@ -35,6 +35,18 @@ APP_ICONS = [
     'msq-todo/apps/todo-web/app/icon.png',
 ]
 
+# In-page uses (navbar, login/no-access/offline/select-branch) each keep their
+# own copy of the emblem in their own public/ dir, same convention as
+# fitclass-logo-white.webp — see msq-core/packages/ui/src/shell/AppNavbar.tsx.
+UI_EMBLEM_DESTS = [
+    'msq-core/apps/admin-web/public/fitclass-emblem.png',
+    'msq-core/apps/auth-web/public/fitclass-emblem.png',
+    'msq-core/apps/lookup-admin/public/fitclass-emblem.png',
+    'msq-hrms/apps/hr-web/public/fitclass-emblem.png',
+    'msq-lms/apps/lms-web/public/fitclass-emblem.png',
+    'msq-todo/apps/todo-web/public/fitclass-emblem.png',
+]
+
 src = Image.open(SRC).convert('RGBA')
 
 # Trim to the ring at an alpha THRESHOLD rather than getbbox(). The source
@@ -82,3 +94,13 @@ render('icon-512-maskable.png', 512, 0.76)
 for dest in APP_ICONS:
     shutil.copyfile(f'{OUT}/favicon.png', dest)
     print(f'{dest:46} <- favicon.png')
+
+# UI emblem: transparent surround kept (unlike the icons above), so it can sit
+# on either the white navbar or the navy login/offline/no-access/select-branch
+# cards without a visible square edge. 320px is 2x the largest current on-page
+# use (h-11 = 44px) for a sharp render on retina displays.
+UI_EMBLEM_SIZE = 320
+ui_emblem = emblem.resize((UI_EMBLEM_SIZE, UI_EMBLEM_SIZE), Image.LANCZOS)
+for dest in UI_EMBLEM_DESTS:
+    ui_emblem.save(dest, 'PNG', optimize=True)
+    print(f'{dest:46} {UI_EMBLEM_SIZE}x{UI_EMBLEM_SIZE}  emblem, transparent')

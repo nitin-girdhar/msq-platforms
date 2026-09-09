@@ -28,7 +28,7 @@
 // and serving assets out of its old caches. This is the most common way a PWA
 // deploy fails quietly. It is on the release checklist in
 // msq-deploy/deploy_linux.md under "Release checklist for PWA deployments".
-const SW_VERSION = 'v2';
+const SW_VERSION = 'v3';
 
 const STATIC_CACHE = `fc-static-${SW_VERSION}`;
 const SHELL_CACHE = `fc-shell-${SW_VERSION}`;

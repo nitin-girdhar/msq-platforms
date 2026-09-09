@@ -877,45 +877,60 @@ This ensures that switching tenants/orgs, logging out, or uninstalling completel
 
 ### Icon set (`auth-web/public/icons/`)
 
-All icons are generated from `auth-web/public/fitclass-logo-white.webp` by
+All icons are generated from `assets/brand/fitclass-emblem.png` — the circular
+brand emblem (navy ring + feather) on transparency — by
 `scripts/generate-pwa-icons.py` (needs Pillow; re-run it if the branding
 changes). They live in auth-web's `public/` because auth-web owns the root
 origin — the paths are origin-absolute, so every product path under the
 single-origin topology resolves them without its own copy.
 
+Do **not** regenerate them from `fitclass-logo-white.webp`. That asset is the
+full LOCKUP (emblem + FITCLASS wordmark + tagline) and remains the right
+artwork for the navbar and the login panel, where there is room to read it —
+but it is illegible at icon sizes. The icon set is emblem-only at every size.
+
 | File | Size | Artwork | Used by |
 |---|---|---|---|
-| `icon-192.png` | 192x192 | emblem only | manifest; also the notification `icon`/`badge` in `sw.js` |
-| `icon-512.png` | 512x512 | full lockup | manifest; splash screen |
-| `icon-512-maskable.png` | 512x512 | full lockup, 60% content box | manifest `purpose: 'maskable'` |
-| `apple-touch-icon.png` | 180x180 | emblem only | iOS Home Screen, via `pwa/metadata.ts` |
-| `favicon.png` | 256x256 | emblem on transparency | browser tab, via `pwa/metadata.ts` |
+| `icon-192.png` | 192x192 | emblem, 92% box | manifest; also the notification `icon`/`badge` in `sw.js` |
+| `icon-512.png` | 512x512 | emblem, 92% box | manifest; splash screen |
+| `icon-512-maskable.png` | 512x512 | emblem, 76% box | manifest `purpose: 'maskable'` |
+| `apple-touch-icon.png` | 180x180 | emblem, 90% box | iOS Home Screen, via `pwa/metadata.ts` |
+| `favicon.png` | 256x256 | emblem, 94% box | browser tab, via `pwa/metadata.ts` |
 
-Three constraints are baked into the generator and are easy to regress:
+Four constraints are baked into the generator and are easy to regress:
 
-- **Every file is opaque RGB, backed with `#0F172A`.** The source artwork is
-  white on transparency, so a transparent icon vanishes on light surfaces —
-  and iOS does not composite alpha at all, rendering a transparent
-  `apple-touch-icon` as a solid black square.
+- **Every file is opaque RGB, backed with white.** iOS does not composite
+  alpha at all and renders a transparent `apple-touch-icon` as a solid black
+  square. White is the ground the emblem is drawn on, and its navy ring
+  supplies the edge, so the icon still reads as a defined shape against both
+  light and dark home screens.
+- **The artwork is composited onto white BEFORE the downscale.** Resampling
+  white-on-transparent RGBA directly produces dark fringing, because fully
+  transparent pixels still carry RGB 0 and bleed into the antialiased edges.
 - **The maskable icon keeps its artwork inside the centred 80% safe zone**
-  (the generator uses a 60% content box). Android launchers crop maskable
-  icons to a circle/squircle and anything outside that zone is clipped.
-- **The small sizes use the emblem alone, not the full lockup.** The
-  "A Series of Luxury Gyms" tagline is illegible below ~256px, and
-  `icon-192.png` renders as small as 24px as a notification badge.
-
-`favicon.png` is a copy of the `app/icon.png` each product app already ships,
-not a regenerated asset — it is the emblem on transparency rather than on
-navy, so it reads on both light and dark browser chrome.
+  (the generator uses a 76% content box). Android launchers crop maskable
+  icons to a circle/squircle and anything outside that zone is clipped. The
+  emblem is itself a circle, so it can use nearly all of the safe zone — a
+  square lockup could only have used 80%/sqrt(2) = 57%.
+- **The source is trimmed at an alpha threshold, not with `getbbox()`.** The
+  master carries a band of near-invisible artefacts below the emblem (alpha
+  <= 34, left over from the lockup's wordmark); a plain `getbbox()` includes
+  them and pushes the emblem off-centre by ~40px.
 
 Declaring `icons` in `pwa/metadata.ts` **suppresses Next's `app/icon.png`
 file convention** for every app that spreads it, which is why the favicon has
 to be listed there explicitly — omitting it drops the tab icon platform-wide.
 Next does not basePath-prefix metadata icon hrefs (verified against
 lookup-admin's `/sa`), so both entries stay origin-absolute and resolve
-against auth-web at the root. The per-app `app/icon.png` files are now
-unreferenced; they are harmless and still served at `<basePath>/icon.png`,
-but `public/icons/favicon.png` is the one the browser actually loads.
+against auth-web at the root. The per-app `app/icon.png` files are therefore
+unreferenced and still served at `<basePath>/icon.png`; the generator
+overwrites all five with a copy of `favicon.png` so they cannot linger as
+stale branding.
+
+**Changing any icon is a service-worker change.** `sw.js` cache-firsts
+`/icons/*` into `fc-static-<SW_VERSION>`, so installed clients keep serving
+the previous artwork until `SW_VERSION` is bumped — see the release checklist
+in `msq-deploy/deploy_linux.md`.
 
 ## Tenant provisioning & default catalogs (P3B)
 

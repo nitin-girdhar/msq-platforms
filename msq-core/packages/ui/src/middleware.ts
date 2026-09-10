@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
+import { authCookieName } from '@platform/auth-constants';
 import { verifySessionJwt } from './auth/verify-edge';
 import { authOrigin, buildChangePasswordUrl, buildLoginUrl } from './auth/sso';
 
@@ -78,7 +78,7 @@ export function createProductMiddleware(options: ProductMiddlewareOptions = {}) 
       return NextResponse.next();
     }
 
-    const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
+    const token = request.cookies.get(authCookieName(process.env['AUTH_COOKIE_NAME']))?.value;
     const payload = token ? await verifySessionJwt(token) : null;
 
     if (!payload) {

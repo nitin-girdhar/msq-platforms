@@ -1,7 +1,6 @@
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
-import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
 import { safeEqual } from '@platform/service-auth';
 import { configureProductSource } from '@platform/authz';
 import { getActiveTenantModulesByTenantId } from '@platform/db';
@@ -91,7 +90,7 @@ app.post('/auth/logout', async (req, reply) => {
   // identity-service still clears the session cookie downstream, and it also
   // revokes the jti itself. Without this guard a throw here 500s the whole
   // logout and leaves a stale cookie behind.
-  const token = req.cookies[AUTH_COOKIE_NAME];
+  const token = req.cookies[config.authCookieName];
   if (token) {
     try {
       const result = await verifyJwtEdge(token);

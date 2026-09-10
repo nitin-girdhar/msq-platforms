@@ -1,4 +1,4 @@
-import { requireStrongSecret } from '@platform/auth-constants';
+import { requireStrongSecret, authCookieName } from '@platform/auth-constants';
 import { timeoutFromEnv } from '@platform/http';
 
 function requireEnv(name: string): string {
@@ -44,6 +44,11 @@ export const config = {
   databaseUrlService: requireEnv('DATABASE_URL_SERVICE'),
   logLevel: process.env['LOG_LEVEL'] ?? 'info',
   secureCookies: process.env['COOKIE_SECURE'] === 'true',
+  // Session cookie name — this is the SIGNING side of the pair the gateway
+  // verifies. Per-environment (fc_session prod / fc_session_uat / fc_session_dev)
+  // so a cookie set by one environment is never READ by a sibling under the same
+  // parent domain and rejected there as "Invalid token". See authCookieName().
+  authCookieName: authCookieName(process.env['AUTH_COOKIE_NAME']),
   // Parent domain the session cookie is scoped to, e.g. `.app.com`, so every
   // product UI on a subdomain (lms./hr./todo./auth.) shares one SSO session.
   // Unset in local single-host dev → host-only cookie (the pre-split behavior).

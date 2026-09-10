@@ -1,7 +1,7 @@
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { JwtPayload, SessionUser } from '@platform/types';
-import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
+import { authCookieName } from '@platform/auth-constants';
 import { verifySessionJwt } from '../auth/verify-edge';
 import { buildLoginUrl, authOrigin } from '../auth/sso';
 
@@ -11,7 +11,7 @@ const API_GATEWAY = process.env['API_GATEWAY_INTERNAL_URL'] ?? 'http://localhost
 
 async function getJwtPayload(): Promise<JwtPayload | null> {
   const cookieStore = await cookies();
-  const token = cookieStore.get(AUTH_COOKIE_NAME)?.value;
+  const token = cookieStore.get(authCookieName(process.env['AUTH_COOKIE_NAME']))?.value;
   if (!token) return null;
   // RS256 (public key) or legacy HS256, selected by the token's alg.
   return verifySessionJwt(token);

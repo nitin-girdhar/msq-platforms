@@ -1,4 +1,4 @@
-import { requireStrongSecret as sharedRequireStrongSecret } from '@platform/auth-constants';
+import { requireStrongSecret as sharedRequireStrongSecret, authCookieName } from '@platform/auth-constants';
 import { timeoutFromEnv } from '@platform/http';
 
 function requireEnv(name: string): string {
@@ -23,6 +23,10 @@ export const config = {
   port: parseInt(process.env['GATEWAY_PORT'] ?? '4000', 10),
   nodeEnv,
   jwtSecret: requireStrongSecret('JWT_SECRET'),
+  // Session cookie name. Per-environment (fc_session / fc_session_uat / …) so a
+  // cookie from a sibling environment under the same parent domain is never
+  // read here and rejected as "Invalid token" — see authCookieName().
+  authCookieName: authCookieName(process.env['AUTH_COOKIE_NAME']),
   // Shared secret injected into every upstream request so services can
   // reject calls that bypass the gateway
   serviceSecret: requireStrongSecret('INTERNAL_SERVICE_SECRET'),

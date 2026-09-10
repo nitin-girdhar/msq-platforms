@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { AUTH_COOKIE_NAME, sessionCookieOptions, clearedSessionCookieOptions } from '../../../lib/cookies.js';
+import { sessionCookieOptions, clearedSessionCookieOptions } from '../../../lib/cookies.js';
+import { config } from '../../../config/index.js';
 import { UnauthorizedError } from '../../../lib/errors.js';
 import * as service from './auth.service.js';
 import { loginSchema, switchOrgSchema, changePasswordSchema } from './auth.schema.js';
@@ -9,7 +10,7 @@ export class AuthController {
     const body = loginSchema.parse(request.body);
     const { token, user, licensed_products } = await service.login(body);
     return reply
-      .setCookie(AUTH_COOKIE_NAME, token, sessionCookieOptions())
+      .setCookie(config.authCookieName, token, sessionCookieOptions())
       .status(200)
       // licensed_products is echoed alongside the user (not inside it): the auth
       // cookie is httpOnly, so this is the client's only way to know which
@@ -18,7 +19,7 @@ export class AuthController {
   };
 
   logout = async (request: FastifyRequest, reply: FastifyReply) => {
-    const token = request.cookies[AUTH_COOKIE_NAME];
+    const token = request.cookies[config.authCookieName];
     // Token revocation is best-effort: a failure to blocklist the jti must never
     // prevent the client cookie from being cleared, otherwise logout returns 500
     // and leaves a stale session cookie behind. The gateway also revokes the jti
@@ -29,20 +30,20 @@ export class AuthController {
       request.log.error({ err }, 'logout: token revocation failed; clearing cookie anyway');
     }
     return reply
-      .setCookie(AUTH_COOKIE_NAME, '', clearedSessionCookieOptions())
+      .setCookie(config.authCookieName, '', clearedSessionCookieOptions())
       .status(200)
       .send({ success: true, data: null });
   };
 
   me = async (request: FastifyRequest, reply: FastifyReply) => {
-    const token = request.cookies[AUTH_COOKIE_NAME];
+    const token = request.cookies[config.authCookieName];
     try {
       const user = await service.getSession(token);
       return reply.status(200).send({ success: true, data: { user } });
     } catch (err) {
       if (err instanceof UnauthorizedError && err.message !== 'Not authenticated' && err.message !== 'Session expired') {
         return reply
-          .setCookie(AUTH_COOKIE_NAME, '', clearedSessionCookieOptions())
+          .setCookie(config.authCookieName, '', clearedSessionCookieOptions())
           .status(401)
           .send({ success: false, error: err.message });
       }
@@ -51,17 +52,17 @@ export class AuthController {
   };
 
   myOrgs = async (request: FastifyRequest, reply: FastifyReply) => {
-    const token = request.cookies[AUTH_COOKIE_NAME];
+    const token = request.cookies[config.authCookieName];
     const orgs = await service.getMyOrgs(token);
     return reply.status(200).send({ success: true, data: { orgs } });
   };
 
   switchOrg = async (request: FastifyRequest, reply: FastifyReply) => {
-    const token = request.cookies[AUTH_COOKIE_NAME];
+    const token = request.cookies[config.authCookieName];
     const body = switchOrgSchema.parse(request.body);
     const { token: new_token, user } = await service.switchOrg(token, body.org_id);
     return reply
-      .setCookie(AUTH_COOKIE_NAME, new_token, sessionCookieOptions())
+      .setCookie(config.authCookieName, new_token, sessionCookieOptions())
       .status(200)
       .send({ success: true, data: { user } });
   };
@@ -74,7 +75,7 @@ export class AuthController {
     const new_token = await service.changePassword(user_id, body.current_password, body.new_password);
 
     return reply
-      .setCookie(AUTH_COOKIE_NAME, new_token, sessionCookieOptions())
+      .setCookie(config.authCookieName, new_token, sessionCookieOptions())
       .status(200)
       .send({ success: true, data: null });
   };

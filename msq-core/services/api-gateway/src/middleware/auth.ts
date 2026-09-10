@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
 import type { JwtPayload } from '@platform/types';
+import { config } from '../config.js';
 import { verifyJwtEdge } from '../lib/jwt-verify.js';
 import type { UserContext } from '../lib/proxy.js';
 
@@ -14,7 +14,7 @@ export async function authPreHandler(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const token = request.cookies[AUTH_COOKIE_NAME] ?? extractBearerToken(request);
+  const token = request.cookies[config.authCookieName] ?? extractBearerToken(request);
 
   if (!token) {
     return reply.status(401).send({ error: 'Not authenticated' });

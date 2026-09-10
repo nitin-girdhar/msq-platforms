@@ -1,4 +1,4 @@
-import { AUTH_COOKIE_NAME, JWT_MAX_AGE_SECONDS } from '@platform/auth-constants';
+import { JWT_MAX_AGE_SECONDS } from '@platform/auth-constants';
 import { config } from '../config/index.js';
 
 export interface CookieOptions {
@@ -32,5 +32,3 @@ export function clearedSessionCookieOptions(): CookieOptions {
     maxAge: 0,
   };
 }
-
-export { AUTH_COOKIE_NAME };

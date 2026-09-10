@@ -6,7 +6,6 @@ import { normalizeEmail, normalizeMobile, isMobileLike } from '@platform/validat
 import { comparePassword, hashPassword } from '../../../lib/password.js';
 import { signJwt, verifyJwt, revokeJti, isJtiRevoked, revokeAllUserSessions, decodeJwtUnchecked } from '../../../lib/jwt.js';
 import { logActivity } from '@platform/audit-log';
-import { AUTH_COOKIE_NAME } from '../../../lib/cookies.js';
 import * as repo from './auth.repository.js';
 import { toSessionUser, sessionUserWithCapabilities } from './auth.types.js';
 import type { DatabaseUser } from './auth.types.js';
@@ -177,8 +176,6 @@ export async function logout(token: string | undefined): Promise<void> {
     void logActivity({ action_type: 'logout', performed_by: result.payload.sub, org_id: result.payload.org_id });
   }
 }
-
-export { AUTH_COOKIE_NAME };
 
 // Verifies the token (signature, revocation, password epoch) and loads the
 // user scoped to the org the token was minted for, so role/rank/org_name in

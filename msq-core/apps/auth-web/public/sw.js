@@ -209,6 +209,10 @@ self.addEventListener('push', (event) => {
         // the SSE notification; without this the phone shows a growing pile for
         // a single follow-up.
         tag: (payload && payload.leadId) || 'fitclass-followup',
+        // Without this, reusing `tag` makes the OS silently swap the
+        // notification's content (e.g. a rescheduled follow-up time) with no
+        // new alert, sound, or vibration - the user never notices it changed.
+        renotify: true,
       });
     })(),
   );

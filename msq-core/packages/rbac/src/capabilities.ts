@@ -34,6 +34,7 @@ export const CAPABILITY = {
   LMS_ANALYTICS:        'lms.analytics',
   LMS_ASSIGNMENTS:      'lms.assignments',
   LMS_CAMPAIGNS:        'lms.campaigns',
+  LMS_CAMPAIGN_TYPES:   'lms.campaign_types',
   LMS_DASHBOARD:        'lms.dashboard',
   LMS_FOLLOWUPS:        'lms.followups',
   LMS_HISTORY:          'lms.history',
@@ -109,7 +110,16 @@ export const CAPABILITY = {
   LMS_LEADS_TIMELINE_VIEW:                 'lms.leads.timeline.view',
   LMS_LEADS_TRANSFER:                      'lms.leads.transfer',
   LMS_LEADS_UNASSIGNED_VIEW:               'lms.leads.unassigned.view',
+  LMS_CAMPAIGN_TYPES_MANAGE:               'lms.campaign_types.manage',
+  LMS_CAMPAIGN_TYPES_VIEW:                 'lms.campaign_types.view',
   LMS_LEADS_VIEW:                          'lms.leads.view',
+  // An OPERATION, not a scope, despite the key. Scope nodes are ordered by
+  // sort_order and resolveScope() returns the widest one held; a fifth rung on
+  // the own/team/org/tenant ladder would outrank 'whole branch' and silently
+  // replace a manager's row scope. Campaign-type visibility is an orthogonal
+  // axis: a rep holding this AND .own still sees only their own leads, of every
+  // type. Ask it with can(), never with resolveScope().
+  LMS_LEADS_VIEW_ALL_TYPES:                'lms.leads.view.all_types',
   LMS_LEADS_WHATSAPP_SEND:                 'lms.leads.whatsapp.send',
   PLATFORM_WRITE:                          'platform.write',
   SUPERADMIN_LOOKUPS_MANAGE:               'superadmin.lookups.manage',

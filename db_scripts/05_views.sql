@@ -157,7 +157,19 @@ SELECT
   -- outcome get. Appended last rather than sitting next to `source` because
   -- CREATE OR REPLACE VIEW can only add columns at the end — re-asserting this
   -- file against a live database would fail on a mid-list insert.
-  src.label            AS source_label
+  src.label            AS source_label,
+  -- Campaign TYPE (1.49.0). Appended at the end for the same reason
+  -- source_label above is: CREATE OR REPLACE VIEW can only ADD columns, never
+  -- insert one mid-list, so re-asserting this file against a live database
+  -- would fail on a tidier placement.
+  --
+  -- Read from the LEAD, not from the campaign: ml.campaign_type_id is the
+  -- denormalised column the RLS predicate on lms.marketing_leads reads, so a
+  -- view sourcing the type from ac.campaign_type_id instead could show a
+  -- different answer than the one visibility was decided on.
+  ml.campaign_type_id,
+  ct.name              AS campaign_type,
+  ct.label             AS campaign_type_label
 FROM  lms.marketing_leads     ml
 JOIN  entity.organizations        o    ON o.id    = ml.org_id
 LEFT JOIN lms.lead_stage       ls   ON ls.id   = ml.stage_id AND ls.tenant_id  = o.tenant_id
@@ -166,6 +178,9 @@ LEFT JOIN marketing.ad_campaigns     ac   ON ac.id   = ml.campaign_id
 LEFT JOIN marketing.marketing_platforms mp ON mp.id  = ac.platform_id AND mp.tenant_id  = o.tenant_id
 LEFT JOIN iam.users            u    ON u.id    = ml.assigned_user_id
 LEFT JOIN lms.lead_sources     src  ON src.id  = ml.source_id AND src.tenant_id = o.tenant_id
+-- Tenant-qualified like every other catalog join above: campaign_types is
+-- tenant-scoped and this view is also read under BYPASSRLS.
+LEFT JOIN marketing.campaign_types ct ON ct.id = ml.campaign_type_id AND ct.tenant_id = o.tenant_id
 -- geo.* is tenant-scoped, and a lead reaches its tenant only through its org,
 -- so every geo join is qualified on the org's tenant_id. Belt and braces
 -- alongside the trigger check in 04_functions_triggers.sql: a view is the
@@ -491,12 +506,23 @@ SELECT
   m.is_active     AS mapping_is_active,
   u.is_active     AS user_is_active,
   COALESCE(w.weight, 0) AS weight,
-  w.updated_at    AS weight_updated_at
+  w.updated_at    AS weight_updated_at,
+  -- The pool the weight belongs to (1.49.0). A membership now carries ONE ROW
+  -- PER TYPE, so this view is no longer one row per (user, branch) -- it is one
+  -- row per (user, branch, type), plus one row with a NULL type for a
+  -- membership that is in no rotation at all (the LEFT JOIN's unmatched side).
+  -- Any caller still assuming uniqueness on user_org_mapping_id must add
+  -- `WHERE campaign_type = '<type>'`.
+  w.campaign_type_id,
+  ct.name         AS campaign_type,
+  ct.label        AS campaign_type_label
 FROM iam.user_org_mapping m
 JOIN      iam.users              u  ON u.id = m.user_id
 JOIN      entity.organizations   o  ON o.id = m.org_id
 JOIN      iam.user_roles        ur  ON ur.id = m.role_id
-LEFT JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = m.id;
+LEFT JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = m.id
+LEFT JOIN marketing.campaign_types   ct ON ct.id = w.campaign_type_id
+                                       AND ct.tenant_id = o.tenant_id;
 
 -- Ad campaigns with resolved platform and status names (for dropdowns).
 CREATE OR REPLACE VIEW marketing.vw_campaign_lookup WITH (security_invoker = true) AS

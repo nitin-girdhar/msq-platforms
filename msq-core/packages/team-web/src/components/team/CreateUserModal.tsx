@@ -10,6 +10,7 @@ import {
   OrgAssignmentsField,
   ManagerSelect,
   useRoleCatalog,
+  useCampaignTypeCatalog,
   useUserAssignments,
   branchOptionsForActor,
 } from '@platform/ui-kit';
@@ -58,6 +59,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
   // Only fetch the catalog while the modal is actually open — the Team page
   // mounts this component up-front so the dialog can animate in.
   const { roles, departments, loading: rolesLoading, error: rolesError } = useRoleCatalog(open);
+  const { campaignTypes, error: campaignTypesError } = useCampaignTypeCatalog(open);
 
   const a = useUserAssignments({
     fallbackOrgId: actor.org_id,
@@ -246,6 +248,8 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
             onHomeChange={a.setHomeOrgId}
             roles={roles}
             departmentId={a.departmentId}
+            campaignTypes={campaignTypes}
+            campaignTypesUnavailable={Boolean(campaignTypesError)}
             canPickBranches={canPickBranches}
             disabled={pending}
           />

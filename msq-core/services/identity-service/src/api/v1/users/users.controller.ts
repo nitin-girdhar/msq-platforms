@@ -66,9 +66,21 @@ export class UsersController {
 
   getAssignmentWeights = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id } = request.auth;
-    const { org_id: queryOrgId } = request.query as { org_id?: string };
-    const weights = await service.getAssignmentWeights({ org_id, user_id, role, tenant_id }, queryOrgId);
+    const { org_id: queryOrgId, campaign_type_id } = request.query as { org_id?: string; campaign_type_id?: string };
+    const weights = await service.getAssignmentWeights({ org_id, user_id, role, tenant_id }, queryOrgId, campaign_type_id);
     return reply.send({ success: true, data: weights });
+  };
+
+  // Read-through campaign-type catalog for OrgAssignmentsField, gated on the
+  // same admin.team.manage-family rank check that guards reaching this router's
+  // user-edit routes (USER_MGMT_MIN_RANK) — not leads-service's
+  // LMS_CAMPAIGN_TYPES_VIEW, which not every admin.team.manage holder has (see
+  // Phase 07 plan §4).
+  getCampaignTypeCatalog = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to view campaign types');
+    const data = await service.getCampaignTypeCatalog({ org_id, user_id, role, tenant_id });
+    return reply.send({ success: true, data });
   };
 
   // Assignable roles for this tenant, already capped at the actor's own rank —

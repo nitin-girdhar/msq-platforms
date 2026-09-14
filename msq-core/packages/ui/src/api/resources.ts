@@ -147,19 +147,40 @@ export const users = {
       role_name: string; role_label: string; rank: number; in_branch: boolean;
     }> }>(`/users/manager-candidates?org_id=${encodeURIComponent(orgId)}`),
 
-  // Current per-user lead weights in a branch. Omit orgId for the actor's own.
-  assignmentWeights: (orgId?: string) =>
-    request<{ success: true; data: Array<{ user_id: string; full_name: string; weight: number }> }>(
-      `/users/assignment-weights${orgId ? `?org_id=${encodeURIComponent(orgId)}` : ''}`,
-    ),
+  // Current per-user lead weights in a branch, optionally scoped to one
+  // campaign type (1.49.0 — weights are keyed per (org, campaign_type), so a
+  // caller that wants just one pool's total should filter server-side rather
+  // than summing the whole branch). Omit orgId for the actor's own branch.
+  assignmentWeights: (orgId?: string, campaignTypeId?: string) => {
+    const params = new URLSearchParams();
+    if (orgId) params.set('org_id', orgId);
+    if (campaignTypeId) params.set('campaign_type_id', campaignTypeId);
+    const qs = params.toString();
+    return request<{ success: true; data: Array<{
+      user_id: string; full_name: string; email: string;
+      campaign_type_id: string; campaign_type: string; campaign_type_label: string;
+      weight: number;
+    }> }>(`/users/assignment-weights${qs ? `?${qs}` : ''}`);
+  },
 
-  // Every branch a user holds, with the role and weight in each. The view
-  // behind it resolves org_name/role_label, so callers never look up raw ids.
+  // Every branch a user holds, with the role and per-campaign-type weights in
+  // each. The view behind it resolves org_name/role_label, so callers never
+  // look up raw ids.
   orgMappings: (userId: string) =>
     request<{ success: true; data: Array<{
       org_id: string; org_name: string; role_id: string; role_label: string;
-      lead_assignment_weight: number; is_active: boolean;
+      weights: Array<{ campaign_type_id: string; campaign_type: string; campaign_type_label: string; weight: number }>;
+      is_active: boolean;
     }> }>(`/users/${userId}/org-mappings`),
+
+  // The tenant's full campaign-type catalog — read-through so OrgAssignmentsField
+  // can group weight inputs without needing leads-service's
+  // LMS_CAMPAIGN_TYPES_VIEW capability (gated on admin.team.manage instead; see
+  // users.controller.ts's getCampaignTypeCatalog).
+  campaignTypeCatalog: () =>
+    request<{ success: true; data: Array<{
+      id: string; name: string; label: string; department_id: string | null; is_default: boolean;
+    }> }>('/users/campaign-type-catalog'),
 
   orgChart: () => request<{ success: true; data: unknown[] }>('/users/org-chart'),
 

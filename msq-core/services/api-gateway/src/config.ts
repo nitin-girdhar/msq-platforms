@@ -85,6 +85,13 @@ export const config = {
   // in the latency path of an outbound message send and fails CLOSED, so it is
   // kept short: a slow leads-service should block the send quickly, not hang it.
   knownContactsTimeoutMs: timeoutFromEnv('GATEWAY_KNOWN_CONTACTS_TIMEOUT_MS', 5_000),
+  // The two super-admin Meta campaign calls that do real work inline: POST
+  // /meta/campaigns/sync (walks a tenant's ad accounts with Graph backoff) and
+  // PATCH /meta/campaigns/:id (the lead re-route fan-out, which
+  // meta-conversion-api itself allows 60s). Kept LONGER than that 60s so the
+  // service reports its own outcome instead of this proxy answering 504 over work
+  // that then completes.
+  metaAdminLongTimeoutMs: timeoutFromEnv('GATEWAY_META_ADMIN_TIMEOUT_MS', 120_000),
 } as const;
 
 if (config.nodeEnv === 'production') {

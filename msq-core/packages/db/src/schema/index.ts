@@ -14,6 +14,7 @@ export * from './tables/message-templates.table.js';
 export * from './tables/push-subscriptions.table.js';
 export * from './tables/marketing-platforms.table.js';
 export * from './tables/campaign-statuses.table.js';
+export * from './tables/campaign-types.table.js';
 export * from './tables/lead-sources.table.js';
 export * from './tables/org-types.table.js';
 export * from './tables/tenant-domains.table.js';
@@ -36,6 +37,7 @@ export * from './tables/schema-versions.table.js';
 export * from './tables/user-org-mapping.table.js';
 export * from './tables/lead-assignment-weights.table.js';
 export * from './tables/meta-tenant-config.table.js';
+export * from './tables/meta-campaigns.table.js';
 export * from './tables/meta-page-form-org-map.table.js';
 export * from './tables/api-clients.table.js';
 export * from './tables/api-client-orgs.table.js';
@@ -112,3 +114,7 @@ export * from './tables/task-lists.table.js';
 export * from './tables/tasks.table.js';
 export * from './tables/task-status-log.table.js';
 export * from './tables/task-comments.table.js';
+
+// Meta lead pull staging (scratch schema)
+export * from './tables/meta-pull-runs.table.js';
+export * from './tables/meta-pull-leads.table.js';

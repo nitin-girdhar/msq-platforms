@@ -31,15 +31,37 @@ export interface ManagerCandidate {
   in_branch: boolean;
 }
 
+/**
+ * One membership's share of one campaign type's pool within a branch — mirrors
+ * a row of lms.lead_assignment_weights (schema 1.49.0: the key is
+ * (user_org_mapping_id, campaign_type_id), so a user holds an independent
+ * weight per type, not one scalar per branch).
+ */
+export interface WeightEntry {
+  campaign_type_id: string;
+  weight: number;
+}
+
 /** One row of the per-branch table — mirrors iam.user_org_mapping. */
 export interface OrgAssignment {
   org_id: string;
   role_id: string;
-  lead_assignment_weight: number;
+  /** A campaign type absent here means "not in that pool", not weight 0. */
+  weights: WeightEntry[];
+}
+
+/** One row of the tenant's campaign-type catalog (marketing.campaign_types). */
+export interface CampaignTypeOption {
+  id: string;
+  name: string;
+  label: string;
+  department_id: string | null;
+  is_default: boolean;
 }
 
 /**
- * A branch's current auto-assignment health, shown under its own row.
+ * One (branch, campaign type) pool's current auto-assignment health, shown
+ * under its own row.
  *
  * `ok` is reported explicitly rather than left implicit: if only problems spoke,
  * a silent row would be ambiguous between "fine" and "not loaded yet".

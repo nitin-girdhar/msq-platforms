@@ -570,4 +570,78 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_campaign_statuses_global_name
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_org
   ON notify.push_subscriptions (user_id, org_id);
 
+-- ── marketing.campaign_types / ext.meta_campaigns (1.49.0) ────────
+-- ONE DEFAULT PER TENANT, enforced here rather than in the application. The
+-- default type is what the backfill, the intake fallback and the admin UI all
+-- resolve to when nothing else matches, so two of them is not a cosmetic
+-- problem -- it is a silently non-deterministic routing rule. Partial, so a
+-- soft-deleted former default does not block naming a new one.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_campaign_types_one_default
+  ON marketing.campaign_types (tenant_id)
+  WHERE is_default AND NOT is_deleted;
+
+-- The tenant's own list, and the FK from every table that points at a type.
+CREATE INDEX IF NOT EXISTS idx_campaign_types_tenant
+  ON marketing.campaign_types (tenant_id) WHERE NOT is_deleted;
+
+-- The three admin grids in a later phase are literally
+-- `WHERE tenant_id = $1 AND mapping_status = $2`.
+CREATE INDEX IF NOT EXISTS idx_meta_campaigns_tenant_status
+  ON ext.meta_campaigns (tenant_id, mapping_status);
+
+-- The FK, for the RESTRICT check when a type is deleted and for the admin grid
+-- joining a type onto each row.
+CREATE INDEX IF NOT EXISTS idx_meta_campaigns_campaign_type
+  ON ext.meta_campaigns (campaign_type_id) WHERE campaign_type_id IS NOT NULL;
+
+-- Lead lists filtered by pool: "every hiring lead in this branch".
+CREATE INDEX IF NOT EXISTS idx_marketing_leads_org_campaign_type
+  ON lms.marketing_leads (org_id, campaign_type_id, created_at DESC)
+  WHERE campaign_type_id IS NOT NULL AND NOT is_deleted;
+
+CREATE INDEX IF NOT EXISTS idx_ad_campaigns_campaign_type
+  ON marketing.ad_campaigns (campaign_type_id)
+  WHERE campaign_type_id IS NOT NULL AND NOT is_deleted;
+
+-- The composite PK on lms.lead_assignment_weights leads on
+-- user_org_mapping_id, so "who is in this type's pool" -- the auto-assignment
+-- picker's own query -- has no usable index without this one.
+CREATE INDEX IF NOT EXISTS idx_lead_assignment_weights_type
+  ON lms.lead_assignment_weights (campaign_type_id);
+
+-- ── scratch.meta_pull_* (1.50.0) ──────────────────────────────────
+-- The 409 guard ("is a run already live for this tenant?") and the wholesale
+-- DELETE that clears a tenant's previous run, both of which run on every
+-- POST /runs.
+CREATE INDEX IF NOT EXISTS idx_meta_pull_runs_tenant_status
+  ON scratch.meta_pull_runs (tenant_id, status);
+
+-- The poller's claims: a pull (`WHERE status = 'queued' ORDER BY created_at`)
+-- and, since 1.50.1, an Apply (`WHERE status = 'apply_queued'`), each
+-- FOR UPDATE SKIP LOCKED LIMIT 1. Partial, because the queue is empty almost
+-- all of the time and a full-table index would be mostly finished runs.
+--
+-- Replaces idx_meta_pull_runs_queued (pulls only). CREATE INDEX IF NOT EXISTS
+-- cannot change an existing index's predicate -- it would silently keep the old
+-- one -- hence a new name and an explicit DROP of the old.
+DROP INDEX IF EXISTS scratch.idx_meta_pull_runs_queued;
+CREATE INDEX IF NOT EXISTS idx_meta_pull_runs_claimable
+  ON scratch.meta_pull_runs (status, created_at)
+  WHERE status IN ('queued', 'apply_queued');
+
+-- The reaper: runs whose heartbeat has gone stale while claimed. Same
+-- reasoning for the partial -- only in-flight runs can ever be reaped.
+CREATE INDEX IF NOT EXISTS idx_meta_pull_runs_heartbeat
+  ON scratch.meta_pull_runs (heartbeat_at)
+  WHERE status IN ('running', 'applying');
+
+-- The delta summary (GROUP BY verdict) and the drill-down behind each of its
+-- numbers (`?verdict=`), which are the two reads the screen makes.
+CREATE INDEX IF NOT EXISTS idx_meta_pull_leads_run_verdict
+  ON scratch.meta_pull_leads (run_id, verdict);
+
+-- The apply loop's worklist, and the re-read that reports what it did.
+CREATE INDEX IF NOT EXISTS idx_meta_pull_leads_run_applied
+  ON scratch.meta_pull_leads (run_id, applied_status);
+
 COMMIT;

@@ -6,7 +6,6 @@ import {
   usersTable,
   userRolesTable,
   userOrgMappingTable,
-  leadAssignmentWeightsTable,
   organizationsTable,
   vwUserTeamMembers,
   vwUserOrgChart,
@@ -200,24 +199,34 @@ export async function getUserByIdAsService(userId: string) {
 // so the CAPABILITY.LMS filter below is hardcoded rather than parameterized like
 // getAssignableUsers' `product` — no other product manages weights through this
 // endpoint today.
-export async function getAssignmentWeights(ctx: RoleTxContext, orgId: string | undefined, tenantId: string) {
+//
+// Reads through lms.vw_lead_assignment_weights (schema 1.49.0) rather than a
+// hand-rolled join: the view already carries campaign_type_id/campaign_type/
+// campaign_type_label, and is the one place every weight reader (this,
+// reconcileOrgAssignments, listOrgMappings) resolves the pool from. Rows with a
+// NULL campaign_type_id (a membership in no rotation at all) are excluded — the
+// screen groups by type, and a typeless row has no group to join.
+export async function getAssignmentWeights(
+  ctx: RoleTxContext,
+  orgId: string | undefined,
+  tenantId: string,
+  campaignTypeId?: string,
+) {
   const targetOrgId = orgId ?? ctx.org_id;
 
-  // LEFT JOIN + COALESCE, not an inner join: a member with no weight row is a
-  // member who is simply not in the rotation, and the screen has to show them at
-  // 0% so an admin can put them in it. An inner join would hide exactly the
-  // people the admin opened this screen to add.
   const query = (tx: DrizzleTx) => tx.execute(sql`
-      SELECT u.id AS user_id, u.full_name, u.email,
-             ur.name AS role_name, ur.label AS role_label, ur.rank,
-             COALESCE(w.weight, 0) AS weight
-      FROM iam.user_org_mapping uom
-      JOIN iam.users u       ON u.id  = uom.user_id
-      JOIN iam.user_roles ur ON ur.id = uom.role_id
-      LEFT JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = uom.id
-      WHERE uom.org_id = ${targetOrgId}::uuid AND uom.is_active AND NOT u.is_deleted AND u.is_active
-        AND ur.rank > ${RANK_READ_ONLY} AND ur.rank < ${RANK_ADMIN}
-      ORDER BY ur.rank DESC, u.full_name
+      SELECT v.user_id, v.user_full_name AS full_name, u.email,
+             v.role_name, v.role_label, v.role_rank AS rank,
+             v.campaign_type_id, v.campaign_type, v.campaign_type_label,
+             v.weight
+      FROM lms.vw_lead_assignment_weights v
+      JOIN iam.users u ON u.id = v.user_id
+      WHERE v.org_id = ${targetOrgId}::uuid
+        AND v.mapping_is_active AND NOT u.is_deleted AND v.user_is_active
+        AND v.role_rank > ${RANK_READ_ONLY} AND v.role_rank < ${RANK_ADMIN}
+        AND v.campaign_type_id IS NOT NULL
+        ${campaignTypeId ? sql`AND v.campaign_type_id = ${campaignTypeId}::uuid` : sql``}
+      ORDER BY v.role_rank DESC, v.user_full_name, v.campaign_type
     `) as Promise<Array<Record<string, unknown>>>;
 
   // The user form shows each selected branch's current total, which means
@@ -235,10 +244,10 @@ export async function getAssignmentWeights(ctx: RoleTxContext, orgId: string | u
 
 export async function updateAssignmentWeights(
   ctx: RoleTxContext,
-  weights: Array<{ user_id: string; weight: number }>,
+  weights: Array<{ user_id: string; campaign_type_id: string; weight: number }>,
 ) {
   return withRoleTx(ctx, async (tx) => {
-    const userIds = weights.map((w) => w.user_id);
+    const userIds = [...new Set(weights.map((w) => w.user_id))];
 
     // Confirm every targeted user is actually eligible (active mapping, in-range rank)
     // in this org before writing anything — prevents setting a weight on a user who
@@ -257,44 +266,40 @@ export async function updateAssignmentWeights(
       throw new BadRequestError(`Users not eligible for lead assignment in this org: ${ineligible.join(', ')}`);
     }
 
-    const sum = weights.reduce((s, w) => s + w.weight, 0);
-    if (sum !== 100 && sum !== 0) {
-      throw new BadRequestError(`Assignment weights must sum to 100 (or 0 to disable auto-assignment), got ${sum}`);
+    // Sum-to-100-or-0 validation is per campaign_type_id present in the payload,
+    // not over the whole batch — a hiring pool and a sales pool are independent
+    // rotations (1.49.0) and must each balance on their own.
+    const byType = new Map<string, typeof weights>();
+    for (const w of weights) {
+      const list = byType.get(w.campaign_type_id) ?? [];
+      list.push(w);
+      byType.set(w.campaign_type_id, list);
+    }
+    for (const [typeId, rows] of byType) {
+      const sum = rows.reduce((s, w) => s + w.weight, 0);
+      if (sum !== 100 && sum !== 0) {
+        throw new BadRequestError(`Assignment weights for campaign type ${typeId} must sum to 100 (or 0), got ${sum}`);
+      }
     }
 
-    // Single batch write instead of one round-trip per user. INSERT ... SELECT
-    // rather than the UPDATE this used to be: the weight now lives in its own
-    // table, where the row may not exist yet for a user being added to the
-    // rotation for the first time. The join to iam.user_org_mapping resolves
-    // (user_id, org_id) to the membership id AND scopes the write to this org —
-    // a user_id in the payload that is not mapped here matches nothing.
+    // Single batch write instead of one round-trip per (user, type). The
+    // composite ON CONFLICT target matches the real PK (user_org_mapping_id,
+    // campaign_type_id) as of 1.49.0. Weight 0 always upserts a real row here —
+    // this endpoint only ever sets what's in its payload and never deletes, so a
+    // payload entry of 0 has to persist as a visible "in the pool at 0%" row,
+    // not silently vanish.
     const valueRows = sql.join(
-      weights.map((w) => sql`(${w.user_id}::uuid, ${w.weight}::int)`),
+      weights.map((w) => sql`(${w.user_id}::uuid, ${w.campaign_type_id}::uuid, ${w.weight}::int)`),
       sql`, `,
     );
-    // Non-zero weights are upserted; zeros only ever UPDATE an existing row.
-    // Inserting a zero would put a row on the table to say "not in the
-    // rotation", which is what having no row already means — and a payload of
-    // all zeros (the documented way to disable auto-assignment for a branch) is
-    // otherwise a row per member, permanently.
     await tx.execute(sql`
-      INSERT INTO lms.lead_assignment_weights (user_org_mapping_id, weight, updated_by)
-      SELECT m.id, v.weight, ${ctx.user_id}::uuid
-      FROM (VALUES ${valueRows}) AS v(user_id, weight)
+      INSERT INTO lms.lead_assignment_weights (user_org_mapping_id, campaign_type_id, weight, updated_by)
+      SELECT m.id, v.campaign_type_id, v.weight, ${ctx.user_id}::uuid
+      FROM (VALUES ${valueRows}) AS v(user_id, campaign_type_id, weight)
       JOIN iam.user_org_mapping m
         ON m.user_id = v.user_id AND m.org_id = ${ctx.org_id}::uuid
-      WHERE v.weight > 0
-      ON CONFLICT (user_org_mapping_id) DO UPDATE
+      ON CONFLICT (user_org_mapping_id, campaign_type_id) DO UPDATE
         SET weight = EXCLUDED.weight, updated_by = EXCLUDED.updated_by, updated_at = NOW()
-    `);
-
-    await tx.execute(sql`
-      UPDATE lms.lead_assignment_weights w
-      SET weight = 0, updated_by = ${ctx.user_id}::uuid, updated_at = NOW()
-      FROM (VALUES ${valueRows}) AS v(user_id, weight)
-      JOIN iam.user_org_mapping m
-        ON m.user_id = v.user_id AND m.org_id = ${ctx.org_id}::uuid
-      WHERE w.user_org_mapping_id = m.id AND v.weight = 0 AND w.weight <> 0
     `);
   });
 }
@@ -488,49 +493,63 @@ export async function getOrgChart(ctx: RoleTxContext) {
 // One branch's membership, with its role already resolved to an id and checked
 // against the actor's rank ceiling by the service layer. The repository trusts
 // these ids — it does not re-authorize them.
+//
+// weights replaces the old scalar lead_assignment_weight (1.49.0 — the key is
+// now (user_org_mapping_id, campaign_type_id)). A type absent from this array
+// means "not in that pool" — no row — matching writeAssignmentWeight's delete
+// path below.
 export interface ResolvedAssignment {
   org_id: string;
   role_id: string;
-  lead_assignment_weight?: number | undefined;
+  weights?: Array<{ campaign_type_id: string; weight: number }>;
 }
 
 /**
- * Writes one membership's LMS lead-assignment weight.
+ * Writes one membership's LMS lead-assignment weight for one campaign type.
  *
- * A zero is an UPDATE, never an INSERT: no row means weight 0 to the
- * auto-assignment picker (it filters `weight > 0`), so inserting zeros would
- * put a row on every membership in the platform to say nothing. An UPDATE that
- * matches nothing is exactly right for "this member was not in the rotation and
- * still isn't"; it clears the weight when they were.
- *
- * DELETE would be the other way to clear one, but DELETE is revoked from
- * app_user and tenant_admin on this table (07_grants.sql), mirroring
- * iam.user_org_mapping.
+ * The composite ON CONFLICT target matches the real PK
+ * (user_org_mapping_id, campaign_type_id) as of schema 1.49.0. Weight 0 now
+ * always upserts a real row (confirmed behaviour change, Phase 07): the UI
+ * needs to tell "branch has a hiring pool, everyone at 0%" apart from "branch
+ * has no hiring pool row at all", which requires 0 to persist as a row rather
+ * than reading identically to "no row".
  */
 async function writeAssignmentWeight(
   tx: DrizzleTx,
   mappingId: string,
+  campaignTypeId: string,
   weight: number,
   actorUserId: string,
 ): Promise<void> {
-  if (weight > 0) {
-    await tx.execute(sql`
-      INSERT INTO lms.lead_assignment_weights (user_org_mapping_id, weight, updated_by)
-      VALUES (${mappingId}::uuid, ${weight}::int, ${actorUserId}::uuid)
-      ON CONFLICT (user_org_mapping_id) DO UPDATE
-        SET weight = EXCLUDED.weight, updated_by = EXCLUDED.updated_by, updated_at = NOW()
-    `);
-    return;
-  }
   await tx.execute(sql`
-    UPDATE lms.lead_assignment_weights
-    SET weight = 0, updated_by = ${actorUserId}::uuid, updated_at = NOW()
-    WHERE user_org_mapping_id = ${mappingId}::uuid AND weight <> 0
+    INSERT INTO lms.lead_assignment_weights (user_org_mapping_id, campaign_type_id, weight, updated_by)
+    VALUES (${mappingId}::uuid, ${campaignTypeId}::uuid, ${weight}::int, ${actorUserId}::uuid)
+    ON CONFLICT (user_org_mapping_id, campaign_type_id) DO UPDATE
+      SET weight = EXCLUDED.weight, updated_by = EXCLUDED.updated_by, updated_at = NOW()
   `);
 }
 
 /**
- * Upserts one branch membership and its lead-assignment weight together.
+ * Removes a membership from one campaign type's pool entirely — the real
+ * "remove from rotation", as opposed to a weight of 0 (which is still a row,
+ * just an inactive one). DELETE is revoked from app_user/tenant_admin on this
+ * table (07_grants.sql); only callers running on withServiceTx (root_service)
+ * may call this.
+ */
+async function deleteAssignmentWeight(
+  tx: DrizzleTx,
+  mappingId: string,
+  campaignTypeId: string,
+): Promise<void> {
+  await tx.execute(sql`
+    DELETE FROM lms.lead_assignment_weights
+    WHERE user_org_mapping_id = ${mappingId}::uuid AND campaign_type_id = ${campaignTypeId}::uuid
+  `);
+}
+
+/**
+ * Upserts one branch membership and its per-campaign-type lead-assignment
+ * weights together.
  *
  * The two writes have to happen in this order and in one transaction: the
  * weight's foreign key is the membership's surrogate id, so the mapping row has
@@ -538,16 +557,19 @@ async function writeAssignmentWeight(
  * UPDATE` returns a row on both the insert and the update path, so this is one
  * round-trip either way.
  *
- * Absent `lead_assignment_weight` resolves to 0, matching the behaviour when
- * the weight was a NOT NULL DEFAULT 0 column on the mapping itself: a payload
- * that omits it zeroes the branch's weight. Callers that must NOT do that
- * (reconcileOrgAssignments' unchanged-row short-circuit) decide before calling.
+ * `reconcileAgainstTypes`, when passed, is the full set of campaign_type_ids
+ * visible to the tenant — any type in that set but NOT present in
+ * `assignment.weights` gets deleted (real "remove from pool"). Only
+ * reconcileOrgAssignments (withServiceTx, the edit-user path) passes this;
+ * createUser and addOrgMapping omit it so they only ever insert/update what's
+ * listed, never delete.
  */
 async function upsertOrgAssignment(
   tx: DrizzleTx,
   targetUserId: string,
   assignment: ResolvedAssignment,
   actorUserId: string,
+  reconcileAgainstTypes?: string[],
 ): Promise<void> {
   const [mapping] = await tx
     .insert(userOrgMappingTable)
@@ -568,7 +590,19 @@ async function upsertOrgAssignment(
     .returning({ id: userOrgMappingTable.id });
 
   if (!mapping) return;
-  await writeAssignmentWeight(tx, mapping.id, assignment.lead_assignment_weight ?? 0, actorUserId);
+
+  const weights = assignment.weights ?? [];
+  for (const w of weights) {
+    await writeAssignmentWeight(tx, mapping.id, w.campaign_type_id, w.weight, actorUserId);
+  }
+
+  if (reconcileAgainstTypes) {
+    const incoming = new Set(weights.map((w) => w.campaign_type_id));
+    const toRemove = reconcileAgainstTypes.filter((id) => !incoming.has(id));
+    for (const typeId of toRemove) {
+      await deleteAssignmentWeight(tx, mapping.id, typeId);
+    }
+  }
 }
 
 export interface CreateUserData {
@@ -707,12 +741,12 @@ export async function getRolesByIdsForTenant(roleIds: string[], tenantId: string
   if (roleIds.length === 0) return [];
   return withServiceTx(async (tx) => {
     const rows = (await tx.execute(sql`
-      SELECT id, name, rank
+      SELECT id, name, label, rank, department_id
       FROM iam.user_roles
       WHERE id IN (${sql.join(roleIds.map((id) => sql`${id}::uuid`), sql`, `)})
         AND is_active
         AND (tenant_id = ${tenantId}::uuid OR tenant_id IS NULL)
-    `)) as Array<{ id: string; name: string; rank: number }>;
+    `)) as Array<{ id: string; name: string; label: string; rank: number; department_id: string | null }>;
     return rows;
   });
 }
@@ -731,6 +765,83 @@ export async function getOrgsInTenant(orgIds: string[], tenantId: string) {
     `)) as Array<{ id: string; name: string }>;
     return rows;
   });
+}
+
+// Confirm every campaign_type_id in an assignment payload is a live type of
+// this tenant, before relying on the client-supplied id for anything — same
+// role as getOrgsInTenant/getRolesByIdsForTenant for org_id/role_id. Server
+// tenant scope, never a client-supplied one: CLAUDE.md's rule against trusting
+// client-scoped identity extends to campaign_type_id here.
+export async function getCampaignTypesInTenant(typeIds: string[], tenantId: string) {
+  if (typeIds.length === 0) return [];
+  return withServiceTx(async (tx) => (await tx.execute(sql`
+    SELECT id, name, label, department_id
+    FROM marketing.campaign_types
+    WHERE id IN (${sql.join(typeIds.map((id) => sql`${id}::uuid`), sql`, `)})
+      AND tenant_id = ${tenantId}::uuid AND is_active AND NOT is_deleted
+  `)) as Array<{ id: string; name: string; label: string; department_id: string | null }>);
+}
+
+// The campaign types a user ALREADY holds a weight row for, per branch.
+//
+// The department rule (1.50.2) applies to NEW weights only: rows that predate it
+// and break it are deliberately kept (reported, and skipped by the picker), so a
+// re-save of a user who carries one must not be refused. Callers exempt exactly
+// these (org, type) pairs from the department check.
+export async function getWeightTypesByOrgForUser(userId: string): Promise<Map<string, Set<string>>> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT uom.org_id, array_agg(w.campaign_type_id::text) AS type_ids
+      FROM iam.user_org_mapping uom
+      JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = uom.id
+      WHERE uom.user_id = ${userId}::uuid
+      GROUP BY uom.org_id
+    `)) as Array<{ org_id: string; type_ids: string[] }>;
+    return new Map(rows.map((r) => [r.org_id, new Set(r.type_ids)]));
+  });
+}
+
+// For PUT /users/assignment-weights: each user's role (label + department) in
+// ONE branch, plus the campaign types they already hold a weight row for there.
+export async function getMembershipRolesInOrg(
+  orgId: string,
+  userIds: string[],
+): Promise<Map<string, { role_label: string; department_id: string | null; weight_type_ids: Set<string> }>> {
+  if (userIds.length === 0) return new Map();
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT uom.user_id,
+             ur.label AS role_label,
+             ur.department_id,
+             COALESCE(array_agg(w.campaign_type_id::text) FILTER (WHERE w.campaign_type_id IS NOT NULL), '{}') AS weight_type_ids
+      FROM iam.user_org_mapping uom
+      JOIN iam.user_roles ur ON ur.id = uom.role_id
+      LEFT JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = uom.id
+      WHERE uom.org_id = ${orgId}::uuid
+        AND uom.is_active
+        AND uom.user_id IN (${sql.join(userIds.map((id) => sql`${id}::uuid`), sql`, `)})
+      GROUP BY uom.user_id, ur.label, ur.department_id
+    `)) as Array<{ user_id: string; role_label: string; department_id: string | null; weight_type_ids: string[] }>;
+    return new Map(rows.map((r) => [r.user_id, {
+      role_label: r.role_label,
+      department_id: r.department_id,
+      weight_type_ids: new Set(r.weight_type_ids),
+    }]));
+  });
+}
+
+// The full campaign-type catalog for one tenant — backs the read-through
+// GET /users/campaign-type-catalog endpoint (Phase 07 §4) so OrgAssignmentsField
+// can group weight inputs by type without needing leads-service's
+// LMS_CAMPAIGN_TYPES_VIEW capability, which not every admin.team.manage holder
+// has.
+export async function getAllCampaignTypesForTenant(tenantId: string) {
+  return withServiceTx(async (tx) => (await tx.execute(sql`
+    SELECT id, name, label, department_id, is_default
+    FROM marketing.campaign_types
+    WHERE tenant_id = ${tenantId}::uuid AND is_active AND NOT is_deleted
+    ORDER BY sort_order
+  `)) as Array<{ id: string; name: string; label: string; department_id: string | null; is_default: boolean }>);
 }
 
 // Of `orgIds`, the ones the ACTOR may create/manage users in.
@@ -1244,16 +1355,59 @@ export async function reconcileOrgAssignments(
   homeOrgId?: string,
 ): Promise<ReconcileResult> {
   return withServiceTx(async (tx) => {
-    // COALESCE, not a null check: a membership with no weight row is out of the
-    // rotation, which is the same thing as a zero. Comparing NULL against the
-    // incoming 0 below would mark every unweighted branch as "changed" and
-    // rewrite it on every edit.
+    // Read through the view (per-type rows), then group into one weights[] per
+    // mapping — jsonb_agg with a FILTER so a membership in no rotation at all
+    // (every campaign_type_id NULL from the LEFT JOIN) reports an empty array,
+    // not an array holding one null entry.
     const current = (await tx.execute(sql`
-      SELECT m.org_id, m.role_id, m.is_active, COALESCE(w.weight, 0) AS lead_assignment_weight
+      SELECT COALESCE(v.org_id, m.org_id) AS org_id, m.role_id, m.is_active,
+             COALESCE(
+               jsonb_agg(jsonb_build_object('campaign_type_id', v.campaign_type_id, 'weight', v.weight))
+                 FILTER (WHERE v.campaign_type_id IS NOT NULL),
+               '[]'
+             ) AS weights
       FROM iam.user_org_mapping m
-      LEFT JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = m.id
+      LEFT JOIN lms.vw_lead_assignment_weights v ON v.user_org_mapping_id = m.id
       WHERE m.user_id = ${targetUserId}::uuid
-    `)) as Array<{ org_id: string; role_id: string; lead_assignment_weight: number; is_active: boolean }>;
+      GROUP BY COALESCE(v.org_id, m.org_id), m.role_id, m.is_active
+    `)) as Array<{
+      org_id: string;
+      role_id: string;
+      is_active: boolean;
+      weights: Array<{ campaign_type_id: string; weight: number }>;
+    }>;
+
+    // The full campaign-type catalog visible to this tenant — reconcileAgainstTypes
+    // for every upsert below, so a type present in `current` but absent from the
+    // incoming payload gets a real DELETE rather than silently staying at its old
+    // weight. Tenant derived from ctx when present (the normal case), else from
+    // the target user's own org — super_admin's ctx.tenant_id can be empty
+    // (packages/rbac/src/ranks.ts), same fallback resolveTenantId uses.
+    const tenantRows = (await tx.execute(sql`
+      SELECT o.tenant_id FROM iam.users u
+      JOIN entity.organizations o ON o.id = u.org_id
+      WHERE u.id = ${targetUserId}::uuid
+    `)) as Array<{ tenant_id: string }>;
+    const reconcileTenantId = ctx.tenant_id || tenantRows[0]?.tenant_id;
+    const allTypes = reconcileTenantId
+      ? ((await tx.execute(sql`
+          SELECT id FROM marketing.campaign_types
+          WHERE tenant_id = ${reconcileTenantId}::uuid AND is_active AND NOT is_deleted
+        `)) as Array<{ id: string }>)
+      : [];
+    const reconcileAgainstTypes = allTypes.map((r) => r.id);
+
+    const sortWeights = (w: Array<{ campaign_type_id: string; weight: number }>) =>
+      [...w].sort((a, b) => a.campaign_type_id.localeCompare(b.campaign_type_id));
+    const sameWeights = (
+      a: Array<{ campaign_type_id: string; weight: number }>,
+      b: Array<{ campaign_type_id: string; weight: number }>,
+    ) => {
+      if (a.length !== b.length) return false;
+      const sa = sortWeights(a);
+      const sb = sortWeights(b);
+      return sa.every((w, i) => w.campaign_type_id === sb[i]!.campaign_type_id && w.weight === sb[i]!.weight);
+    };
 
     const currentById = new Map(current.map((r) => [r.org_id, r]));
     const wanted = new Set(assignments.map((a) => a.org_id));
@@ -1262,18 +1416,18 @@ export async function reconcileOrgAssignments(
     const updated: string[] = [];
 
     for (const a of assignments) {
-      const weight = a.lead_assignment_weight ?? 0;
+      const weights = a.weights ?? [];
       const existing = currentById.get(a.org_id);
 
       if (!existing || !existing.is_active) {
         added.push(a.org_id);
-      } else if (existing.role_id !== a.role_id || existing.lead_assignment_weight !== weight) {
+      } else if (existing.role_id !== a.role_id || !sameWeights(existing.weights, weights)) {
         updated.push(a.org_id);
       } else {
         continue; // identical — skip the write entirely
       }
 
-      await upsertOrgAssignment(tx, targetUserId, { ...a, lead_assignment_weight: weight }, ctx.user_id);
+      await upsertOrgAssignment(tx, targetUserId, { ...a, weights }, ctx.user_id, reconcileAgainstTypes);
     }
 
     const removed = current
@@ -1404,9 +1558,17 @@ export async function adminResetPassword(
 // Multi-org grant/revoke — a user can hold access (with a role) in more than
 // one org at once via iam.user_org_mapping. The view already resolves
 // org_name/role_label so callers never have to look up a raw id themselves.
+// Multi-org grant/revoke — a user can hold access (with a role) in more than
+// one org at once via iam.user_org_mapping. The view already resolves
+// org_name/role_label so callers never have to look up a raw id themselves.
+//
+// weights is now a per-mapping list (1.49.0), fetched via a second query rather
+// than fought into the primary Drizzle groupBy — mirrors the existing
+// Promise.all pattern used elsewhere in this file (e.g. resolveAssignments'
+// getOrgsInTenant + getRolesByIdsForTenant).
 export async function listOrgMappings(userId: string) {
-  return withServiceTx((tx) =>
-    tx
+  return withServiceTx(async (tx) => {
+    const mappings = await tx
       .select({
         userId:           vwUserOrgAccess.userId,
         userFullName:     vwUserOrgAccess.userFullName,
@@ -1421,16 +1583,11 @@ export async function listOrgMappings(userId: string) {
         roleRank:         vwUserOrgAccess.roleRank,
         grantedAt:        vwUserOrgAccess.grantedAt,
         mappingUpdatedAt: vwUserOrgAccess.mappingUpdatedAt,
-        // Not on the view, and both needed to seed the Edit user form: without
-        // role_id the form cannot preselect each branch's role, and without the
-        // weight an edit would round-trip every branch back to 0.
-        roleId:               userOrgMappingTable.roleId,
-        // LEFT JOIN, so COALESCE: a branch the user is not in the rotation for
-        // has no weight row, and the form has to read that as the 0 it means.
-        // A null here would reach the weight input as an empty field and the
-        // next save would send it back as null.
-        leadAssignmentWeight: sql<number>`COALESCE(${leadAssignmentWeightsTable.weight}, 0)`,
-        isActive:             userOrgMappingTable.isActive,
+        // Not on the view, and needed to seed the Edit user form: without
+        // role_id the form cannot preselect each branch's role.
+        mappingId: userOrgMappingTable.id,
+        roleId:    userOrgMappingTable.roleId,
+        isActive:  userOrgMappingTable.isActive,
       })
       .from(vwUserOrgAccess)
       .innerJoin(
@@ -1440,13 +1597,32 @@ export async function listOrgMappings(userId: string) {
           eq(userOrgMappingTable.orgId, vwUserOrgAccess.orgId),
         ),
       )
-      .leftJoin(
-        leadAssignmentWeightsTable,
-        eq(leadAssignmentWeightsTable.userOrgMappingId, userOrgMappingTable.id),
-      )
       .where(eq(vwUserOrgAccess.userId, userId))
-      .orderBy(desc(vwUserOrgAccess.grantedAt)),
-  );
+      .orderBy(desc(vwUserOrgAccess.grantedAt));
+
+    const mappingIds = mappings.map((m) => m.mappingId);
+    const weights = mappingIds.length === 0 ? [] : (await tx.execute(sql`
+      SELECT user_org_mapping_id, campaign_type_id, campaign_type, campaign_type_label, weight
+      FROM lms.vw_lead_assignment_weights
+      WHERE user_org_mapping_id IN (${sql.join(mappingIds.map((id) => sql`${id}::uuid`), sql`, `)})
+        AND campaign_type_id IS NOT NULL
+    `)) as Array<{
+      user_org_mapping_id: string;
+      campaign_type_id: string;
+      campaign_type: string;
+      campaign_type_label: string;
+      weight: number;
+    }>;
+
+    const byMapping = new Map<string, typeof weights>();
+    for (const w of weights) {
+      const list = byMapping.get(w.user_org_mapping_id) ?? [];
+      list.push(w);
+      byMapping.set(w.user_org_mapping_id, list);
+    }
+
+    return mappings.map((m) => ({ ...m, weights: byMapping.get(m.mappingId) ?? [] }));
+  });
 }
 
 export async function orgExists(orgId: string): Promise<boolean> {
@@ -1492,12 +1668,16 @@ export async function addOrgMapping(ctx: RoleTxContext, targetUserId: string, da
       .returning();
     if (!row) return row;
 
-    await writeAssignmentWeight(tx, row.id, weight, ctx.user_id);
+    // Single type only — addOrgMapping is a single (org, role, type) grant, not
+    // the multi-branch reconcile path, so no reconcileAgainstTypes (never
+    // deletes another type's row).
+    await writeAssignmentWeight(tx, row.id, data.campaign_type_id, weight, ctx.user_id);
 
     // The weight is no longer a column on the row this returns, but it WAS part
     // of this endpoint's response body. Put it back so the API contract is
-    // unchanged by the move — callers still get the weight they just set.
-    return { ...row, leadAssignmentWeight: weight };
+    // unchanged by the move — callers still get the weight (and now type) they
+    // just set.
+    return { ...row, leadAssignmentWeight: weight, campaignTypeId: data.campaign_type_id };
   });
 }
 

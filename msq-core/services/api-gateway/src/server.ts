@@ -8,6 +8,7 @@ import { config } from './config.js';
 import { proxyTo, proxyToRaw, proxySSE } from './lib/proxy.js';
 import { authPreHandler } from './middleware/auth.js';
 import { productGuard } from './middleware/require-product.js';
+import { superAdminGuard } from './middleware/require-super-admin.js';
 import { communicationSendGuard } from './middleware/comms-send-guard.js';
 import { verifyJwtEdge, revokeJti } from './lib/jwt-verify.js';
 import { createRateLimiter } from './lib/rate-limit.js';
@@ -229,6 +230,12 @@ const withAuth = { preHandler: [authPreHandler, productGuard] };
 // Communication send routes: additionally enforce the read_only send-block here
 // (communication-service itself is a stateless relay — see comms-send-guard).
 const withCommsSend = { preHandler: [authPreHandler, productGuard, communicationSendGuard] };
+// Super-admin console routes (the /meta/* admin surface lookup-admin uses):
+// refused at the edge unless platform_role is super_admin. Defence in depth —
+// meta-conversion-api re-checks RANKS.SUPER_ADMIN and RLS fences the rows — so
+// a service that one day forgets its own check does not open a cross-tenant
+// admin surface. See middleware/require-super-admin.ts.
+const withSuperAdmin = { preHandler: [authPreHandler, productGuard, superAdminGuard] };
 
 // Notifications (SSE — long-lived connection)
 app.get('/notifications/stream', { ...withAuth }, async (req, reply) => {
@@ -363,6 +370,29 @@ app.patch('/campaigns/:id', { ...withAuth }, async (req, reply) => {
 app.delete('/campaigns/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.leadsServiceUrl, `/api/v1/campaigns/${id}`, req, reply, req.userCtx);
+});
+
+// Campaign types — the tenant's pool catalog (sales / hiring / …), which decides
+// where an inbound lead routes. Sits beside /campaigns because it is the same
+// screen family and the same service, but it is TENANT-scoped where a campaign
+// is per branch. leads-service gates both on capability.
+app.get('/campaign-types', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/campaign-types', req, reply, req.userCtx);
+});
+app.post('/campaign-types', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/campaign-types', req, reply, req.userCtx);
+});
+app.get('/campaign-types/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.leadsServiceUrl, `/api/v1/campaign-types/${id}`, req, reply, req.userCtx);
+});
+app.patch('/campaign-types/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.leadsServiceUrl, `/api/v1/campaign-types/${id}`, req, reply, req.userCtx);
+});
+app.delete('/campaign-types/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.leadsServiceUrl, `/api/v1/campaign-types/${id}`, req, reply, req.userCtx);
 });
 
 // Lookups
@@ -545,6 +575,13 @@ app.put('/users/assignment-weights', { ...withAuth }, async (req, reply) => {
 app.get('/users/role-catalog', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/users/role-catalog', req, reply, req.userCtx);
 });
+// The tenant's campaign-type catalog for OrgAssignmentsField's per-type weight
+// inputs. Registered explicitly: it used to reach identity-service only because
+// `/users/:id` below forwarded "campaign-type-catalog" as if it were a user id —
+// working by accident, and one id-format check away from a 404.
+app.get('/users/campaign-type-catalog', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/users/campaign-type-catalog', req, reply, req.userCtx);
+});
 app.get('/users/manager-candidates', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/users/manager-candidates', req, reply, req.userCtx);
 });
@@ -712,6 +749,113 @@ app.post('/meta/integration', { ...withAuth }, async (req, reply) => {
 });
 app.patch('/meta/integration', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.metaServiceUrl, '/api/v1/integration', req, reply, req.userCtx);
+});
+
+// Meta page -> branch routing (super_admin only — enforced in
+// meta-conversion-api, which also RLS-pins the write to the administered
+// tenant). These four had no gateway route at all until now: the CRUD existed
+// in the service but was reachable only from inside the cluster, so the table
+// that decides where every inbound Meta lead lands was editable by hand-written
+// SQL alone. The administered tenant travels as ?tenant_id=, forwarded verbatim
+// by proxyTo, same as the tenant-scoped lookups above.
+app.get('/meta/page-org-map', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/page-org-map', req, reply, req.userCtx);
+});
+app.post('/meta/page-org-map', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/page-org-map', req, reply, req.userCtx);
+});
+app.patch('/meta/page-org-map/:mappingId', { ...withSuperAdmin }, async (req, reply) => {
+  const { mappingId } = req.params as { mappingId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/page-org-map/${mappingId}`, req, reply, req.userCtx);
+});
+app.delete('/meta/page-org-map/:mappingId', { ...withSuperAdmin }, async (req, reply) => {
+  const { mappingId } = req.params as { mappingId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/page-org-map/${mappingId}`, req, reply, req.userCtx);
+});
+
+// Meta Page discovery (super_admin only) — lets the mapping screen offer pages
+// by name instead of asking for raw numeric Meta Page ids. Spends the selected
+// tenant's stored Meta credentials, hence the same ?tenant_id= scoping.
+app.get('/meta/pages', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/pages', req, reply, req.userCtx);
+});
+
+// Meta campaign -> TYPE mapping (super_admin only — enforced in
+// meta-conversion-api, which RLS-pins every one of these to the administered
+// tenant). This is what decides whether an inbound Meta lead is a SALES lead or
+// a HIRING lead, and therefore which pool in a branch it routes to.
+//
+// The administered tenant travels as ?tenant_id=, forwarded verbatim by proxyTo,
+// same as the page-org-map routes above — never the caller's own tenant, since
+// platform staff administer a tenant other than their own.
+//
+// POST /sync spends the selected tenant's stored Meta credentials to walk its ad
+// accounts (with Graph backoff), and PATCH runs the lead re-route fan-out across
+// every branch — meta-conversion-api gives that call 60s. Both are routinely
+// slower than the default 30s proxy timeout, which answered 504 while the
+// service went on to finish, so the admin saw a failure for work that succeeded.
+// They get config.metaAdminLongTimeoutMs, deliberately LONGER than the service's
+// own reclassify timeout so the service, not this proxy, decides and reports.
+app.get('/meta/campaigns', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/campaigns', req, reply, req.userCtx);
+});
+app.post('/meta/campaigns/sync', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/campaigns/sync', req, reply, req.userCtx, {
+    timeoutMs: config.metaAdminLongTimeoutMs,
+  });
+});
+app.patch('/meta/campaigns/:metaCampaignId', { ...withSuperAdmin }, async (req, reply) => {
+  const { metaCampaignId } = req.params as { metaCampaignId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/campaigns/${metaCampaignId}`, req, reply, req.userCtx, {
+    timeoutMs: config.metaAdminLongTimeoutMs,
+  });
+});
+
+// Meta lead PULL (super_admin only — enforced in meta-conversion-api, which
+// RLS-pins every one of these to the administered tenant via ?tenant_id=). This
+// is the backfill for leads the live webhook missed: an integration that was
+// down, a page mapped late, a form nobody knew about. It replaces a three-stage
+// Python CLI a developer had to run from a laptop.
+//
+// Both POSTs ENQUEUE and return 202 in one fast transaction; the work is done by
+// a poller in the service, so nothing rides on this proxy's timeout
+// (config.proxyTimeoutMs, 30s) — the client polls GET /runs/:runId:
+//   * POST /runs queues the pull.
+//   * POST /runs/:runId/apply queues the Apply (completed -> apply_queued). It
+//     used to run INLINE — one intake call per staged row — and any real run
+//     outlived this proxy, answered 504 while the service kept writing, and let
+//     the admin press Apply again. A FOR UPDATE SKIP LOCKED claim on the run row
+//     still stops a double-click queueing it twice.
+app.get('/meta/lead-pull/campaigns', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/lead-pull/campaigns', req, reply, req.userCtx);
+});
+app.post('/meta/lead-pull/runs', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/lead-pull/runs', req, reply, req.userCtx);
+});
+// The tenant's current run, so the screen can reopen it on load. Static segment:
+// matched ahead of /runs/:runId, never captured as a run id.
+app.get('/meta/lead-pull/runs/latest', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/lead-pull/runs/latest', req, reply, req.userCtx);
+});
+app.get('/meta/lead-pull/runs/:runId', { ...withSuperAdmin }, async (req, reply) => {
+  const { runId } = req.params as { runId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/lead-pull/runs/${runId}`, req, reply, req.userCtx);
+});
+app.get('/meta/lead-pull/runs/:runId/leads', { ...withSuperAdmin }, async (req, reply) => {
+  const { runId } = req.params as { runId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/lead-pull/runs/${runId}/leads`, req, reply, req.userCtx);
+});
+app.post('/meta/lead-pull/runs/:runId/apply', { ...withSuperAdmin }, async (req, reply) => {
+  const { runId } = req.params as { runId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/lead-pull/runs/${runId}/apply`, req, reply, req.userCtx);
+});
+
+// Re-run auto-assignment (super_admin console): re-routes leads that arrived
+// unassigned once their pool has been fixed. Dry run by default; at most 500
+// leads per call, so it fits the default proxy timeout. Refused at the edge for
+// non-super-admins; leads-service re-checks and fences the tenant in SQL.
+app.post('/lead-assignment/rerun', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/lead-assignment/rerun', req, reply, req.userCtx);
 });
 
 // Communications

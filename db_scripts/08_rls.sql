@@ -246,11 +246,35 @@ ALTER TABLE lms.marketing_leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lms.marketing_leads FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON lms.marketing_leads;
 DROP POLICY IF EXISTS tenant_isolation_policy ON lms.marketing_leads;
+-- THE CAMPAIGN-TYPE TERM ON `USING` IS THE SALES/HR VISIBILITY BOUNDARY (1.49.0).
+-- All lead kinds share one pipeline; what keeps a hiring lead off a sales rep's
+-- screen is this predicate, here, not a filter in leads-service. Put another way:
+-- a rep with a psql prompt and a valid session gets the same answer as a rep
+-- with the app, which is the only version of this that is actually a boundary.
+--
+-- ON `USING` ONLY -- NEVER ADD IT TO `WITH CHECK`. WITH CHECK governs what a
+-- session may WRITE, and a manager legitimately creates and reassigns leads
+-- ACROSS types (that is exactly what reclassification is). Narrowing WITH CHECK
+-- would not hide one extra row; it would only stop managers routing work, and it
+-- would do so with a bare "new row violates row-level security policy" that
+-- names nothing.
+--
+-- lms.fn_user_sees_campaign_type returns TRUE for a NULL type, so this term
+-- changes NOTHING until types are backfilled -- which is what makes 1.49.0 a
+-- structural change rather than a behavioural one.
 CREATE POLICY org_isolation_policy ON lms.marketing_leads AS PERMISSIVE FOR ALL TO app_user
-  USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted)
+  USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted
+             AND lms.fn_user_sees_campaign_type(
+                   NULLIF(current_setting('app.current_user_id',true),'')::uuid,
+                   org_id,
+                   campaign_type_id))
   WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
 CREATE POLICY tenant_isolation_policy ON lms.marketing_leads AS PERMISSIVE FOR ALL TO tenant_admin
-  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted
+         AND lms.fn_user_sees_campaign_type(
+               NULLIF(current_setting('app.current_user_id',true),'')::uuid,
+               org_id,
+               campaign_type_id))
   WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
 
 -- iam.users
@@ -276,6 +300,59 @@ CREATE POLICY org_isolation_policy ON marketing.ad_campaigns AS PERMISSIVE FOR A
 CREATE POLICY tenant_isolation_policy ON marketing.ad_campaigns AS PERMISSIVE FOR ALL TO tenant_admin
   USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
   WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+
+-- marketing.campaign_types
+-- Tenant-scoped, not org-scoped: a type is a TENANT's catalog entry shared by
+-- every branch, so there is no org_id to key on. The read policy therefore
+-- derives the tenant from the session's current org -- the same shape the seven
+-- tenant-scoped LMS lookups further down this file use -- because an ordinary
+-- app_user session sets app.current_org_id and never app.current_tenant_id.
+--
+-- Writes are the N-6 admin path (a super_admin administering a SELECTED tenant
+-- through @platform/db's withTenantConfigTx, which pins app.current_tenant_id),
+-- the same as every other tenant-scoped config table here.
+--
+-- The NOINHERIT service logins are NOT named here, and that is not the mistake
+-- it looks like: the widening block at the foot of this file rewrites every
+-- policy's role list to include the members of the roles it targets, so
+-- `TO app_user` becomes `TO app_user, lms_svc, lead_svc, ...` on apply. Naming
+-- them by hand is the thing that would drift. GRANTs have no such block, which
+-- is why 07_grants.sql spells each service login out.
+ALTER TABLE marketing.campaign_types ENABLE ROW LEVEL SECURITY;
+ALTER TABLE marketing.campaign_types FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy       ON marketing.campaign_types;
+DROP POLICY IF EXISTS tenant_isolation_policy    ON marketing.campaign_types;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON marketing.campaign_types;
+CREATE POLICY org_isolation_policy ON marketing.campaign_types AS PERMISSIVE FOR SELECT TO app_user
+  USING (tenant_id = (SELECT tenant_id FROM entity.organizations
+                      WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+CREATE POLICY tenant_isolation_policy ON marketing.campaign_types AS PERMISSIVE FOR ALL TO tenant_admin
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+CREATE POLICY admin_tenant_config_policy ON marketing.campaign_types AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+-- ext.meta_campaigns
+-- Same shape as ext.meta_forms below, whose discovery-cache pattern it copies:
+-- campaigns exist independently of (and prior to) any org attribution, so there
+-- is no branch to scope on. It gets the N-6 admin policy as well, because unlike
+-- meta_forms this table is EDITED from the console -- an admin confirms a
+-- campaign's type -- and that caller pins app.current_tenant_id, not an org.
+ALTER TABLE ext.meta_campaigns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_campaigns FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy       ON ext.meta_campaigns;
+DROP POLICY IF EXISTS tenant_isolation_policy    ON ext.meta_campaigns;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON ext.meta_campaigns;
+CREATE POLICY org_isolation_policy ON ext.meta_campaigns AS PERMISSIVE FOR SELECT TO app_user
+  USING (tenant_id = (SELECT tenant_id FROM entity.organizations
+                      WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+CREATE POLICY tenant_isolation_policy ON ext.meta_campaigns AS PERMISSIVE FOR ALL TO tenant_admin
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+CREATE POLICY admin_tenant_config_policy ON ext.meta_campaigns AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
 -- lms.lead_interactions
 ALTER TABLE lms.lead_interactions ENABLE ROW LEVEL SECURITY;
@@ -679,8 +756,9 @@ CREATE POLICY tenant_isolation_policy ON ext.meta_tenant_config
 ALTER TABLE ext.meta_page_form_org_map ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ext.meta_page_form_org_map FORCE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS org_isolation_policy    ON ext.meta_page_form_org_map;
-DROP POLICY IF EXISTS tenant_isolation_policy ON ext.meta_page_form_org_map;
+DROP POLICY IF EXISTS org_isolation_policy       ON ext.meta_page_form_org_map;
+DROP POLICY IF EXISTS tenant_isolation_policy    ON ext.meta_page_form_org_map;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON ext.meta_page_form_org_map;
 
 CREATE POLICY org_isolation_policy ON ext.meta_page_form_org_map
   FOR ALL TO app_user
@@ -697,6 +775,44 @@ CREATE POLICY tenant_isolation_policy ON ext.meta_page_form_org_map
     SELECT id FROM entity.organizations
     WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid
   ));
+
+-- N-6 admin path: a platform super_admin administering a SELECTED tenant's
+-- page -> branch routing from the lookup-admin console, reached through
+-- @platform/db's withTenantConfigTx (meta-conversion-api's page-org-map API).
+--
+-- Neither policy above can serve that caller, and both fail SILENTLY rather
+-- than erroring -- the failure shape this codebase has been bitten by before:
+--   * org_isolation_policy is keyed on app.current_org_id, which
+--     withTenantConfigTx deliberately does NOT set -> org_id = NULL -> false.
+--   * tenant_isolation_policy is TO tenant_admin, and withTenantConfigTx runs
+--     as app_user (or, for a product-scoped login, as lms_svc, a NOINHERIT
+--     member of app_user -- see the widening block at the end of this file,
+--     which names such members on every policy so `TO app_user` actually
+--     reaches them).
+-- The net result before this policy existed was zero rows and no error.
+--
+-- Deliberately keyed on the table's OWN tenant_id column, unlike
+-- tenant_isolation_policy above which keys on an entity.organizations
+-- subquery. They are not harmonised on purpose: the admin path pins
+-- app.current_tenant_id to the target tenant and must be judged against that,
+-- while the tenant_admin path derives reach from org membership.
+--
+-- The org_id half of the WITH CHECK is a SECURITY CONTROL, not decoration.
+-- tenant_id and org_id are independent columns here with no trigger tying them
+-- together (confirmed: 04_functions_triggers.sql has no trigger on this
+-- table), so without it a super_admin could pin tenant_id to tenant A and
+-- point org_id at tenant B's branch -- routing another tenant's inbound Meta
+-- leads into a branch of their choosing. It calls entity.fn_org_tenant()
+-- rather than an inline `org_id IN (SELECT ... FROM entity.organizations)`
+-- because that subquery is re-filtered by entity.organizations' own
+-- membership-keyed app_user policy and would return zero rows for exactly this
+-- caller; see the function's comment in 04_functions_triggers.sql.
+CREATE POLICY admin_tenant_config_policy ON ext.meta_page_form_org_map
+  AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid
+              AND entity.fn_org_tenant(org_id)
+                  = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
 ALTER TABLE ext.meta_forms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ext.meta_forms FORCE ROW LEVEL SECURITY;
@@ -1625,6 +1741,67 @@ CREATE POLICY tenant_isolation_policy ON comms.message_templates AS PERMISSIVE F
   USING (NOT is_deleted
          AND (tenant_id IS NULL
               OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid));
+
+
+-- ── scratch.meta_pull_* — Meta lead pull staging (1.50.0) ────────────────────
+--
+-- ONE policy each, and it is the N-6 admin policy: this is a platform
+-- super_admin surface administering a SELECTED tenant, reached only through
+-- @platform/db's withTenantConfigTx. There is deliberately no org_isolation_policy
+-- and no tenant_isolation_policy, because there is no ordinary app_user session
+-- and no tenant_admin session that ever touches these tables.
+--
+-- withTenantConfigTx pins app.current_tenant_id and app.current_user_id and
+-- sets app.current_org_id NOT AT ALL (packages/db/src/transaction.ts), which is
+-- exactly why an org-keyed policy here would evaluate `org_id = NULL` -> false
+-- and read ZERO ROWS WITH NO ERROR. Same failure shape documented at length
+-- above ext.meta_page_form_org_map; the remedy is the same.
+--
+-- TENANT ISOLATION IS THIS POLICY, NEVER A LITERAL `WHERE tenant_id = $1` in
+-- the service. A filter alongside the policy would make the cross-tenant
+-- acceptance test pass whether or not the policy is doing its job.
+--
+-- The NOINHERIT service logins (lms_svc, meta_svc) are not named here by hand:
+-- the widening block directly below rewrites every policy's role list from
+-- current membership, so `TO app_user` reaches them on apply. GRANTs have no
+-- such block, which is why 07_grants.sql spells each one out.
+
+ALTER TABLE scratch.meta_pull_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scratch.meta_pull_runs FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS admin_tenant_config_policy ON scratch.meta_pull_runs;
+
+CREATE POLICY admin_tenant_config_policy ON scratch.meta_pull_runs
+  AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+ALTER TABLE scratch.meta_pull_leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scratch.meta_pull_leads FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS admin_tenant_config_policy ON scratch.meta_pull_leads;
+
+-- The org_id half of the WITH CHECK is a SECURITY CONTROL, not decoration, and
+-- is lifted from ext.meta_page_form_org_map's policy for the identical reason:
+-- tenant_id and org_id are independent columns here with no trigger tying them
+-- together, so without it a staged row could name tenant A while pointing
+-- org_id at tenant B's branch -- and Apply writes real leads into whatever org
+-- the staged row names. `org_id IS NULL OR ...` because NULL org_id IS the
+-- unmapped_form verdict and must remain insertable (see 02_tables_core.sql).
+--
+-- entity.fn_org_tenant() rather than an inline
+-- `org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = ...)`:
+-- that subquery is re-filtered by entity.organizations' own app_user policy,
+-- which is keyed on the caller's memberships -- and a platform super_admin
+-- holds none in the administered tenant. It would be silently FALSE and every
+-- insert would be refused as a bare row-level-security violation.
+CREATE POLICY admin_tenant_config_policy ON scratch.meta_pull_leads
+  AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid
+              AND (org_id IS NULL
+                   OR entity.fn_org_tenant(org_id)
+                      = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid));
 
 
 -- Widen every RLS policy to also name the roles that are MEMBERS of the roles

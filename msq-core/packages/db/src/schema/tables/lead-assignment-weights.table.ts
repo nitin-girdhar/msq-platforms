@@ -1,7 +1,8 @@
-import { uuid, smallint, timestamp } from 'drizzle-orm/pg-core';
+import { uuid, smallint, timestamp, primaryKey } from 'drizzle-orm/pg-core';
 import { lmsSchema } from '../pg-schemas';
 import { usersTable } from './users.table';
 import { userOrgMappingTable } from './user-org-mapping.table';
+import { campaignTypesTable } from './campaign-types.table';
 
 /**
  * % share of new leads a user auto-receives within one branch.
@@ -17,13 +18,32 @@ import { userOrgMappingTable } from './user-org-mapping.table';
  *
  * Written by identity-service (user create/edit carries weights in the same
  * payload as the branch/role assignments); read by leads-service.
+ *
+ * The key is (userOrgMappingId, campaignTypeId) as of schema 1.49.0 — membership
+ * is PER CAMPAIGN TYPE. The same person can sit in their branch's sales rotation
+ * at 40% and its hiring rotation at 0%, and a hiring lead must never be offered
+ * to the sales pool. Every query that used to key on userOrgMappingId alone now
+ * needs a type as well, or it reads (and writes) the wrong pool.
+ *
+ * Still NO orgId on this table: the branch resolves through
+ * `iam.fn_mapping_org(mapping_id)`, never a direct column.
  */
 export const leadAssignmentWeightsTable = lmsSchema.table('lead_assignment_weights', {
   userOrgMappingId: uuid('user_org_mapping_id')
-    .primaryKey()
+    .notNull()
     .references(() => userOrgMappingTable.id, { onDelete: 'cascade' }),
+  // CASCADE, unlike the other campaign_type_id FKs: a weight row is membership
+  // OF a pool and means nothing once the pool is gone.
+  campaignTypeId: uuid('campaign_type_id')
+    .notNull()
+    .references(() => campaignTypesTable.id, { onDelete: 'cascade' }),
   weight:    smallint('weight').notNull().default(0),
   updatedBy: uuid('updated_by').references(() => usersTable.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  pk: primaryKey({
+    name: 'pk_lead_assignment_weights',
+    columns: [t.userOrgMappingId, t.campaignTypeId],
+  }),
+}));

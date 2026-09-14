@@ -46,6 +46,18 @@ CREATE SCHEMA IF NOT EXISTS comms;
 -- (task assigned) expected to follow, so it must not live under lms.
 CREATE SCHEMA IF NOT EXISTS notify;
 
+-- The platform's first STAGING area: rows that exist to be reviewed and then
+-- thrown away, not to be kept. Today it holds the Meta lead-pull runs
+-- (scratch.meta_pull_runs / scratch.meta_pull_leads), which a super admin
+-- empties and refills on every pull.
+--
+-- A schema of its own rather than more ext.* tables, because the lifecycle is
+-- the opposite of everything in ext: these rows are DELETEd wholesale, carry no
+-- soft-delete recipe, and nothing downstream may foreign-key to them. Keeping
+-- them out of ext is what makes "this table is disposable" readable from the
+-- name rather than from a comment somebody has to find.
+CREATE SCHEMA IF NOT EXISTS scratch;
+
 -- ── Roles (idempotent) ─────────────────────────────────────────────
 DO $$
 BEGIN
@@ -289,5 +301,18 @@ DECLARE v_db TEXT := current_database();
 BEGIN
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO lms_svc', v_db);
 END; $$;
+
+-- ── scratch schema USAGE ───────────────────────────────────────────
+-- Declared here rather than beside the other schema grants in 07_grants.sql
+-- because the schema itself is created above and every grantee below is a role
+-- this file has just finished creating.
+--
+-- lms_svc is the login meta-conversion-api actually connects as
+-- (msq-deploy/artifacts/docker-compose.yml sets DATABASE_URL to DB_LMS_SVC_USER
+-- with DB_PRODUCT_SCOPED_LOGIN=true, so withTenantConfigTx runs AS lms_svc and
+-- never does SET ROLE app_user). meta_svc is the Python sync scripts' login.
+-- Both need it; naming only one is the silent-zero-rows failure this repo has
+-- been bitten by twice.
+GRANT USAGE ON SCHEMA scratch TO app_user, tenant_admin, root_service, lms_svc, meta_svc;
 
 COMMIT;

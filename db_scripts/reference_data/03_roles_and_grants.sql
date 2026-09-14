@@ -144,6 +144,11 @@ FROM (VALUES
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'admin','admin.team.view','admin.team.view.team','admin.team.view.org',
   'lms.campaigns.view',
+  'lms.campaign_types.view',
+  -- Sees hiring leads as well as sales ones. This is the branch-management
+  -- tier: below it, lms.leads.view.all_types is deliberately absent, which is
+  -- what keeps a hiring lead off a sales rep's list.
+  'lms.leads.view.all_types',
   'lms.analytics','lms.analytics.view',
   'hr.attendance','hr.attendance.view','hr.attendance.view.own','hr.attendance.view.team',
   'hr.attendance.punch','hr.attendance.photo.view',
@@ -177,6 +182,11 @@ FROM (VALUES
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'admin','admin.team.view','admin.team.view.team','admin.team.view.org',
   'lms.campaigns.view',
+  'lms.campaign_types.view',
+  -- Sees hiring leads as well as sales ones. This is the branch-management
+  -- tier: below it, lms.leads.view.all_types is deliberately absent, which is
+  -- what keeps a hiring lead off a sales rep's list.
+  'lms.leads.view.all_types',
   'lms.analytics','lms.analytics.view',
   'hr.attendance','hr.attendance.view','hr.attendance.view.own','hr.attendance.view.team',
   'hr.attendance.punch','hr.attendance.photo.view',
@@ -253,6 +263,8 @@ FROM (VALUES
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.analytics.view',
   'lms.campaigns.view','lms.campaigns.manage',
+  'lms.campaign_types.view','lms.campaign_types.manage',
+  'lms.leads.view.all_types',
   'admin','admin.team.view','admin.team.view.team','admin.team.view.org','admin.team.manage','admin.team.notify',
   'admin.api_tokens.view','admin.api_tokens.manage',
   'hr.attendance','hr.attendance.view',
@@ -310,6 +322,8 @@ FROM (VALUES
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.analytics.view','lms.analytics.org.view',
   'lms.campaigns.view','lms.campaigns.manage',
+  'lms.campaign_types.view','lms.campaign_types.manage',
+  'lms.leads.view.all_types',
   'admin','admin.team.view','admin.team.view.team','admin.team.view.org','admin.team.manage','admin.team.notify',
   'admin.api_tokens.view','admin.api_tokens.manage',
   'hr.attendance','hr.attendance.view',
@@ -408,9 +422,13 @@ END $seedcheck$;
 INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
 SELECT NULL, r.id, c.id, FALSE
 FROM (VALUES
-  ('read_only',              ARRAY['lms.analytics','lms.campaigns','admin.team','admin.api_tokens','hr.attendance.admin','hr.leave.admin','tasks.lists']),
-  ('sales_representative',   ARRAY['lms.analytics','lms.campaigns','admin.team','admin.api_tokens','hr.attendance.admin','hr.leave.admin']),
-  ('senior_sales_executive', ARRAY['lms.analytics','lms.campaigns','admin.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  -- lms.campaign_types travels with lms.campaigns everywhere in this list: it is
+  -- the same audience, and leaving it out would REVEAL the page to these roles
+  -- rather than hide it -- a page with no row inherits its parent's grant, and
+  -- `lms` is granted to all three. See the paragraph above.
+  ('read_only',              ARRAY['lms.analytics','lms.campaigns','lms.campaign_types','admin.team','admin.api_tokens','hr.attendance.admin','hr.leave.admin','tasks.lists']),
+  ('sales_representative',   ARRAY['lms.analytics','lms.campaigns','lms.campaign_types','admin.team','admin.api_tokens','hr.attendance.admin','hr.leave.admin']),
+  ('senior_sales_executive', ARRAY['lms.analytics','lms.campaigns','lms.campaign_types','admin.api_tokens','hr.attendance.admin','hr.leave.admin']),
   ('org_manager',            ARRAY['admin.api_tokens','hr.attendance.admin','hr.leave.admin']),
   ('org_sr_manager',         ARRAY['admin.api_tokens','hr.attendance.admin','hr.leave.admin']),
   ('org_admin',              ARRAY['superadmin.lookups'])
@@ -669,5 +687,70 @@ ON CONFLICT (name) WHERE tenant_id IS NULL DO UPDATE SET
   label       = EXCLUDED.label,
   description = EXCLUDED.description,
   rank        = EXCLUDED.rank;
+
+
+-- ── Back-fill: campaign types + all-types lead visibility (1.49.0) ──
+-- The same trap the WhatsApp and history.detail back-fills above document: the
+-- grant blocks at the top of this file join `r.tenant_id IS NULL`, but the
+-- ladder roles have been PER-TENANT copies since _migrations/19, so a capability
+-- added now lands on the four anchors and never reaches org_manager or
+-- org_sr_manager in any existing tenant. The remedy is the same: pin each new
+-- capability to an existing one with exactly the right audience, for every copy.
+--
+-- lms.leads.view.all_types is pinned to lms.leads.delete, and that pin is chosen
+-- rather than the more obvious lms.leads.view.org because the audiences differ
+-- by one role that matters: read_only holds view.org. An audit account that can
+-- see the branch should not thereby start seeing HR's hiring pipeline. The
+-- holders of lms.leads.delete are exactly org_manager, org_sr_manager, org_admin
+-- and tenant_admin -- the four roles this capability is meant for, and no others.
+--
+-- VERIFY WITH iam.fn_role_capability_matrix, never by reading
+-- iam.role_capabilities: that table shows grant rows, including ones a denied
+-- ancestor makes inert, so it will happily report a grant that does not apply.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.delete'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'lms.leads.view.all_types'
+  AND rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO UPDATE SET is_granted = TRUE;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.delete'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key = 'lms.leads.view.all_types'
+  AND rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = TRUE;
+
+-- The campaign-types operations follow their campaigns twins one-for-one:
+-- whoever may read campaigns may read types, whoever may manage campaigns may
+-- manage them. Both directions, so a tenant that has already denied campaigns to
+-- a role does not acquire a types page it never asked for.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, rc.is_granted
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id
+JOIN iam.capabilities tgt ON tgt.key = replace(src.key, 'lms.campaigns', 'lms.campaign_types')
+WHERE src.key IN ('lms.campaigns', 'lms.campaigns.view', 'lms.campaigns.manage')
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO UPDATE SET is_granted = EXCLUDED.is_granted;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, rc.is_granted
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id
+JOIN iam.capabilities tgt ON tgt.key = replace(src.key, 'lms.campaigns', 'lms.campaign_types')
+WHERE src.key IN ('lms.campaigns', 'lms.campaigns.view', 'lms.campaigns.manage')
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO UPDATE SET is_granted = EXCLUDED.is_granted;
 
 COMMIT;

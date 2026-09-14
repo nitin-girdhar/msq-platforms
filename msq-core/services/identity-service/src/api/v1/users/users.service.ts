@@ -113,18 +113,51 @@ function rankForRole(roleName: string): number {
  * Fails as a whole. A partially-applied assignment list would leave a user with
  * access they were never meant to have in one branch and none in another.
  */
+/**
+ * The DEPARTMENT RULE (1.50.2): a lead-assignment weight belongs to the user's
+ * department. A role with no department cannot be weighted, and a weight is only
+ * valid for a campaign type in the role's own department — the same rule
+ * lms.fn_user_sees_campaign_type applies to visibility, so nobody is ever
+ * weighted for leads they would not be allowed to see. The DB trigger
+ * (lms.fn_assert_weight_type_tenant) re-asserts it; this turns it into a 400
+ * that names the role instead of a raw check_violation.
+ */
+function assertWeightDepartment(
+  role: { label: string; department_id: string | null },
+  type: { label: string; department_id: string | null },
+): void {
+  if (!role.department_id) {
+    throw new BadRequestError(`Role "${role.label}" has no department — assign one before setting lead weights`);
+  }
+  if (type.department_id !== role.department_id) {
+    throw new BadRequestError(
+      `"${type.label}" leads belong to a different department than the role "${role.label}" — `
+      + 'weight this user only in their own department\'s campaign types',
+    );
+  }
+}
+
 async function resolveAssignments(
   ctx: RoleTxContext,
   actorRank: number,
   assignments: OrgAssignmentInput[],
+  // The target user's EXISTING weight rows per branch (edit only). Pre-1.50.2
+  // rows that break the department rule are kept by decision, so re-saving them
+  // unchanged must not be refused; only NEW (org, type) pairs are checked.
+  existingWeightTypesByOrg?: Map<string, Set<string>>,
 ): Promise<repo.ResolvedAssignment[]> {
   const orgIds = assignments.map((a) => a.org_id);
   const roleIds = [...new Set(assignments.map((a) => a.role_id))];
+  // Never trust a client-supplied campaign_type_id as tenant-scoped — same
+  // posture as org_id/role_id below. Re-derived from the DB against the
+  // ACTOR's own tenant, not asserted by the request.
+  const typeIds = [...new Set(assignments.flatMap((a) => (a.weights ?? []).map((w) => w.campaign_type_id)))];
   const tenantId = await resolveTenantId(ctx);
 
-  const [orgs, roles] = await Promise.all([
+  const [orgs, roles, campaignTypes] = await Promise.all([
     repo.getOrgsInTenant(orgIds, tenantId),
     repo.getRolesByIdsForTenant(roleIds, tenantId),
+    repo.getCampaignTypesInTenant(typeIds, tenantId),
   ]);
 
   const knownOrgs = new Set(orgs.map((o) => o.id));
@@ -137,6 +170,22 @@ async function resolveAssignments(
   const missingRoles = roleIds.filter((id) => !roleById.has(id));
   if (missingRoles.length > 0) {
     throw new BadRequestError(`Role not found in this tenant: ${missingRoles.join(', ')}`);
+  }
+
+  const knownTypes = new Set(campaignTypes.map((t) => t.id));
+  const missingTypes = typeIds.filter((id) => !knownTypes.has(id));
+  if (missingTypes.length > 0) {
+    throw new BadRequestError(`Campaign type not found in this tenant: ${missingTypes.join(', ')}`);
+  }
+
+  const typeById = new Map(campaignTypes.map((t) => [t.id, t]));
+  for (const a of assignments) {
+    const role = roleById.get(a.role_id)!;
+    const existing = existingWeightTypesByOrg?.get(a.org_id);
+    for (const w of a.weights ?? []) {
+      if (existing?.has(w.campaign_type_id)) continue;
+      assertWeightDepartment(role, typeById.get(w.campaign_type_id)!);
+    }
   }
 
   // Which branches may this actor place someone into?
@@ -176,7 +225,7 @@ async function resolveAssignments(
   return assignments.map((a) => ({
     org_id:  a.org_id,
     role_id: a.role_id,
-    ...(a.lead_assignment_weight !== undefined ? { lead_assignment_weight: a.lead_assignment_weight } : {}),
+    ...(a.weights !== undefined ? { weights: a.weights } : {}),
   }));
 }
 
@@ -438,7 +487,7 @@ export async function getAssignableUsers(
   );
 }
 
-export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
+export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string, campaignTypeId?: string) {
   const tenantId = await resolveTenantId(ctx);
   // Reading another branch's weights is the same visibility as the cross-org
   // filter on the roster, so it takes the same guard — and the org must be in
@@ -450,15 +499,54 @@ export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
     const [org] = await repo.getOrgsInTenant([orgId], tenantId);
     if (!org) throw new BadRequestError('Branch not found in this tenant');
   }
-  return repo.getAssignmentWeights(ctx, orgId, tenantId);
+  // A stale/foreign campaign_type_id would otherwise read through the view as a
+  // silent empty result — validate it up front so the caller gets a clean 400
+  // instead. Also closes the same cross-tenant-scope gap org_id/role_id are
+  // already checked for.
+  if (campaignTypeId !== undefined) {
+    const [type] = await repo.getCampaignTypesInTenant([campaignTypeId], tenantId);
+    if (!type) throw new BadRequestError('Campaign type not found in this tenant');
+  }
+  return repo.getAssignmentWeights(ctx, orgId, tenantId, campaignTypeId);
 }
 
 export async function updateAssignmentWeights(
   ctx: RoleTxContext,
-  weights: Array<{ user_id: string; weight: number }>,
+  weights: Array<{ user_id: string; campaign_type_id: string; weight: number }>,
 ) {
+  // Never trust a client-supplied campaign_type_id as tenant-scoped — derive
+  // the tenant server-side and re-check every id against it, same posture as
+  // resolveAssignments.
+  const tenantId = await resolveTenantId(ctx);
+  const typeIds = [...new Set(weights.map((w) => w.campaign_type_id))];
+  const campaignTypes = await repo.getCampaignTypesInTenant(typeIds, tenantId);
+  const knownTypes = new Set(campaignTypes.map((t) => t.id));
+  const missingTypes = typeIds.filter((id) => !knownTypes.has(id));
+  if (missingTypes.length > 0) {
+    throw new BadRequestError(`Campaign type not found in this tenant: ${missingTypes.join(', ')}`);
+  }
+
+  // Department rule, per user's role in THIS branch, exempting rows they already
+  // hold. A user with no membership here is left to the repository's
+  // eligibility check, which already names them.
+  const typeById = new Map(campaignTypes.map((t) => [t.id, t]));
+  const memberships = await repo.getMembershipRolesInOrg(ctx.org_id, [...new Set(weights.map((w) => w.user_id))]);
+  for (const w of weights) {
+    const m = memberships.get(w.user_id);
+    if (!m || m.weight_type_ids.has(w.campaign_type_id)) continue;
+    assertWeightDepartment({ label: m.role_label, department_id: m.department_id }, typeById.get(w.campaign_type_id)!);
+  }
+
   await repo.updateAssignmentWeights(ctx, weights);
   await logActivity({ action_type: 'assignment_weights_updated', performed_by: ctx.user_id, org_id: ctx.org_id });
+}
+
+// The tenant's full campaign-type catalog, for OrgAssignmentsField's read-through
+// (gated on admin.team.manage rather than leads-service's LMS_CAMPAIGN_TYPES_VIEW —
+// see users.controller.ts's getCampaignTypeCatalog).
+export async function getCampaignTypeCatalog(ctx: RoleTxContext) {
+  const tenantId = await resolveTenantId(ctx);
+  return repo.getAllCampaignTypesForTenant(tenantId);
 }
 
 export async function getTeamMembers(ctx: RoleTxContext) {
@@ -736,7 +824,9 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
   // Supersedes the legacy single-org move below: when the caller sends the full
   // branch list, home comes from home_org_id and `org_id` is ignored entirely.
   if (data.org_assignments) {
-    const resolved = await resolveAssignments(ctx, actorRank, data.org_assignments);
+    const resolved = await resolveAssignments(
+      ctx, actorRank, data.org_assignments, await repo.getWeightTypesByOrgForUser(targetUserId),
+    );
     const newHomeOrgId = data.home_org_id!;
     const homeAssignment = resolved.find((a) => a.org_id === newHomeOrgId)!;
     const homeMoved = newHomeOrgId !== targetOrgId;
@@ -985,6 +1075,42 @@ export async function addOrgMapping(
   if (!orgOk) throw new NotFoundError('Organization not found');
   const roleOk = await repo.roleExists(data.role_id);
   if (!roleOk) throw new NotFoundError('Role not found');
+
+  // Everything this grant writes is judged against the TARGET BRANCH's tenant,
+  // not the actor's. They differ for exactly one caller — a platform super_admin
+  // in lookup-admin's OrgAccessPanel, which spans every tenant's branches — and
+  // validating against the actor's tenant (as this did until 1.50.1) let that
+  // caller write a weight row pointing at THEIR OWN tenant's campaign type into
+  // another tenant's branch: a pool that routes nothing, carrying a foreign id.
+  //
+  // Everyone else must also be acting inside that tenant. orgExists alone
+  // accepted any branch id on the platform, so a tenant admin could otherwise
+  // grant a user into a branch of a tenant they have no authority over.
+  // platform_role, not a role name: super_admin is the one tenant-less platform
+  // role, the same distinction checkMoveUserBranchAccess draws.
+  const orgTenantId = await repo.getTenantIdForOrg(data.org_id);
+  if (!orgTenantId) throw new NotFoundError('Organization not found');
+  if (ctx.role !== 'super_admin') {
+    const actorTenantId = await resolveTenantId(ctx);
+    if (orgTenantId !== actorTenantId) {
+      throw new ForbiddenError('You cannot grant access to a branch in another tenant');
+    }
+  }
+
+  // Roles are tenant-owned, so a role id from another tenant is the same class
+  // of mismatch as the campaign type below.
+  const [role] = await repo.getRolesByIdsForTenant([data.role_id], orgTenantId);
+  if (!role) throw new BadRequestError('Role not found in this branch\'s tenant');
+
+  // Never trust a client-supplied campaign_type_id as tenant-scoped. The DB
+  // re-asserts this (trg_lead_assignment_weights_tenant_match), so a missed
+  // check here is a refused write rather than a corrupt row.
+  const [campaignType] = await repo.getCampaignTypesInTenant([data.campaign_type_id], orgTenantId);
+  if (!campaignType) throw new BadRequestError('Campaign type not found in this branch\'s tenant');
+
+  // Department rule — exempting a row the user already holds (kept by decision).
+  const existingTypes = (await repo.getWeightTypesByOrgForUser(targetUserId)).get(data.org_id);
+  if (!existingTypes?.has(data.campaign_type_id)) assertWeightDepartment(role, campaignType);
 
   const row = await repo.addOrgMapping(ctx, targetUserId, data);
 

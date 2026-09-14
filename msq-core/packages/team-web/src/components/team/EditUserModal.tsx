@@ -11,6 +11,7 @@ import {
   OrgAssignmentsField,
   ManagerSelect,
   useRoleCatalog,
+  useCampaignTypeCatalog,
   useUserAssignments,
   branchOptionsForActor,
   type OrgAssignment,
@@ -102,7 +103,7 @@ export default function EditUserModal({
             .map((m) => ({
               org_id: m.org_id,
               role_id: m.role_id,
-              lead_assignment_weight: Number(m.lead_assignment_weight ?? 0),
+              weights: m.weights.map((w) => ({ campaign_type_id: w.campaign_type_id, weight: Number(w.weight ?? 0) })),
             })),
         );
       })
@@ -146,6 +147,7 @@ export default function EditUserModal({
   const canPickBranches = actorRank >= RANKS.TENANT_ADMIN;
 
   const { roles, departments, loading: rolesLoading, error: rolesError } = useRoleCatalog(open);
+  const { campaignTypes, error: campaignTypesError } = useCampaignTypeCatalog(open);
 
   const a = useUserAssignments({
     ...(existing ? { assignments: existing } : {}),
@@ -459,6 +461,8 @@ export default function EditUserModal({
               onHomeChange={a.setHomeOrgId}
               roles={roles}
               departmentId={a.departmentId}
+              campaignTypes={campaignTypes}
+              campaignTypesUnavailable={Boolean(campaignTypesError)}
               canPickBranches={canPickBranches && !isSelf}
               disabled={locked}
               excludeUserId={user.id}

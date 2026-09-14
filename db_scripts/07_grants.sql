@@ -246,6 +246,7 @@ GRANT EXECUTE ON FUNCTION iam.fn_org_active_users(UUID)  TO app_user, tenant_adm
 -- Read by the RLS policies on lms.lead_assignment_weights (08_rls.sql), so
 -- every role that touches that table has to be able to call it.
 GRANT EXECUTE ON FUNCTION iam.fn_mapping_org(UUID)       TO app_user, tenant_admin;
+GRANT EXECUTE ON FUNCTION entity.fn_org_tenant(UUID)     TO app_user, tenant_admin;
 GRANT EXECUTE ON FUNCTION iam.fn_user_org_rank(UUID,UUID) TO app_user, tenant_admin;
 -- Replaces the bare fn_user_org_rank >= 980 term in the iam.user_org_mapping,
 -- iam.users and iam.reporting_lines WRITE policies. SECURITY DEFINER, so its
@@ -271,7 +272,13 @@ GRANT ALL    ON TABLE audit.activities TO root_service;
 -- ── Grants for Meta tables ────────────────────────────────────────
 GRANT SELECT, INSERT, UPDATE ON ext.meta_tenant_config      TO tenant_admin;
 GRANT SELECT, INSERT, UPDATE ON ext.meta_page_form_org_map  TO tenant_admin;
-GRANT SELECT, INSERT         ON ext.meta_page_form_org_map  TO app_user;
+-- SELECT/INSERT/UPDATE/DELETE, not the SELECT/INSERT this line used to carry.
+-- The N-6 admin path (admin_tenant_config_policy in 08_rls.sql) reaches this
+-- table as app_user and offers PATCH and DELETE; a policy that permits a
+-- statement the GRANT does not is dead, and the caller gets "permission denied
+-- for table meta_page_form_org_map" instead. DELETE is a real delete here: the
+-- table has no is_deleted column and no soft_delete_row trigger.
+GRANT SELECT, INSERT, UPDATE, DELETE ON ext.meta_page_form_org_map  TO app_user;
 GRANT SELECT, INSERT, UPDATE ON ext.meta_forms              TO tenant_admin;
 GRANT SELECT                 ON ext.vw_meta_forms           TO tenant_admin;
 GRANT SELECT, INSERT, UPDATE ON ext.meta_leads               TO app_user;
@@ -604,15 +611,116 @@ GRANT SELECT, INSERT, UPDATE ON TABLE lms.lead_links TO lms_svc;
 -- only covers tables created AFTER this script runs.
 GRANT SELECT ON TABLE lms.lead_assignment_weights, lms.vw_lead_assignment_weights TO lms_svc;
 GRANT EXECUTE ON FUNCTION iam.fn_mapping_org(UUID) TO lms_svc;
+
+-- meta-conversion-api runs as lms_svc (DB_PRODUCT_SCOPED_LOGIN=true), and
+-- lms_svc holds NO privilege on ext.meta_page_form_org_map: the
+-- `ALTER DEFAULT PRIVILEGES IN SCHEMA ext` line below only covers tables
+-- created AFTER it runs, and this one is created in 02_tables_core.sql. Its
+-- page-org-map admin API writes the table directly under
+-- withTenantConfigTx, so the grant has to be explicit.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ext.meta_page_form_org_map TO lms_svc;
+-- Read-only, for GET /meta/pages resolving the selected tenant's stored Meta
+-- credentials and for validating ?tenant_id= against entity.tenants.
+GRANT SELECT ON TABLE ext.meta_tenant_config TO lms_svc;
+-- Called from ext.meta_page_form_org_map's admin_tenant_config_policy WITH
+-- CHECK, which is evaluated as the querying role.
+GRANT EXECUTE ON FUNCTION entity.fn_org_tenant(UUID) TO lms_svc;
 -- iam.api_clients / iam.api_client_orgs (N-4, moved from ext) are managed
 -- exclusively by identity-service; lms_svc's blanket `SELECT ON ALL TABLES IN
 -- SCHEMA iam` above already covers any incidental read, no product-specific
 -- write grant needed.
 GRANT EXECUTE ON FUNCTION iam.can_assign_to(UUID,UUID,UUID) TO lms_svc;
 
+-- ── Campaign types (1.49.0) ─────────────────────────────────────────
+-- NAME THE SERVICE LOGINS. `TO app_user` is not enough for any of these: every
+-- *_svc login is NOINHERIT, so a privilege held only by app_user is not held by
+-- lms_svc or lead_svc at all. (08_rls.sql's widening block fixes the POLICY half
+-- of this automatically; there is no equivalent for GRANTs, which is why each
+-- one below is spelled out.) Granted explicitly rather than left to the
+-- ALTER DEFAULT PRIVILEGES lines below, which only cover tables created AFTER
+-- this script runs -- these are created in 02_tables_core.sql.
+--
+-- WRITE for lms_svc: the campaign-types admin screen (a later phase) is served
+-- by a product-scoped login. READ for lead_svc: the intake path only resolves a
+-- type, it never edits the catalog.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE marketing.campaign_types TO lms_svc;
+GRANT SELECT                         ON TABLE marketing.campaign_types TO lead_svc;
+GRANT SELECT                         ON TABLE marketing.campaign_types TO app_user, tenant_admin;
+GRANT ALL PRIVILEGES                 ON TABLE marketing.campaign_types TO root_service;
+
+-- ext.meta_campaigns: meta_svc is the WRITER (the campaign fetch and the sync
+-- scripts own this cache), lms_svc writes the mapping half from the admin
+-- console, lead_svc reads it on the intake path to resolve an inbound lead's
+-- campaign to a type.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ext.meta_campaigns TO meta_svc;
+-- meta_svc reaches marketing for the FIRST time here. Its schema USAGE list
+-- (public/ext/lms/iam/entity, above) predates campaign types, and
+-- marketing.fn_match_campaign_type is deliberately NOT security definer -- it
+-- reads marketing.campaign_types as the CALLER, so without both of these the
+-- sync scripts' every match attempt fails with "permission denied for schema
+-- marketing", not a wrong answer. Read-only: the catalog is the console's.
+GRANT USAGE  ON SCHEMA marketing                        TO meta_svc;
+GRANT SELECT ON TABLE  marketing.campaign_types         TO meta_svc;
+GRANT SELECT, INSERT, UPDATE         ON TABLE ext.meta_campaigns TO lms_svc;
+GRANT SELECT                         ON TABLE ext.meta_campaigns TO lead_svc;
+GRANT SELECT                         ON TABLE ext.meta_campaigns TO app_user, tenant_admin;
+GRANT ALL PRIVILEGES                 ON TABLE ext.meta_campaigns TO root_service;
+
+-- Both new functions. fn_user_sees_campaign_type is evaluated inside
+-- lms.marketing_leads' RLS USING clause, so EVERY role that reads a lead needs
+-- EXECUTE on it or the read fails with a permission error on the policy itself.
+GRANT EXECUTE ON FUNCTION marketing.fn_match_campaign_type(UUID, TEXT)
+  TO app_user, tenant_admin, root_service, lms_svc, lead_svc, meta_svc;
+GRANT EXECUTE ON FUNCTION lms.fn_user_sees_campaign_type(UUID, UUID, UUID)
+  TO app_user, tenant_admin, root_service, lms_svc, lead_svc, meta_svc;
+
+-- 1.50.1: the deactivate/delete guard's view into ext.* for leads-service, which
+-- has no grant on that schema by design. Service logins named explicitly: GRANTs
+-- have no equivalent of 08_rls.sql's policy-widening block.
+GRANT EXECUTE ON FUNCTION marketing.fn_campaign_type_usage(UUID)
+  TO tenant_admin, root_service, lms_svc, lead_svc;
+
 ALTER DEFAULT PRIVILEGES IN SCHEMA lms       GRANT SELECT, INSERT, UPDATE ON TABLES TO lms_svc;
 ALTER DEFAULT PRIVILEGES IN SCHEMA marketing GRANT SELECT, INSERT, UPDATE ON TABLES TO lms_svc;
 ALTER DEFAULT PRIVILEGES IN SCHEMA ext       GRANT SELECT, INSERT, UPDATE ON TABLES TO lms_svc;
+
+-- ── scratch.meta_pull_* — Meta lead pull staging (1.50.0) ───────────
+--
+-- DELETE IS GRANTED HERE ON PURPOSE, AND IT BREAKS THIS FILE'S CONVENTION.
+-- Everywhere else in 07_grants.sql a service login gets SELECT/INSERT/UPDATE
+-- and nothing more, because a domain row is soft-deleted (is_deleted = TRUE via
+-- the soft_delete_row trigger) and a real DELETE is a bug. These two tables are
+-- the exception the `scratch` schema exists to mark: they carry no is_deleted
+-- column and no soft-delete trigger, and POST /meta/lead-pull/runs BEGINS by
+-- deleting the tenant's previous run so nothing from the last pull survives
+-- into the next (the FK cascade takes the staged rows with it). Without DELETE
+-- the feature's first statement fails. Do not "restore consistency" by removing
+-- it -- read the table comments in 02_tables_core.sql first.
+--
+-- NAME THE SERVICE LOGINS. `TO app_user` is not enough: every *_svc login is
+-- NOINHERIT, so a privilege held only by app_user is not held by lms_svc at
+-- all. 08_rls.sql's widening block fixes the POLICY half of this automatically;
+-- there is no equivalent for GRANTs.
+--
+-- lms_svc is the login that actually runs this feature: meta-conversion-api
+-- connects as DB_LMS_SVC_USER with DB_PRODUCT_SCOPED_LOGIN=true, so
+-- withTenantConfigTx runs AS lms_svc and never does SET ROLE app_user.
+-- meta_svc is named alongside it because meta-sync-scripts shares this data.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE scratch.meta_pull_runs,  scratch.meta_pull_leads TO lms_svc;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE scratch.meta_pull_runs,  scratch.meta_pull_leads TO meta_svc;
+-- admin_tenant_config_policy below is `TO app_user`, and a policy permitting a
+-- statement the GRANT does not is dead. tenant_admin is deliberately NOT
+-- granted: this is a platform super_admin surface reached only through
+-- withTenantConfigTx, and there is no tenant_admin policy on either table, so a
+-- grant would buy nothing but the impression of access.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE scratch.meta_pull_runs,  scratch.meta_pull_leads TO app_user;
+GRANT ALL PRIVILEGES                 ON TABLE scratch.meta_pull_runs,  scratch.meta_pull_leads TO root_service;
+
+-- entity.fn_org_tenant is called from scratch.meta_pull_leads' WITH CHECK, so
+-- every role that inserts a staged row needs EXECUTE on it or the write fails
+-- with a permission error on the policy itself rather than a policy violation.
+GRANT EXECUTE ON FUNCTION entity.fn_org_tenant(UUID)
+  TO app_user, tenant_admin, root_service, lms_svc, meta_svc;
 
 -- ── hr_svc: hr ──────────────────────────────────────────────────────
 GRANT SELECT         ON TABLE hr.employment_types, hr.leave_types, hr.leave_request_statuses, hr.attendance_statuses TO hr_svc;

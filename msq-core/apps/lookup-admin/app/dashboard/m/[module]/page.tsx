@@ -29,6 +29,32 @@ const EXTRA_CARDS: Partial<Record<ModuleKey, { slug: string; title: string; desc
       href: '/dashboard/catalogs',
     },
   ],
+  lms: [
+    {
+      slug: 'meta-mappings',
+      title: 'Meta Page Mapping',
+      description: 'Which branch each Meta Page (and optionally each lead form) routes inbound leads to.',
+      href: '/dashboard/meta-mappings',
+    },
+    {
+      slug: 'meta-campaigns',
+      title: 'Meta Campaign Mapping',
+      description: 'Confirm or correct which type each Meta campaign is, and preview the lead impact before committing.',
+      href: '/dashboard/meta-campaigns',
+    },
+    {
+      slug: 'lead-pull',
+      title: 'Meta Lead Pull',
+      description: 'Backfill leads the live webhook missed — review what is genuinely missing from LMS, then apply only that.',
+      href: '/dashboard/lead-pull',
+    },
+    {
+      slug: 'lead-assignment-rerun',
+      title: 'Re-run Auto-Assignment',
+      description: 'Assign leads that arrived unassigned — after fixing lead weights or a role’s department.',
+      href: '/dashboard/lead-assignment-rerun',
+    },
+  ],
   capabilities: [
     {
       slug: 'capability-matrix',

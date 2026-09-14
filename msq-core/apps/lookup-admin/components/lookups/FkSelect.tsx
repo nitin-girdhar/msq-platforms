@@ -80,8 +80,15 @@ async function fetchOptions(field: LookupFieldConfig, formValues: FormValues, te
   // Orgs come from the cross-tenant /lookups/organizations route, so the tenant
   // filter is applied here. Used by departments.org_id, where leaving it blank
   // means "tenant-wide". NOT identity-service's /orgs/all — that route projects
-  // no tenant_id (so this filter matched nothing and the list was always empty)
-  // and is pinned to the CALLER's tenant. See orgs.listAll in src/lib/api/client.ts.
+  // no tenant_id and is pinned to the CALLER's tenant.
+  //
+  // This comment used to claim the empty-list bug was already fixed by moving
+  // off /orgs/all. It was not: orgs.listAll still read the response as
+  // camelCase (o.tenantId) while the route answers snake_case, so every row's
+  // tenant_id was the STRING "undefined", the filter below matched nothing, and
+  // the Organization dropdown on the Departments form was empty for every
+  // tenant. Fixed in orgs.listAll (src/lib/api/client.ts), where the full
+  // explanation lives.
   if (fk.endpoint === 'orgs') {
     if (!tenantId) return [];
     const res = await orgs.listAll();

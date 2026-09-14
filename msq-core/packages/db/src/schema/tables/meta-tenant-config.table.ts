@@ -13,6 +13,9 @@ export const metaTenantConfigTable = extSchema.table('meta_tenant_config', {
   graphApiVersion:   text('graph_api_version').notNull().default('v21.0'),
   isActive:          boolean('is_active').notNull().default(true),
   capiTriggerStages: uuid('capi_trigger_stages').array().notNull().default(sql`'{}'`),
+  // The ad accounts a "Fetch campaigns" run iterates to populate
+  // ext.meta_campaigns. Ids are 'act_<digits>'.
+  adAccountIds:      text('ad_account_ids').array().notNull().default(sql`'{}'`),
   // Nullable; when absent the service falls back to DEFAULT_FIELD_MAPPINGS in meta.config.ts
   fieldMappings:     jsonb('field_mappings'),
   createdAt:         timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

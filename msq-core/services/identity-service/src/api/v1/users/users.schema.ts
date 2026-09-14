@@ -97,6 +97,17 @@ export const orgScopedQuerySchema = z.object({
 
 export type OrgScopedQuery = z.infer<typeof orgScopedQuerySchema>;
 
+// Assignment weights are also filterable by campaign type (1.49.0 — weights are
+// keyed per (org, campaign_type)). A sibling of orgScopedQuerySchema rather than
+// an in-place extension: that schema is shared with /users/manager-candidates,
+// an unrelated route that has no notion of campaign type.
+export const assignmentWeightsQuerySchema = z.object({
+  org_id: z.string().uuid().optional(),
+  campaign_type_id: z.string().uuid().optional(),
+});
+
+export type AssignmentWeightsQuery = z.infer<typeof assignmentWeightsQuerySchema>;
+
 export const uploadPhotoSchema = z.object({
   photo: z.string().min(1).max(PHOTO_MAX_B64_CHARS),
   content_type: z.enum(['image/jpeg', 'image/png', 'image/webp']).optional(),

@@ -17,27 +17,38 @@ headers {
 body:json {
   {
     "weights": [
-      { "user_id": "{{userId}}", "weight": 50 },
-      { "user_id": "{{secondUserId}}", "weight": 50 }
+      { "user_id": "{{userId}}", "campaign_type_id": "{{campaignTypeId}}", "weight": 50 },
+      { "user_id": "{{secondUserId}}", "campaign_type_id": "{{campaignTypeId}}", "weight": 50 }
     ]
   }
 }
 
 docs {
   Sets the % share of new leads each user should auto-receive within the
-  caller's org. Requires org_admin rank or above.
+  caller's org, PER CAMPAIGN TYPE (schema 1.49.0 — a user's sales-pool
+  weight and hiring-pool weight are independent). Requires org_admin
+  rank or above.
 
   Rules enforced server-side:
   - Every user_id must already be an active, in-range-rank member of
     iam.user_org_mapping for this org (same eligibility resolveAutoAssignedUser
     uses) — otherwise the request is rejected with 400.
-  - The weights must sum to exactly 100, OR all be 0 (which disables
-    auto-assignment for the org — new leads stay unassigned, same as today).
+  - Every campaign_type_id must belong to the caller's own tenant —
+    otherwise 400 (never trust a client-supplied campaign_type_id as
+    tenant-scoped).
+  - Within EACH campaign_type_id present in the payload, weights must sum
+    to exactly 100, OR all be 0 (which disables auto-assignment for that
+    pool — new leads of that type stay unassigned, same as today). A
+    payload mixing two types is validated independently per type.
   - Changes are NOT retroactive — only future unassigned leads (Meta sync,
     manual lead creation without an explicit assigned_user_id) are affected.
+  - A weight of 0 always upserts a real row here (this endpoint only ever
+    sets what's in its payload; it never deletes a type from anyone's
+    pool — that only happens via the edit-user reconcile path).
 
-  Example: one user at 100 and another at 0 sends every new lead to the
-  first user. Two users at 50/50 split evenly; on an odd lead count the
-  extra lead goes to whichever user currently has the larger workload
-  deficit (random tiebreak if exactly equal).
+  Example: one user at 100 and another at 0 (same campaign_type_id) sends
+  every new lead of that type to the first user. Two users at 50/50 split
+  evenly; on an odd lead count the extra lead goes to whichever user
+  currently has the larger workload deficit (random tiebreak if exactly
+  equal).
 }

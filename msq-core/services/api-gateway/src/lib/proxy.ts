@@ -17,6 +17,12 @@ export interface UserContext {
 export interface ProxyOptions {
   forwardCookies?: boolean;
   extraHeaders?: Record<string, string>;
+  /**
+   * Per-route override of config.proxyTimeoutMs, for the few admin routes whose
+   * legitimate work outlasts the default (see the /meta/campaigns block in
+   * server.ts). Use sparingly: the default is the platform's latency budget.
+   */
+  timeoutMs?: number;
 }
 
 // Injects the acting user's identity headers (verified by the gateway from the
@@ -102,7 +108,7 @@ export async function proxyTo(
       method,
       headers: forwardHeaders,
       ...(body !== undefined ? { body } : {}),
-      timeoutMs: config.proxyTimeoutMs,
+      timeoutMs: options?.timeoutMs ?? config.proxyTimeoutMs,
       // The registered route pattern, not the resolved URL — keeps record ids
       // out of an error string that is logged and may reach a client.
       target: request.routeOptions?.url ?? path,

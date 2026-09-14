@@ -4,44 +4,53 @@ import { useEffect, useState } from 'react';
 import { users as usersApi } from '../../api/resources';
 import type { WeightStatus } from './types';
 
+/** `${org_id}:${campaign_type_id}` — the composite key every param/result uses. */
+export function weightStatusKey(orgId: string, campaignTypeId: string): string {
+  return `${orgId}:${campaignTypeId}`;
+}
+
 /**
- * Each selected branch's current auto-assignment total, keyed by org id.
+ * Each selected (branch, campaign type) pool's current auto-assignment total,
+ * keyed by `${org_id}:${campaign_type_id}` — weights are keyed per type as of
+ * schema 1.49.0, so a branch's sales pool and hiring pool are independent
+ * totals, not one number split across both.
  *
- * Advisory only. The sum-to-100 rule is enforced on the dedicated Assignment
- * Weights screen; here it is reported so an admin can see what they are walking
- * into, and never blocks a save — 22 of 26 production branches currently sit at
- * 0%, and refusing to save would keep them there.
+ * Advisory only. The sum-to-100 rule is enforced per-type on the dedicated
+ * Assignment Weights screen; here it is reported so an admin can see what they
+ * are walking into, and never blocks a save — most branches' pools currently
+ * sit at 0%, and refusing to save would keep them there.
  *
  * `excludeUserId` drops the user being edited from the tally so their own new
  * number can be added to it rather than double-counted against their old one.
  */
 export function useWeightStatus(
-  orgIds: string[],
+  pairs: Array<{ org_id: string; campaign_type_id: string }>,
   draftWeights: Record<string, number>,
   excludeUserId?: string,
 ): Record<string, WeightStatus> {
   const [others, setOthers] = useState<Record<string, { total: number; count: number }>>({});
   const [loaded, setLoaded] = useState<Set<string>>(new Set());
 
-  // Sorted + joined so the effect keys off the SET of branches, not the array
+  // Sorted + joined so the effect keys off the SET of pairs, not array
   // identity — reordering rows must not refetch.
-  const key = [...orgIds].sort().join(',');
+  const key = [...pairs.map((p) => weightStatusKey(p.org_id, p.campaign_type_id))].sort().join(',');
 
   useEffect(() => {
     let cancelled = false;
-    const ids = key ? key.split(',') : [];
-    if (ids.length === 0) return;
+    const keys = key ? key.split(',') : [];
+    if (keys.length === 0) return;
 
-    Promise.all(ids.map(async (orgId) => {
+    Promise.all(keys.map(async (k) => {
+      const [orgId, campaignTypeId] = k.split(':') as [string, string];
       try {
-        const res = await usersApi.assignmentWeights(orgId);
+        const res = await usersApi.assignmentWeights(orgId, campaignTypeId);
         const rows = res.data.filter((r) => r.user_id !== excludeUserId);
-        return [orgId, {
+        return [k, {
           total: rows.reduce((s, r) => s + Number(r.weight ?? 0), 0),
           count: rows.length,
         }] as const;
       } catch {
-        // A branch whose weights can't be read reports nothing rather than a
+        // A pool whose weights can't be read reports nothing rather than a
         // wrong 0% — the row stays in the loading state.
         return null;
       }
@@ -62,15 +71,17 @@ export function useWeightStatus(
   }, [key, excludeUserId]);
 
   const result: Record<string, WeightStatus> = {};
-  for (const orgId of orgIds) {
-    const base = others[orgId];
-    if (!base || !loaded.has(orgId)) {
-      result[orgId] = { status: 'loading', total: 0, userCount: 0 };
+  for (const p of pairs) {
+    const k = weightStatusKey(p.org_id, p.campaign_type_id);
+    const base = others[k];
+    if (!base || !loaded.has(k)) {
+      result[k] = { status: 'loading', total: 0, userCount: 0 };
       continue;
     }
-    const total = base.total + (draftWeights[orgId] ?? 0);
-    const userCount = base.count + ((draftWeights[orgId] ?? 0) > 0 ? 1 : 0);
-    result[orgId] = {
+    const draft = draftWeights[k] ?? 0;
+    const total = base.total + draft;
+    const userCount = base.count + (draft > 0 ? 1 : 0);
+    result[k] = {
       status: total === 100 ? 'ok' : total === 0 ? 'zero' : 'off',
       total,
       userCount,

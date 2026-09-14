@@ -62,6 +62,20 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Every lead in the branch, including unassigned.', 3),
 ('lms.leads.view.tenant', 'scope', 'lms.leads.view', 'Every branch',
  'Every lead across every branch in the tenant.', 4),
+-- NOT kind='scope', despite the key reading like one, and the difference is
+-- load-bearing. For a scope node sort_order IS the breadth ordering -- effective
+-- scope is the granted sibling with the HIGHEST sort_order (see iam.capabilities'
+-- own comment, and resolveScope() in @platform/rbac) -- so adding a fifth child
+-- to the own/team/org/tenant ladder would make "sees every campaign type"
+-- outrank "sees the whole branch" and silently replace a manager's row scope.
+-- Campaign-type visibility is an ORTHOGONAL axis, not a wider rung: a rep with
+-- this and .own still sees only their own leads, of every type. An operation
+-- needs its own explicit grant and takes no part in scope resolution, which is
+-- exactly the behaviour wanted. The key keeps the `lms.leads.view.` prefix
+-- because the parent it hangs off is genuinely lms.leads.view: deny the ability
+-- to read leads and this is meaningless.
+('lms.leads.view.all_types', 'operation', 'lms.leads.view', 'See every campaign type',
+ 'Also shows hiring and other non-sales leads, on top of their row scope.', 5),
 ('lms.leads.unassigned.view', 'operation', 'lms.leads', 'See unassigned leads',
  'Adds the unassigned queue to the list and dashboard.', 2),
 ('lms.leads.create', 'operation', 'lms.leads', 'Create leads',
@@ -153,6 +167,13 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Read campaigns and their results.', 1),
 ('lms.campaigns.manage', 'operation', 'lms.campaigns', 'Manage campaigns',
  'Create, edit and retire campaigns.', 2),
+
+('lms.campaign_types', 'page', 'lms', 'Campaign Types',
+ 'Campaign types, their keywords, and which campaign maps to which.', 8),
+('lms.campaign_types.view',   'operation', 'lms.campaign_types', 'View campaign types',
+ 'Read the types and the campaign-to-type mapping grids.', 1),
+('lms.campaign_types.manage', 'operation', 'lms.campaign_types', 'Manage campaign types',
+ 'Add types, edit keywords, and confirm a campaign type. Changes lead routing.', 2),
 
 -- ── ATTENDANCE ──────────────────────────────────────────────────────
 ('hr.attendance', 'tool', NULL, 'Attendance',

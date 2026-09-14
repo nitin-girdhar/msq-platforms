@@ -110,6 +110,17 @@ caddy (ports 80/443, profile "sso-proxy", root docker-compose.yml, infra/Caddyfi
 | POST | `/meta/crm-event` | meta-conversion-api |
 | POST | `/meta/capi/auto-trigger` | meta-conversion-api |
 | GET/POST/PATCH | `/meta/integration` | meta-conversion-api |
+| GET/POST | `/meta/page-org-map` (super_admin, `?tenant_id=`) | meta-conversion-api |
+| PATCH/DELETE | `/meta/page-org-map/:mappingId` (super_admin, `?tenant_id=`) | meta-conversion-api |
+| GET | `/meta/pages` (super_admin, `?tenant_id=`) | meta-conversion-api — Graph `/me/accounts`, returns `{page_id, name}` only |
+| GET | `/meta/campaigns` (super_admin, `?tenant_id=`, optional `?mapping_status=`) | meta-conversion-api — the three mapping grids, with a per-campaign lead count |
+| POST | `/meta/campaigns/sync` (super_admin, `?tenant_id=`) | meta-conversion-api — the "Fetch campaigns" button; walks the tenant's ad accounts |
+| PATCH | `/meta/campaigns/:metaCampaignId` (super_admin, `?tenant_id=`, `?dry_run=`) | meta-conversion-api — confirm/correct a type, then fan out the reclassification |
+| GET | `/meta/lead-pull/campaigns` (super_admin, `?tenant_id=`, optional `?page_ids=`) | meta-conversion-api — the campaign multiselect; the response says the filter is **post-fetch** |
+| POST | `/meta/lead-pull/runs` (super_admin, `?tenant_id=`) | meta-conversion-api — enqueues a pull, **202 + `run_id`**; 409 while one is live |
+| GET | `/meta/lead-pull/runs/:runId` (super_admin, `?tenant_id=`) | meta-conversion-api — status, progress, delta summary (polled by the UI) |
+| GET | `/meta/lead-pull/runs/:runId/leads` (super_admin, `?tenant_id=`, optional `?verdict=`) | meta-conversion-api — the staged rows behind each summary number |
+| POST | `/meta/lead-pull/runs/:runId/apply` (super_admin, `?tenant_id=`) | meta-conversion-api — applies the importable rows through the canonical write path |
 | GET/POST | `/lookups/:slug` (super_admin only) | admin-service (shared iam/entity: org-types, tenant-domains, tenant-plan-types, user-roles) |
 | PATCH | `/lookups/:slug/:id` (super_admin only) | admin-service |
 | GET/POST/PATCH | `/lookups/{lms-roles,lead-stage,lead-stage-outcome,interaction-types,follow-up-statuses,lead-sources,marketing-platforms,campaign-statuses}` (super_admin, `?tenant_id=`) | leads-service (N-6) |
@@ -117,7 +128,7 @@ caddy (ports 80/443, profile "sso-proxy", root docker-compose.yml, infra/Caddyfi
 | GET/POST/PATCH | `/lookups/{task-statuses,task-priorities,task-roles}` (super_admin, `?tenant_id=`) | tasks-service (N-6) |
 | GET/POST | `/lookups/tenants` (super_admin only) | admin-service |
 | PATCH | `/lookups/tenants/:id` (super_admin only) | admin-service |
-| GET/POST | `/lookups/organizations` (super_admin only) — GET lists orgs **across all tenants** (each row carries `tenantId`; callers filter client-side). This is lookup-admin's org source for the navbar Org scope and the departments `org_id` FK; identity-service's `/orgs/all` is NOT usable there, as it omits `tenant_id` and is pinned to the caller's own tenant | admin-service |
+| GET/POST | `/lookups/organizations` (super_admin only) — GET lists orgs **across all tenants** (each row carries `tenant_id` and `is_active`, **snake_case** like every other response on the platform; callers filter client-side). This is lookup-admin's org source for the navbar Org scope and the departments `org_id` FK; identity-service's `/orgs/all` is NOT usable there, as it omits `tenant_id` and is pinned to the caller's own tenant | admin-service |
 | PATCH | `/lookups/organizations/:id` (super_admin only, tenant-scoped) | admin-service |
 | GET | `/capabilities` (super_admin only) — the global `iam.capabilities` tree (tool→page→tab→operation→scope) | admin-service |
 | GET | `/roles/:id/capabilities?tenant_id=` (super_admin only) — platform defaults + this tenant's overrides for one role | admin-service |
@@ -202,9 +213,13 @@ Assignments are **not** a separate table. The assignment is stored as `lms.marke
 
 ### Weighted auto-assignment
 
-When a new lead is created without an explicit `assigned_user_id` (Meta sync, manual lead creation), `resolveAutoAssignedUser(tx, orgId)` in leads-service (`services/leads-service/src/lib/assignment.ts` — moved out of `@platform/db` in P-1, it is LMS business logic) picks who receives it. Applies uniformly across every lead-creation path — both `services/meta-conversion-api/.../lead-sync.service.ts` and `services/leads-service/.../leads.repository.ts createLead()` call it.
+When a new lead is created without an explicit `assigned_user_id` (Meta sync, manual lead creation), `resolveAutoAssignedUser(tx, orgId, campaignTypeId)` in leads-service (`services/leads-service/src/lib/assignment.ts` — moved out of `@platform/db` in P-1, it is LMS business logic) picks who receives it. Applies uniformly across every lead-creation path, all inside leads-service: intake `createWebhookLead` (which the Meta webhook and lead-pull Apply reach through `meta-conversion-api/.../lead-sync.service.ts` → `POST /intake/webhook` — lead-sync never calls it directly), `leads.repository.ts` `createLead()` and the branch transfer, and the campaign reclassify fan-out. Every one of them logs `lead.autoassign_skipped` when the pick finds nobody.
 
-**Eligibility:** active `iam.user_org_mapping` row for the org, an **active, non-deleted `iam.users` row**, an `lms.lead_assignment_weights` row with `weight > 0`, a role rank strictly between `READ_ONLY` and `ADMIN` (org admins and read-only users are never auto-assigned leads), and a role holding the `LMS` capability.
+**Weights follow the role's department (1.50.2).** A weight only routes when the member's role department equals the campaign type's department — the same rule `lms.fn_user_sees_campaign_type` uses for visibility — so a Sales rep weighted for Hiring is never handed hiring leads they cannot see. New weights breaking the rule are refused (identity-service 400, DB trigger); pre-existing ones are kept, skipped by the picker with reason `no_department_match`, and reported by `one_time/report_weight_department_mismatch_dryrun.sql`. Once the role or weights are fixed, the super-admin **Re-run Auto-Assignment** screen (lookup-admin → leads-service `POST /lead-assignment/rerun`, dry run first, 500 leads per call) assigns leads that arrived unassigned — only leads with no owner and no logged interaction.
+
+**The pool is `(branch x campaign type)`, not just the branch, as of `1.49.0`.** A hiring lead routes to that branch's HR rotation and a sales lead to its sales rotation, because `lms.lead_assignment_weights` is keyed on `(user_org_mapping_id, campaign_type_id)` — one person holds one row per pool they belong to. See *Campaign-type routing* below.
+
+**Eligibility:** active `iam.user_org_mapping` row for the org, an **active, non-deleted `iam.users` row**, an `lms.lead_assignment_weights` row **for that campaign type** with `weight > 0`, a role rank strictly between `READ_ONLY` and `ADMIN` (org admins and read-only users are never auto-assigned leads), and a role holding the `LMS` capability. The `LMS` gate still applies to every type — hiring leads are LMS leads too, living in `lms.marketing_leads` and worked on the same screens. What a pool's members see of the *other* types is a separate question, answered by `lms.fn_user_sees_campaign_type()` inside the row policy, not by the picker.
 
 Since `1.44.0` the weight lives in `lms.lead_assignment_weights`, keyed by the membership's surrogate `iam.user_org_mapping.id`, rather than in a `lead_assignment_weight` column on the mapping itself — the mapping is shared by every product and only LMS ever read that column. **No row means weight 0**, so the picker's join to the weights table does the `> 0` filtering that the column's `NOT NULL DEFAULT 0` used to require an explicit predicate for. See *Per-product settings on a membership* in `docs/DB_model.md` for the pattern other products should follow instead of adding a column here.
 
@@ -219,13 +234,62 @@ Both server paths therefore gate on `!== undefined`, never on truthiness — `re
 The UI never omits the key while the reassign panel is open: it requires a successor whenever the branch still has anyone eligible (`/users/assignable`, which gates on real branch membership and the LMS capability, not the rank ladder), and sends `null` only when it does not. Leads are never left owned by a login that can no longer act on them. The reassign only fires when the user actually **leaves** the branch — `homeMoved && !stillHoldsOldOrg` — so moving home between branches they keep strands nothing and is correctly a no-op.
 
 **Algorithm — deficit-based weighted round-robin:**
-1. Count each eligible user's current *open* workload: leads assigned to them in this org where the lead's stage has `is_terminated = false` (no hardcoded stage names — picks up `new`/`contacting`/`on_hold`/`qualified`, and any future non-terminal stage, automatically)
+1. Count each eligible user's current *open* workload **in this same pool**: leads assigned to them in this org, **carrying this campaign type**, where the lead's stage has `is_terminated = false` (no hardcoded stage names — picks up `new`/`contacting`/`on_hold`/`qualified`, and any future non-terminal stage, automatically)
 2. `deficit = (weight / 100 * total_open_including_new_lead) - current_open_count`
 3. Assign to whichever eligible user has the highest deficit; ties broken randomly
 
-This deterministically converges to each user's target %, self-corrects as leads resolve (convert/reject/transfer), and is not retroactive — changing weights only affects future unassigned leads. If no users in the org have a weight set, `resolveAutoAssignedUser` returns `null` and the lead stays unassigned (today's default behavior, unchanged).
+**Both halves of the deficit are measured in the same pool, and that is load-bearing.** Counting a user's whole open book instead would let a rep with 50 open *sales* leads look permanently over-served in the *hiring* rotation and starve them of hiring leads altogether — invisible on a small test dataset, systematic in production.
+
+This deterministically converges to each user's target %, self-corrects as leads resolve (convert/reject/transfer), and is not retroactive — changing weights only affects future unassigned leads.
+
+**No more silent nulls.** `resolveAutoAssignedUser` returns `{ userId, reason }` where `reason` is `'assigned' | 'no_weighted_users' | 'no_capable_users'`, replacing the bare `null` it used to return. The old shape could not tell a branch with nobody weighted apart from one whose weighted members all lack the LMS capability, and callers had nothing to log either way: 10 of 30 production branches sat with no weighted user and auto-assign failed silently for a long time before anyone noticed. Every caller now logs a non-`'assigned'` reason — intake emits `lead.autoassign_skipped` with `{ org_id, campaign_type, reason }`. A lead whose type cannot be resolved at all yields `'no_weighted_users'`, because no weight row can carry a NULL type; it does **not** fall back to an untyped cross-pool rotation.
 
 **Managing weights:** `GET/PUT /users/assignment-weights` (identity-service, org-admin rank required for PUT). The PUT endpoint validates every `user_id` is actually eligible and that weights sum to exactly 100 (or all 0, disabling auto-assignment for the org) — both checked at the application layer inside the same transaction as the write, not via a DB constraint.
+
+**The Python port (`meta-sync-scripts/common/lead_writer.py::resolve_auto_assigned_user`) mirrors this pool-scoped picker, with one known gap.** It ports the rank-ladder eligibility bounds and the type-scoped deficit formula (both halves of it) statement-for-statement, but does **not** replicate the `hasCapability(tenantId, roleName, CAPABILITY.LMS)` filter documented above — there is no Python equivalent of that RBAC lookup in this package. In practice this means a weighted org member whose role sits in-band on the rank ladder but holds no `LMS` capability grant could be selected by a Python-ingested lead (`sync_leads.py`, `import_downloaded_leads.py`) where the TypeScript path would exclude them. This predates the campaign-types phase and is a pre-existing TypeScript/Python divergence, not something introduced by campaign-type support — flagged here rather than fixed silently, per the scope boundary that keeps behavioural mismatches between the two paths visible instead of quietly patched in only one.
+
+### Campaign-type routing
+
+**What a campaign type is.** `marketing.campaign_types` is a tenant-scoped catalog — `sales`, `hiring`, whatever a tenant adds next — carrying `department_id` (the team it routes to; NULL = visible to everyone), `match_keywords`, `is_default` and `match_priority`. Every tenant is seeded with `sales` (the `is_default` catch-all) and `hiring` by `entity.seed_tenant_rbac()`.
+
+**How a lead gets one.** `resolveCampaignForLead(tx, orgId, input)` in `leads-service/src/lib/campaign-resolution.ts` resolves it, most specific first:
+
+1. the `campaign_type_id` the caller supplied — the Meta path, where **meta-conversion-api** resolved the mapping from `ext.meta_campaigns` and passed it in;
+2. the page/form default (`ext.meta_page_form_org_map.default_campaign_type_id`), likewise **passed in** by the caller;
+3. the tenant's `is_default` type — walk-ins, the public `POST /public/v1/leads` API, manual lead creation, anything with no Meta campaign at all.
+
+Both caller-supplied ids are checked against the org's tenant before use, and a foreign or unknown id is a **400, never a silent fall-through to the default** — the public intake route spreads the caller's whole body through, so `campaign_type_id` is genuinely attacker-controlled there.
+
+**leads-service never reads `ext.*`.** That schema belongs to meta-conversion-api, which holds the Graph token and owns the campaign → type mapping; the resolved ids arrive as arguments instead. This is why step 2 is a parameter rather than a lookup, and it is what keeps the two services separable with no new cross-service grant. (`lead_svc` does hold `SELECT` on `ext.meta_campaigns` from 1.49.0's grants; this phase deliberately does not use it.)
+
+**Branch projection of a Meta campaign.** Given a `meta_campaign_id`, resolution looks up `marketing.ad_campaigns` on `(org_id, meta_campaign_id)` and, on a miss, creates that branch's row carrying the type — platform and status resolved exactly as `meta-sync-scripts/sync_campaigns.py` does, against the *campaign's* tenant, with the name falling back to `Meta Campaign <id>`. The insert is `ON CONFLICT (org_id, meta_campaign_id) WHERE meta_campaign_id IS NOT NULL DO NOTHING` followed by a re-select: concurrent webhook deliveries for a brand-new campaign race routinely, and the partial unique index would otherwise turn the loser into a `23505` that fails a perfectly good lead. The `WHERE` in the conflict target is **not optional** — Postgres only infers a *partial* unique index when the predicate is repeated, and without it the statement fails outright. A tenant missing the platform/status catalog row yields no campaign rather than an error: the lead still gets its type, is still created and still routes. Dropping an inbound lead over a missing dropdown entry would be the worse failure.
+
+`meta-sync-scripts/common/campaign_resolution.py` is the Python port of both this resolution and `campaign-mapping.service.ts`'s `ext.meta_campaigns` cache/insert (the two collapse into one module there — see its own docstring for why), called by `lead_writer.create_lead` before auto-assignment. Both paths resolve the type by calling `marketing.fn_match_campaign_type()` — never by reimplementing the keyword match in either language — so a campaign types identically whichever path ingests its first lead.
+
+Meta campaign ids are carried as **strings** end to end. They run to 17 digits, past `Number.MAX_SAFE_INTEGER`, so a JSON number would arrive with its low digits already corrupted and match the wrong campaign; every query casts with `::bigint` instead.
+
+**Reclassification — `POST /internal/campaign-reclassify`.** meta-conversion-api calls this immediately after an admin confirms a campaign → type mapping, because leads-service owns the leads and the routing rules. It is registered on the service's **existing** `/internal` router group, behind the same `authenticateInternal` shared-secret preHandler as `/internal/leads/reassign-org`. Body: `{ meta_campaign_id, campaign_type_id, dry_run, actor_id? }`; `dry_run` defaults to **true**, so a caller that forgets the flag gets an impact preview rather than an unrequested fan-out. One transaction does two different things:
+
+- **Relabel** — unconditional. Every `marketing.ad_campaigns` row for that Meta campaign, and every lead on them, in **every branch**, gets the corrected type.
+- **Re-route** — deliberately narrow. A lead changes hands only if it is auto-assigned and untouched by a person since (an `initial` row in `lms.lead_assignment_log` with no later `reassigned`/`bulk_assigned`/`self_assigned`/`reclassified`), sits in a non-terminated stage, has **zero** `lms.lead_interactions`, **and** its current assignee holds no weight for the new type in that branch. Each one is re-picked **in its own branch's** rotation for the new type; an empty target pool leaves it unassigned with a logged reason, never silently back on the old pool.
+
+This conservatism is a product decision, not a heuristic: a lead someone has already called stays with them and only its label is corrected, because yanking a lead mid-conversation is worse than a wrong label. The last condition is also what keeps the fan-out quiet in the common case — a rep weighted for both pools simply keeps their lead.
+
+The move is written as **one** `UPDATE` setting `assigned_user_id` and `campaign_type_id` together. That is the only way `lms.log_lead_assignment()` records it as `reclassified` rather than a plain `reassigned`; splitting it into an unassign then an assign would write `unassigned` + `initial` and the timeline would no longer say *why* the lead moved. Consequently the bulk relabel deliberately **excludes** the re-route candidates, so their type is still `DISTINCT` by the time that statement runs. The per-lead note goes through the `app.lead_transition_note` GUC, which the trigger reads into `lead_assignment_log.note`.
+
+The dry run and the real run share the same counting queries, so the preview cannot promise an impact different from the one the admin confirms. Response: `{ dry_run, campaigns_relabelled, leads_relabelled, leads_reassigned, leads_left_unassigned, by_branch[] }`.
+
+The whole operation runs under `withServiceTx` (BYPASSRLS) — a campaign's leads are spread across every branch that ran it, so there is no single org to scope an RLS transaction to. **The tenant fence is therefore restated explicitly in SQL**, on the campaign type's own `tenant_id`, in every query.
+
+**Managing types:** `GET/POST/PATCH/DELETE /campaign-types` (leads-service), gated on `lms.campaign_types.view` / `lms.campaign_types.manage` — **by capability, never by role name**. Writes go through `withTenantConfigTx`, not `withRoleTx`: `marketing.campaign_types` is tenant-scoped and its write policy keys on `app.current_tenant_id`, a GUC `withRoleTx`'s `app_user` branch never sets. That transaction pins the tenant and **not** `app.current_org_id`, so these reads deliberately join nothing from `iam.departments` or `lms.marketing_leads` — both are fenced on the org GUC and would return zero rows with no error. The delete guard's usage counts therefore run separately, under a documented service transaction, because a type is tenant-wide while its leads live in branches the acting admin may not be scoped to.
+
+Deleting a type is refused while it is the tenant default, or while any lead, campaign or assignment weight still points at it — the FKs are `ON DELETE RESTRICT` but this is a *soft* delete, which they do not police at all.
+
+`name` is not editable and `is_default` is not settable through this API: the name is what weight rows, the Python sync and saved reports refer to a pool by, and moving `is_default` makes that type unconditionally visible to everyone (see `lms.fn_user_sees_campaign_type`), which is a provisioning decision rather than a CRUD field.
+
+**Visibility is the database's answer, not the API's.** Which types a user can see at all is decided by `lms.fn_user_sees_campaign_type()` inside `lms.marketing_leads`' RLS `USING` clause. The `campaign_type_ids` filter on `GET /leads` and `GET /assignments/mine` only *narrows* what the caller may already see.
+
+**CRM campaign CRUD** (`/campaigns`) accepts and returns `campaign_type_id`. Classifying a **Meta** campaign is not done there: that mapping is per Meta campaign and tenant-wide, so it lives in meta-conversion-api, while `/campaigns` edits one branch's record. Changing the type on a campaign relabels the **campaign only** — existing leads keep the type they were routed under, since `lms.sync_lead_campaign_type()` fills a lead's NULL type from its campaign but never overwrites one. Moving the leads too is the reclassify fan-out's job.
 
 ### Multi-branch users on the roster (`GET /users`)
 
@@ -433,10 +497,11 @@ Bidirectional integration with Meta (Facebook) Lead Ads:
 4. HMAC-SHA256 verification using the resolved row's `app_secret`
 5. Fetches full lead data from Meta Graph API using the resolved row's `access_token`
 6. Always inserts a new `lms.marketing_leads` row (source resolved from Meta's per-lead `platform` field when present — `fb`→`facebook`, `ig`→`instagram`, `wa`→`whatsapp` — falling back to the static `ext.meta_page_form_org_map.platform` config value if Meta omits or returns an unrecognized platform; stage=new). If an active lead with the same `(org_id, phone)` already exists, the old row is marked `is_active=false, superseded_by=<new_id>` and a `lms.lead_links` record (`link_type='merge'`) is written for audit. A linked `ext.meta_leads` row is created referencing the new marketing lead.
-7. Org (and, for the shared-app path, tenant) is resolved from `ext.meta_page_form_org_map` via `page_id`/`form_id` — `form_id` is authoritative (globally unique across all tenants), `page_id` is a fallback. Unmapped leads are skipped.
+7. Org (and, for the shared-app path, tenant) is resolved from `ext.meta_page_form_org_map`: an exact `form_id` row wins (`form_id` is globally unique across all tenants), else the Page's **page-level** row (`form_id IS NULL`), else the lead is unmapped and skipped. The page-level fallback is restricted to `form_id IS NULL` as of 1.48.1 — it previously took the most recently created active row for the Page whatever its `form_id`, so an unknown form could be attributed to a branch mapped for some unrelated form, disagreeing with the Python `common/mappings.py::resolve()` reading the same table.
 8. Field extraction uses the resolved tenant's `field_mappings` (from `ext.meta_tenant_config.field_mappings`, JSONB) merged over the hardcoded `DEFAULT_FIELD_MAPPINGS` — lets a tenant remap Meta form field keys without a redeploy
 9. Address/job/demographic fields are written to `ext.meta_lead_addresses`, `ext.meta_lead_professional`, `ext.meta_lead_demographics` (1:1, only when at least one field is present)
 10. Any remaining unmapped form fields stored in `ext.meta_lead_custom_fields`
+11. **Campaign attribution and typing.** Before the intake call (the type is an *input* to routing, not a later relabel), `lead-sync.service.ts` resolves the lead's campaign type through `campaign-mapping.service.ts::resolveCampaignType` and forwards `meta_campaign_id`, `meta_campaign_name`, `meta_campaign_status`, `meta_platform`, `campaign_type_id` and `default_campaign_type_id` to leads-service, with `campaign_id`/`adset_id`/`ad_id` in `metadata`. Until 1.49.0's service work these were written into `ext.meta_leads` and forwarded **nowhere** — `IntakeLeadPayload` had no campaign fields at all — so `lms.marketing_leads.campaign_id` was NULL for every live Meta lead and the Campaign row on the lead-edit screen always read `-`.
 
 ### Inbound failure diagnostics
 Step 6 delegates the `lms.marketing_leads` insert to leads-service `POST /api/v1/intake/webhook`; a rejection there surfaces in meta-conversion-api as `evt: webhook.lead_sync_failed`. Two things make that line self-diagnosing:
@@ -446,6 +511,105 @@ Step 6 delegates the `lms.marketing_leads` insert to leads-service `POST /api/v1
 **Only field names cross the service boundary, never values.** The intake request body is a lead's name, phone, email and every Meta form answer, so the client deliberately does not echo the upstream body into the error message; `details` is safe precisely because leads-service builds it from a fixed list of column literals.
 
 Note: the webhook still returns 200 after a per-lead failure, so Meta does not retry and the lead is not persisted anywhere — these log fields are currently the only record of it.
+
+### Campaign discovery and typing
+
+`ext.meta_campaigns` is the **single source of truth** for which type a Meta campaign carries, and meta-conversion-api owns it — it holds the Graph token and owns the whole `ext.*` schema. Rows arrive by two routes.
+
+**From a lead (`first_seen_source='lead'`).** `campaign-mapping.service.ts::resolveCampaignType` runs on the webhook path inside the existing `withServiceTx` (an inbound Meta delivery carries no session — the same documented system operation as the two page/form resolvers), so every statement filters `tenant_id` explicitly rather than relying on RLS. A **hit** returns the row's type, `suggested` or `confirmed` alike: **routing never waits for a human.** A **miss** inserts the row typed by `marketing.fn_match_campaign_type` — `suggested` with the winning `matched_keyword` when a keyword fires, otherwise `unmapped` with the form default and then the tenant default, so the lead still routes somewhere sane while the row sits in the admin's "needs mapping" grid. The insert is `ON CONFLICT (meta_campaign_id) DO NOTHING` plus a re-select, for the same race that `ensureBranchCampaign` guards against.
+
+**From the Fetch button (`first_seen_source='fetch'`).** `campaign-sync.service.ts` iterates `ext.meta_tenant_config.ad_account_ids`, cursor-paging `GET /act_<id>/campaigns`, and runs a three-way upsert per campaign in its own `withTenantConfigTx` — one transaction per campaign, so a single conflicting row cannot roll back the hundreds already written:
+
+| existing row | what happens |
+|---|---|
+| none | insert, `first_seen_source='fetch'`, run the matcher |
+| `mapping_status='confirmed'` | refresh `name` / `objective` / `effective_status` / `last_synced_at` **only** |
+| `suggested` or `unmapped` | refresh metadata **and** re-run the matcher, since `match_keywords` may have improved |
+
+**A confirmed mapping is never overwritten.** That is the product's explicit "works from next time onwards" guarantee and it is an invariant, not a preference: an inferred type is provisional, an admin's decision is not. `confirmed_by` and `confirmed_at` appear in neither the insert nor the update list — not touching a column is a stronger guarantee than writing it back to itself. `RETURNING (xmax = 0)` is what separates the insert arm from the update arm, which is what makes "a second run reports `0 inserted`" checkable at all; and since a freshly inserted row can never be `confirmed`, `xmax <> 0 AND mapping_status = 'confirmed'` is exactly "a confirmed mapping this fetch left alone".
+
+**One Graph call per NEW campaign, never per lead.** The `ext.meta_campaigns` row is the cache — once it exists, no campaign-name lookup is ever made again. The remaining window is the one *before* the first row commits, when a new campaign goes live and a burst of leads all miss at once; an in-process LRU keyed on campaign id closes it by caching the in-flight **promise**, so concurrent callers share one request. A rejected lookup is evicted rather than cached, so a throttled call does not poison the next five minutes.
+
+**A Graph failure never fails a lead.** `fetchCampaign` returns null instead of throwing, the resolution path is wrapped so that *any* error yields nulls, and the lead is created and routed from the form/tenant default with a `webhook.campaign_name_fetch_failed` warning and an `unmapped` row for the admin to fix. Dropping a real customer lead because a metadata lookup was rate-limited is strictly worse than a temporarily mistyped one.
+
+**Retry and backoff.** `graphGet` retries on 429, 5xx, a dropped socket, and Meta's rate-limit error codes (4, 17, 32, 613, 80004) with exponential backoff and full jitter, and reads `X-Business-Use-Case-Usage` to slow itself *before* Meta blocks it. Permanent failures — #190 expired token, #200 missing `ads_read` — are deliberately **not** retried. `estimated_time_to_regain_access` is in *minutes* and is honoured only as a signal to wait the capped maximum, never literally: this runs from a button, and hanging an admin's request for an hour is not an option. A failing ad account is recorded in `errors` and the run continues; partial success is the honest answer for an operation spanning several accounts. The token needs **`ads_read`**.
+
+For contrast, `msq-lms/meta-sync-scripts/common/graph_api.py` is a bare `requests.get` with a 15s timeout and no retry, backoff or 429 handling at all. That is survivable for a supervised CLI run someone watches and re-runs; it is not survivable for a button, and it is a warning rather than a template.
+
+**Admin surface.** `campaign-admin.service.ts` is kept out of `campaign-mapping.service.ts` for the reason `page-org-map.service.ts` had to be split: the mapping module is the BYPASSRLS webhook path, while every admin operation is an authenticated super_admin acting on **one selected tenant** through `withTenantConfigTx`. All three routes require an explicit `?tenant_id=` and read `ctx.tenant_id` nowhere — platform staff administer a tenant other than their own, and a silent fallback is the exact bug removed from the page/form API one phase earlier. The list query carries **no literal `tenant_id` filter** on purpose: `admin_tenant_config_policy` is the scope, and a redundant filter would make the cross-tenant test pass whether or not the policy works.
+
+`PATCH …?dry_run=true` returns the impact preview and **writes nothing** — not the mapping, not the learned keyword, not the reclassification. An admin checking what a correction would cost must be able to walk away having changed nothing. On a real confirm the mapping commits *first*, in its own transaction, and only then is leads-service asked to fan out: if the fan-out fails the mapping still stands and re-pressing Confirm retries it, whereas fanning out first would leave leads relabelled against a mapping that was never saved.
+
+`learn_keyword` is opt-in per request. `HIR_Gurugram_Trainer_Sep26` offers `gurugram` as readily as `trainer`, and a wrong keyword silently mistypes every future campaign containing it — so the server proposes the longest unused token and the admin decides. The append is `array_append` guarded by a `NOT … = ANY(…)`, never a rewrite of the whole array, so two admins confirming different campaigns onto the same type cannot lose each other's keyword.
+
+**Shared ad accounts.** `uq_meta_campaigns_campaign_id` is global, not per-tenant. A campaign already registered to tenant A therefore cannot be inserted for tenant B, and the conflicting row is invisible to B under RLS — Postgres answers with a `23505` or `42501`, which the engine reports per campaign as *"Campaign is already registered to a different tenant"* rather than failing the run or leaking whose row it is.
+
+### Lead pull — the backfill for what the webhook missed
+
+The webhook above is the live path, and it misses things: an integration that
+was down, a page mapped late, a form nobody knew about. The only remedy used to
+be a three-stage Python CLI (`download_page_leads.py` → `check_leads_against_db.py`
+→ `import_downloaded_leads.py`) run by hand from a laptop against `output/<run>/`
+CSVs. Schema 1.50.0 moves that into the console: a super admin picks orgs, pages
+and campaigns plus a start date, pulls, sees what is genuinely missing versus
+already present, and applies only the missing rows.
+
+**Two Meta constraints this is designed *with*, not around.**
+
+1. **There is no campaign-scoped lead edge.** Leads come
+   page → `/{page-id}/leadgen_forms` → `/{form-id}/leads`, and `campaign_id` is
+   only a *field* on each lead. So the campaign filter is **post-fetch** and
+   narrowing campaigns cannot make a pull faster or cheaper. Both the campaigns
+   endpoint and the run status say so explicitly, because otherwise the first
+   thing an admin does is select one campaign, wait exactly as long as for all of
+   them, and file a bug.
+2. **Meta ignores the `time_created` filter** (observed; it is why the Python's
+   `in_window()` re-filters every lead client-side). It is sent anyway as an
+   optimisation and **always** re-applied locally — keeping leads whose
+   `created_time` is unparseable rather than dropping them, because losing a real
+   customer to a format surprise is worse than one extra row in a review grid.
+   The newest-first early stop is kept too: once a *whole* page lands before
+   `since`, nothing newer remains behind it, which is what keeps a bounded pull
+   from crawling years of history.
+
+**Page-first, not form-first.** `ext.meta_page_form_org_map`'s `form_id` list
+goes stale the moment someone creates a new form, so a form-driven sync silently
+stops seeing new leads — confirmed live, `ext.meta_leads` already holds form ids
+with no mapping row. The engine asks each Page what forms it has *right now* and
+pulls from all of them, mapped or not. An unmapped form's leads are staged with
+`org_id IS NULL` and reported, never guessed into an org.
+
+**Page access tokens are mandatory.** `/leadgen_forms` and `/{form-id}/leads`
+accept a Page token only; the tenant-level token on `ext.meta_tenant_config` is a
+User/System-User token both edges reject with Meta **#190**. `getManagedPageTokens`
+resolves them via `GET /me/accounts` first. A selected page absent from that
+result is counted as an error **with the reason** ("the Page moved to another
+Business, or the token lost access") and skipped — never swallowed.
+
+**The run row is the queue.** There is no job/queue infrastructure in this repo,
+so `POST /runs` inserts `queued` and returns `run_id` in one fast transaction
+(nothing rides on the gateway timeout) and `workers/pull-poller.ts` claims work
+with `FOR UPDATE SKIP LOCKED`, following notifications-service's `followup-checker`
+`setInterval` + `running` boolean pattern. Both guards are needed: the boolean
+stops a tick landing on a slow one, and only SKIP LOCKED survives a second
+replica. A **reaper** fails runs whose `heartbeat_at` (written per page) has gone
+stale — without it a deploy mid-pull strands the run in `running` and the 409
+guard locks that tenant out forever. See `docs/DB_model.md` for the tables.
+
+**Apply reuses the canonical write path.** It calls `syncLeadToDatabase` — the
+same function the webhook calls — once per importable row rather than writing
+leads itself, so campaign typing, pool routing and every `ext.meta_lead_*` child
+table come for free, and idempotency does too: that function re-checks
+`ext.meta_leads.meta_lead_id` before acting *and* again inside its transaction,
+**at apply time against live data** rather than against a staging snapshot that
+may be hours old. Pressing Apply twice inserts nothing. Four of its behaviours
+are handled explicitly by the caller: it takes no `tenant_id` (that travels in
+`syncContext`), it **throws** on a missing phone and a non-numeric lead id (caught
+**per row**, recorded as `applied_status='failed'`, never aborting the batch),
+`isMetaTestLead` is exported but *not* called inside it (the caller applies it —
+that gap is how 20 Lead Ads Testing Tool submissions once became real leads), and
+its intake call sits between the two dedup checks, so rows are applied
+sequentially under a single SKIP LOCKED claim rather than concurrently.
 
 ### Outbound flow (CRM → Meta CAPI)
 - **Auto-trigger**: When a lead's stage actually changes *and* the lead's source is a Meta one (`lms.lead_sources.name` in `facebook`/`instagram`/`whatsapp` — `META_LEAD_SOURCE_NAMES`, mirrored independently in `lead-sync.service.ts` and `meta-capi-trigger.ts` since the two are separate services), leads-service fires a fire-and-forget HTTP call to meta-conversion-api. Both conditions are checked before the call, so a website/walk-in/referral lead never reaches the CAPI service at all.
@@ -1046,9 +1210,52 @@ Each product repo carries the same three-package shape, plus a web-component pac
 
 `apps/lookup-admin` (port 3005) is a separate Next.js app providing the super_admin-only web UI for managing these lookup tables, tenants, and organizations (all 15 tenant-scoped tables now via their owning product service; the 4 shared iam/entity lookups + tenants/organizations via admin-service), plus a Users management UI (`app/dashboard/users/`) that calls the pre-existing identity-service Users CRUD, reset-password, and org-mappings endpoints. For the 15 tenant-scoped tables, the table page renders a `TenantSelector` (a `<select>` driven by the URL's `tenant_id` search param) above the grid; no tenant selected means an empty/prompt state instead of a fetch, and "New"/edit actions (and parent-lookup option fetches, e.g. lead-stage for a stage-outcome) pass the selected `tenant_id` through. This selector is advisory only — the real enforcement is the backend's required `tenant_id` query param, the `authenticateSuperAdmin` gate, and the tenant-pinned admin RLS.
 
-**Shell (module-grouped nav).** The dashboard is built on `@platform/ui-kit/shell` (the same `AppSidebar`/`MobileSidebar`/`UserMenu` chrome every product app uses). The left rail groups every table by `LookupTableDef.module` (`platform`/`lms`/`hr`/`tasks`/`capabilities`, see `src/lib/lookupTableConfig.ts`) via `NavGroup`/`filterNavGroups` (added to `@platform/ui-kit/shell/nav` for this) — flat `NavItem[]` usage in the other product apps is untouched. Each group lands on `/dashboard/m/[module]`, a card pane listing that module's tables (plus a couple of hand-built screens folded in as extra cards: Users under Platform, the Capability Matrix under Capabilities); a table card opens the existing `/dashboard/lookups/[table]` CRUD page.
+**Shell (module-grouped nav).** The dashboard is built on `@platform/ui-kit/shell` (the same `AppSidebar`/`MobileSidebar`/`UserMenu` chrome every product app uses). The left rail groups every table by `LookupTableDef.module` (`platform`/`lms`/`hr`/`tasks`/`capabilities`, see `src/lib/lookupTableConfig.ts`) via `NavGroup`/`filterNavGroups` (added to `@platform/ui-kit/shell/nav` for this) — flat `NavItem[]` usage in the other product apps is untouched. Each group lands on `/dashboard/m/[module]`, a card pane listing that module's tables (plus a few hand-built screens folded in as extra cards: Users and Catalog Versions under Platform, Meta Page Mapping / Meta Campaign Mapping / Meta Lead Pull under LMS, the Capability Matrix under Capabilities); a table card opens the existing `/dashboard/lookups/[table]` CRUD page.
 
 **FK fields.** `LookupFieldConfig`'s old `select`/`geo-select` types (backed by a bare `selectOptionsFrom` string, plus a hardcoded country→state→city cascade component) were replaced by a single `fk` type carrying an `FkConfig` (`table` or `endpoint`, optional `dependsOn` for chaining, `scope: 'tenant'|'global'`). One `FkSelect` component resolves the option list, chains to any depth (the geo cascade is now just three ordinary fields), disables until its parent has a value, and surfaces a fetch error instead of silently rendering an empty list.
+
+**Meta page → branch mapping.** The LMS module exposes a bespoke screen at `/dashboard/meta-mappings`
+(registered as an `EXTRA_CARDS` entry on `/dashboard/m/lms`, not in `lookupTableConfig.ts`) for
+`ext.meta_page_form_org_map` — the table that decides which branch every inbound Meta lead lands
+in. It reads and writes the gateway's `/meta/page-org-map` routes (super_admin, `?tenant_id=`), with
+`/meta/pages` populating a page picker so an admin selects a named Page instead of pasting a raw
+numeric id. Page discovery is best-effort: it spends the tenant's stored Meta credentials on a live
+Graph API call, so a tenant with no active integration degrades to a raw-id input rather than taking
+the screen down. The table does not fit the generic `[table]` grid — a row is a `(page_id, form_id)`
+routing key, and a **NULL `form_id` is meaningful** (the page-level catch-all covering every form on
+that page, at most one active per page). `page_id`/`form_id` are immutable on edit (they are the
+row's identity); only branch and `is_active` are patchable, and removal is a deactivate, never the
+DELETE route. The navbar org scope narrows the grid **client-side**, because the list route validates
+its query with `tenantScopedQuerySchema` (tenant_id only) and would silently drop an `org_id`.
+
+**Meta lead pull.** The LMS module also exposes a bespoke screen at `/dashboard/lead-pull`
+(registered as an `EXTRA_CARDS` entry on `/dashboard/m/lms`, not in `lookupTableConfig.ts`) that moves
+the three-stage backfill CLI (download -> reconcile -> import) a developer used to run by hand into a
+button: pick branches/pages/campaigns and a required `since` date, `POST /meta/lead-pull/runs`
+(super_admin, `?tenant_id=`) enqueues a background run and returns immediately with a `run_id`, and
+the client polls `GET /meta/lead-pull/runs/:runId` — backing off when the tab is hidden, stopping once
+the run reaches a terminal status (`completed`/`failed`/`applied`). The delta summary renders the
+run's live `verdict_summary` (computed from the staged rows, not the run's own `counts.verdicts`
+snapshot), and every number opens the staged rows behind it via `GET .../runs/:runId/leads?verdict=`
+in an AG Grid. `POST .../runs/:runId/apply` is enabled only once a run is `completed`; it is
+idempotent server-side (re-applying inserts nothing — every row comes back `already_synced`), but the
+button still disables during `applying` rather than relying on that alone. The two duplicate verdicts
+(`phone_duplicate`, `email_duplicate`) are importable on purpose — the UI explains why next to the
+Apply button, matching the backend comment in `lead-reconcile.service.ts`. The campaign filter is
+applied **post-fetch** (Meta has no campaign-scoped lead edge), and the form says so next to the
+campaign control so narrowing it is never mistaken for making the pull cheaper. A `truncated` run
+(the per-form Graph page cap was hit) renders a prominent, non-dismissable warning rather than a
+footnote, since the pull's data is then genuinely incomplete. Page discovery reuses the same
+best-effort `/meta/pages` call `meta-mappings` makes and degrades the page filter to a typed
+comma-separated id list under the same conditions.
+
+**Known doc/code mismatch (reported, not worked around):** the phase brief that drove this screen
+lists `hiring_form` as its own verdict bucket. `lead-reconcile.service.ts` does not classify leads
+that way — that behaviour was deliberately removed once campaign types could route a recruitment
+lead somewhere (see that file's header comment). A lead on a hiring-shaped form still gets a normal
+verdict and is separately flagged per row with `is_hiring_form` + `suggested_campaign_type_id`; the
+UI surfaces that as a badge in the staged-leads grid rather than as a summary bucket that does not
+exist server-side.
 
 **Capability administration.** The Capabilities module additionally exposes a Capability Matrix screen (`/dashboard/capabilities/matrix`) for granting/revoking `iam.capabilities` nodes to a role, per tenant — the UI side of the endpoints documented above. It reads the global capability tree once, then per (tenant, role) reads `iam.role_capabilities` (platform defaults + that tenant's overrides) and PUTs the diff. `iam.capabilities`/`iam.role_capabilities` gained Drizzle table definitions in `@platform/db/schema` for this (they previously had none, despite existing in the DB since Tier C3). Role catalog CRUD (the `user-roles`/`lms-roles`/`hr-roles`/`task-roles` cards in this module) still goes through the existing `/lookups/{slug}` tables, unchanged.
 

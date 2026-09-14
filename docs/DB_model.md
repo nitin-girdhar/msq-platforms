@@ -146,6 +146,7 @@
 | `task`      | To-do lists, tasks, comments                     |
 | `comms`     | Cross-product WhatsApp/email message templates (org > tenant > global resolution) |
 | `notify`    | Cross-product Web Push subscriptions (one row per installed PWA/device) |
+| `scratch`   | **Staging.** Rows that exist to be reviewed and then thrown away — today the Meta lead-pull runs. DELETEd wholesale, no soft delete, nothing may FK into them |
 
 ---
 
@@ -555,37 +556,80 @@ here.** Instead:
 
 ### lms.lead_assignment_weights
 
-% share of new leads a user auto-receives within one branch. The first table
-built on the extension pattern above.
+% share of new leads a user auto-receives within one branch, **for one campaign
+type**. The first table built on the extension pattern above.
 
 | Column              | Type        | Constraints                              |
 | ------------------- | ----------- | ---------------------------------------- |
-| user_org_mapping_id | UUID        | PK, FK → iam.user_org_mapping(id) ON DELETE CASCADE |
+| user_org_mapping_id | UUID        | PK part 1, FK → iam.user_org_mapping(id) ON DELETE CASCADE |
+| campaign_type_id    | UUID        | PK part 2, NOT NULL, FK → marketing.campaign_types(id) ON DELETE CASCADE |
 | weight              | SMALLINT    | NOT NULL, DEFAULT 0, CHECK 0-100         |
 | updated_by          | UUID        | FK → iam.users(id) ON DELETE SET NULL    |
 | created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
 | updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
 
-**No row means weight 0** — the picker filters `weight > 0`, so absence and an
-explicit zero mean the same thing and only non-zero weights are stored. An
-existing row *can* hold 0: deactivating a user zeroes it rather than deleting it
-(DELETE is revoked from `app_user`/`tenant_admin`, mirroring
-`iam.user_org_mapping`).
+**The primary key is `(user_org_mapping_id, campaign_type_id)` as of 1.49.0.**
+Pool membership is **per type**: the same person can sit in their branch's sales
+rotation at 40% and its hiring rotation at 0%, and a hiring lead must never be
+offered to the sales pool. Every query that keyed on `user_org_mapping_id` alone
+now needs a type too, or it reads and writes the wrong pool. The 1.49.0 backfill
+rebuilt every pre-existing row under its tenant's `sales` type with the same
+weight, so the picker's behaviour was unchanged by the migration. Note the
+ordering that migration had to follow — populate the column, *then* NOT NULL,
+*then* swap the key; doing the key first fails on the first existing row.
+
+**No row means "not in that pool"** — the picker filters `weight > 0`, and a
+membership with no row for a type is simply not in that type's rotation at all.
+As of Phase 07 (admin screens), this is now distinguishable from an *explicit*
+weight of 0: `writeAssignmentWeight`/`updateAssignmentWeights` in
+identity-service's `users.repository.ts` always upsert a real row, including
+for weight 0 — so the UI can show "branch has a hiring pool, everyone at 0%"
+separately from "branch has no hiring pool row at all". `deleteAssignmentWeight`
+is the only true removal, and — DELETE being revoked from
+`app_user`/`tenant_admin`, mirroring `iam.user_org_mapping` — only
+`reconcileOrgAssignments` (running on the service role) ever calls it, when an
+edit removes a user from a type's pool entirely. Deactivating a user or moving
+them off a branch still zeroes (never deletes) every weight row for that
+membership.
 
 The sum across a branch must be 100 (or all 0 to disable auto-assignment), and
-that is enforced **only** in identity-service's `PUT /users/assignment-weights`.
-`createUser`, `addOrgMapping`, `reconcileOrgAssignments` and every `one_time/`
-onboarding script bypass it — a pre-existing gap the move preserved rather than
-changed.
+that is enforced **only** in identity-service's `PUT /users/assignment-weights`
+— per campaign type present in the payload, not per whole batch. `createUser`,
+`addOrgMapping`, `reconcileOrgAssignments` and every `one_time/` onboarding
+script bypass it — a pre-existing gap the move preserved rather than changed.
 
-**Written by** identity-service (the user create/edit payload carries weights
-alongside branch/role assignments, so the API field name is still
-`lead_assignment_weight`). **Read by** leads-service's `resolveAutoAssignedUser`.
+**Written by** identity-service (the user create/edit payload carries a
+`weights[]` array per branch, one entry per `{campaign_type_id, weight}` —
+**not** the scalar `lead_assignment_weight` field name this doc previously
+described; that shape predates the 1.49.0 composite-key migration). **Read by**
+leads-service's `resolveAutoAssignedUser(tx, orgId, campaignTypeId)`, which
+joins this table on BOTH the mapping and the campaign type — and scopes its
+open-workload count to that same type. Scoping only the eligibility join and
+not the count is the easy mistake: it is invisible on a small dataset and, in
+production, lets a rep's large sales backlog suppress their hiring deficit
+until they are starved of hiring leads entirely.
 **RLS:** `org_admin_read/insert/update_policy` + `tenant_isolation_policy`, all
 via `iam.fn_mapping_org`.  
-**Triggers:** `set_updated_at`  
+**Triggers:** `set_updated_at`; `trg_lead_assignment_weights_tenant_match` (1.50.1) —
+`lms.fn_assert_weight_type_tenant()` raises `check_violation` when the row's
+campaign type belongs to a different tenant than the membership's branch. Nothing
+else ties the two tenants together (both FKs are satisfied by any tenant's type),
+and a pool keyed on a foreign type silently routes nothing. Existing rows are not
+re-validated by a trigger — `one_time/audit_cross_tenant_weights_dryrun.sql`
+lists any on a server. Since **1.50.2** the same trigger also enforces the
+**department rule** on NEW rows: the type's `department_id` must equal the
+department of the membership's role, and a role with no department cannot be
+weighted (the rule `lms.fn_user_sees_campaign_type` applies to visibility, so no
+one is weighted for leads they cannot see). An upsert of an already-held
+(membership, type) row is let through: pre-existing rows that break the rule are
+**kept** by decision, skipped by the picker (reason `no_department_match`), and
+listed by `one_time/report_weight_department_mismatch_dryrun.sql`.  
 **View:** `lms.vw_lead_assignment_weights` restores the flat
-`(user_id, org_id, weight)` shape for reporting and operator SQL.
+`(user_id, org_id, weight)` shape for reporting and operator SQL, now with the
+type columns. It is **no longer one row per (user, branch)** — it is one row per
+(user, branch, type), plus a NULL-type row for a membership in no rotation at
+all. Any caller assuming uniqueness on `user_org_mapping_id` must add a type
+filter.
 
 ---
 
@@ -731,7 +775,7 @@ Only one Meta table is catalog-shaped, which is why the rest correctly never app
 
 - `ext.lead_stage_capi_event_map` — **tenant-scoped catalog**, cloned per tenant by mechanism 2. Untracked and unversioned.
 - `ext.meta_capi_event_types` — deliberately **global** vocabulary, no `tenant_id`. Not per-tenant, so nothing to drift.
-- `ext.meta_tenant_config`, `ext.meta_page_form_org_map`, `ext.meta_forms` — per-tenant **credentials and page→org routing config**, not defaults cloned from a platform template. Each tenant's values are unique by nature; there is no version to compare against.
+- `ext.meta_tenant_config`, `ext.meta_page_form_org_map`, `ext.meta_forms`, `ext.meta_campaigns` — per-tenant **credentials, page→org routing config and campaign→type mapping**, not defaults cloned from a platform template. Each tenant's values are unique by nature; there is no version to compare against.
 
 ---
 
@@ -961,6 +1005,9 @@ Core lead entity. `full_name` is GENERATED STORED.
 | outcome_id        | UUID        | FK → lms.lead_stage_outcome(id)              |
 | outcome_comment   | TEXT        |                                              |
 | campaign_id       | UUID        | FK → marketing.ad_campaigns(id)              |
+| campaign_type_id  | UUID        | FK → marketing.campaign_types(id) ON DELETE RESTRICT; denormalised, and **the column RLS reads** |
+
+Written explicitly on every intake path rather than left to `sync_lead_campaign_type()`: that trigger only fills a NULL **from the campaign**, so a lead carrying a type but no campaign row — a walk-in, or a Meta campaign whose catalog row could not be created — would otherwise be born untyped and unroutable.
 | source_id         | UUID        | FK → lms.lead_sources(id)                    |
 | assigned_user_id  | UUID        | FK → iam.users(id)                           |
 | is_active         | BOOLEAN     | NOT NULL, DEFAULT TRUE; FALSE when superseded or transferred out |
@@ -977,7 +1024,9 @@ Core lead entity. `full_name` is GENERATED STORED.
 
 **Unique indexes (partial):** `(org_id, phone) WHERE phone IS NOT NULL AND NOT is_deleted AND is_active = true`, `(org_id, email) WHERE email IS NOT NULL AND NOT is_deleted AND is_active = true` — uniqueness enforced only among active leads; superseded rows may share the same phone/email  
 **RLS:** org-scoped for app_user; tenant-scoped for tenant_admin  
-**Triggers:** `set_updated_at`, `soft_delete_row`, `set_org_id`, `set_created_by`, `check_lead_stage_outcome`, `check_lead_fk_org_scope`, `log_lead_assignment`, `log_lead_stage_change`, `audit_marketing_leads_changes`
+**Triggers:** `set_updated_at`, `soft_delete_row`, `set_org_id`, `set_created_by`, `check_lead_stage_outcome`, `check_lead_fk_org_scope`, `log_lead_assignment`, `log_lead_stage_change`, `audit_marketing_leads_changes`, `sync_lead_campaign_type`
+
+`campaign_type_id` is **denormalised on purpose**: a lead can carry a type with no campaign at all (a walk-in, or a Meta lead whose campaign id never arrived — the fallback there is `ext.meta_page_form_org_map.default_campaign_type_id`), and the RLS predicate reads it on every row, where a nullable join would be slower and harder to reason about. `lms.sync_lead_campaign_type()` (BEFORE INSERT OR UPDATE OF `campaign_id`) copies the campaign's type down when none was supplied, so attaching a campaign late — from the edit screen or a batch script — cannot leave the two disagreeing. It never overwrites a type set explicitly in the same statement, which is what lets a manager reclassify one lead without the next campaign edit undoing it.
 
 ---
 
@@ -1081,8 +1130,10 @@ Immutable log of lead assignment changes. Auto-populated by trigger.
 | note                 | TEXT        |                                             |
 | assigned_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()         |
 
-**Action values:** initial, reassigned, unassigned, self_assigned, bulk_assigned  
+**Action values:** initial, reassigned, unassigned, self_assigned, bulk_assigned, reclassified  
 **RLS:** org + tenant isolation (SELECT only for non-service roles)
+
+**`reclassified` (1.49.0)** is an assignment that moved because the lead's *campaign type* moved — it left one (branch × type) pool for another — rather than a person handing it to a colleague. `lms.log_lead_assignment()` writes it whenever `campaign_type_id` changed in the same statement as `assigned_user_id`, and appends the pool to the note (`From the Hiring pool.`) for `initial` and `reclassified` rows. Deciding this in the trigger rather than in service code means a reclassification done in raw SQL, or by the Python sync, is logged identically.
 
 **Bulk moves are labelled.** The branch-transfer and deactivation flows both reach this table
 through `POST /internal/leads/reassign-org`, which sets `app.lead_transition_note` before the
@@ -1211,6 +1262,103 @@ backfillable, since stage/outcome are current state and have since moved.
 
 ---
 
+### marketing.campaign_types
+
+*Schema 1.49.0.* What KIND of campaign this is — `sales`, `hiring`, and whatever
+a tenant adds next — and therefore **which team its leads route to**. The
+routing key for auto-assignment (pool = branch × type) and one half of the
+sales/HR visibility boundary described below.
+
+| Column         | Type        | Constraints                                        |
+| -------------- | ----------- | -------------------------------------------------- |
+| id             | UUID        | PK (UUIDv7)                                        |
+| tenant_id      | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
+| name           | TEXT        | NOT NULL; UNIQUE (tenant_id, name)                 |
+| label          | TEXT        | NOT NULL                                           |
+| description    | TEXT        |                                                    |
+| department_id  | UUID        | FK → iam.departments(id) ON DELETE RESTRICT; **NULL = visible to all** |
+| match_keywords | TEXT[]      | NOT NULL, DEFAULT '{}'                             |
+| is_default     | BOOLEAN     | NOT NULL, DEFAULT FALSE; at most one live row per tenant |
+| match_priority | INT         | NOT NULL, DEFAULT 100; **lower wins**              |
+| sort_order     | INT         | NOT NULL, DEFAULT 0                                |
+| is_active      | BOOLEAN     | NOT NULL, DEFAULT TRUE                             |
+| is_deleted     | BOOLEAN     | NOT NULL, DEFAULT FALSE                            |
+| deleted_at / deleted_by / created_by | | standard audit columns           |
+| metadata       | JSONB       | NOT NULL, DEFAULT '{}'                             |
+| created_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                |
+| updated_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                |
+
+**Unique index (partial):** `uix_campaign_types_one_default` on `(tenant_id) WHERE is_default AND NOT is_deleted` — two defaults would be a silently non-deterministic routing rule, since the default is what the backfill, the intake fallback and the admin UI all resolve to.
+**RLS:** `org_isolation_policy` (SELECT, tenant derived from the session's current org), `tenant_isolation_policy`, `admin_tenant_config_policy` (the N-6 super-admin write path).
+**Triggers:** `set_updated_at`, `soft_delete_row`
+**Seeded per tenant** by `entity.seed_tenant_rbac()` — `sales` (department `sales`, `is_default`, no keywords) and `hiring` (department `hr`, keywords `{hiring,hire,recruit,recruitment,hr,job,vacancy,trainer}`, `match_priority` 50). Written as literals, not cloned from `tenant_id IS NULL` templates like the other catalogs: a template row could not carry a tenant-scoped `department_id`.
+
+#### Keyword matching — `marketing.fn_match_campaign_type(tenant, name)`
+
+`STABLE`, returns the matching type id or NULL. Case-insensitive, matched **on
+word boundaries** against `match_keywords`; lowest `match_priority` wins, then
+`sort_order`, then `name`.
+
+It lives in SQL, not in a service, because two independent intake paths read Meta
+campaign names — leads-service (TypeScript) and `msq-lms/meta-sync-scripts`
+(Python) — and a rule implemented twice drifts. **Call it; do not port it.**
+
+It deliberately does not use Postgres' `\m`/`\M` word-boundary escapes: those
+treat `_` as a word character, and Meta campaign names are overwhelmingly
+underscore-separated (`HIR_Gurugram_Trainer_Sep26`), so `\mtrainer\M` would
+never fire. The predicate requires a non-alphanumeric character or the string end
+on both sides instead — which is also what stops `hr` matching `Threadbare` and
+`job` matching `Jobbers`.
+
+#### The sales / HR visibility boundary — `lms.fn_user_sees_campaign_type`
+
+**This is enforced in RLS, not in application code.** Both
+`lms.marketing_leads` policies carry
+`lms.fn_user_sees_campaign_type(current_user_id, org_id, campaign_type_id)` on
+`USING`. A rep with a `psql` prompt and a valid session gets the same answer as a
+rep with the app, which is the only version of this that is actually a boundary.
+A repository filtering on `campaign_type_id` is filtering, not securing.
+
+It is on `USING` **only, never `WITH CHECK`** — writes must stay unrestricted so
+a manager can create and reassign leads across types, which is what
+reclassification is.
+
+The function returns TRUE when **any** of:
+
+1. the lead carries no type (`campaign_type_id IS NULL`);
+2. the type is the tenant's **default** — the catch-all pool where unmatched
+   campaigns, walk-ins and manually created leads land. This clause is what makes
+   the 1.49.0 backfill a true no-op: it stamped `sales` on the whole existing
+   pipeline, and without it a `read_only` auditor (no department, no `all_types`)
+   would have lost the entire branch the moment it committed;
+3. the type has no `department_id`;
+4. the caller is `super_admin` / `tenant_admin` / `org_admin`;
+5. the caller's role in that branch holds `lms.leads.view.all_types`;
+6. the caller's role sits in the type's department.
+
+`SECURITY DEFINER`, because it is called from inside a policy and reads
+RLS-protected `iam.*` and `marketing.*`. Invoker rights would be filtered by
+those policies and return NULL rather than raise — turning the predicate silently
+FALSE and hiding **every** typed lead from **everyone**.
+
+`lms.leads.view.all_types` is granted to `org_manager`, `org_sr_manager`,
+`org_admin` and `tenant_admin`, and deliberately **not** to
+`sales_representative`, `senior_sales_executive` or `read_only`. It is declared
+`kind = 'operation'`, not `'scope'`, despite its key: for scope nodes
+`sort_order` *is* the breadth ordering, so a fifth rung on the
+own/team/org/tenant ladder would outrank "whole branch" and silently replace a
+manager's row scope. Campaign-type visibility is an orthogonal axis. Verify it
+with `iam.fn_role_capability_matrix`, never by reading `iam.role_capabilities`.
+
+Clause 6 is why `iam.user_roles.department_id` is populated as of 1.49.0:
+`entity.seed_tenant_rbac()` passed a literal NULL there from the day Tier C
+shipped, so it was unset on every role in every tenant. It now resolves by name
+(`sales_representative` / `senior_sales_executive` / `org_manager` /
+`org_sr_manager` → `sales`, `hr_admin` → `hr`; the four anchors stay
+department-less, being cross-department by definition).
+
+---
+
 ### marketing.ad_campaigns
 
 | Column     | Type         | Constraints                                     |
@@ -1223,6 +1371,8 @@ backfillable, since stage/outcome are current state and have since moved.
 | budget     | NUMERIC(12,2)|                                                  |
 | started_at | TIMESTAMPTZ  |                                                  |
 | ended_at   | TIMESTAMPTZ  |                                                  |
+| meta_campaign_id | BIGINT |                                                  |
+| campaign_type_id | UUID   | FK → marketing.campaign_types(id) ON DELETE RESTRICT; the per-branch projection of the type `ext.meta_campaigns` holds |
 | is_deleted | BOOLEAN      | NOT NULL, DEFAULT FALSE                          |
 | deleted_at | TIMESTAMPTZ  |                                                  |
 | deleted_by | UUID         |                                                  |
@@ -1311,6 +1461,7 @@ and Forms can sit behind a single tenant-level app.
 | graph_api_version   | TEXT        | NOT NULL, DEFAULT 'v21.0'                 |
 | is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                    |
 | capi_trigger_stages | UUID[]      | NOT NULL, DEFAULT '{}'                    |
+| ad_account_ids      | TEXT[]      | NOT NULL, DEFAULT '{}'; the `act_<digits>` accounts a "Fetch campaigns" run iterates to populate `ext.meta_campaigns`. A column rather than an `ext.meta_ad_accounts` table because an ad account carries nothing but its id here — Pages are already handled the same way (a bare `page_id`, no `ext.meta_pages`) — and the only per-campaign sync state there is lives on `ext.meta_campaigns.last_synced_at` |
 | field_mappings      | JSONB       | nullable — per-tenant override of Meta form field keys; falls back to `DEFAULT_FIELD_MAPPINGS` in `meta.config.ts` when NULL |
 | created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                   |
 | updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                   |
@@ -1326,25 +1477,71 @@ Routes an incoming Meta lead (identified by Page + Form) to the owning org.
 `form_id` is the authoritative routing key — a Meta lead form always belongs
 to exactly one Page and `form_id` is globally unique in Meta's system, so it
 safely disambiguates even a shared/corporate Page running forms for several
-orgs. `page_id` is retained for reference/validation and as a fallback
-default so a brand-new form created on an already-mapped Page can be
-auto-attributed without requiring a manual mapping entry first. An org can
-own many rows here (multiple Pages and/or multiple Forms across campaigns).
+orgs. A **NULL `form_id` is the page-level catch-all**: every leadgen form on that
+Page routes to the row's org unless a more specific `form_id` row exists for
+that same Page. An org can own many rows here (multiple Pages and/or multiple
+Forms across campaigns).
 
-| Column     | Type        | Constraints                              |
-| ---------- | ----------- | ----------------------------------------- |
-| id         | UUID        | PK (UUIDv7)                              |
-| tenant_id  | UUID        | NOT NULL, FK → entity.tenants(id)        |
-| org_id     | UUID        | NOT NULL, FK → entity.organizations(id)  |
-| page_id    | BIGINT      | NOT NULL                                 |
-| form_id    | BIGINT      | NOT NULL                                 |
-| platform   | TEXT        | NOT NULL, CHECK IN ('fb', 'ig')          |
-| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                   |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                  |
-| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                  |
+Precedence is exact `form_id` → page-level row → unmapped, and both
+implementations must agree on it: `page-org-map.service.ts::resolveOrgId` and
+the Python `common/mappings.py::resolve()`. The TypeScript fallback used to take
+the most recently created active row for the Page *whatever its `form_id`*, so
+an unknown form could land in whichever branch was mapped last rather than in
+the catch-all; it is restricted to `form_id IS NULL` as of 1.48.1, matching the
+Python. A form with no exact row on a Page that has no page-level row is
+**unmapped** — logged and skipped — rather than silently attributed.
 
-**Unique:** `(page_id, form_id)`  
-**RLS:** org + tenant isolation
+| Column         | Type        | Constraints                                 |
+| -------------- | ----------- | ------------------------------------------- |
+| id             | UUID        | PK (UUIDv7)                                 |
+| tenant_id      | UUID        | NOT NULL, FK → entity.tenants(id)           |
+| org_id         | UUID        | NOT NULL, FK → entity.organizations(id)     |
+| page_id        | BIGINT      | NOT NULL                                    |
+| form_id        | BIGINT      | **NULLABLE** — NULL = page-level catch-all  |
+| platform       | TEXT        | NOT NULL, CHECK IN ('fb', 'ig', 'wa')       |
+| default_campaign_type_id | UUID | FK → marketing.campaign_types(id) ON DELETE SET NULL; the type a lead through this page/form gets when the campaign name matches no keyword — and the **only** signal for a lead carrying no campaign id at all |
+| is_active      | BOOLEAN     | NOT NULL, DEFAULT TRUE                      |
+| last_synced_at | TIMESTAMPTZ | Stamped by sync_leads.py; observability only |
+| created_at     | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                     |
+| updated_at     | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                     |
+
+**Unique:** `uq_meta_page_form_org_map (page_id, form_id)` — globally, not per
+tenant. Postgres treats NULLs as distinct in a UNIQUE constraint, so that alone
+would permit many page-level rows for one Page; the partial index
+`uq_meta_page_form_org_map_page_level ON (page_id) WHERE form_id IS NULL AND
+is_active` caps it at **one active page-level row per Page**. The two produce
+different 409s in the API, because the remedies differ.
+
+**RLS:** three policies.
+- `org_isolation_policy` (`FOR ALL TO app_user`) — keyed on
+  `app.current_org_id`; the ordinary end-user path.
+- `tenant_isolation_policy` (`FOR ALL TO tenant_admin`) — keyed on an
+  `entity.organizations` subquery.
+- `admin_tenant_config_policy` (`FOR ALL TO app_user`, added 1.48.1) — the N-6
+  admin path: a platform super_admin administering a **selected** tenant through
+  `withTenantConfigTx`. Keyed on the table's **own `tenant_id` column**, which is
+  deliberately a different shape from `tenant_isolation_policy`'s subquery and is
+  not to be harmonised with it. Neither of the other two can serve that caller,
+  and both fail *silently*: `app.current_org_id` is never set by
+  `withTenantConfigTx`, and the caller's PG role is `app_user`/`lms_svc`, not
+  `tenant_admin`.
+
+  Its `WITH CHECK` also requires
+  `entity.fn_org_tenant(org_id) = app.current_tenant_id`. That half is a security
+  control: `tenant_id` and `org_id` are independent columns with no trigger tying
+  them together, so without it a super_admin could pin `tenant_id` to tenant A
+  and point `org_id` at tenant B's branch. It calls the SECURITY DEFINER helper
+  rather than an inline subquery because `entity.organizations`' own `app_user`
+  policy is membership-keyed and returns nothing for a super_admin holding no
+  membership in the administered tenant — the check would have been silently
+  FALSE and every admin INSERT refused.
+
+Grants matter here as much as the policy: `app_user` holds SELECT/INSERT/**UPDATE
+/DELETE** (it held only SELECT/INSERT until 1.48.1, so the PATCH and DELETE the
+policy permits were dead), and `lms_svc` — what meta-conversion-api actually
+connects as — is granted the table **explicitly**, since
+`ALTER DEFAULT PRIVILEGES IN SCHEMA ext` covers only tables created after
+`07_grants.sql` runs and this one is created in `02`.
 
 ---
 
@@ -1367,6 +1564,55 @@ Synced catalog of a tenant's Meta lead forms (from the Graph API), independent o
 | updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                |
 
 **View:** `ext.vw_meta_forms`
+
+---
+
+### ext.meta_campaigns
+
+*Schema 1.49.0.* Discovery cache of Meta ad campaigns, and **the source of truth
+for campaign → campaign type**. Deliberately shaped like `ext.meta_forms` above —
+tenant-scoped, no `org_id`, the natural Meta id carrying the UNIQUE.
+
+| Column            | Type        | Constraints                                |
+| ----------------- | ----------- | ------------------------------------------ |
+| id                | UUID        | PK (UUIDv7)                                |
+| tenant_id         | UUID        | NOT NULL, FK → entity.tenants(id)          |
+| ad_account_id     | TEXT        | `act_<digits>`; NULL when discovered from a lead |
+| meta_campaign_id  | BIGINT      | NOT NULL, **UNIQUE (global, not per-tenant)** |
+| name              | TEXT        |                                            |
+| objective         | TEXT        |                                            |
+| effective_status  | TEXT        |                                            |
+| meta_created_time | TIMESTAMPTZ |                                            |
+| campaign_type_id  | UUID        | FK → marketing.campaign_types(id) ON DELETE RESTRICT |
+| mapping_status    | TEXT        | NOT NULL, DEFAULT 'unmapped'; CHECK IN ('unmapped','suggested','confirmed') |
+| matched_keyword   | TEXT        | which keyword fired; shown in the admin grid |
+| confirmed_by      | UUID        | FK → iam.users(id) ON DELETE SET NULL      |
+| confirmed_at      | TIMESTAMPTZ |                                            |
+| first_seen_source | TEXT        | CHECK IN ('fetch','lead')                  |
+| last_synced_at    | TIMESTAMPTZ |                                            |
+| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                    |
+| updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                    |
+
+**Why the mapping lives in `ext` and not on `marketing.ad_campaigns`:**
+`ad_campaigns.org_id` is NOT NULL, so a CRM campaign row is per **branch**. A
+Meta campaign is not branch-scoped — only its leads are — and a proactive fetch
+from an ad account has no branch to attribute to at all. One row here means an
+admin confirms a campaign's type **once**, not once per branch, and
+`ad_campaigns` stays a plain per-branch projection that inherits the type.
+
+**`UNIQUE (meta_campaign_id)` is global on purpose**, exactly as `ext.meta_forms`
+treats `form_id`: Meta ids are globally unique and one row must serve every
+branch. Do not "fix" it to `(tenant_id, meta_campaign_id)`.
+
+**`mapping_status`** drives three admin grids: `suggested` (a keyword matched —
+`matched_keyword` says which — needs confirming), `unmapped` (nothing matched,
+needs a manual pick), `confirmed` (done). An inferred type is **provisional**; an
+admin's decision is not. **Every writer must exclude `mapping_status =
+'confirmed'`** or the next fetch or sync silently undoes it.
+
+**Index:** `idx_meta_campaigns_tenant_status` on `(tenant_id, mapping_status)`
+**RLS:** `org_isolation_policy` (SELECT), `tenant_isolation_policy`, `admin_tenant_config_policy`
+**Triggers:** `set_updated_at` (no soft delete — like every `ext.meta_*` cache it has no `is_deleted`; a row here is a cached fact about Meta, not a record of ours to retire)
 
 ---
 
@@ -2198,6 +2444,7 @@ Append-only.
 | `iam.fn_user_org_rank(UUID,UUID)`        | iam    | Returns user's role rank in a specific org              |
 | `iam.purge_expired_token_blocklist()`    | iam    | Cleanup: removes expired token blocklist entries        |
 | `iam.fn_mapping_org(UUID)`               | iam    | Resolves a `user_org_mapping_id` to its `org_id` — the required indirection for RLS on per-product membership-extension tables (see "Per-product settings on a membership" above); a direct subquery into `iam.user_org_mapping` is re-filtered by that table's own FORCE'd policies and silently returns NULL |
+| `entity.fn_org_tenant(UUID)`             | entity | SECURITY DEFINER — resolves an `org_id` to its owning `tenant_id`. The indirection an RLS policy needs to prove a caller-supplied `org_id` sits inside the session's pinned tenant (`ext.meta_page_form_org_map.admin_tenant_config_policy`); an inline subquery on `entity.organizations` is re-filtered by that table's membership-keyed `app_user` policy and silently returns nothing. Added 1.48.1 |
 | `iam.fn_user_can_manage_users(UUID,UUID)`| iam    | SECURITY DEFINER — may this actor create/manage users in *that* org; added 1.43.0, drives the 5 write policies under "User management is a capability, per branch" |
 | `iam.fn_user_org_role(UUID,UUID)`        | iam    | Resolves a user's effective `iam.user_roles` row for a given org (tenant-copy-wins resolution) |
 | `iam.fn_role_capability_matrix(UUID)`    | iam    | Resolves the full effective (tenant override → platform default → deny) capability grant matrix for a tenant, walking `iam.capabilities`' tree with ancestor-denial cascade — see "A denied parent silently kills its whole subtree" in Architecture.md |
@@ -2224,6 +2471,155 @@ Append-only.
 | `entity.seed_tenant_geo(...)`            | entity | Mechanism-2 cloning for geo defaults |
 
 > `<product>.fn_member_rank(UUID,UUID)` / `<product>.fn_member_role(UUID,UUID)` (previously listed here) were **dropped at schema 1.40.0** along with the per-product role/grant tables — see "Retired: per-product role tables" above. Role/rank resolution now goes through `iam.fn_user_org_role` instead.
+
+---
+
+## The `scratch` schema — Meta lead-pull staging
+
+*Schema 1.50.0.* The platform's first **staging** area. A schema of its own
+rather than more `ext.*` tables because the lifecycle is the opposite of
+everything in `ext`: these rows are `DELETE`d wholesale rather than
+soft-deleted, carry none of the standard domain columns (`is_active`,
+`is_deleted`, `deleted_at`, `metadata`) and no `soft_delete_row` trigger, and
+**nothing downstream may foreign-key into them**. Putting them under a name that
+says `scratch` is what makes "this table is disposable" readable without
+hunting for a comment.
+
+It backs the Meta lead **pull**: a super-admin backfill for leads the live
+webhook missed — an integration that was down, a page mapped late, a form nobody
+knew about. It replaces the three-stage Python CLI in
+`msq-lms/meta-sync-scripts` (download → check → import) that a developer had to
+run from a laptop.
+
+### scratch.meta_pull_runs
+
+**The run row IS the queue.** There is no job/queue infrastructure in this repo
+— no bullmq, pg-boss, agenda, node-cron, Redis or worker process — and the only
+background pattern is notifications-service's `setInterval` poller. So
+`POST /meta/lead-pull/runs` inserts `queued` and returns `run_id` in one fast
+transaction (nothing rides on the gateway timeout), and a poller in
+meta-conversion-api claims work with `FOR UPDATE SKIP LOCKED`.
+
+| Column       | Type        | Constraints                                   |
+| ------------ | ----------- | --------------------------------------------- |
+| id           | UUID        | PK (UUIDv7)                                   |
+| tenant_id    | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
+| created_by   | UUID        | NOT NULL, FK → iam.users(id) ON DELETE CASCADE |
+| status       | TEXT        | NOT NULL, DEFAULT 'queued'; CHECK IN ('queued','running','completed','failed','applying','applied') |
+| filters      | JSONB       | NOT NULL, DEFAULT '{}' — the request verbatim (org_ids, page_ids, campaign_ids, since, until) |
+| counts       | JSONB       | NOT NULL, DEFAULT '{}' — per-verdict tallies, pages/forms walked, page-token errors, `truncated` |
+| heartbeat_at | TIMESTAMPTZ | written per page completed; what the reaper reads |
+| started_at   | TIMESTAMPTZ |                                               |
+| finished_at  | TIMESTAMPTZ |                                               |
+| applied_at   | TIMESTAMPTZ |                                               |
+| applied_by   | UUID        | FK → iam.users(id) ON DELETE SET NULL         |
+| error_text   | TEXT        |                                               |
+| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                       |
+| updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                       |
+
+**Two guards, and both are needed.** The poller's in-process `running` boolean
+stops a tick starting on top of a slow one — a pull that outlasts the interval
+would multiply Graph load exactly when load is already the reason it is slow.
+`FOR UPDATE SKIP LOCKED` is the one that survives a **second replica**, which a
+boolean in one process's memory cannot. Compose runs a single instance today, so
+SKIP LOCKED buys nothing right now; it buys that scaling this service later does
+not silently double-run every pull.
+
+**The reaper is not optional.** `POST /runs` refuses with **409** while a run is
+`queued`/`running`/`applying`, so a deploy landing mid-pull would strand the run
+in `running` forever and that tenant could **never** start another one. A run
+whose `heartbeat_at` is older than `META_LEAD_PULL_STALE_MINUTES` is marked
+`failed` on the next tick. This is the whole reason for a claimed queue rather
+than a floating promise.
+
+### scratch.meta_pull_leads
+
+One row per lead Meta returned, classified against LMS.
+
+| Column                     | Type        | Constraints                            |
+| -------------------------- | ----------- | -------------------------------------- |
+| id                         | UUID        | PK (UUIDv7)                            |
+| run_id                     | UUID        | NOT NULL, FK → scratch.meta_pull_runs(id) ON DELETE CASCADE |
+| tenant_id                  | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
+| org_id                     | UUID        | **NULLABLE** — FK → entity.organizations(id) ON DELETE CASCADE |
+| page_id                    | BIGINT      |                                        |
+| form_id                    | BIGINT      | NOT NULL                               |
+| form_name                  | TEXT        | staged for the hiring signal and the review grid |
+| meta_lead_id               | BIGINT      | NOT NULL                               |
+| campaign_id / adset_id / ad_id | BIGINT  |                                        |
+| platform                   | TEXT        | CHECK IN ('fb','ig','wa')              |
+| lead_created_at            | TIMESTAMPTZ |                                        |
+| raw_field_data             | JSONB       | Meta's `field_data` verbatim           |
+| verdict                    | TEXT        | CHECK IN ('already_synced','test_lead','unmapped_form','missing_contact','phone_duplicate','email_duplicate','new') |
+| existing_lead_id           | UUID        | FK → lms.marketing_leads(id) ON DELETE SET NULL |
+| reason                     | TEXT        |                                        |
+| is_hiring_form             | BOOLEAN     | NOT NULL, DEFAULT false                |
+| suggested_campaign_type_id | UUID        | FK → marketing.campaign_types(id) ON DELETE SET NULL |
+| applied_status             | TEXT        | NOT NULL, DEFAULT 'pending'; CHECK IN ('pending','applied','skipped','failed') |
+| applied_lead_id            | UUID        | FK → lms.marketing_leads(id) ON DELETE SET NULL |
+| applied_error              | TEXT        |                                        |
+| created_at                 | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                |
+|                            |             | **UNIQUE (run_id, meta_lead_id)**      |
+
+**`org_id` is nullable on purpose**, unlike `ext.meta_page_form_org_map` where
+it is NOT NULL. That is not an inconsistency to fix: a staged row with **no org
+IS the `unmapped_form` verdict** — a lead Meta returned for a form nobody has
+mapped. It is recorded so the admin can see it and go fix the mapping, and Apply
+skips it with that reason; it can never be applied. Guessing a branch is exactly
+what the mapping table exists to prevent — one Page here is shared by eight
+branch orgs, so "the page's org" is not a well-defined thing.
+
+The raw-lead columns are shaped to map **1:1 onto `syncLeadToDatabase`'s
+`RawMetaLead` parameter**, because Apply calls that canonical write path rather
+than writing leads itself. That is what makes campaign typing, pool routing and
+dedup apply automatically, and what makes re-running Apply safe.
+
+**The verdict ladder**, ported verdict-for-verdict and in order from
+`meta-sync-scripts/common/reconcile.py::classify`: `already_synced` →
+`test_lead` → `unmapped_form` → `missing_contact` → `phone_duplicate` (last
+**ten** significant digits) → `email_duplicate` → `new`. The two duplicate
+verdicts are **importable on purpose**: the write path supersedes on phone and
+returns the existing lead on email, and either way an `ext.meta_leads` row is
+written — which is what stops the lead being re-fetched forever. Dropping them
+would make every future pull re-surface the same leads.
+
+**One deliberate behaviour change from the Python.** `hiring_form` was a *skip*
+verdict there, because a job applicant had nowhere to go. Since campaign types
+(1.49.0) it does, so it stopped being a verdict and became `is_hiring_form` +
+`suggested_campaign_type_id` (matched by `marketing.fn_match_campaign_type` on
+the form name). **Leads on hiring forms that the Python discarded are now
+imported**, and the admin is pointed at the real fix —
+`ext.meta_page_form_org_map.default_campaign_type_id`.
+
+### RLS and grants on `scratch`
+
+**One policy per table**, `admin_tenant_config_policy FOR ALL TO app_user` keyed
+on `app.current_tenant_id` — the N-6 admin shape, because this is a platform
+super_admin administering a *selected* tenant through `withTenantConfigTx`,
+which pins `app.current_tenant_id` and `app.current_user_id` and sets
+`app.current_org_id` **not at all**. An org-keyed policy would evaluate
+`org_id = NULL` → false and read **zero rows with no error**. There is
+deliberately no `org_isolation_policy` and no `tenant_isolation_policy`, and
+`tenant_admin` holds no DML either — a grant with no policy buys nothing but the
+impression of access.
+
+`scratch.meta_pull_leads`' `WITH CHECK` additionally requires
+`org_id IS NULL OR entity.fn_org_tenant(org_id) = <pinned tenant>`. That is a
+security control, not decoration: **Apply writes real leads into whatever org
+the staged row names**, so without it a row could name tenant A while pointing
+`org_id` at tenant B's branch. `fn_org_tenant` rather than an inline
+`entity.organizations` subquery, because such a subquery is re-filtered by that
+table's own membership-keyed policy and returns nothing for a super_admin
+holding no membership in the administered tenant (see 1.48.1).
+
+**`DELETE` is granted here, breaking `07_grants.sql`'s no-DELETE convention on
+purpose.** Every other service grant is SELECT/INSERT/UPDATE because a domain
+row is soft-deleted and a real DELETE is a bug. These tables have no
+`is_deleted`, and `POST /runs` *begins* by deleting the tenant's previous run.
+Granted to `lms_svc` (what meta-conversion-api actually connects as),
+`meta_svc`, `app_user` and `root_service` — `TO app_user` alone reaches no
+NOINHERIT service login, and GRANTs have no equivalent of `08_rls.sql`'s
+policy-widening block.
 
 ---
 

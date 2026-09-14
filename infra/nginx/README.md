@@ -1,10 +1,27 @@
-# nginx in front of a UAT deployment
+# nginx in front of a UAT or production deployment
 
-`apps-uat.conf` is the nginx equivalent of `infra/Caddyfile` — the same
-single-origin, path-prefix topology, which is what the PWA (one service-worker
-scope, one push subscription) depends on. Keep the two in step: a prefix added in
-one belongs in the other, and a prefix *change* also needs that product image
-rebuilt, because the Next `basePath` is compiled in, not read from env.
+`apps-uat.conf` / `apps-prd.conf` are the nginx equivalent of `infra/Caddyfile`
+— the same single-origin, path-prefix topology, which is what the PWA (one
+service-worker scope, one push subscription) depends on. Keep them in step: a
+prefix added in one belongs in all three, and a prefix *change* also needs that
+product image rebuilt, because the Next `basePath` is compiled in, not read from
+env.
+
+| File | Host | Serves |
+|---|---|---|
+| `apps-uat.conf` | apps-uat.fitclass.in | the six web apps |
+| `api-uat.conf`  | api-uat.fitclass.in  | api-gateway, direct |
+| `apps-prd.conf` | apps.fitclass.in     | the six web apps |
+| `api-prd.conf`  | api.fitclass.in      | api-gateway, direct |
+| `snippets/connection-upgrade.conf` | — | the `$connection_upgrade` map, required by all four |
+| `snippets/msq-pwa.conf` | — | `/sw.js`, `/manifest.webmanifest`, `/icons/*`, `/offline` cache policy |
+
+Only ONE environment goes on a given machine: the two `api-*.conf` files both
+declare `upstream api_gateway`, so enabling both fails `nginx -t` with
+"duplicate upstream".
+
+Both hostnames for an environment live on the SAME box and are split by
+`server_name`, so a deployment still needs exactly two ports open: 80 and 443.
 
 ## Steps
 
@@ -23,14 +40,18 @@ rebuilt, because the Next `basePath` is compiled in, not read from env.
 3. **Install and place the config.**
 
        sudo apt install nginx certbot python3-certbot-nginx
-       sudo cp apps-uat.conf /etc/nginx/sites-available/apps-uat.conf
+
+       # Prerequisites FIRST — nginx refuses to start without either of them.
+       # $connection_upgrade is not built in, and a `map` is only legal in the
+       # http { } context, so it cannot live in the server config that uses it.
+       sudo cp snippets/connection-upgrade.conf /etc/nginx/conf.d/
+       sudo cp snippets/msq-pwa.conf            /etc/nginx/snippets/
+
+       # Then the site (swap uat -> prd for production).
+       sudo cp apps-uat.conf api-uat.conf /etc/nginx/sites-available/
        sudo ln -s /etc/nginx/sites-available/apps-uat.conf /etc/nginx/sites-enabled/
+       sudo ln -s /etc/nginx/sites-available/api-uat.conf  /etc/nginx/sites-enabled/
        sudo rm -f /etc/nginx/sites-enabled/default     # otherwise it wins on port 80
-
-   The config uses `$connection_upgrade`, which is not built in. Add the map once
-   inside the `http { }` block of `/etc/nginx/nginx.conf`:
-
-       map $http_upgrade $connection_upgrade { default upgrade; "" close; }
 
 4. **Certificate.** `sudo certbot --nginx -d apps-uat.fitclass.in`
    Renewal runs from a systemd timer — confirm with
@@ -40,12 +61,16 @@ rebuilt, because the Next `basePath` is compiled in, not read from env.
 
 ## The env values this pairs with
 
-In the deployment `.env` (already set in `msq-deploy/artifacts/.env-uat`):
+The per-environment templates live in `msq-deploy/.env-dev`, `.env-uat` and
+`.env-prd`. Copy the matching one to the deployment `.env` (`/opt/msq/.env`) —
+deploy.sh only seeds it from `.env.example`, which carries the local
+`app.localhost` values. `.env-uat` already holds:
 
     AUTH_URL=https://apps-uat.fitclass.in
     LMS_URL=https://apps-uat.fitclass.in/lms      # + /hrms /todo /admin /sa
     WEB_URL=https://apps-uat.fitclass.in          # must equal AUTH_URL — gateway CORS
-    COOKIE_DOMAIN=apps-uat.fitclass.in            # host-only, no leading dot
+    AUTH_COOKIE_NAME=fc_session_uat               # distinct from prod's fc_session → prod cookie is never read here
+    COOKIE_DOMAIN=apps-uat.fitclass.in
     COOKIE_SECURE=true
     TRUST_PROXY_HOPS=1
     VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT
@@ -61,11 +86,56 @@ client into a single bucket.
 service exists only in the dev compose file's `sso-proxy` profile and is not in
 the deploy bundle at all.
 
+## What `snippets/msq-pwa.conf` is for
+
+Everything an install depends on is served from the origin ROOT by auth-web, and
+each piece needs a different cache policy than Next's default
+`Cache-Control: public, max-age=0`:
+
+| Path | Policy | Why |
+|---|---|---|
+| `/sw.js` | `no-store` | **The single most common quiet PWA failure.** A cached worker keeps serving the previous release out of its own caches; the page looks fine and a reload does not fix it. Browsers cap SW script caching at 24h on their own, but that does nothing about a CDN or proxy in between. |
+| `/manifest.webmanifest` | 5 min | Drives the install prompt and the icon. Wrong content-type and Chrome ignores it entirely — Next sets `application/manifest+json` correctly, so do not override it. |
+| `/icons/*` | 1 day | Includes `apple-touch-icon.png`. iOS never reads the manifest's `icons`, so that one `<link>` is the entire Home Screen icon story. |
+| `/offline` | `no-cache` | The worker precaches this at install as its navigation fallback; a stale copy gets pinned for the life of that `SW_VERSION`. |
+
+These are exact (`=`) and `^~` matches, which outrank the regex prefix locations,
+so the snippet is correct wherever it sits in the server block.
+
+Two nginx footguns the snippet works around, both silent:
+
+- **`add_header` does not merge.** Declaring one inside a location DROPS every
+  header inherited from the server block. That is why each location in the
+  snippet repeats the HSTS line — without it, `/sw.js` would be the one response
+  on the origin served without HSTS.
+- **`proxy_hide_header Cache-Control` comes first.** Without it the response
+  carries Next's `max-age=0` AND the new value, and which one wins is up to the
+  client.
+
 ## Verifying
 
-    curl -I https://apps-uat.fitclass.in/sw.js     # 200, served by auth-web
-    curl -I https://apps-uat.fitclass.in/lms       # 200, NOT 404 — the bare prefix
-    curl -I https://apps-uat.fitclass.in/lms/      # 200
+    H=apps-uat.fitclass.in    # or apps.fitclass.in
+
+    # Routing: the bare prefix is what a person types by hand, and `/lms/*`
+    # alone does not match it.
+    curl -I https://$H/lms        # 200, NOT 404
+    curl -I https://$H/lms/       # 200
+    curl -I https://$H/hrms       # 200 (repeat for /todo /admin /sa)
+    curl -I https://$H/lmsfoo     # must fall through to auth-web, not lms-web
+
+    # PWA root files, and the cache policy that keeps installs updatable.
+    curl -I https://$H/sw.js                  # 200 + Cache-Control: no-store
+    curl -I https://$H/manifest.webmanifest   # 200 + application/manifest+json
+    curl -I https://$H/icons/apple-touch-icon.png   # 200
+    curl -I https://$H/offline                # 200
+
+    # Exactly one Cache-Control header (proxy_hide_header working).
+    curl -sI https://$H/sw.js | grep -ci ^cache-control    # 1
+
+    # The five extra origins must be GONE. Run from ANOTHER machine — Docker's
+    # iptables rules sit in front of ufw, so a published 0.0.0.0 port stays
+    # reachable even when ufw claims it is blocked.
+    nmap -Pn -p 22,80,443,3000-3005,4000,5432,8010 $H
 
 Then in the browser: DevTools → Application → Service Workers shows one worker at
 scope `/`, and Manifest shows the install prompt. A failed registration logs

@@ -95,3 +95,5 @@ db_scripts/one_time/*
 open_issues/*
 db_scripts/tools/*
 .env*uat
+msq-deploy/.env-dev
+msq-deploy/.env-prd

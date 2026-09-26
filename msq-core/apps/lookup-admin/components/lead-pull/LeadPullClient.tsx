@@ -1,10 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
-import { Button, type ApiRequestError } from '@platform/ui-kit';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Button, type ApiRequestError, type SearchableOption } from '@platform/ui-kit';
 import {
   leadPull,
+  orgs as orgsApi,
+  campaignTypes as campaignTypesApi,
   type CreatePullRunInput,
   type MetaPageOption,
   type PullApplyResult,
@@ -16,6 +18,7 @@ import PullFilterForm from './PullFilterForm';
 import RunProgress from './RunProgress';
 import DeltaSummary from './DeltaSummary';
 import StagedLeadsGrid from './StagedLeadsGrid';
+import MappingFormModal from '@/components/meta-mappings/MappingFormModal';
 
 interface Props {
   tenantId: string;
@@ -48,6 +51,32 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
   const [pollNonce, setPollNonce] = useState(0);
 
   const [grid, setGrid] = useState<{ verdict: PullVerdict | undefined; title: string } | null>(null);
+
+  // ── 1.51.0: inline "map this page", then remap the run's unmapped rows ──
+  const [orgList, setOrgList] = useState<Array<{ id: string; name: string; tenant_id: string }>>([]);
+  const [typeOptions, setTypeOptions] = useState<SearchableOption[]>([]);
+  const [mapPageId, setMapPageId] = useState<string | null>(null);
+  const [remapNotice, setRemapNotice] = useState<string | null>(null);
+  const [scheduledError, setScheduledError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    orgsApi.listAll()
+      .then((res) => { if (!cancelled) setOrgList(res.data.filter((o) => o.tenant_id === tenantId)); })
+      .catch(() => { if (!cancelled) setOrgList([]); });
+    campaignTypesApi.list(tenantId)
+      .then((res) => {
+        if (!cancelled) setTypeOptions(res.data.filter((t) => t.is_active).map((t) => ({ id: t.id, label: t.label })));
+      })
+      .catch(() => { if (!cancelled) setTypeOptions([]); });
+    return () => { cancelled = true; };
+  }, [tenantId]);
+
+  const orgOptions: SearchableOption[] = useMemo(() => orgList.map((o) => ({ id: o.id, label: o.name })), [orgList]);
+  const orgNames: Record<string, string> = useMemo(
+    () => Object.fromEntries(orgList.map((o) => [o.id, o.name])),
+    [orgList],
+  );
 
   const pageNames: Record<string, string> = Object.fromEntries(
     pages.filter((p) => p.name).map((p) => [p.page_id, p.name as string]),
@@ -159,7 +188,39 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
     setGrid({ verdict, title });
   }, []);
 
-  const canApply = run?.status === 'completed';
+  // An applied run can be applied AGAIN when rows became importable after an
+  // inline mapping + remap (1.51.0).
+  const canApply = run?.status === 'completed' || (run?.status === 'applied' && run.importable > 0);
+
+  const handleMappingSaved = useCallback(() => {
+    if (!runId) return;
+    setRemapNotice(null);
+    leadPull.remap(tenantId, runId)
+      .then((res) => {
+        setRemapNotice(
+          `${res.data.remapped} row${res.data.remapped === 1 ? '' : 's'} now resolve to a branch`
+          + (res.data.still_unmapped ? ` · ${res.data.still_unmapped} still unmapped` : '')
+          + '. Review the summary, then Apply.',
+        );
+        setPollNonce((n) => n + 1);
+      })
+      .catch((err: unknown) => setRemapNotice(err instanceof Error ? err.message : 'Could not remap the run.'));
+  }, [tenantId, runId]);
+
+  const openScheduledRun = useCallback(() => {
+    setScheduledError(null);
+    leadPull.latestRun(tenantId, 'scheduled')
+      .then((res) => {
+        if (!res.data) {
+          setScheduledError('No scheduled catch-up run yet for this tenant.');
+          return;
+        }
+        setRunId(res.data.run_id);
+        setRun(null);
+        setApplyError(null);
+      })
+      .catch((err: unknown) => setScheduledError(err instanceof Error ? err.message : 'Could not load the scheduled run.'));
+  }, [tenantId]);
   const applyInFlight = queueingApply || run?.status === 'apply_queued' || run?.status === 'applying';
   const runIsLive = run ? !TERMINAL_STATUSES.has(run.status) : creating;
   // The last Apply pass's tallies, written onto the run by the server's worker.
@@ -174,9 +235,21 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
         <h1 className="mt-1 text-2xl font-bold text-[#0F172A]">Meta Lead Pull</h1>
         <p className="mt-1 text-xs text-[#64748B]">
           Backfill leads the live webhook missed. Choose what to pull and from when, review what is genuinely missing
-          from LMS, and apply only that.
+          from LMS — and which branch and team each lead will go to — and apply only that. A scheduled catch-up run
+          also stages the last few days automatically; it is never applied without you.
         </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Button variant="secondary" onClick={openScheduledRun}>Open latest scheduled catch-up</Button>
+          {scheduledError && <span className="text-xs text-[#64748B]">{scheduledError}</span>}
+        </div>
       </div>
+
+      {run?.trigger_kind === 'scheduled' && (
+        <div role="status" className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+          You are looking at a <strong>scheduled catch-up</strong> run (last few days, every mapped page). Review it and
+          press Apply to import what the webhook missed.
+        </div>
+      )}
 
       {createError && (
         <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -227,13 +300,20 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
           onOpenVerdict={openVerdictGrid}
           unmappedPageIds={run.unmapped_page_ids}
           pageNames={pageNames}
+          onMapPage={run.status === 'completed' || run.status === 'applied' ? setMapPageId : undefined}
         />
+      )}
+
+      {remapNotice && (
+        <div role="status" className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155]">
+          {remapNotice}
+        </div>
       )}
 
       {run && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#E2E8F0] bg-white p-4">
           <Button variant="primary" onClick={handleApply} disabled={!canApply || applyInFlight} aria-busy={applyInFlight}>
-            {applyInFlight ? 'Applying…' : run.status === 'applied' ? 'Applied' : 'Apply'}
+            {applyInFlight ? 'Applying…' : run.status === 'applied' && run.importable === 0 ? 'Applied' : 'Apply'}
           </Button>
           <p className="text-xs text-[#64748B]">
             Enabled only once the pull has completed, and runs in the background — you can leave this page while it
@@ -265,9 +345,23 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
           verdict={grid.verdict}
           title={grid.title}
           pageNames={pageNames}
+          orgNames={orgNames}
           onClose={() => setGrid(null)}
         />
       )}
+
+      <MappingFormModal
+        open={mapPageId !== null}
+        onClose={() => setMapPageId(null)}
+        tenantId={tenantId}
+        row={null}
+        pages={pages}
+        pagesUnavailable={pagesUnavailable}
+        orgOptions={orgOptions}
+        campaignTypeOptions={typeOptions}
+        initialPageId={mapPageId ?? undefined}
+        onSaved={handleMappingSaved}
+      />
     </div>
   );
 }

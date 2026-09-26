@@ -25,22 +25,23 @@ export default function MetaCampaignsClient({ tenantId, rows, campaignTypes, cam
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
 
   // Seed a default for every row not already represented: a suggested row
-  // starts on its own matched type, an unmapped row starts EMPTY. Rows already
-  // in `selections` (including ones the admin has since edited) are left as-is
-  // rather than reset by a router.refresh().
+  // starts on the RULE ENGINE's suggestion, an unmapped row starts EMPTY. Rows
+  // already in `selections` (including ones the admin has since edited) are
+  // left as-is rather than reset by a router.refresh().
   //
-  // An unmapped row DOES carry a campaign_type_id — the form/tenant FALLBACK the
-  // live path routed it on — but that is not a suggestion. Pre-filling it made
-  // "Confirm all" on Needs mapping confirm every unmatched campaign to the
-  // default pool (usually sales) in one click, the exact decision this grid
-  // exists to make a human take.
+  // 1.51.0: campaign_type_id is written ONLY by a confirm, so an unconfirmed
+  // row's guess lives in suggested_campaign_type_id. An unmapped row starts
+  // empty on purpose: "Confirm all" on Needs mapping must never confirm every
+  // unmatched campaign to one pool in a click — the decision this grid exists
+  // to make a human take.
   useEffect(() => {
     setSelections((prev) => {
       let changed = false;
       const next = { ...prev };
       for (const row of rows) {
         if (!(row.meta_campaign_id in next)) {
-          next[row.meta_campaign_id] = row.mapping_status === 'unmapped' ? '' : (row.campaign_type_id ?? '');
+          next[row.meta_campaign_id] =
+            row.mapping_status === 'unmapped' ? '' : (row.campaign_type_id ?? row.suggested_campaign_type_id ?? '');
           changed = true;
         }
       }
@@ -53,9 +54,23 @@ export default function MetaCampaignsClient({ tenantId, rows, campaignTypes, cam
     [campaignTypes],
   );
 
-  const suggested = useMemo(() => rows.filter((r) => r.mapping_status === 'suggested'), [rows]);
-  const unmapped = useMemo(() => rows.filter((r) => r.mapping_status === 'unmapped'), [rows]);
-  const confirmed = useMemo(() => rows.filter((r) => r.mapping_status === 'confirmed'), [rows]);
+  // 1.51.0: narrow every grid to the campaigns promoting one page. Built from
+  // the rows' own page_ids (the fetch records the pages each campaign's ad
+  // sets promote), so it lists only pages that actually carry a campaign.
+  const [pageFilter, setPageFilter] = useState('');
+  const pageOptions = useMemo(
+    () => [...new Set(rows.flatMap((r) => r.page_ids ?? []))].sort(),
+    [rows],
+  );
+  const visible = useMemo(
+    () => (pageFilter ? rows.filter((r) => (r.page_ids ?? []).includes(pageFilter)) : rows),
+    [rows, pageFilter],
+  );
+  const conflicted = useMemo(() => rows.filter((r) => r.conflict_reason), [rows]);
+
+  const suggested = useMemo(() => visible.filter((r) => r.mapping_status === 'suggested'), [visible]);
+  const unmapped = useMemo(() => visible.filter((r) => r.mapping_status === 'unmapped'), [visible]);
+  const confirmed = useMemo(() => visible.filter((r) => r.mapping_status === 'confirmed'), [visible]);
 
   // Confirm-all on Needs mapping requires an explicit pick on EVERY row. A
   // partial batch would silently confirm some and leave the rest, which reads as
@@ -97,12 +112,50 @@ export default function MetaCampaignsClient({ tenantId, rows, campaignTypes, cam
           </Link>
           <h1 className="mt-1 text-2xl font-bold text-[#0F172A]">Meta Campaign Mapping</h1>
           <p className="mt-1 text-xs text-[#64748B]">
-            Which type — sales, hiring, or otherwise — each Meta campaign is, and therefore which pool of
-            people its leads route to.
+            Which type — sales, hiring, or otherwise — each Meta campaign is, and therefore which department&apos;s
+            pool its leads route to. Unconfirmed campaigns route on the{' '}
+            <Link href="/dashboard/campaign-types" className="font-semibold text-[#0b6cbf] hover:underline">
+              ordered rules
+            </Link>{' '}
+            until you confirm them. Campaigns are fetched from the{' '}
+            <Link href="/dashboard/meta-ad-accounts" className="font-semibold text-[#0b6cbf] hover:underline">
+              enabled ad accounts
+            </Link>{' '}
+            and land in the tenant their pages are mapped to.
           </p>
         </div>
         <FetchCampaignsButton tenantId={tenantId} onSynced={handleRefresh} />
       </div>
+
+      {conflicted.length > 0 && (
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <p className="font-semibold">
+            {conflicted.length} campaign{conflicted.length === 1 ? '' : 's'} promote pages mapped to more than one tenant.
+          </p>
+          <p className="mt-0.5">
+            A campaign must belong to one tenant. Their confirmed type is not applied to another tenant&apos;s leads until
+            the page mappings are fixed: {conflicted.slice(0, 5).map((r) => r.name ?? r.meta_campaign_id).join(', ')}
+            {conflicted.length > 5 ? '…' : ''}
+          </p>
+        </div>
+      )}
+
+      {pageOptions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <label htmlFor="campaign-page-filter" className="font-semibold text-[#334155]">Page</label>
+          <select
+            id="campaign-page-filter"
+            value={pageFilter}
+            onChange={(e) => setPageFilter(e.target.value)}
+            className="rounded-lg border border-[#E2E8F0] bg-white px-2 py-1 text-xs"
+          >
+            <option value="">All pages</option>
+            {pageOptions.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {campaignTypesUnavailable && (
         <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">

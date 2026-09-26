@@ -354,6 +354,77 @@ CREATE POLICY admin_tenant_config_policy ON ext.meta_campaigns AS PERMISSIVE FOR
   USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
+-- marketing.campaign_type_rules (1.51.0)
+-- Identical policy set to marketing.campaign_types, and for the same reasons:
+-- tenant-scoped catalog, read on the product runtime through the current org's
+-- tenant, written on the N-6 admin path and by tenant_admin.
+ALTER TABLE marketing.campaign_type_rules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE marketing.campaign_type_rules FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy       ON marketing.campaign_type_rules;
+DROP POLICY IF EXISTS tenant_isolation_policy    ON marketing.campaign_type_rules;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON marketing.campaign_type_rules;
+CREATE POLICY org_isolation_policy ON marketing.campaign_type_rules AS PERMISSIVE FOR SELECT TO app_user
+  USING (tenant_id = (SELECT tenant_id FROM entity.organizations
+                      WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
+CREATE POLICY tenant_isolation_policy ON marketing.campaign_type_rules AS PERMISSIVE FOR ALL TO tenant_admin
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+CREATE POLICY admin_tenant_config_policy ON marketing.campaign_type_rules AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+-- ext.meta_adsets / ext.meta_ads (1.51.0)
+-- Same shape as ext.meta_campaigns: discovery caches with no branch, read by
+-- the product runtime through the current org's tenant, written on the N-6
+-- admin path.
+DO $meta_ad_rls$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['ext.meta_adsets', 'ext.meta_ads'] LOOP
+    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('ALTER TABLE %s FORCE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS org_isolation_policy ON %s', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %s', t);
+    EXECUTE format('DROP POLICY IF EXISTS admin_tenant_config_policy ON %s', t);
+    EXECUTE format($p$CREATE POLICY org_isolation_policy ON %s AS PERMISSIVE FOR SELECT TO app_user
+      USING (tenant_id = (SELECT tenant_id FROM entity.organizations
+                          WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid))$p$, t);
+    EXECUTE format($p$CREATE POLICY tenant_isolation_policy ON %s AS PERMISSIVE FOR SELECT TO tenant_admin
+      USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)$p$, t);
+    EXECUTE format($p$CREATE POLICY admin_tenant_config_policy ON %s AS PERMISSIVE FOR ALL TO app_user
+      USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+      WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)$p$, t);
+  END LOOP;
+END $meta_ad_rls$;
+
+-- ext.meta_ad_accounts (1.51.0)
+-- RLS on, FORCE on, and NO POLICY AT ALL -- deliberately. The table is
+-- platform-level (no tenant_id): one shared Meta integration's ad accounts
+-- carry campaigns for many tenants, so no tenant key could fence it. With no
+-- policy, every non-BYPASSRLS role reads zero rows and every write fails; only
+-- root_service (withServiceTx) reaches it, and only from super_admin routes
+-- that have already checked RANKS.SUPER_ADMIN. It holds no lead data and no
+-- credential -- account ids, names and an enable flag.
+ALTER TABLE ext.meta_ad_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_ad_accounts FORCE ROW LEVEL SECURITY;
+
+-- ext.meta_lead_inbox (1.51.0)
+-- The N-6 admin policy for tenant-attributed rows only. tenant_id IS NULL rows
+-- (an unmapped page: neither tenant nor branch is known) match NO policy and
+-- are reached only on the super_admin service path, the same way the shared
+-- ext.meta_tenant_config row is. The org half of WITH CHECK is lifted from
+-- scratch.meta_pull_leads for the identical reason: Retry writes a real lead
+-- into whatever org the row names, so the org must belong to the pinned tenant.
+ALTER TABLE ext.meta_lead_inbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_lead_inbox FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON ext.meta_lead_inbox;
+CREATE POLICY admin_tenant_config_policy ON ext.meta_lead_inbox AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid
+              AND (org_id IS NULL
+                   OR entity.fn_org_tenant(org_id) = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid));
+
 -- lms.lead_interactions
 ALTER TABLE lms.lead_interactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lms.lead_interactions FORCE ROW LEVEL SECURITY;
@@ -824,6 +895,16 @@ DROP POLICY IF EXISTS tenant_isolation_policy ON ext.meta_forms;
 -- app_user policy.
 CREATE POLICY tenant_isolation_policy ON ext.meta_forms
   AS PERMISSIVE FOR ALL TO tenant_admin
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+-- 1.51.0: the console's form picker (super_admin via withTenantConfigTx) now
+-- writes this cache, so it gets the N-6 admin policy. Keyed on the pinned
+-- tenant; the product runtime never sets app.current_tenant_id, so this grants
+-- ordinary sessions nothing.
+DROP POLICY IF EXISTS admin_tenant_config_policy ON ext.meta_forms;
+CREATE POLICY admin_tenant_config_policy ON ext.meta_forms
+  AS PERMISSIVE FOR ALL TO app_user
   USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 

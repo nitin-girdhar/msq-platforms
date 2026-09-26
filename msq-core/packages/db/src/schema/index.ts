@@ -116,5 +116,9 @@ export * from './tables/task-status-log.table.js';
 export * from './tables/task-comments.table.js';
 
 // Meta lead pull staging (scratch schema)
+export * from './tables/campaign-type-rules.table.js';
+export * from './tables/meta-ad-accounts.table.js';
+export * from './tables/meta-adsets.table.js';
+export * from './tables/meta-lead-inbox.table.js';
 export * from './tables/meta-pull-runs.table.js';
 export * from './tables/meta-pull-leads.table.js';

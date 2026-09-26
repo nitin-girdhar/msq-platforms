@@ -11,11 +11,13 @@ interface Props {
 
 function summarize(result: CampaignSyncResult): string {
   return [
-    `${result.fetched} fetched`,
-    `${result.inserted} new`,
+    `${result.ad_accounts} ad account${result.ad_accounts === 1 ? '' : 's'} walked`,
+    `${result.fetched} campaigns fetched`,
+    `${result.inserted} new for this tenant`,
     `${result.suggested} need confirmation`,
     `${result.unmapped} need mapping`,
     `${result.confirmed_untouched} already confirmed and left alone`,
+    ...(result.other_tenant ? [`${result.other_tenant} belong to other tenants`] : []),
   ].join(' · ');
 }
 
@@ -57,6 +59,23 @@ export default function FetchCampaignsButton({ tenantId, onSynced }: Props) {
       {result && (
         <div className="space-y-1 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155]">
           <p>{summarize(result)}</p>
+          {result.unattributed.length > 0 && (
+            <div className="mt-1 space-y-0.5 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[#475569]">
+              <p className="font-semibold">
+                {result.unattributed.length} campaign{result.unattributed.length === 1 ? '' : 's'} promote pages no tenant
+                maps — map those pages on Meta Page Mapping, then fetch again:
+              </p>
+              <p>
+                {[...new Set(result.unattributed.flatMap((c) => c.page_ids))].slice(0, 10).join(', ') || 'no promoted page'}
+              </p>
+            </div>
+          )}
+          {result.conflicts.length > 0 && (
+            <div role="alert" className="mt-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-800">
+              {result.conflicts.length} campaign{result.conflicts.length === 1 ? '' : 's'} promote pages of more than one
+              tenant and were skipped: {result.conflicts.slice(0, 5).map((c) => c.name ?? c.meta_campaign_id).join(', ')}
+            </div>
+          )}
           {result.errors.length > 0 && (
             <div role="alert" className="mt-1 space-y-0.5 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-800">
               {/* Not "N accounts": the sync records per-ACCOUNT failures (a

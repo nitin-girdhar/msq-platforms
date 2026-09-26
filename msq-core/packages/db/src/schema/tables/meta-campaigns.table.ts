@@ -45,6 +45,16 @@ export const metaCampaignsTable = extSchema.table('meta_campaigns', {
   /** 'unmapped' | 'suggested' | 'confirmed' */
   mappingStatus:    text('mapping_status').notNull().default('unmapped'),
   matchedKeyword:   text('matched_keyword'),
+  /**
+   * 1.51.0: the rule engine's guess. `campaignTypeId` is set ONLY by an admin
+   * confirm, so a guess or a fallback can never harden into the campaign's type.
+   */
+  suggestedCampaignTypeId: uuid('suggested_campaign_type_id').references(() => campaignTypesTable.id, { onDelete: 'set null' }),
+  matchedRuleId:    uuid('matched_rule_id'),
+  /** Pages this campaign's ad sets promote — what the shared-app fetch attributes the tenant by. */
+  pageIds:          bigint('page_ids', { mode: 'bigint' }).array().notNull().default(sql`'{}'`),
+  /** Set when the campaign's pages map to more than one tenant; such a campaign is skipped. */
+  conflictReason:   text('conflict_reason'),
   confirmedBy:      uuid('confirmed_by').references(() => usersTable.id, { onDelete: 'set null' }),
   confirmedAt:      timestamp('confirmed_at', { withTimezone: true }),
   /** 'fetch' | 'lead' */

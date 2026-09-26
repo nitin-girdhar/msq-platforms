@@ -69,10 +69,12 @@ interface Props {
   verdict: PullVerdict | undefined;
   title: string;
   pageNames: Record<string, string>;
+  // 1.51.0: branch names for the Branch column (org_id -> name).
+  orgNames?: Record<string, string> | undefined;
   onClose: () => void;
 }
 
-export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageNames, onClose }: Props) {
+export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageNames, orgNames, onClose }: Props) {
   const [rows, setRows] = useState<StagedLeadRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -119,9 +121,9 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
     return (
       <span
         className="inline-flex items-center rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
-        title={p.data.suggested_campaign_type_label ? `Suggested type: ${p.data.suggested_campaign_type_label}` : 'No matching campaign type found'}
+        title="The form name looks like recruitment. Check the Routes to column: if it is not your hiring type, add a form-name rule or set the page/form default type."
       >
-        Hiring{p.data.suggested_campaign_type_label ? ` → ${p.data.suggested_campaign_type_label}` : ''}
+        Hiring-looking form
       </span>
     );
   }, []);
@@ -157,6 +159,18 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
       valueGetter: (p) => p.data?.form_name ?? p.data?.form_id ?? '',
     },
     {
+      // 1.51.0: where Apply will put the lead — the branch from the page/form
+      // mapping, and the type (therefore the department's pool) by the same
+      // ladder the webhook uses: confirmed campaign -> rules -> page default ->
+      // tenant default.
+      colId: 'branch', headerName: 'Branch', width: 170, minWidth: 130, sortable: true, filter: true,
+      valueGetter: (p) => (p.data?.org_id ? orgNames?.[p.data.org_id] ?? p.data.org_id : 'Unmapped'),
+    },
+    {
+      colId: 'routes_to', headerName: 'Routes to (type)', width: 150, minWidth: 120, sortable: true, filter: true,
+      valueGetter: (p) => p.data?.suggested_campaign_type_label ?? '—',
+    },
+    {
       colId: 'verdict', headerName: 'Verdict', width: 160, sortable: true, filter: true,
       valueGetter: (p) => (p.data?.verdict ? VERDICT_LABELS[p.data.verdict] ?? p.data.verdict : ''),
       cellRenderer: verdictCellRenderer,
@@ -170,7 +184,7 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
     },
     {
       colId: 'hiring', headerName: 'Hiring signal', width: 220, sortable: true, filter: true,
-      valueGetter: (p) => (p.data?.is_hiring_form ? `Hiring${p.data.suggested_campaign_type_label ? ` → ${p.data.suggested_campaign_type_label}` : ''}` : ''),
+      valueGetter: (p) => (p.data?.is_hiring_form ? 'Hiring-looking form' : ''),
       cellRenderer: hiringCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center' },
     },
@@ -188,7 +202,7 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
       colId: 'applied_error', headerName: 'Applied error', width: 260, minWidth: 180, sortable: true, filter: true,
       valueGetter: (p) => p.data?.applied_error ?? '',
     },
-  ], [pageNames, pageCellRenderer, verdictCellRenderer, importableCellRenderer, hiringCellRenderer, appliedStatusCellRenderer]);
+  ], [pageNames, orgNames, pageCellRenderer, verdictCellRenderer, importableCellRenderer, hiringCellRenderer, appliedStatusCellRenderer]);
 
   const onGridReady = useCallback((params: GridReadyEvent<StagedLeadRow>) => {
     params.api.sizeColumnsToFit();

@@ -6,7 +6,15 @@ import {
   metaCampaigns,
   type MetaCampaignRow,
   type ConfirmCampaignResult,
+  type RuleMatchField,
 } from '@/src/lib/api/client';
+
+const RULE_FIELD_OPTIONS: Array<{ value: RuleMatchField; label: string }> = [
+  { value: 'campaign_name', label: 'Campaign name' },
+  { value: 'form_name', label: 'Lead form name' },
+  { value: 'adset_name', label: 'Ad set name' },
+  { value: 'ad_name', label: 'Ad name' },
+];
 
 const FORM_ID = 'confirm-campaign-type-form';
 
@@ -107,7 +115,12 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
   const isSingleEditable = !!target && target.editable && target.campaigns.length === 1;
 
   const [singleTypeId, setSingleTypeId] = useState('');
-  const [learnKeyword, setLearnKeyword] = useState(false);
+  // 1.51.0: an optional ordered rule added with the confirm — typed by the
+  // admin, never guessed from the name (the retired "learn keyword" offered
+  // 'gurugram' for 'HIR_Gurugram_Trainer_Sep26').
+  const [addRule, setAddRule] = useState(false);
+  const [rulePattern, setRulePattern] = useState('');
+  const [ruleField, setRuleField] = useState<RuleMatchField>('campaign_name');
   const [previews, setPreviews] = useState<Record<string, ConfirmCampaignResult> | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -117,7 +130,9 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
   useEffect(() => {
     if (!target) return;
     setSingleTypeId(isSingleEditable ? target.campaigns[0]!.campaignTypeId : '');
-    setLearnKeyword(false);
+    setAddRule(false);
+    setRulePattern('');
+    setRuleField('campaign_name');
     setPreviews(null);
     setPreviewError(null);
     setCommitError(null);
@@ -136,10 +151,8 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
 
   const entryKey = effectiveEntries.map((e) => `${e.row.meta_campaign_id}:${e.campaignTypeId}`).join(',');
 
-  // Preview runs with learn_keyword ALWAYS true — a dry run writes nothing
-  // regardless, so this is the only way to show the admin what token WOULD be
-  // learned before they decide, via the checkbox below, whether the real
-  // commit should actually learn it.
+  // The preview never carries add_rule: a rule changes future suggestions, not
+  // the leads this confirm moves, so it has no bearing on the impact shown.
   useEffect(() => {
     if (!target || effectiveEntries.length === 0 || effectiveEntries.some((e) => !e.campaignTypeId)) {
       setPreviews(null);
@@ -150,7 +163,7 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
     setPreviewError(null);
     mapWithConcurrency(effectiveEntries, PREVIEW_CONCURRENCY, (e) =>
       metaCampaigns
-        .confirm(tenantId, e.row.meta_campaign_id, { campaign_type_id: e.campaignTypeId, learn_keyword: true }, true)
+        .confirm(tenantId, e.row.meta_campaign_id, { campaign_type_id: e.campaignTypeId }, true)
         .then((res) => [e.row.meta_campaign_id, res.data] as const),
     )
       .then((entries) => {
@@ -173,8 +186,8 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
   if (!target) return null;
 
   const aggregate = previews ? aggregatePreviews(previews) : null;
-  const learnable = previews ? Object.values(previews).filter((p) => p.learned_keyword) : [];
   const missingType = effectiveEntries.some((e) => !e.campaignTypeId);
+  const rulePatternValid = !addRule || rulePattern.trim().length >= 2;
 
   const handleClose = () => {
     if (committing) return;
@@ -183,7 +196,7 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!previews || missingType) return;
+    if (!previews || missingType || !rulePatternValid) return;
 
     setCommitting(true);
     setCommitError(null);
@@ -199,7 +212,10 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
         const res = await metaCampaigns.confirm(
           tenantId,
           entry.row.meta_campaign_id,
-          { campaign_type_id: entry.campaignTypeId, learn_keyword: learnKeyword },
+          {
+            campaign_type_id: entry.campaignTypeId,
+            ...(addRule && isSingleEditable ? { add_rule: { pattern: rulePattern.trim(), match_field: ruleField } } : {}),
+          },
           false,
         );
         if (res.data.reclassification_error) {
@@ -229,7 +245,7 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
     onClose();
   };
 
-  const disableCommit = committing || previewing || !previews || missingType;
+  const disableCommit = committing || previewing || !previews || missingType || !rulePatternValid;
   const isBulk = effectiveEntries.length > 1;
 
   const footer = (
@@ -301,8 +317,13 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
             <div className="space-y-1">
               <p>
                 Relabels <strong>{aggregate.leads_relabelled}</strong> lead{aggregate.leads_relabelled === 1 ? '' : 's'} across{' '}
-                <strong>{aggregate.by_branch.length}</strong> branch{aggregate.by_branch.length === 1 ? '' : 'es'} · reassigns{' '}
-                <strong>{aggregate.leads_reassigned}</strong> · <strong>{aggregate.leads_left_unassigned}</strong> would be left unassigned.
+                <strong>{aggregate.by_branch.length}</strong> branch{aggregate.by_branch.length === 1 ? '' : 'es'} · moves{' '}
+                <strong>{aggregate.leads_reassigned}</strong> open lead{aggregate.leads_reassigned === 1 ? '' : 's'} to the new
+                team&apos;s pool · <strong>{aggregate.leads_left_unassigned}</strong> would be left unassigned.
+              </p>
+              <p className="text-[11px] text-[#64748B]">
+                Every OPEN lead of this campaign moves to the new type&apos;s pool in its branch, including leads someone has
+                already worked — unless its owner already works that pool.
               </p>
               {aggregate.by_branch.some((b) => b.leads_left_unassigned > 0) && (
                 <ul className="space-y-0.5 text-amber-700">
@@ -320,24 +341,54 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
           )}
         </div>
 
-        {learnable.length > 0 && (
-          <label className="flex items-start gap-2 text-xs font-semibold text-[#334155]">
-            <input
-              type="checkbox"
-              checked={learnKeyword}
-              onChange={(e) => setLearnKeyword(e.target.checked)}
-              disabled={committing}
-              className="mt-0.5 h-3.5 w-3.5"
-            />
-            <span>
-              Also add matched keyword{learnable.length === 1 ? '' : 's'} to the target type
-              {learnable.length === 1 ? '' : 's'}
-              <span className="mt-0.5 block font-normal text-[11px] text-[#64748B]">
-                {learnable.map((p) => `"${p.learned_keyword}"`).join(', ')} — makes the next fetch match similarly-named
-                campaigns automatically.
+        {isSingleEditable && (
+          <div className="space-y-2 rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5">
+            <label className="flex items-start gap-2 text-xs font-semibold text-[#334155]">
+              <input
+                type="checkbox"
+                checked={addRule}
+                onChange={(e) => setAddRule(e.target.checked)}
+                disabled={committing}
+                className="mt-0.5 h-3.5 w-3.5"
+              />
+              <span>
+                Also add a rule for this type
+                <span className="mt-0.5 block font-normal text-[11px] text-[#64748B]">
+                  So the next similarly-named campaign is suggested correctly. Added at the END of the rule list —
+                  reorder it on Campaign Types &amp; Rules.
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+            {addRule && (
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <input
+                  type="text"
+                  value={rulePattern}
+                  onChange={(e) => setRulePattern(e.target.value)}
+                  placeholder="Word or phrase, e.g. HIR or recruitment"
+                  aria-label="Rule pattern"
+                  disabled={committing}
+                  className="rounded-lg border border-[#CBD5E1] px-2.5 py-1.5 text-xs"
+                />
+                <select
+                  value={ruleField}
+                  onChange={(e) => setRuleField(e.target.value as RuleMatchField)}
+                  aria-label="Rule matches on"
+                  disabled={committing}
+                  className="rounded-lg border border-[#CBD5E1] px-2 py-1.5 text-xs"
+                >
+                  {RULE_FIELD_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                {!rulePatternValid && (
+                  <p className="text-[11px] text-red-600 sm:col-span-2">Enter at least 2 characters.</p>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </form>
     </Modal>

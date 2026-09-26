@@ -25,7 +25,8 @@ import { usersTable } from './users.table';
 export const metaPullRunsTable = scratchSchema.table('meta_pull_runs', {
   id:          uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   tenantId:    uuid('tenant_id').notNull().references(() => tenantsTable.id, { onDelete: 'cascade' }),
-  createdBy:   uuid('created_by').notNull().references(() => usersTable.id, { onDelete: 'cascade' }),
+  /** NULL for a scheduled catch-up run (1.51.0). */
+  createdBy:   uuid('created_by').references(() => usersTable.id, { onDelete: 'cascade' }),
   /** 'queued' | 'running' | 'completed' | 'failed' | 'applying' | 'applied' */
   status:      text('status').notNull().default('queued'),
   /**
@@ -35,6 +36,11 @@ export const metaPullRunsTable = scratchSchema.table('meta_pull_runs', {
    * made the pull no cheaper.
    */
   filters:     jsonb('filters').notNull().default({}),
+  /**
+   * 1.51.0: 'manual' | 'scheduled'. A new run clears only the tenant's previous
+   * run of the same kind, so the scheduled catch-up never wipes an admin's run.
+   */
+  triggerKind: text('trigger_kind').notNull().default('manual'),
   /** Per-verdict tallies plus pages/forms walked, page-token errors, truncation. */
   counts:      jsonb('counts').notNull().default({}),
   heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }),

@@ -120,6 +120,21 @@ export default function CampaignMappingGrid({
       {
         colId: 'name', headerName: 'Campaign', flex: 2, minWidth: 220, sortable: true, filter: true,
         valueGetter: (p) => p.data?.name ?? p.data?.meta_campaign_id ?? '',
+        tooltipValueGetter: (p) => p.data?.conflict_reason ?? undefined,
+        cellRenderer: (p: ICellRendererParams<MetaCampaignRow>) => (
+          <span className="truncate">
+            {p.data?.conflict_reason && (
+              <span className="mr-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-800">CONFLICT</span>
+            )}
+            {p.data?.name ?? p.data?.meta_campaign_id}
+          </span>
+        ),
+      },
+      {
+        // 1.51.0: the pages this campaign's ad sets promote — what the fetch
+        // attributed it to its tenant by.
+        colId: 'page_ids', headerName: 'Page(s)', width: 170, minWidth: 140, sortable: true, filter: true,
+        valueGetter: (p) => (p.data?.page_ids ?? []).join(', '),
       },
       {
         colId: 'ad_account_id', headerName: 'Ad account', width: 180, minWidth: 150, sortable: true, filter: true,
@@ -135,7 +150,8 @@ export default function CampaignMappingGrid({
 
     if (mode === 'suggested') {
       cols.push({
-        colId: 'matched_keyword', headerName: 'Matched keyword', width: 160, minWidth: 140, sortable: true, filter: true,
+        // The pattern of the ordered rule that produced the suggestion (1.51.0).
+        colId: 'matched_keyword', headerName: 'Matched rule', width: 150, minWidth: 130, sortable: true, filter: true,
         valueGetter: (p) => p.data?.matched_keyword ?? '',
       });
     }
@@ -160,7 +176,7 @@ export default function CampaignMappingGrid({
       cols.push(
         {
           colId: 'confirmed_by', headerName: 'Confirmed by', width: 160, minWidth: 140, sortable: true, filter: true,
-          valueGetter: (p) => p.data?.confirmed_by ?? '',
+          valueGetter: (p) => p.data?.confirmed_by_name ?? p.data?.confirmed_by ?? '',
         },
         {
           colId: 'confirmed_at', headerName: 'Confirmed at', width: 180, minWidth: 150, sortable: true, filter: true,

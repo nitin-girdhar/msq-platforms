@@ -28,12 +28,14 @@ interface Props {
   onOpenVerdict: (verdict: PullVerdict | undefined, label: string) => void;
   unmappedPageIds: string[];
   pageNames: Record<string, string>;
+  // 1.51.0: map an unmapped page right here, then remap the run's rows.
+  onMapPage?: ((pageId: string) => void) | undefined;
 }
 
 // The card the whole screen exists to produce: what genuinely needs pulling in
 // versus what LMS already has, with every number opening the rows behind it —
 // a count the admin cannot drill into is one they have to trust blindly.
-export default function DeltaSummary({ run, onOpenVerdict, unmappedPageIds, pageNames }: Props) {
+export default function DeltaSummary({ run, onOpenVerdict, unmappedPageIds, pageNames, onMapPage }: Props) {
   const summary = run.verdict_summary;
   const fetched = Object.values(summary).reduce((sum, n) => sum + (n ?? 0), 0);
   // Every staged row starts `applied_status = 'pending'` the moment the pull
@@ -78,8 +80,8 @@ export default function DeltaSummary({ run, onOpenVerdict, unmappedPageIds, page
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
           <p>
             {summary.unmapped_form} lead{summary.unmapped_form === 1 ? '' : 's'} came from a form with no active page
-            mapping — these are being dropped by the live webhook RIGHT NOW too. Fixing the mapping is the actual
-            remedy, not re-running this pull.
+            mapping — the live webhook parks these in the Meta Lead Inbox too. Map the page below, and this run&apos;s
+            rows become importable without pulling again.
           </p>
           {unmappedPageIds.length > 0 && (
             <p className="mt-1.5">
@@ -96,6 +98,15 @@ export default function DeltaSummary({ run, onOpenVerdict, unmappedPageIds, page
                   >
                     {pageNames[id] ?? id}
                   </Link>
+                  {onMapPage && (
+                    <button
+                      type="button"
+                      onClick={() => onMapPage(id)}
+                      className="ml-1 rounded border border-amber-300 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+                    >
+                      Map here
+                    </button>
+                  )}
                 </span>
               ))}
             </p>

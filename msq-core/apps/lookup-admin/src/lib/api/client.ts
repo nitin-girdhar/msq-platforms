@@ -223,13 +223,31 @@ export interface MetaPageOrgMapRow {
   // unless a more specific form_id row exists.
   form_id: string | null;
   platform: MetaPlatform;
+  // 1.51.0: the page/form fallback type — used when neither a confirmed
+  // campaign nor an ordered rule types the lead, and for organic leads.
+  default_campaign_type_id: string | null;
+  default_campaign_type_label: string | null;
   is_active: boolean;
+  // When a lead last arrived through this row (webhook or lead-pull Apply).
   last_synced_at: string | null;
 }
 
 export interface MetaPageOption {
   page_id: string;
   name: string | null;
+  // 1.51.0: who already maps this page. 'other' pages belong to another tenant
+  // and must not be mapped or pulled here (the service refuses their forms).
+  owner?: 'this' | 'other' | null;
+  owner_tenant_name?: string | null;
+}
+
+export interface MetaPageForm {
+  form_id: string;
+  name: string | null;
+  status: string | null;
+  leads_count: number | null;
+  // The branch an exact form row already routes this form to, if any.
+  mapped_org_id: string | null;
 }
 
 export interface CreateMetaMappingInput {
@@ -240,6 +258,15 @@ export interface CreateMetaMappingInput {
   // payload the same shape the page-level case reads as.
   form_id?: string;
   platform: MetaPlatform;
+  default_campaign_type_id?: string | null;
+}
+
+export interface UpdateMetaMappingInput {
+  org_id?: string;
+  is_active?: boolean;
+  platform?: MetaPlatform;
+  // null clears the default; omitted leaves it.
+  default_campaign_type_id?: string | null;
 }
 
 export const metaMappings = {
@@ -263,11 +290,18 @@ export const metaMappings = {
       { method: 'POST', body: JSON.stringify(body) },
     ),
 
-  // 204 No Content — `request` returns undefined for it. Only org_id and
-  // is_active are accepted by updateMappingSchema; page_id/form_id/platform are
-  // immutable by design (they are the row's identity), so an edit that needs to
-  // change those is a deactivate plus a new row.
-  update: (tenantId: string, mappingId: string, body: { org_id?: string; is_active?: boolean }) =>
+  // The live leadgen forms on one page (1.51.0) — the form picker. Refused for a
+  // page mapped to another tenant.
+  pageForms: (tenantId: string, pageId: string) =>
+    request<{ success: true; data: MetaPageForm[] }>(
+      `/meta/pages/${encodeURIComponent(pageId)}/forms?tenant_id=${encodeURIComponent(tenantId)}`,
+    ),
+
+  // 204 No Content — `request` returns undefined for it. page_id/form_id are the
+  // row's identity and stay immutable (an edit that needs to change them is a
+  // deactivate plus a new row); branch, platform, default type and active are
+  // editable (1.51.0).
+  update: (tenantId: string, mappingId: string, body: UpdateMetaMappingInput) =>
     request<void>(
       `/meta/page-org-map/${mappingId}?tenant_id=${encodeURIComponent(tenantId)}`,
       { method: 'PATCH', body: JSON.stringify(body) },
@@ -298,8 +332,18 @@ export interface MetaCampaignRow {
   campaign_type_name: string | null;
   campaign_type_label: string | null;
   mapping_status: MappingStatus;
+  // The pattern of the rule that produced the suggestion.
   matched_keyword: string | null;
+  // 1.51.0: the rule engine's guess; campaign_type_id is set only by a confirm.
+  suggested_campaign_type_id: string | null;
+  suggested_campaign_type_label: string | null;
+  matched_rule_id: string | null;
+  // Pages the campaign's ad sets promote (strings — 16+ digit ids).
+  page_ids: string[];
+  // Set when the campaign's pages map to more than one tenant.
+  conflict_reason: string | null;
   confirmed_by: string | null;
+  confirmed_by_name: string | null;
   confirmed_at: string | null;
   first_seen_source: string | null;
   last_synced_at: string | null;
@@ -312,12 +356,24 @@ export interface CampaignSyncError {
   message: string;
 }
 
+export interface CampaignSyncIssue {
+  meta_campaign_id: string;
+  name: string | null;
+  page_ids: string[];
+}
+
 export interface CampaignSyncResult {
   fetched: number;
   inserted: number;
   suggested: number;
   unmapped: number;
   confirmed_untouched: number;
+  // 1.51.0: campaigns whose pages map to no tenant / to more than one.
+  unattributed: CampaignSyncIssue[];
+  conflicts: CampaignSyncIssue[];
+  // Campaigns attributed to another tenant, skipped by a tenant-scoped fetch.
+  other_tenant: number;
+  ad_accounts: number;
   errors: CampaignSyncError[];
 }
 
@@ -342,12 +398,8 @@ export interface ConfirmCampaignResult {
   dry_run: boolean;
   meta_campaign_id: string;
   campaign_type_id: string;
-  // The token that would be (or was) added to the type's match_keywords, or
-  // null when nothing matched. Populated on every dry run this client makes
-  // (learn_keyword is always sent as true on the preview call, which writes
-  // nothing regardless) purely so the modal can show the admin what learning
-  // would add before they decide whether to actually opt in.
-  learned_keyword: string | null;
+  // 1.51.0: the rule added with the confirm (or that would be, on a dry run).
+  added_rule: { pattern: string; match_field: RuleMatchField } | null;
   // True once a real confirm has committed the mapping; false on a dry run.
   mapping_saved: boolean;
   // Always present on a dry run. Null only when a real confirm SAVED the mapping
@@ -359,13 +411,14 @@ export interface ConfirmCampaignResult {
 
 export interface ConfirmCampaignInput {
   campaign_type_id: string;
-  learn_keyword?: boolean;
+  // 1.51.0: optionally add an ordered rule for this type in the same action.
+  add_rule?: { pattern: string; match_field: RuleMatchField };
 }
 
 export const metaCampaigns = {
-  list: (tenantId: string) =>
+  list: (tenantId: string, pageId?: string) =>
     request<{ success: true; data: MetaCampaignRow[] }>(
-      `/meta/campaigns?tenant_id=${encodeURIComponent(tenantId)}`,
+      `/meta/campaigns?tenant_id=${encodeURIComponent(tenantId)}${pageId ? `&page_id=${encodeURIComponent(pageId)}` : ''}`,
     ),
 
   sync: (tenantId: string) =>
@@ -407,11 +460,166 @@ export interface CampaignTypeRow {
   updated_at: string;
 }
 
+export type RuleMatchField = 'campaign_name' | 'form_name' | 'adset_name' | 'ad_name';
+
+// marketing.campaign_type_rules (1.51.0): FIRST MATCH WINS in rule_order.
+export interface CampaignTypeRuleRow {
+  id: string;
+  rule_order: number;
+  match_field: RuleMatchField;
+  pattern: string;
+  campaign_type_id: string;
+  campaign_type_label: string | null;
+  campaign_type_is_active: boolean | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RuleTestResult {
+  campaign_type_id: string | null;
+  campaign_type_label: string | null;
+  rule_id: string | null;
+  match_field: RuleMatchField | null;
+  pattern: string | null;
+}
+
+export interface CreateCampaignTypeInput {
+  name: string;
+  label: string;
+  description?: string;
+  department_id?: string | null;
+}
+
+export interface UpdateCampaignTypeInput {
+  label?: string;
+  description?: string | null;
+  department_id?: string | null;
+  is_active?: boolean;
+}
+
+function tq(tenantId: string): string {
+  return `?tenant_id=${encodeURIComponent(tenantId)}`;
+}
+
 export const campaignTypes = {
   list: (tenantId: string) =>
-    request<{ success: true; data: CampaignTypeRow[] }>(
-      `/campaign-types?tenant_id=${encodeURIComponent(tenantId)}`,
+    request<{ success: true; data: CampaignTypeRow[] }>(`/campaign-types${tq(tenantId)}`),
+
+  create: (tenantId: string, body: CreateCampaignTypeInput) =>
+    request<{ success: true; data: { id: string } }>(`/campaign-types${tq(tenantId)}`, {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  update: (tenantId: string, id: string, body: UpdateCampaignTypeInput) =>
+    request<void>(`/campaign-types/${id}${tq(tenantId)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+
+  rules: (tenantId: string) =>
+    request<{ success: true; data: CampaignTypeRuleRow[] }>(`/campaign-types/rules${tq(tenantId)}`),
+
+  createRule: (
+    tenantId: string,
+    body: { match_field: RuleMatchField; pattern: string; campaign_type_id: string; rule_order?: number },
+  ) =>
+    request<{ success: true; data: { id: string } }>(`/campaign-types/rules${tq(tenantId)}`, {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  updateRule: (
+    tenantId: string,
+    ruleId: string,
+    body: { match_field?: RuleMatchField; pattern?: string; campaign_type_id?: string; is_active?: boolean },
+  ) =>
+    request<void>(`/campaign-types/rules/${ruleId}${tq(tenantId)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+
+  deleteRule: (tenantId: string, ruleId: string) =>
+    request<void>(`/campaign-types/rules/${ruleId}${tq(tenantId)}`, { method: 'DELETE' }),
+
+  // The WHOLE live list in its new order — partial lists are refused.
+  reorderRules: (tenantId: string, ruleIds: string[]) =>
+    request<void>(`/campaign-types/rules/order${tq(tenantId)}`, {
+      method: 'PUT', body: JSON.stringify({ rule_ids: ruleIds }),
+    }),
+
+  testRules: (
+    tenantId: string,
+    names: { campaign_name?: string; form_name?: string; adset_name?: string; ad_name?: string },
+  ) =>
+    request<{ success: true; data: RuleTestResult }>(`/campaign-types/rules/test${tq(tenantId)}`, {
+      method: 'POST', body: JSON.stringify(names),
+    }),
+};
+
+// ── Meta ad accounts under the shared integration (1.51.0) ──────────────────
+// PLATFORM-level — no tenant_id. The campaign fetch walks the ENABLED ones and
+// attributes each campaign to a tenant by the pages it promotes.
+export interface MetaAdAccountRow {
+  ad_account_id: string;
+  name: string | null;
+  business_name: string | null;
+  account_status: number | null;
+  is_enabled: boolean;
+  last_synced_at: string | null;
+  last_seen_at: string | null;
+}
+
+export const metaAdAccounts = {
+  list: () => request<{ success: true; data: MetaAdAccountRow[] }>('/meta/ad-accounts'),
+  sync: () =>
+    request<{ success: true; data: { seen: number; added: number; accounts: MetaAdAccountRow[] } }>(
+      '/meta/ad-accounts/sync', { method: 'POST' },
     ),
+  setEnabled: (adAccountId: string, isEnabled: boolean) =>
+    request<{ success: true; data: MetaAdAccountRow }>(`/meta/ad-accounts/${encodeURIComponent(adAccountId)}`, {
+      method: 'PATCH', body: JSON.stringify({ is_enabled: isEnabled }),
+    }),
+};
+
+// ── Meta lead inbox (1.51.0) ─────────────────────────────────────────────────
+// Webhook leads that did not land. tenantId null = the tenant-less rows (pages
+// mapped to nobody), which only a super admin can see.
+export type InboxReason = 'unmapped' | 'missing_contact' | 'sync_failed';
+export type InboxStatus = 'open' | 'resolved' | 'ignored';
+
+export interface MetaLeadInboxRow {
+  id: string;
+  meta_lead_id: string;
+  tenant_id: string | null;
+  org_id: string | null;
+  page_id: string | null;
+  form_id: string | null;
+  campaign_id: string | null;
+  platform: MetaPlatform | null;
+  lead_created_at: string | null;
+  reason: InboxReason;
+  error_text: string | null;
+  status: InboxStatus;
+  attempts: number;
+  resolved_lead_id: string | null;
+  lead_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function inboxQuery(tenantId: string | null, extra: Record<string, string | undefined> = {}): string {
+  const params = new URLSearchParams(
+    Object.entries({ tenant_id: tenantId ?? undefined, ...extra })
+      .filter((e): e is [string, string] => typeof e[1] === 'string' && e[1] !== '')
+      .map(([k, v]) => [k, v]),
+  );
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
+export const metaLeadInbox = {
+  list: (tenantId: string | null, status: InboxStatus = 'open', reason?: InboxReason) =>
+    request<{ success: true; data: MetaLeadInboxRow[] }>(`/meta/lead-inbox${inboxQuery(tenantId, { status, reason })}`),
+  retry: (tenantId: string | null, id: string) =>
+    request<{ success: true; data: { status: 'resolved'; marketing_lead_id: string; duplicate: boolean; assigned_user_id: string | null } }>(
+      `/meta/lead-inbox/${id}/retry${inboxQuery(tenantId)}`, { method: 'POST' },
+    ),
+  ignore: (tenantId: string | null, id: string) =>
+    request<void>(`/meta/lead-inbox/${id}/ignore${inboxQuery(tenantId)}`, { method: 'POST' }),
 };
 
 // ── Meta lead pull (bespoke — see /dashboard/lead-pull) ─────────────────────
@@ -456,8 +664,12 @@ export interface PullCampaignOption {
   meta_campaign_id: string;
   name: string | null;
   effective_status: string | null;
+  // The confirmed type, else the rule suggestion.
   campaign_type_label: string | null;
+  mapping_status: MappingStatus;
 }
+
+export type PullMode = 'pages' | 'campaign';
 
 export interface CreatePullRunInput {
   org_ids?: string[];
@@ -465,6 +677,16 @@ export interface CreatePullRunInput {
   campaign_ids?: string[];
   since: string;
   until?: string;
+  // 1.51.0: 'campaign' walks only the selected campaigns' ads.
+  mode?: PullMode;
+}
+
+export type PullTriggerKind = 'manual' | 'scheduled';
+
+export interface RemapResult {
+  remapped: number;
+  still_unmapped: number;
+  verdicts: Record<string, number>;
 }
 
 export interface PullPageError {
@@ -486,6 +708,9 @@ export interface PullRunCounts {
   page_errors: PullPageError[];
   campaign_filter_applied: boolean;
   verdicts: Record<string, number>;
+  // 1.51.0
+  ads_walked?: number;
+  foreign_pages_skipped?: number;
   // Written by the worker when an Apply pass finishes: that PASS's tallies. After
   // an interrupted-then-resumed Apply, `apply_summary` on the run is the
   // whole-run truth.
@@ -501,12 +726,14 @@ export type PullRunLifecycleStatus =
 export interface PullRunStatus {
   id: string;
   status: PullRunLifecycleStatus;
+  trigger_kind: PullTriggerKind;
   filters: {
     org_ids: string[];
     page_ids: string[];
     campaign_ids: string[];
     since: string;
     until: string | null;
+    mode?: PullMode;
   };
   // Written by the poller as the run's own PullRunCounts; a queued/running run
   // has not filled every field in yet, hence Partial.
@@ -589,9 +816,16 @@ export const leadPull = {
   // The tenant's current run (at most one — a new Pull deletes the previous), or
   // data: null. What the screen reopens on load, so leaving the page mid-pull or
   // before Apply no longer loses the run.
-  latestRun: (tenantId: string) =>
+  latestRun: (tenantId: string, triggerKind: PullTriggerKind = 'manual') =>
     request<{ success: true; data: { run_id: string; status: PullRunLifecycleStatus } | null }>(
-      `/meta/lead-pull/runs/latest?tenant_id=${encodeURIComponent(tenantId)}`,
+      `/meta/lead-pull/runs/latest?tenant_id=${encodeURIComponent(tenantId)}&trigger_kind=${triggerKind}`,
+    ),
+
+  // 1.51.0: after mapping a page/form inline, re-resolve the run's unmapped rows.
+  remap: (tenantId: string, runId: string) =>
+    request<{ success: true; data: RemapResult }>(
+      `/meta/lead-pull/runs/${runId}/remap?tenant_id=${encodeURIComponent(tenantId)}`,
+      { method: 'POST' },
     ),
 
   getRun: (tenantId: string, runId: string) =>
@@ -629,7 +863,7 @@ export const leadPull = {
 // (weights, or a role's department). Served by leads-service through the
 // gateway's super-admin-guarded /lead-assignment/rerun. dry_run previews and
 // writes nothing; at most 500 leads per call — pass next_cursor back to continue.
-export type RerunSkipReason = 'no_weighted_users' | 'no_department_match' | 'no_capable_users';
+export type RerunSkipReason = 'no_campaign_type' | 'no_weighted_users' | 'no_department_match' | 'no_capable_users';
 
 export interface RerunBranchResult {
   org_id: string;

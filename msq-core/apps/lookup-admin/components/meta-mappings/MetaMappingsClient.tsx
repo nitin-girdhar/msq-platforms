@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button, type SearchableOption } from "@platform/ui-kit";
 import {
   orgs,
+  campaignTypes,
   type MetaPageOption,
   type MetaPageOrgMapRow,
 } from "@/src/lib/api/client";
@@ -64,6 +65,25 @@ export default function MetaMappingsClient({
       cancelled = true;
     };
   }, []);
+
+  // The tenant's live campaign types, for the page/form default type (1.51.0).
+  // Best-effort: without them the default-type picker only offers "no default".
+  const [typeOptions, setTypeOptions] = useState<SearchableOption[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    campaignTypes
+      .list(tenantId)
+      .then((res) => {
+        if (!cancelled)
+          setTypeOptions(res.data.filter((t) => t.is_active).map((t) => ({ id: t.id, label: t.label })));
+      })
+      .catch(() => {
+        if (!cancelled) setTypeOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
 
   const tenantOrgs = useMemo(
     () => orgList.filter((o) => o.tenant_id === tenantId),
@@ -201,6 +221,7 @@ export default function MetaMappingsClient({
         pages={pages}
         pagesUnavailable={pagesUnavailable}
         orgOptions={orgOptions}
+        campaignTypeOptions={typeOptions}
         onSaved={handleSaved}
       />
     </div>

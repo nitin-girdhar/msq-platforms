@@ -1088,8 +1088,23 @@ DECLARE
   v_action TEXT;
   v_note   TEXT;
   v_type   TEXT;
+  v_old_assignee UUID;
+  v_old_type     UUID;
 BEGIN
-  IF NEW.assigned_user_id IS NOT DISTINCT FROM OLD.assigned_user_id THEN RETURN NEW; END IF;
+  -- INSERT (1.51.0): a lead auto-assigned AT INTAKE used to leave no log row at
+  -- all, because this trigger fired on UPDATE only. Campaign reclassification
+  -- keys "was this auto-assigned?" on the 'initial' row, so every intake-assigned
+  -- lead was invisible to it and kept its old owner after a re-type. An INSERT
+  -- with an owner now logs 'initial' exactly as a NULL -> user UPDATE does.
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.assigned_user_id IS NULL THEN RETURN NEW; END IF;
+    v_old_assignee := NULL;
+    v_old_type     := NEW.campaign_type_id;
+  ELSE
+    IF NEW.assigned_user_id IS NOT DISTINCT FROM OLD.assigned_user_id THEN RETURN NEW; END IF;
+    v_old_assignee := OLD.assigned_user_id;
+    v_old_type     := OLD.campaign_type_id;
+  END IF;
   BEGIN
     v_actor := NULLIF(current_setting('app.current_user_id', true), '')::uuid;
   EXCEPTION WHEN OTHERS THEN v_actor := NULL; END;
@@ -1102,9 +1117,9 @@ BEGIN
     v_note := NULLIF(current_setting('app.lead_transition_note', true), '');
   EXCEPTION WHEN OTHERS THEN v_note := NULL; END;
   v_action := CASE
-    WHEN OLD.assigned_user_id IS NULL AND NEW.assigned_user_id IS NOT NULL THEN 'initial'
-    WHEN OLD.assigned_user_id IS NOT NULL AND NEW.assigned_user_id IS NULL  THEN 'unassigned'
-    WHEN v_actor = NEW.assigned_user_id                                      THEN 'self_assigned'
+    WHEN v_old_assignee IS NULL AND NEW.assigned_user_id IS NOT NULL THEN 'initial'
+    WHEN v_old_assignee IS NOT NULL AND NEW.assigned_user_id IS NULL  THEN 'unassigned'
+    WHEN v_actor = NEW.assigned_user_id                                THEN 'self_assigned'
     ELSE 'reassigned'
   END;
   -- A lead whose TYPE moved in the same statement was re-POOLED, not merely
@@ -1114,7 +1129,7 @@ BEGIN
   -- Written here rather than by the later phase's service code so a
   -- reclassification done in SQL, or by the Python sync, is logged identically.
   IF v_action = 'reassigned'
-     AND NEW.campaign_type_id IS DISTINCT FROM OLD.campaign_type_id THEN
+     AND NEW.campaign_type_id IS DISTINCT FROM v_old_type THEN
     v_action := 'reclassified';
   END IF;
 
@@ -1131,7 +1146,7 @@ BEGIN
   INSERT INTO lms.lead_assignment_log
     (org_id, lead_id, assigned_by_id, assigned_to_id, action, previous_assignee_id, note)
   VALUES
-    (NEW.org_id, NEW.id, v_actor, NEW.assigned_user_id, v_action, OLD.assigned_user_id, v_note);
+    (NEW.org_id, NEW.id, v_actor, NEW.assigned_user_id, v_action, v_old_assignee, v_note);
   RETURN NEW;
 END; $$;
 
@@ -1139,6 +1154,33 @@ DROP TRIGGER IF EXISTS trg_lead_assignment_log ON lms.marketing_leads;
 CREATE TRIGGER trg_lead_assignment_log
   AFTER UPDATE OF assigned_user_id ON lms.marketing_leads
   FOR EACH ROW EXECUTE FUNCTION lms.log_lead_assignment();
+-- 1.51.0: auto_assign_reason says why the auto-assigner left a lead unowned, so
+-- it is meaningless the moment anyone owns it. Cleared HERE rather than by each
+-- writer, because a lead gains an owner on half a dozen paths (manual assign,
+-- bulk assign, transfer, rerun, reclassify, self-assign) and a stale reason on an
+-- owned lead would send an admin chasing a problem that is already solved.
+CREATE OR REPLACE FUNCTION lms.clear_auto_assign_reason()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.assigned_user_id IS NOT NULL THEN
+    NEW.auto_assign_reason := NULL;
+  END IF;
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_marketing_leads_clear_auto_assign_reason ON lms.marketing_leads;
+CREATE TRIGGER trg_marketing_leads_clear_auto_assign_reason
+  BEFORE INSERT OR UPDATE OF assigned_user_id, auto_assign_reason ON lms.marketing_leads
+  FOR EACH ROW EXECUTE FUNCTION lms.clear_auto_assign_reason();
+
+-- 1.51.0: a separate INSERT trigger rather than `AFTER INSERT OR UPDATE OF`, so
+-- the UPDATE side keeps its column filter and the INSERT side can skip the
+-- (common) unassigned insert without entering the function.
+DROP TRIGGER IF EXISTS trg_lead_assignment_log_insert ON lms.marketing_leads;
+CREATE TRIGGER trg_lead_assignment_log_insert
+  AFTER INSERT ON lms.marketing_leads
+  FOR EACH ROW WHEN (NEW.assigned_user_id IS NOT NULL)
+  EXECUTE FUNCTION lms.log_lead_assignment();
 
 -- ── iam.can_assign_to ─────────────────────────────────────────────────
 -- Looks up role via iam.user_org_mapping instead of iam.users.org_id so that
@@ -2499,30 +2541,117 @@ CREATE TRIGGER trg_meta_campaigns_updated_at
 -- marketing.campaign_types, or root_service. Making it definer-rights would let
 -- an app_user session probe another tenant's keywords by passing a foreign
 -- tenant id.
+-- ── marketing.fn_match_campaign_type_rules (1.51.0) ───────────────────
+-- THE matcher. Walks the tenant's marketing.campaign_type_rules in rule_order
+-- and returns the FIRST rule whose pattern appears, on word boundaries, in the
+-- Meta name its match_field names. Every argument after the tenant is optional:
+-- a caller that only knows the campaign name (the campaign grid, the fetch)
+-- passes NULL for the rest, and a rule on a name that is NULL simply cannot
+-- match. The live lead path passes all four, which is how a form-name or
+-- ad-name rule can type a lead whose campaign name says nothing.
+--
+-- Rules pointing at an inactive or deleted type are skipped, not errors: the
+-- next rule gets its chance.
+--
+-- The word-boundary predicate is unchanged from the old keyword matcher (see
+-- fn_match_campaign_type below for why \m/\M are not usable).
+--
+-- STABLE, not SECURITY DEFINER, for the same reason the old matcher was not:
+-- it reads the rules as the CALLER, so a session cannot probe another tenant's
+-- rules by passing a foreign tenant id.
+CREATE OR REPLACE FUNCTION marketing.fn_match_campaign_type_rules(
+  p_tenant_id     UUID,
+  p_campaign_name TEXT,
+  p_form_name     TEXT DEFAULT NULL,
+  p_adset_name    TEXT DEFAULT NULL,
+  p_ad_name       TEXT DEFAULT NULL
+) RETURNS TABLE (campaign_type_id UUID, rule_id UUID, match_field TEXT, pattern TEXT)
+LANGUAGE sql STABLE AS $$
+  SELECT r.campaign_type_id, r.id, r.match_field, r.pattern
+  FROM marketing.campaign_type_rules r
+  JOIN marketing.campaign_types ct
+    ON ct.id = r.campaign_type_id AND ct.is_active AND NOT ct.is_deleted
+  CROSS JOIN LATERAL (
+    SELECT CASE r.match_field
+             WHEN 'campaign_name' THEN p_campaign_name
+             WHEN 'form_name'     THEN p_form_name
+             WHEN 'adset_name'    THEN p_adset_name
+             WHEN 'ad_name'       THEN p_ad_name
+           END AS subject
+  ) s
+  WHERE r.tenant_id = p_tenant_id
+    AND r.is_active
+    AND NOT r.is_deleted
+    AND s.subject IS NOT NULL
+    -- regexp_replace backslash-escapes any non-alphanumeric in the pattern
+    -- so a stored '.' or '+' is matched literally rather than as a metachar.
+    AND s.subject ~* ('(^|[^[:alnum:]])'
+                      || regexp_replace(btrim(r.pattern), '([^[:alnum:]])', '\\\1', 'g')
+                      || '([^[:alnum:]]|$)')
+  ORDER BY r.rule_order ASC, r.id ASC
+  LIMIT 1;
+$$;
+
+-- 1.51.0: now a thin wrapper over the ordered rules, campaign name only. Kept
+-- because reconcile's form-name hint and older callers use the scalar shape;
+-- campaign_types.match_keywords is no longer read by anything.
 CREATE OR REPLACE FUNCTION marketing.fn_match_campaign_type(
   p_tenant_id     UUID,
   p_campaign_name TEXT
 ) RETURNS UUID LANGUAGE sql STABLE AS $$
-  SELECT ct.id
-  FROM marketing.campaign_types ct
-  WHERE ct.tenant_id = p_tenant_id
-    AND ct.is_active
-    AND NOT ct.is_deleted
-    AND p_campaign_name IS NOT NULL
-    AND EXISTS (
-      SELECT 1
-      FROM unnest(ct.match_keywords) AS kw
-      -- regexp_replace backslash-escapes any non-alphanumeric in the keyword
-      -- so a stored '.' or '+' is matched literally rather than as a metachar.
-      WHERE kw <> ''
-        AND p_campaign_name ~* ('(^|[^[:alnum:]])' || regexp_replace(kw, '([^[:alnum:]])', '\\\1', 'g')
-                                || '([^[:alnum:]]|$)')
-    )
-  ORDER BY ct.match_priority ASC,   -- lower wins
-           ct.sort_order     ASC,   -- then the admin's own ordering
-           ct.name           ASC    -- then stable, so the answer never flaps
-  LIMIT 1;
+  SELECT m.campaign_type_id
+  FROM marketing.fn_match_campaign_type_rules(p_tenant_id, p_campaign_name) m;
 $$;
+
+-- ── marketing.fn_assert_rule_type_tenant (1.51.0) ─────────────────────
+-- A rule may only point at a campaign type of its OWN tenant. The FK alone is
+-- satisfied by any tenant's type, and a foreign type would route a lead into a
+-- pool that belongs to someone else -- the same hole 1.50.1 closed on
+-- lms.lead_assignment_weights. SECURITY DEFINER so the check sees the type row
+-- whatever the writer's RLS shows it.
+CREATE OR REPLACE FUNCTION marketing.fn_assert_rule_type_tenant()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE
+  v_type_tenant UUID;
+BEGIN
+  SELECT tenant_id INTO v_type_tenant
+  FROM marketing.campaign_types WHERE id = NEW.campaign_type_id;
+  IF v_type_tenant IS DISTINCT FROM NEW.tenant_id THEN
+    RAISE EXCEPTION 'campaign type % does not belong to tenant %', NEW.campaign_type_id, NEW.tenant_id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_campaign_type_rules_tenant_match ON marketing.campaign_type_rules;
+CREATE TRIGGER trg_campaign_type_rules_tenant_match
+  BEFORE INSERT OR UPDATE OF tenant_id, campaign_type_id ON marketing.campaign_type_rules
+  FOR EACH ROW EXECUTE FUNCTION marketing.fn_assert_rule_type_tenant();
+
+DROP TRIGGER IF EXISTS trg_campaign_type_rules_updated_at ON marketing.campaign_type_rules;
+CREATE TRIGGER trg_campaign_type_rules_updated_at
+  BEFORE UPDATE ON marketing.campaign_type_rules
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_campaign_type_rules_soft_delete ON marketing.campaign_type_rules;
+CREATE TRIGGER trg_campaign_type_rules_soft_delete
+  BEFORE DELETE ON marketing.campaign_type_rules
+  FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+-- updated_at on the 1.51.0 ext.* discovery caches and the lead inbox. No soft
+-- delete, same as ext.meta_campaigns: cached facts about Meta, not our records.
+DROP TRIGGER IF EXISTS trg_meta_ad_accounts_updated_at ON ext.meta_ad_accounts;
+CREATE TRIGGER trg_meta_ad_accounts_updated_at
+  BEFORE UPDATE ON ext.meta_ad_accounts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_meta_adsets_updated_at ON ext.meta_adsets;
+CREATE TRIGGER trg_meta_adsets_updated_at
+  BEFORE UPDATE ON ext.meta_adsets FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_meta_ads_updated_at ON ext.meta_ads;
+CREATE TRIGGER trg_meta_ads_updated_at
+  BEFORE UPDATE ON ext.meta_ads FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_meta_lead_inbox_updated_at ON ext.meta_lead_inbox;
+CREATE TRIGGER trg_meta_lead_inbox_updated_at
+  BEFORE UPDATE ON ext.meta_lead_inbox FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- ── marketing.fn_campaign_type_usage (1.50.1) ─────────────────────────
 -- What still ROUTES through a campaign type from the Meta side: mapping rows in

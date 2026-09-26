@@ -31,6 +31,24 @@ const EXTRA_CARDS: Partial<Record<ModuleKey, { slug: string; title: string; desc
   ],
   lms: [
     {
+      slug: 'campaign-types',
+      title: 'Campaign Types & Rules',
+      description: 'Which department each campaign type routes to, and the ordered rules that type a lead from its campaign, form, ad set or ad name.',
+      href: '/dashboard/campaign-types',
+    },
+    {
+      slug: 'meta-ad-accounts',
+      title: 'Meta Ad Accounts',
+      description: 'Ad accounts under the shared Meta integration — enable the ones "Fetch campaigns" walks.',
+      href: '/dashboard/meta-ad-accounts',
+    },
+    {
+      slug: 'meta-lead-inbox',
+      title: 'Meta Lead Inbox',
+      description: 'Webhook leads that could not be created (unmapped page, missing phone, errors) — fix the cause, then retry.',
+      href: '/dashboard/meta-lead-inbox',
+    },
+    {
       slug: 'meta-mappings',
       title: 'Meta Page Mapping',
       description: 'Which branch each Meta Page (and optionally each lead form) routes inbound leads to.',

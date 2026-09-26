@@ -48,9 +48,8 @@ export default async function MetaCampaignsPage() {
   // Campaign types feed every confirm dialog's dropdown. Best-effort, same
   // shape as meta-mappings' pagesUnavailable: a failed or empty catalog must
   // not take the whole screen down when the campaign grids themselves loaded
-  // fine. See the KNOWN BACKEND BUG note on `campaignTypes` in
-  // src/lib/api/client.ts — this route does not actually honor
-  // ?tenant_id=, so what comes back is the CALLER's own tenant's types.
+  // fine. leads-service honours ?tenant_id= for a super admin (1.50.1), so these
+  // are the ADMINISTERED tenant's types.
   let campaignTypes: CampaignTypeRow[] = [];
   let campaignTypesUnavailable = false;
   try {

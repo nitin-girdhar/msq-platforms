@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Modal, Button, SearchableSelect, type SearchableOption } from '@platform/ui-kit';
 import {
   metaMappings,
+  type MetaPageForm,
   type MetaPageOption,
   type MetaPageOrgMapRow,
   type MetaPlatform,
@@ -23,14 +24,19 @@ interface Props {
   open: boolean;
   onClose: () => void;
   tenantId: string;
-  // null = create. A row = edit, where only branch and status are mutable:
-  // updateMappingSchema in meta-conversion-api accepts org_id and is_active
-  // only, because (page_id, form_id) IS the row's routing identity — changing
-  // it is a deactivate plus a new row, not an edit.
+  // null = create. A row = edit: branch, platform, default type and status are
+  // mutable (1.51.0); (page_id, form_id) IS the row's routing identity, so
+  // changing it is a deactivate plus a new row, not an edit.
   row: MetaPageOrgMapRow | null;
   pages: MetaPageOption[];
   pagesUnavailable: boolean;
   orgOptions: SearchableOption[];
+  // 1.51.0: the tenant's live campaign types, for the page/form default type.
+  campaignTypeOptions: SearchableOption[];
+  // Prefill for a CREATE opened from elsewhere (the lead-pull screen's "map this
+  // page" action). Ignored on edit.
+  initialPageId?: string | undefined;
+  initialFormId?: string | undefined;
   onSaved: () => void;
 }
 
@@ -42,6 +48,9 @@ export default function MappingFormModal({
   pages,
   pagesUnavailable,
   orgOptions,
+  campaignTypeOptions,
+  initialPageId,
+  initialFormId,
   onSaved,
 }: Props) {
   const isEdit = row !== null;
@@ -52,19 +61,41 @@ export default function MappingFormModal({
   const [orgId, setOrgId] = useState('');
   const [platform, setPlatform] = useState<MetaPlatform>('fb');
   const [isActive, setIsActive] = useState(true);
+  const [defaultTypeId, setDefaultTypeId] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The live forms on the chosen page (1.51.0 form picker). null = not loaded /
+  // not loadable, in which case the form id is typed instead.
+  const [forms, setForms] = useState<MetaPageForm[] | null>(null);
+  const [formsLoading, setFormsLoading] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setPageId(row?.page_id ?? '');
-    setPageLevel(row ? row.form_id === null : true);
-    setFormId(row?.form_id ?? '');
+    setPageId(row?.page_id ?? initialPageId ?? '');
+    setPageLevel(row ? row.form_id === null : !initialFormId);
+    setFormId(row?.form_id ?? initialFormId ?? '');
     setOrgId(row?.org_id ?? '');
     setPlatform(row?.platform ?? 'fb');
     setIsActive(row?.is_active ?? true);
+    setDefaultTypeId(row?.default_campaign_type_id ?? '');
     setError(null);
-  }, [open, row]);
+  }, [open, row, initialPageId, initialFormId]);
+
+  // Load the page's live forms when a form-level row is being created.
+  useEffect(() => {
+    if (!open || isEdit || pageLevel || !/^\d+$/.test(pageId)) {
+      setForms(null);
+      return;
+    }
+    let cancelled = false;
+    setFormsLoading(true);
+    metaMappings
+      .pageForms(tenantId, pageId)
+      .then((res) => { if (!cancelled) setForms(res.data); })
+      .catch(() => { if (!cancelled) setForms(null); })
+      .finally(() => { if (!cancelled) setFormsLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, isEdit, pageLevel, pageId, tenantId]);
 
   const handleClose = () => {
     if (pending) return;
@@ -72,11 +103,17 @@ export default function MappingFormModal({
     onClose();
   };
 
-  const pageOptions: SearchableOption[] = pages.map((p) => ({
+  // Pages another tenant already maps are left out (1.51.0): the shared Meta
+  // token manages every tenant's pages, and mapping one here would route that
+  // tenant's leads into this one. The service refuses their forms regardless.
+  const ownPages = pages.filter((p) => p.owner !== 'other');
+  const foreignCount = pages.length - ownPages.length;
+  const pageOptions: SearchableOption[] = ownPages.map((p) => ({
     id: p.page_id,
     label: p.name ?? p.page_id,
-    hint: p.page_id,
+    hint: p.owner === 'this' ? `${p.page_id} · already mapped here` : p.page_id,
   }));
+  const typeOptions: SearchableOption[] = [{ id: '', label: 'No default (use the tenant default)' }, ...campaignTypeOptions];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,7 +127,12 @@ export default function MappingFormModal({
     setPending(true);
     try {
       if (row) {
-        await metaMappings.update(tenantId, row.id, { org_id: orgId, is_active: isActive });
+        await metaMappings.update(tenantId, row.id, {
+          org_id: orgId,
+          is_active: isActive,
+          platform,
+          default_campaign_type_id: defaultTypeId || null,
+        });
       } else {
         if (!pageId) {
           setError('Page is required.');
@@ -110,6 +152,7 @@ export default function MappingFormModal({
           // string. That is what produces the form_id IS NULL catch-all row
           // covering every form on the page.
           ...(pageLevel ? {} : { form_id: formId.trim() }),
+          ...(defaultTypeId ? { default_campaign_type_id: defaultTypeId } : {}),
         });
       }
       onSaved();
@@ -210,6 +253,11 @@ export default function MappingFormModal({
             <p className="mt-1 text-[11px] text-[#94A3B8]">
               Pages could not be listed for this tenant — it may have no active Meta integration. Paste the numeric Page ID instead.
             </p>
+          ) : foreignCount > 0 ? (
+            <p className="mt-1 text-[11px] text-[#94A3B8]">
+              {foreignCount} page{foreignCount === 1 ? ' is' : 's are'} hidden because another tenant already maps{' '}
+              {foreignCount === 1 ? 'it' : 'them'}.
+            </p>
           ) : null}
         </div>
 
@@ -236,16 +284,39 @@ export default function MappingFormModal({
 
         {!isEdit && !pageLevel && (
           <div>
-            <label htmlFor="mm-form" className={labelClass}>Form ID</label>
-            <input
-              id="mm-form"
-              value={formId}
-              onChange={(e) => setFormId(e.target.value)}
-              disabled={pending}
-              inputMode="numeric"
-              placeholder="Numeric Meta Form ID"
-              className={`${inputClass} font-mono`}
-            />
+            <label htmlFor="mm-form" className={labelClass}>Lead form</label>
+            {forms && forms.length > 0 ? (
+              <select
+                id="mm-form"
+                value={formId}
+                onChange={(e) => setFormId(e.target.value)}
+                disabled={pending}
+                className={inputClass}
+              >
+                <option value="">— Select a form —</option>
+                {forms.map((f) => (
+                  <option key={f.form_id} value={f.form_id} disabled={Boolean(f.mapped_org_id)}>
+                    {f.name ?? f.form_id} · {f.form_id}
+                    {f.status && f.status !== 'ACTIVE' ? ` (${f.status.toLowerCase()})` : ''}
+                    {f.mapped_org_id ? ' — already mapped' : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id="mm-form"
+                value={formId}
+                onChange={(e) => setFormId(e.target.value)}
+                disabled={pending}
+                inputMode="numeric"
+                placeholder={formsLoading ? 'Loading forms…' : 'Numeric Meta Form ID'}
+                className={`${inputClass} font-mono`}
+              />
+            )}
+            <p className="mt-1 text-[11px] text-[#94A3B8]">
+              A form-level row overrides the page-level row for this one form — use it when one page serves several
+              branches.
+            </p>
           </div>
         )}
 
@@ -282,22 +353,39 @@ export default function MappingFormModal({
           )}
         </div>
 
-        {!isEdit && (
-          <div>
-            <label htmlFor="mm-platform" className={labelClass}>Platform</label>
-            <select
-              id="mm-platform"
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value as MetaPlatform)}
+        <div>
+          <span className={labelClass}>Default campaign type</span>
+          <div className="mt-1">
+            <SearchableSelect
+              value={defaultTypeId}
+              onChange={setDefaultTypeId}
+              options={typeOptions}
+              ariaLabel="Default campaign type"
+              placeholder="No default"
               disabled={pending}
-              className={inputClass}
-            >
-              {PLATFORMS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
-              ))}
-            </select>
+              className="w-full"
+            />
           </div>
-        )}
+          <p className="mt-1 text-[11px] text-[#94A3B8]">
+            Used when the lead&apos;s campaign is not confirmed and no rule matches — and for organic leads with no
+            campaign. E.g. set a hiring-only form to Hiring.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="mm-platform" className={labelClass}>Platform</label>
+          <select
+            id="mm-platform"
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value as MetaPlatform)}
+            disabled={pending}
+            className={inputClass}
+          >
+            {PLATFORMS.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        </div>
 
         {isEdit && (
           <label className="flex items-center gap-2 text-xs font-semibold text-[#334155]">

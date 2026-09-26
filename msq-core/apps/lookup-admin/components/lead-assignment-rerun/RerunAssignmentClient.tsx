@@ -17,6 +17,7 @@ interface Props {
 }
 
 const REASON_LABELS: Record<RerunSkipReason, string> = {
+  no_campaign_type: 'the tenant has no default campaign type',
   no_weighted_users: 'nobody weighted in this pool',
   no_department_match: 'weighted users are in another department',
   no_capable_users: 'weighted roles lack LMS access',

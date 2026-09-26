@@ -2474,6 +2474,84 @@ Append-only.
 
 ---
 
+## Meta lead routing additions (schema 1.51.0)
+
+Why: see `docs/Architecture.md` → *Meta lead routing (1.51.0)* and the 1.51.0 row in
+`db_scripts/09_schema_version.sql`. Existing servers: `db_scripts/one_time/apply_meta_routing_1_51.sql`
+(+ `_dryrun.sql`), then `apply_schema.ps1` (04–08, 10).
+
+### marketing.campaign_type_rules (new)
+
+The ORDERED rule list that types a Meta lead. **First match wins**, lowest `rule_order` first.
+Replaces `campaign_types.match_keywords` (kept, unread, for one version).
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID PK | `gen_uuidv7()` |
+| tenant_id | UUID NOT NULL → entity.tenants | CASCADE |
+| rule_order | INT NOT NULL | unique per tenant among live rules (`uix_campaign_type_rules_order`) |
+| match_field | TEXT | `campaign_name` \| `form_name` \| `adset_name` \| `ad_name` |
+| pattern | TEXT NOT NULL | word/phrase, matched on word boundaries, case-insensitive |
+| campaign_type_id | UUID NOT NULL → marketing.campaign_types | RESTRICT; must be the rule's own tenant (`trg_campaign_type_rules_tenant_match`) |
+| is_active, is_deleted, deleted_at, deleted_by, created_by, metadata, created_at, updated_at | | standard; soft delete via `trg_campaign_type_rules_soft_delete` |
+
+RLS: same policy set as `marketing.campaign_types` (org read, tenant_admin, N-6 admin write).
+Matcher: `marketing.fn_match_campaign_type_rules(tenant, campaign, form, adset, ad)` →
+`(campaign_type_id, rule_id, match_field, pattern)`; rules on inactive/deleted types are skipped.
+`marketing.fn_match_campaign_type(tenant, name)` is now a campaign-name-only wrapper over it.
+Seeded per tenant by `entity.seed_tenant_rbac()`: `hiring, hire, recruit, recruitment, vacancy` → Hiring
+(`hr`, `job`, `trainer` deliberately dropped — they match fitness sales campaign names).
+
+### ext.meta_campaigns (changed)
+
+`campaign_type_id` is now written **only by an admin confirm**. New columns:
+`suggested_campaign_type_id` (rule guess, → campaign_types, SET NULL), `matched_rule_id`
+(→ campaign_type_rules, SET NULL), `page_ids BIGINT[]` (pages the ad sets promote; GIN-indexed),
+`conflict_reason TEXT` (pages map to more than one tenant). Backfill moved every `suggested` row's type into
+`suggested_campaign_type_id` and cleared the fallback type from `unmapped` rows.
+
+### ext.meta_ad_accounts (new, platform-level)
+
+`ad_account_id TEXT UNIQUE` (`act_<digits>`), `name`, `business_name`, `account_status INT`,
+`is_enabled BOOL` (what "Fetch campaigns" walks), `last_synced_at`, `last_seen_at`. **No tenant_id** — one
+account carries many tenants' campaigns. RLS enabled + forced with **no policy**: `root_service` only, from
+super_admin routes. Seeded (enabled) from the deprecated `ext.meta_tenant_config.ad_account_ids`.
+
+### ext.meta_adsets / ext.meta_ads (new)
+
+Name caches for the per-lead rules. `meta_adsets`: `tenant_id`, `meta_adset_id UNIQUE`, `meta_campaign_id`,
+`name`, `promoted_page_id`, `effective_status`, `last_synced_at`. `meta_ads`: `tenant_id`, `meta_ad_id UNIQUE`,
+`meta_adset_id`, `meta_campaign_id`, `name`, `effective_status`, `last_synced_at`. RLS like
+`ext.meta_campaigns` (org read, tenant_admin read, N-6 admin write).
+
+### ext.meta_lead_inbox (new)
+
+Webhook leads that did not become an LMS lead. `meta_lead_id UNIQUE`, `tenant_id`/`org_id` **nullable**
+(unmapped page), `integration_id`, `page_id`, `form_id`, `campaign_id`, `adset_id`, `ad_id`, `platform`,
+`lead_created_at`, `raw_field_data` (PII, for Retry), `reason` (`unmapped` \| `missing_contact` \|
+`sync_failed`), `error_text`, `status` (`open` \| `resolved` \| `ignored`), `attempts`, `resolved_lead_id`,
+`resolved_by`, `resolved_at`. RLS: N-6 admin policy for tenant rows (with the `fn_org_tenant` org check);
+tenant-less rows match no policy (super-admin service path).
+
+### ext.meta_forms (changed)
+
+Gains the N-6 `admin_tenant_config_policy` and app_user/lms_svc write grants: the console form picker now
+writes it (it used to be written only by the Python sync).
+
+### lms.marketing_leads (changed)
+
+`auto_assign_reason TEXT` — `no_campaign_type` \| `no_weighted_users` \| `no_department_match` \|
+`no_capable_users`; NULL once owned (cleared by `trg_marketing_leads_clear_auto_assign_reason`).
+New `trg_lead_assignment_log_insert` writes an `initial` `lms.lead_assignment_log` row for a lead inserted with
+an owner; the backfill wrote the missing `initial` rows for existing intake-assigned leads.
+
+### scratch.meta_pull_runs (changed)
+
+`trigger_kind TEXT` (`manual` \| `scheduled`) — a tenant keeps one run of each kind; `created_by` is now
+nullable (a scheduled run has no person behind it). `filters.mode` (`pages` \| `campaign`) records the pull
+mode. `scratch.meta_pull_leads.suggested_campaign_type_id` now holds the **predicted** type (full ladder), not
+only the form-name hint.
+
 ## The `scratch` schema — Meta lead-pull staging
 
 *Schema 1.50.0.* The platform's first **staging** area. A schema of its own

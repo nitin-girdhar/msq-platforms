@@ -271,6 +271,8 @@ Meta campaign ids are carried as **strings** end to end. They run to 17 digits, 
 **Reclassification — `POST /internal/campaign-reclassify`.** meta-conversion-api calls this immediately after an admin confirms a campaign → type mapping, because leads-service owns the leads and the routing rules. It is registered on the service's **existing** `/internal` router group, behind the same `authenticateInternal` shared-secret preHandler as `/internal/leads/reassign-org`. Body: `{ meta_campaign_id, campaign_type_id, dry_run, actor_id? }`; `dry_run` defaults to **true**, so a caller that forgets the flag gets an impact preview rather than an unrequested fan-out. One transaction does two different things:
 
 - **Relabel** — unconditional. Every `marketing.ad_campaigns` row for that Meta campaign, and every lead on them, in **every branch**, gets the corrected type.
+- > **Superseded in 1.51.0** — see [Meta lead routing (1.51.0)](#meta-lead-routing-1510).
+
 - **Re-route** — deliberately narrow. A lead changes hands only if it is auto-assigned and untouched by a person since (an `initial` row in `lms.lead_assignment_log` with no later `reassigned`/`bulk_assigned`/`self_assigned`/`reclassified`), sits in a non-terminated stage, has **zero** `lms.lead_interactions`, **and** its current assignee holds no weight for the new type in that branch. Each one is re-picked **in its own branch's** rotation for the new type; an empty target pool leaves it unassigned with a logged reason, never silently back on the old pool.
 
 This conservatism is a product decision, not a heuristic: a lead someone has already called stays with them and only its label is corrected, because yanking a lead mid-conversation is worse than a wrong label. The last condition is also what keeps the fan-out quiet in the common case — a rep weighted for both pools simply keeps their lead.
@@ -290,6 +292,81 @@ Deleting a type is refused while it is the tenant default, or while any lead, ca
 **Visibility is the database's answer, not the API's.** Which types a user can see at all is decided by `lms.fn_user_sees_campaign_type()` inside `lms.marketing_leads`' RLS `USING` clause. The `campaign_type_ids` filter on `GET /leads` and `GET /assignments/mine` only *narrows* what the caller may already see.
 
 **CRM campaign CRUD** (`/campaigns`) accepts and returns `campaign_type_id`. Classifying a **Meta** campaign is not done there: that mapping is per Meta campaign and tenant-wide, so it lives in meta-conversion-api, while `/campaigns` edits one branch's record. Changing the type on a campaign relabels the **campaign only** — existing leads keep the type they were routed under, since `lms.sync_lead_campaign_type()` fills a lead's NULL type from its campaign but never overwrites one. Moving the leads too is the reclassify fan-out's job.
+
+### Meta lead routing (1.51.0)
+
+The goal: every Meta lead — webhook, scheduled catch-up or manual pull — reaches the right **tenant and
+branch** (from its **page**) and the right **department** (from its **campaign type**), and is auto-assigned
+from that branch × type pool. Product decisions of 2026-09-26 behind this section: page is the branch key
+(a form-level row is kept only as an override for pages shared by several branches); one shared Meta app;
+a campaign never spans tenants; unconfirmed campaigns route on the rules immediately; re-typing a campaign
+moves **all** its open leads; the scheduled catch-up only stages; roles get LMS access via capabilities (no
+role seeding).
+
+**The type ladder, per lead** (`meta-conversion-api/src/services/campaign-mapping.service.ts::resolveCampaignType`):
+
+1. the campaign's **confirmed** type (`ext.meta_campaigns.campaign_type_id`, written ONLY by an admin confirm);
+2. the first matching **ordered rule** (`marketing.campaign_type_rules`, first match wins in `rule_order`),
+   evaluated on the campaign, lead-form, ad-set and ad **names** by `marketing.fn_match_campaign_type_rules`;
+3. the page (or form-override) **default type** (`ext.meta_page_form_org_map.default_campaign_type_id`);
+4. the tenant's **default** type.
+
+The campaign-name-only rule result is also stored on the campaign as `suggested_campaign_type_id` (+
+`matched_rule_id`) for the admin grid — a suggestion is never read back as the campaign's type. Before
+1.51.0 an unmatched or unnamed campaign stored the fallback (usually Sales) as its type and every later lead
+inherited it. Form / ad-set / ad names are resolved by `lead-names.service.ts`: cache first
+(`ext.meta_forms`, `ext.meta_adsets`, `ext.meta_ads`), one short Graph call per NEW id, and **only for fields
+the tenant has a live rule on**. A campaign row owned by another tenant is flagged (`conflict_reason`) and not
+applied; the lead is still typed from its own rules/defaults.
+
+**Assignment** is unchanged in shape (`leads-service/src/lib/assignment.ts`): branch × type pool, role
+department must equal the type's department, LMS capability, weights. What changed: the reason a pick leaves a
+lead unowned is **stored** on `lms.marketing_leads.auto_assign_reason` (`no_campaign_type` — new, previously
+misreported as `no_weighted_users` — `no_weighted_users`, `no_department_match`, `no_capable_users`), cleared
+by trigger the moment anyone owns the lead; intake returns `assigned_user_id`, so the webhook's `lead:created`
+event carries the real assignee (it was hard-coded null); and a lead inserted with an owner now writes an
+`initial` log row (`trg_lead_assignment_log_insert`).
+
+**Re-typing a campaign** (`POST /internal/campaign-reclassify`) re-routes **every open lead** of the campaign
+(active, not superseded, non-terminated stage) whose owner is not in the new type's pool — interactions and
+manual assignment no longer protect a lead, because a lead of the wrong type sits with a team RLS may not even
+let see it. Unassigned open leads are picked too. An empty target pool unassigns the lead with the reason
+stored. Leads whose branch campaign row was never created are found through `metadata.campaign_id`.
+Re-run Auto-Assignment now also takes untyped leads (typed to the tenant default on the way).
+
+**Campaign discovery (shared app).** `ext.meta_ad_accounts` (platform-level, RLS on with no app policy,
+`root_service` only) lists every ad account `/me/adaccounts` returns; a super admin enables the ones to walk.
+"Fetch campaigns" (`campaign-sync.service.ts::syncCampaigns`) walks the enabled accounts with
+`adsets{promoted_object}` and `ads` expanded, and attributes each campaign to the ONE tenant its promoted pages
+are mapped to — never to the tenant that pressed the button. No tenant → reported as `unattributed`; several →
+reported as a conflict and flagged. `?tenant_id=` on the route only narrows the writes.
+`ext.meta_tenant_config.ad_account_ids` is deprecated.
+
+**Leads that do not land** — unmapped page, missing phone, sync error — are parked in `ext.meta_lead_inbox`
+with their field data (the webhook still answers 200, so Meta never redelivers). A super admin maps the page and
+presses Retry (`lead-inbox.service.ts::retryInbox`), which goes through the same `syncLeadToDatabase`. The
+row resolves itself when the lead later lands by any route (webhook redelivery, Retry, pull Apply).
+
+**Lead pull additions.** Campaign mode (`filters.mode='campaign'`) walks `GET /{campaign}/ads` then
+`/{ad}/leads` on the promoted page's token — only the selected campaigns' leads. Pages mapped to another tenant
+are never walked in either mode. Reconcile predicts each staged lead's type with the ladder above (grid column
+"Routes to"). `POST /lead-pull/runs/:id/remap` re-resolves the branch of unmapped staged rows after an inline
+mapping, and Apply accepts an `applied` run again while it has pending importable rows. A scheduled catch-up
+(`trigger_kind='scheduled'`, `META_CATCHUP_INTERVAL_HOURS` default 6, `META_CATCHUP_WINDOW_DAYS` default 3, 0
+disables) stages one run per tenant with active mappings in its own slot, never applied automatically.
+
+**Console (lookup-admin, super admin).** Campaign Types & Rules (`/dashboard/campaign-types`: types →
+department, ordered rules with reorder, rule tester), Meta Ad Accounts, Meta Lead Inbox, and the updated Meta
+Campaign Mapping (pages, suggestion + matched rule, conflicts, add-rule-on-confirm), Meta Page Mapping (default
+type, form picker, other tenants' pages hidden) and Meta Lead Pull (mode, Branch / Routes-to columns, map-here +
+remap, scheduled run).
+
+**New routes** (gateway → service; all super-admin except the tenant-staff capability path on rules):
+`GET/POST/PATCH/DELETE /campaign-types/rules`, `PUT /campaign-types/rules/order`, `POST /campaign-types/rules/test`
+(leads-service; capability `lms.campaign_types.view/manage`, or super admin with `?tenant_id=`);
+`GET /meta/ad-accounts`, `POST /meta/ad-accounts/sync`, `PATCH /meta/ad-accounts/:id`;
+`GET /meta/pages/:pageId/forms`; `GET /meta/lead-inbox`, `POST /meta/lead-inbox/:id/retry|ignore`;
+`POST /meta/lead-pull/runs/:id/remap`; `GET /meta/lead-pull/runs/latest?trigger_kind=`.
 
 ### Multi-branch users on the roster (`GET /users`)
 
@@ -516,6 +593,8 @@ Note: the webhook still returns 200 after a per-lead failure, so Meta does not r
 
 `ext.meta_campaigns` is the **single source of truth** for which type a Meta campaign carries, and meta-conversion-api owns it — it holds the Graph token and owns the whole `ext.*` schema. Rows arrive by two routes.
 
+> **Superseded in 1.51.0** — see [Meta lead routing (1.51.0)](#meta-lead-routing-1510).
+
 **From a lead (`first_seen_source='lead'`).** `campaign-mapping.service.ts::resolveCampaignType` runs on the webhook path inside the existing `withServiceTx` (an inbound Meta delivery carries no session — the same documented system operation as the two page/form resolvers), so every statement filters `tenant_id` explicitly rather than relying on RLS. A **hit** returns the row's type, `suggested` or `confirmed` alike: **routing never waits for a human.** A **miss** inserts the row typed by `marketing.fn_match_campaign_type` — `suggested` with the winning `matched_keyword` when a keyword fires, otherwise `unmapped` with the form default and then the tenant default, so the lead still routes somewhere sane while the row sits in the admin's "needs mapping" grid. The insert is `ON CONFLICT (meta_campaign_id) DO NOTHING` plus a re-select, for the same race that `ensureBranchCampaign` guards against.
 
 **From the Fetch button (`first_seen_source='fetch'`).** `campaign-sync.service.ts` iterates `ext.meta_tenant_config.ad_account_ids`, cursor-paging `GET /act_<id>/campaigns`, and runs a three-way upsert per campaign in its own `withTenantConfigTx` — one transaction per campaign, so a single conflicting row cannot roll back the hundreds already written:
@@ -539,6 +618,8 @@ For contrast, `msq-lms/meta-sync-scripts/common/graph_api.py` is a bare `request
 **Admin surface.** `campaign-admin.service.ts` is kept out of `campaign-mapping.service.ts` for the reason `page-org-map.service.ts` had to be split: the mapping module is the BYPASSRLS webhook path, while every admin operation is an authenticated super_admin acting on **one selected tenant** through `withTenantConfigTx`. All three routes require an explicit `?tenant_id=` and read `ctx.tenant_id` nowhere — platform staff administer a tenant other than their own, and a silent fallback is the exact bug removed from the page/form API one phase earlier. The list query carries **no literal `tenant_id` filter** on purpose: `admin_tenant_config_policy` is the scope, and a redundant filter would make the cross-tenant test pass whether or not the policy works.
 
 `PATCH …?dry_run=true` returns the impact preview and **writes nothing** — not the mapping, not the learned keyword, not the reclassification. An admin checking what a correction would cost must be able to walk away having changed nothing. On a real confirm the mapping commits *first*, in its own transaction, and only then is leads-service asked to fan out: if the fan-out fails the mapping still stands and re-pressing Confirm retries it, whereas fanning out first would leave leads relabelled against a mapping that was never saved.
+
+> **Superseded in 1.51.0** — see [Meta lead routing (1.51.0)](#meta-lead-routing-1510).
 
 `learn_keyword` is opt-in per request. `HIR_Gurugram_Trainer_Sep26` offers `gurugram` as readily as `trainer`, and a wrong keyword silently mistypes every future campaign containing it — so the server proposes the longest unused token and the admin decides. The append is `array_append` guarded by a `NOT … = ANY(…)`, never a rewrite of the whole array, so two admins confirming different campaigns onto the same type cannot lose each other's keyword.
 

@@ -135,6 +135,12 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: 
       valueGetter: (p) => orgNames[p.data?.org_id ?? ''] ?? p.data?.org_id ?? '',
     },
     {
+      // 1.51.0: the page/form fallback type — used when neither a confirmed
+      // campaign nor a rule types the lead, and for organic leads.
+      colId: 'default_type', headerName: 'Default type', width: 150, minWidth: 130, sortable: true, filter: true,
+      valueGetter: (p) => p.data?.default_campaign_type_label ?? '—',
+    },
+    {
       colId: 'platform', headerName: 'Platform', width: 140, sortable: true, filter: true,
       valueGetter: (p) => platformLabel(p.data?.platform),
       cellRenderer: platformCellRenderer,
@@ -147,7 +153,7 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: 
       cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
-      colId: 'last_synced_at', headerName: 'Last synced', width: 190, minWidth: 150, sortable: true, filter: true,
+      colId: 'last_synced_at', headerName: 'Last lead', width: 190, minWidth: 150, sortable: true, filter: true,
       valueGetter: (p) => formatSyncedAt(p.data?.last_synced_at),
     },
     {

@@ -6,6 +6,7 @@ import {
   leadPull,
   orgs,
   type CreatePullRunInput,
+  type PullMode,
   type MetaPageOption,
   type PullCampaignOption,
 } from '@/src/lib/api/client';
@@ -30,8 +31,10 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
   // comma-separated id field — same fallback MappingFormModal uses — when
   // /meta/pages could not be listed (no active integration) or came back empty.
   const canPickPages = !pagesUnavailable && pages.length > 0;
+  // Pages another tenant maps are left out (1.51.0) — pulling one would stage
+  // that tenant's leads here. The server skips them regardless.
   const pageOptions: SelectOption[] = useMemo(
-    () => pages.map((p) => ({ id: p.page_id, label: p.name ?? p.page_id })),
+    () => pages.filter((p) => p.owner !== 'other').map((p) => ({ id: p.page_id, label: p.name ?? p.page_id })),
     [pages],
   );
   const [selectedPages, setSelectedPages] = useState<SelectOption[]>([]);
@@ -41,6 +44,9 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
   const [campaignsLoading, setCampaignsLoading] = useState(false);
   const [selectedCampaigns, setSelectedCampaigns] = useState<SelectOption[]>([]);
 
+  // 1.51.0: 'campaign' walks only the selected campaigns' ads — far less Meta
+  // work for one campaign, and it finds leads on forms nobody mapped yet.
+  const [mode, setMode] = useState<PullMode>('pages');
   const [since, setSince] = useState('');
   const [until, setUntil] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -116,6 +122,10 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
       setFormError('"Until" must be after "Since" — a same-day range is empty, since Until starts at midnight.');
       return;
     }
+    if (mode === 'campaign' && (selectedCampaigns.length === 0 || selectedCampaigns.length > 20)) {
+      setFormError('Campaign mode needs between 1 and 20 selected campaigns.');
+      return;
+    }
 
     const input: CreatePullRunInput = {
       org_ids: selectedOrgs.map((o) => String(o.id)),
@@ -123,6 +133,7 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
       campaign_ids: selectedCampaigns.map((c) => String(c.id)),
       since,
       ...(until ? { until } : {}),
+      mode,
     };
     onSubmit(input);
   };
@@ -194,11 +205,24 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
             selectAllLabel="Select all"
           />
           <p className="text-[11px] leading-snug text-[#94A3B8]">
-            Meta has no campaign-scoped lead feed — every lead on the selected pages is fetched regardless. Narrowing
-            campaigns focuses the REVIEW, not the pull; it will not run faster or cheaper.
+            {mode === 'campaign'
+              ? 'Campaign mode: only these campaigns\u2019 ads are read, so the pull is as small as the selection.'
+              : 'Pages mode reads every form on the selected pages and keeps only these campaigns — narrowing focuses the review, not the pull.'}
           </p>
         </div>
       </div>
+
+      <fieldset className="flex flex-wrap items-center gap-4 text-xs text-[#334155]" disabled={fieldsDisabled}>
+        <legend className="sr-only">Pull mode</legend>
+        <label className="flex items-center gap-1.5">
+          <input type="radio" name="lp-mode" checked={mode === 'pages'} onChange={() => setMode('pages')} />
+          Pages — every form on the chosen pages
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input type="radio" name="lp-mode" checked={mode === 'campaign'} onChange={() => setMode('campaign')} />
+          Campaigns — only the selected campaigns (needs <code>ads_read</code>)
+        </label>
+      </fieldset>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="flex flex-col gap-1">

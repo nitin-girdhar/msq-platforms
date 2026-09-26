@@ -644,4 +644,39 @@ CREATE INDEX IF NOT EXISTS idx_meta_pull_leads_run_verdict
 CREATE INDEX IF NOT EXISTS idx_meta_pull_leads_run_applied
   ON scratch.meta_pull_leads (run_id, applied_status);
 
+-- ── 1.51.0: ordered rules, campaign discovery, lead inbox ─────────────────
+-- One live rule per position per tenant: the matcher's ORDER BY rule_order must
+-- never tie. Partial, so a soft-deleted rule does not hold its old slot.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_campaign_type_rules_order
+  ON marketing.campaign_type_rules (tenant_id, rule_order)
+  WHERE NOT is_deleted;
+
+-- The FK, for the RESTRICT check when a type is deleted and for "which rules
+-- point at this type" in the admin screen.
+CREATE INDEX IF NOT EXISTS idx_campaign_type_rules_type
+  ON marketing.campaign_type_rules (campaign_type_id) WHERE NOT is_deleted;
+
+-- The grid's Page filter: `WHERE page_ids && $pages`.
+CREATE INDEX IF NOT EXISTS idx_meta_campaigns_page_ids
+  ON ext.meta_campaigns USING gin (page_ids);
+
+CREATE INDEX IF NOT EXISTS idx_meta_adsets_campaign ON ext.meta_adsets (meta_campaign_id);
+CREATE INDEX IF NOT EXISTS idx_meta_adsets_tenant   ON ext.meta_adsets (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_meta_ads_campaign    ON ext.meta_ads    (meta_campaign_id);
+CREATE INDEX IF NOT EXISTS idx_meta_ads_tenant      ON ext.meta_ads    (tenant_id);
+
+-- The inbox screen reads open rows, newest first, optionally by tenant.
+CREATE INDEX IF NOT EXISTS idx_meta_lead_inbox_status
+  ON ext.meta_lead_inbox (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_meta_lead_inbox_tenant
+  ON ext.meta_lead_inbox (tenant_id) WHERE tenant_id IS NOT NULL;
+-- "Resolve every open row for this page" after an admin maps the page.
+CREATE INDEX IF NOT EXISTS idx_meta_lead_inbox_page
+  ON ext.meta_lead_inbox (page_id) WHERE status = 'open';
+
+-- Unassigned leads by reason, for the rerun screen's breakdown.
+CREATE INDEX IF NOT EXISTS idx_marketing_leads_auto_assign_reason
+  ON lms.marketing_leads (org_id, auto_assign_reason)
+  WHERE auto_assign_reason IS NOT NULL AND NOT is_deleted;
+
 COMMIT;

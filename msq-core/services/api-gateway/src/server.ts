@@ -376,6 +376,32 @@ app.delete('/campaigns/:id', { ...withAuth }, async (req, reply) => {
 // where an inbound lead routes. Sits beside /campaigns because it is the same
 // screen family and the same service, but it is TENANT-scoped where a campaign
 // is per branch. leads-service gates both on capability.
+// Ordered campaign-type RULES (1.51.0): the first-match-wins list that types a
+// Meta lead from its campaign / form / ad set / ad name. Static `rules` segment,
+// registered ahead of /campaign-types/:id. Same audience split as the types —
+// tenant staff by capability, a super_admin with ?tenant_id= — enforced in
+// leads-service.
+app.get('/campaign-types/rules', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/campaign-types/rules', req, reply, req.userCtx);
+});
+app.post('/campaign-types/rules', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/campaign-types/rules', req, reply, req.userCtx);
+});
+app.post('/campaign-types/rules/test', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/campaign-types/rules/test', req, reply, req.userCtx);
+});
+app.put('/campaign-types/rules/order', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/campaign-types/rules/order', req, reply, req.userCtx);
+});
+app.patch('/campaign-types/rules/:ruleId', { ...withAuth }, async (req, reply) => {
+  const { ruleId } = req.params as { ruleId: string };
+  return proxyTo(config.leadsServiceUrl, `/api/v1/campaign-types/rules/${ruleId}`, req, reply, req.userCtx);
+});
+app.delete('/campaign-types/rules/:ruleId', { ...withAuth }, async (req, reply) => {
+  const { ruleId } = req.params as { ruleId: string };
+  return proxyTo(config.leadsServiceUrl, `/api/v1/campaign-types/rules/${ruleId}`, req, reply, req.userCtx);
+});
+
 app.get('/campaign-types', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.leadsServiceUrl, '/api/v1/campaign-types', req, reply, req.userCtx);
 });
@@ -779,6 +805,13 @@ app.delete('/meta/page-org-map/:mappingId', { ...withSuperAdmin }, async (req, r
 app.get('/meta/pages', { ...withSuperAdmin }, async (req, reply) => {
   return proxyTo(config.metaServiceUrl, '/api/v1/pages', req, reply, req.userCtx);
 });
+// The live leadgen forms on one page (1.51.0) — the mapping screen's form picker,
+// replacing hand-typed form ids. Refused by the service for a page mapped to
+// another tenant.
+app.get('/meta/pages/:pageId/forms', { ...withSuperAdmin }, async (req, reply) => {
+  const { pageId } = req.params as { pageId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/pages/${encodeURIComponent(pageId)}/forms`, req, reply, req.userCtx);
+});
 
 // Meta campaign -> TYPE mapping (super_admin only — enforced in
 // meta-conversion-api, which RLS-pins every one of these to the administered
@@ -809,6 +842,25 @@ app.patch('/meta/campaigns/:metaCampaignId', { ...withSuperAdmin }, async (req, 
   return proxyTo(config.metaServiceUrl, `/api/v1/campaigns/${metaCampaignId}`, req, reply, req.userCtx, {
     timeoutMs: config.metaAdminLongTimeoutMs,
   });
+});
+
+// Meta AD ACCOUNTS under the shared integration (1.51.0; super_admin only —
+// enforced again in meta-conversion-api). Platform-level, NOT tenant-scoped: one
+// ad account carries campaigns for several tenants, and the campaign fetch
+// attributes each campaign to a tenant by the pages it promotes. So there is no
+// ?tenant_id= on these three. POST /sync walks /me/adaccounts with backoff and
+// gets the long admin timeout for the same reason /meta/campaigns/sync does.
+app.get('/meta/ad-accounts', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/ad-accounts', req, reply, req.userCtx);
+});
+app.post('/meta/ad-accounts/sync', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/ad-accounts/sync', req, reply, req.userCtx, {
+    timeoutMs: config.metaAdminLongTimeoutMs,
+  });
+});
+app.patch('/meta/ad-accounts/:adAccountId', { ...withSuperAdmin }, async (req, reply) => {
+  const { adAccountId } = req.params as { adAccountId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/ad-accounts/${encodeURIComponent(adAccountId)}`, req, reply, req.userCtx);
 });
 
 // Meta lead PULL (super_admin only — enforced in meta-conversion-api, which
@@ -848,6 +900,29 @@ app.get('/meta/lead-pull/runs/:runId/leads', { ...withSuperAdmin }, async (req, 
 app.post('/meta/lead-pull/runs/:runId/apply', { ...withSuperAdmin }, async (req, reply) => {
   const { runId } = req.params as { runId: string };
   return proxyTo(config.metaServiceUrl, `/api/v1/lead-pull/runs/${runId}/apply`, req, reply, req.userCtx);
+});
+// 1.51.0: after the admin maps a page/form inline, re-resolve the run's unmapped
+// rows and re-classify — one fast SQL pass, no Graph calls.
+app.post('/meta/lead-pull/runs/:runId/remap', { ...withSuperAdmin }, async (req, reply) => {
+  const { runId } = req.params as { runId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/lead-pull/runs/${runId}/remap`, req, reply, req.userCtx);
+});
+
+// Meta LEAD INBOX (1.51.0; super_admin only — re-checked in meta-conversion-api):
+// webhook leads that did not land (unmapped page, missing phone, sync failure),
+// parked with their data for Retry after the cause is fixed. ?tenant_id= selects
+// the administered tenant's rows (RLS-fenced); omitting it lists the tenant-less
+// rows from pages mapped to nobody. Retry runs one intake call — default timeout.
+app.get('/meta/lead-inbox', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/lead-inbox', req, reply, req.userCtx);
+});
+app.post('/meta/lead-inbox/:id/retry', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/lead-inbox/${id}/retry`, req, reply, req.userCtx);
+});
+app.post('/meta/lead-inbox/:id/ignore', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/lead-inbox/${id}/ignore`, req, reply, req.userCtx);
 });
 
 // Re-run auto-assignment (super_admin console): re-routes leads that arrived

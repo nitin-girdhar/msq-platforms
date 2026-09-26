@@ -178,11 +178,30 @@ BEGIN
     ('sales',  'sales', 'Sales',  'Campaigns that look for customers.',
      '{}'::TEXT[], TRUE,  100, 1),
     ('hiring', 'hr',    'Hiring', 'Campaigns that look for staff. Routes to the HR pool.',
-     '{hiring,hire,recruit,recruitment,hr,job,vacancy,trainer}'::TEXT[], FALSE, 50, 2)
+     '{}'::TEXT[], FALSE, 50, 2)
   ) AS v(name, dept, label, description, match_keywords, is_default, match_priority, sort_order)
   JOIN iam.departments d ON d.tenant_id = p_tenant_id AND d.name = v.dept
   ON CONFLICT (tenant_id, name) DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
+
+  -- 1.51.0: the matcher reads ORDERED RULES (marketing.campaign_type_rules), not
+  -- match_keywords, which new tenants now get empty. The starter rules route
+  -- explicit recruitment words to Hiring on the campaign name. `hr`, `job` and
+  -- `trainer` -- in the pre-1.51.0 keyword list -- are deliberately LEFT OUT:
+  -- at a fitness business "Personal_Trainer" and "Job_Offer_Membership" are
+  -- SALES campaign names, and a keyword that sends them to the HR pool is worse
+  -- than no keyword at all. Tenants add their own from the Campaign Types screen.
+  -- Seeded only when the tenant has no live rules, so re-provisioning never
+  -- stacks a second copy on top of an admin's edits.
+  IF NOT EXISTS (SELECT 1 FROM marketing.campaign_type_rules
+                 WHERE tenant_id = p_tenant_id AND NOT is_deleted) THEN
+    INSERT INTO marketing.campaign_type_rules (tenant_id, rule_order, match_field, pattern, campaign_type_id)
+    SELECT p_tenant_id, v.rule_order, 'campaign_name', v.pattern, ct.id
+    FROM (VALUES (10, 'hiring'), (20, 'hire'), (30, 'recruit'), (40, 'recruitment'), (50, 'vacancy'))
+         AS v(rule_order, pattern)
+    JOIN marketing.campaign_types ct ON ct.tenant_id = p_tenant_id AND ct.name = 'hiring';
+    GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
+  END IF;
 
   -- department_id is resolved HERE and cannot come from the template it clones:
   -- template roles are global (tenant_id IS NULL) while iam.departments is

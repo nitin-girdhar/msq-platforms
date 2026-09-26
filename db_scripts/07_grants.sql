@@ -680,6 +680,41 @@ GRANT EXECUTE ON FUNCTION lms.fn_user_sees_campaign_type(UUID, UUID, UUID)
 GRANT EXECUTE ON FUNCTION marketing.fn_campaign_type_usage(UUID)
   TO tenant_admin, root_service, lms_svc, lead_svc;
 
+-- ── 1.51.0: ordered rules, campaign discovery caches, lead inbox ────────
+-- marketing.campaign_type_rules: edited from the console (leads-service, as the
+-- N-6 app_user path or lms_svc), read by the matcher on every intake path.
+-- DELETE is granted to the writers only because trg_campaign_type_rules_soft_delete
+-- fires ON DELETE and turns it into a soft delete; no row is ever removed.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE marketing.campaign_type_rules TO app_user, lms_svc;
+GRANT SELECT                         ON TABLE marketing.campaign_type_rules TO lead_svc, tenant_admin;
+GRANT ALL PRIVILEGES                 ON TABLE marketing.campaign_type_rules TO root_service;
+GRANT EXECUTE ON FUNCTION marketing.fn_match_campaign_type_rules(UUID, TEXT, TEXT, TEXT, TEXT)
+  TO app_user, tenant_admin, root_service, lms_svc, lead_svc;
+
+-- ext.meta_campaigns: the N-6 console path now WRITES here too (the fetch and
+-- confirm run under withTenantConfigTx as app_user, not only as lms_svc).
+GRANT INSERT, UPDATE ON TABLE ext.meta_campaigns TO app_user;
+
+-- ext.meta_forms: meta-conversion-api's form picker now writes the cache the
+-- Python sync used to own, through the N-6 console path.
+GRANT SELECT, INSERT, UPDATE ON TABLE ext.meta_forms TO app_user, lms_svc;
+
+-- ext.meta_adsets / ext.meta_ads: same writers and readers as ext.meta_campaigns.
+GRANT SELECT, INSERT, UPDATE ON TABLE ext.meta_adsets, ext.meta_ads TO app_user, lms_svc;
+GRANT SELECT                 ON TABLE ext.meta_adsets, ext.meta_ads TO lead_svc, tenant_admin;
+GRANT ALL PRIVILEGES         ON TABLE ext.meta_adsets, ext.meta_ads TO root_service;
+
+-- ext.meta_ad_accounts: root_service ONLY. Platform-level, no tenant column,
+-- reached solely by super_admin routes on withServiceTx (see 02_tables_core.sql).
+REVOKE ALL ON TABLE ext.meta_ad_accounts FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES ON TABLE ext.meta_ad_accounts TO root_service;
+
+-- ext.meta_lead_inbox: written by the webhook (withServiceTx -- the webhook has
+-- no session at all) and worked from the console (N-6 path for tenant-attributed
+-- rows, withServiceTx for the tenant-less "unmapped" rows a super admin triages).
+GRANT SELECT, INSERT, UPDATE ON TABLE ext.meta_lead_inbox TO app_user, lms_svc;
+GRANT ALL PRIVILEGES         ON TABLE ext.meta_lead_inbox TO root_service;
+
 ALTER DEFAULT PRIVILEGES IN SCHEMA lms       GRANT SELECT, INSERT, UPDATE ON TABLES TO lms_svc;
 ALTER DEFAULT PRIVILEGES IN SCHEMA marketing GRANT SELECT, INSERT, UPDATE ON TABLES TO lms_svc;
 ALTER DEFAULT PRIVILEGES IN SCHEMA ext       GRANT SELECT, INSERT, UPDATE ON TABLES TO lms_svc;

@@ -50,7 +50,13 @@ export const marketingLeadsTable = lmsSchema.table('marketing_leads', {
   campaignTypeId:  uuid('campaign_type_id').references(() => campaignTypesTable.id, { onDelete: 'restrict' }),
   sourceId:        uuid('source_id').references(() => leadSourcesTable.id),
   assignedUserId:  uuid('assigned_user_id').references(() => usersTable.id, { onDelete: 'set null' }),
-  isActive:        boolean('is_active').notNull().default(true),
+  /**
+   * 1.51.0: why the auto-assigner left this lead unowned —
+   * 'no_campaign_type' | 'no_weighted_users' | 'no_department_match' | 'no_capable_users'.
+   * NULL once anyone owns it.
+   */
+  autoAssignReason: text('auto_assign_reason'),
+  isActive:      boolean('is_active').notNull().default(true),
   supersededBy:    uuid('superseded_by').references((): any => marketingLeadsTable.id, { onDelete: 'set null' }),
   rawWebhookData:  jsonb('raw_webhook_data').notNull().default({}),
   metadata:        jsonb('metadata').notNull().default({}),

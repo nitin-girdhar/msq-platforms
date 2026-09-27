@@ -88,6 +88,7 @@ export {
 } from './export/export';
 
 export { NotificationProvider, useNotifications, type AppNotification } from './providers/NotificationProvider';
+export { UserAdminScopeProvider, useUserAdminScope, type UserAdminScope } from './providers/UserAdminScope';
 
 // PWA — installability + service worker registration shared by all six root
 // layouts. See docs/Architecture.md → Web push & PWA.

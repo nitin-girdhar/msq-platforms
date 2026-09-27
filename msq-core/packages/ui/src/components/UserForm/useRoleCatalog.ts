@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { users as usersApi } from '../../api/resources';
+import { useUserAdminScope } from '../../providers/UserAdminScope';
 import type { DepartmentOption, RoleOption } from './types';
 
 interface RoleCatalog {
@@ -22,13 +23,15 @@ export function useRoleCatalog(enabled = true): RoleCatalog {
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
+  // lookup-admin's selected tenant, when set — its roles, not the session's.
+  const { tenant_id: scopeTenantId } = useUserAdminScope();
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
 
     setLoading(true);
-    usersApi.roleCatalog()
+    usersApi.roleCatalog({ tenant_id: scopeTenantId })
       .then((res) => {
         if (cancelled) return;
         setRoles(res.data.roles);
@@ -44,7 +47,7 @@ export function useRoleCatalog(enabled = true): RoleCatalog {
       });
 
     return () => { cancelled = true; };
-  }, [enabled]);
+  }, [enabled, scopeTenantId]);
 
   return { roles, departments, loading, error };
 }

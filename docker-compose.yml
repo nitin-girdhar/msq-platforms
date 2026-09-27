@@ -109,6 +109,10 @@ services:
     environment:
       PORT: ${IDENTITY_SERVICE_PORT}
       <<: *db-env
+      # hr-service internal call (Team create/edit → hr.employee_profiles sync).
+      # Hardcoded for the same reason as the gateway's product URLs below: .env's
+      # value is localhost for native `pnpm turbo dev`, meaningless in a container.
+      HR_SERVICE_URL: http://hr-service:${HR_SERVICE_PORT}
       # Profile-photo (avatar) storage. MUST resolve to the SAME shared blob
       # volume hr-service mounts so the avatar identity writes is the exact
       # file hr-service enrolls with CompreFace.

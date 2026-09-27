@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { users as usersApi } from '../../api/resources';
+import { useUserAdminScope } from '../../providers/UserAdminScope';
 import type { CampaignTypeOption } from './types';
 
 interface CampaignTypeCatalog {
@@ -25,13 +26,15 @@ export function useCampaignTypeCatalog(enabled = true): CampaignTypeCatalog {
   const [campaignTypes, setCampaignTypes] = useState<CampaignTypeOption[]>([]);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
+  // lookup-admin's selected tenant, when set — its types, not the session's.
+  const { tenant_id: scopeTenantId } = useUserAdminScope();
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
 
     setLoading(true);
-    usersApi.campaignTypeCatalog()
+    usersApi.campaignTypeCatalog({ tenant_id: scopeTenantId })
       .then((res) => {
         if (cancelled) return;
         setCampaignTypes(res.data);
@@ -46,7 +49,7 @@ export function useCampaignTypeCatalog(enabled = true): CampaignTypeCatalog {
       });
 
     return () => { cancelled = true; };
-  }, [enabled]);
+  }, [enabled, scopeTenantId]);
 
   return { campaignTypes, loading, error };
 }

@@ -1,4 +1,4 @@
-import { users as usersResource } from '@platform/ui-kit';
+import { users as usersResource, type UserAdminScope } from '@platform/ui-kit';
 import type { SessionUser } from '@platform/types';
 
 // Thin typed wrappers around @platform/ui-kit's shared `users` resource rather
@@ -26,6 +26,8 @@ export interface AssignableUser {
   rank: number;
 }
 
+// `scope` is lookup-admin's selected tenant (UserAdminScopeProvider); omitted —
+// every other host — the server scopes by the session exactly as before.
 export const users = {
   list: () => usersResource.list() as Promise<{ success: true; data: SessionUser[]; total: number; page: number; page_size: number }>,
 
@@ -33,16 +35,16 @@ export const users = {
   // server-side on the product's CAPABILITY node, so it excludes staff who sit
   // on the same rank ladder but do not work that product — never filter the
   // plain roster by hand for an assignee list.
-  assignable: (opts: { product: 'lms' | 'tasks'; orgId?: string }) =>
-    usersResource.assignable(opts) as Promise<{ success: true; data: AssignableUser[] }>,
+  assignable: (opts: { product: 'lms' | 'tasks'; orgId?: string }, scope?: UserAdminScope) =>
+    usersResource.assignable({ ...opts, tenantId: scope?.tenant_id }) as Promise<{ success: true; data: AssignableUser[] }>,
 
-  create: (body: Record<string, unknown>) => usersResource.create(body),
+  create: (body: Record<string, unknown>, scope?: UserAdminScope) => usersResource.create(body, scope),
 
-  update: (id: string, body: Record<string, unknown>) => usersResource.update(id, body),
+  update: (id: string, body: Record<string, unknown>, scope?: UserAdminScope) => usersResource.update(id, body, scope),
 
   // Every branch the user holds. The Edit form needs the full set to send back a
   // complete assignment list; the roster row only carries their home branch.
-  orgMappings: (id: string) => usersResource.orgMappings(id),
+  orgMappings: (id: string, scope?: UserAdminScope) => usersResource.orgMappings(id, scope),
 
   resetPassword: (
     id: string,
@@ -50,5 +52,6 @@ export const users = {
     override_policy?: boolean,
     force_password_change?: boolean,
     send_email_notification?: boolean,
-  ) => usersResource.resetPassword(id, new_password, override_policy, force_password_change, send_email_notification),
+    scope?: UserAdminScope,
+  ) => usersResource.resetPassword(id, new_password, override_policy, force_password_change, send_email_notification, scope),
 };

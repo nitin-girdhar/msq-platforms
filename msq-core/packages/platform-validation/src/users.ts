@@ -77,6 +77,14 @@ export const createUserSchema = refineOrgAssignments(
     send_email_notification: z.boolean().optional(),
     org_assignments: z.array(orgAssignmentSchema).min(1).optional(),
     home_org_id: z.string().uuid().optional(),
+    // Seeds hr.employee_profiles.date_of_joining when identity-service creates
+    // the member's HR profile (defaults to today there). Not stored on iam.users;
+    // after creation it is HR-owned and edited in HRMS. A future date is allowed:
+    // members are often set up before their first day.
+    date_of_joining: z.string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date of joining must be YYYY-MM-DD')
+      .refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)), 'Date of joining is not a valid date')
+      .optional(),
   }).refine(
     (v) => v.role_name !== undefined || v.org_assignments !== undefined,
     { message: 'Either role_name or org_assignments is required', path: ['role_name'] },

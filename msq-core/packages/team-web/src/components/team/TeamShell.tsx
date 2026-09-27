@@ -28,6 +28,13 @@ interface Props {
   /** The slice the SERVER actually returned — it narrows a scope the actor may
    *  not use, so this is the only honest label for what is on screen. */
   scope: TeamScope;
+  /** Page heading. lookup-admin mounts this as "Users". */
+  title?: string;
+  /** Replaces the scope label under the heading (lookup-admin names the tenant /
+   *  branch its navbar selected) and hides the My team / My branch / All
+   *  switcher, whose rungs describe the ACTOR's own roster, not a tenant being
+   *  administered from outside. */
+  scopeLabel?: string;
 }
 
 const SCOPE_LABEL: Record<TeamScope, string> = {
@@ -42,7 +49,9 @@ const SCOPE_EMPTY: Record<TeamScope, string> = {
   tenant: 'No users found in this tenant.',
 };
 
-export default function TeamShell({ users, actor, total, orgs, myOrgs, branchesFailed, scope, leadProduct = 'lms' }: Props) {
+export default function TeamShell({
+  users, actor, total, orgs, myOrgs, branchesFailed, scope, leadProduct = 'lms', title = 'Team', scopeLabel,
+}: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SessionUser | null>(null);
   const router = useRouter();
@@ -58,7 +67,9 @@ export default function TeamShell({ users, actor, total, orgs, myOrgs, branchesF
   // may not use, so a hand-typed ?scope=tenant gains nobody anything.
   const held = resolveScope(actor, CAPABILITY.ADMIN_TEAM_VIEW);
   const tenantWide = actor.rank >= RANKS.TENANT_ADMIN || held === 'tenant' || held === 'all';
-  const scopeOptions: TeamScope[] = tenantWide
+  const scopeOptions: TeamScope[] = scopeLabel !== undefined
+    ? []
+    : tenantWide
     ? ['reports', 'org', 'tenant']
     : held === 'org'
       ? ['reports', 'org']
@@ -96,11 +107,11 @@ export default function TeamShell({ users, actor, total, orgs, myOrgs, branchesF
     <div className="space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Team</h1>
+          <h1 className="text-2xl font-bold text-[#0F172A]">{title}</h1>
           {/* Names the slice, not just the count. "12 total" on a subtree reads
               as the whole company to someone who has never seen the wider one. */}
           <p className="mt-1 text-xs text-[#64748B]">
-            {total} {total === 1 ? 'person' : 'people'} · {SCOPE_LABEL[scope].toLowerCase()}
+            {total} {total === 1 ? 'person' : 'people'} · {scopeLabel ?? SCOPE_LABEL[scope].toLowerCase()}
           </p>
         </div>
 

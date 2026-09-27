@@ -1691,3 +1691,75 @@ export async function removeOrgMapping(targetUserId: string, orgId: string): Pro
     return rows.length > 0;
   });
 }
+
+// ── Explicit admin scope (lookup-admin's navbar Tenant / Org) ────────────────
+// super_admin runs on the unrestricted service connection (withRoleTx), so no
+// RLS policy fences its reads or writes to a tenant — these existence and
+// membership checks ARE the fence. Service connection on purpose: the answer
+// must not depend on which tenant the caller's own session happens to sit in.
+
+export async function tenantExists(tenantId: string): Promise<boolean> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT 1 FROM entity.tenants WHERE id = ${tenantId}::uuid
+    `)) as Array<Record<string, unknown>>;
+    return rows.length > 0;
+  });
+}
+
+// "Belongs" = the user's home branch, or any branch they are (or were) mapped
+// into, sits in this tenant. Inactive mappings count so a deactivated member can
+// still be found, reactivated and have their access edited from that tenant.
+export async function userBelongsToTenant(userId: string, tenantId: string): Promise<boolean> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT 1
+      FROM iam.users u
+      WHERE u.id = ${userId}::uuid
+        AND NOT u.is_deleted
+        AND (
+          EXISTS (SELECT 1 FROM entity.organizations o WHERE o.id = u.org_id AND o.tenant_id = ${tenantId}::uuid)
+          OR EXISTS (
+            SELECT 1
+            FROM iam.user_org_mapping mm
+            JOIN entity.organizations mo ON mo.id = mm.org_id
+            WHERE mm.user_id = u.id AND mo.tenant_id = ${tenantId}::uuid
+          )
+        )
+    `)) as Array<Record<string, unknown>>;
+    return rows.length > 0;
+  });
+}
+
+// getUserById for an actor with no membership in the target's branch (a
+// super_admin working another tenant from lookup-admin). The role reported is
+// the one held in `orgId` when given, else the home branch's, else any branch of
+// the tenant — never a branch outside it.
+export async function getUserByIdInTenant(
+  ctx: RoleTxContext,
+  targetUserId: string,
+  tenantId: string,
+  orgId?: string,
+) {
+  return withRoleTx(ctx, async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT u.id, u.org_id, u.first_name, u.middle_name, u.last_name, u.full_name,
+             u.email, u.mobile, u.is_active, u.force_password_change,
+             u.password_changed_at, u.last_login_at, u.manager_id, u.created_at, u.updated_at,
+             ur.name  AS role_name,
+             ur.label AS role_label,
+             ur.rank,
+             m.full_name AS manager_name
+      FROM iam.users u
+      JOIN iam.user_org_mapping uom ON uom.user_id = u.id AND uom.is_active
+      JOIN entity.organizations o   ON o.id = uom.org_id AND o.tenant_id = ${tenantId}::uuid
+      JOIN iam.user_roles ur        ON ur.id = uom.role_id
+      LEFT JOIN iam.users m         ON m.id  = u.manager_id
+      WHERE u.id = ${targetUserId}::uuid AND NOT u.is_deleted
+        ${orgId ? sql`AND uom.org_id = ${orgId}::uuid` : sql``}
+      ORDER BY (uom.org_id = u.org_id) DESC
+      LIMIT 1
+    `)) as Array<Record<string, unknown>>;
+    return rows[0] ?? null;
+  });
+}

@@ -443,8 +443,8 @@ export const metaCampaigns = {
 // The ADMINISTERED tenant travels as ?tenant_id=, exactly like /meta/campaigns*.
 // leads-service honours it only for a platform super_admin (router gate +
 // controller rank check) and pins the transaction to that tenant, so the types
-// listed here are the selected tenant's — the ids the confirm dialog and
-// OrgAccessPanel then write are ones that tenant's RLS accepts.
+// listed here are the selected tenant's — the ids the confirm dialog then
+// writes are ones that tenant's RLS accepts.
 export interface CampaignTypeRow {
   id: string;
   name: string;
@@ -934,81 +934,5 @@ export const orgs = {
         .filter((o) => o.is_active !== false)
         .map((o) => ({ id: String(o.id), name: o.name, tenant_id: String(o.tenant_id) })),
     };
-  },
-};
-
-// ── Users ────────────────────────────────────────────────────────────────────
-
-export interface UserRow {
-  id: string;
-  first_name: string;
-  middle_name: string | null;
-  last_name: string | null;
-  email: string;
-  mobile: string | null;
-  role_name: string;
-  role_label: string;
-  org_id: string;
-  org_name: string;
-  is_active: boolean;
-  force_password_change?: boolean;
-  [key: string]: unknown;
-}
-
-export interface OrgMappingRow {
-  user_id: string;
-  org_id: string;
-  org_name: string;
-  tenant_id: string;
-  tenant_name: string;
-  role_name: string;
-  role_label: string;
-  role_rank: number;
-  granted_at: string;
-  mapping_updated_at: string;
-  // Per-campaign-type weights (schema 1.49.0) — a mapping with no active pool
-  // membership comes back with an empty array, not a scalar 0.
-  weights: Array<{ campaign_type_id: string; campaign_type: string; campaign_type_label: string; weight: number }>;
-}
-
-export const users = {
-  list: () => request<{ success: true; data: UserRow[] }>('/users'),
-
-  getAssignable: (product: 'lms' | 'tasks', orgId?: string, scope?: 'delegation' | 'collaboration') =>
-    request<{ success: true; data: UserRow[] }>(`/users/assignable?product=${product}${orgId ? `&org_id=${orgId}` : ''}${scope ? `&scope=${scope}` : ''}`),
-
-  create: (body: Record<string, unknown>) =>
-    request<{ success: true; data: { id: string; email: string }; temporary_password?: string }>('/users', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-
-  update: (id: string, body: Record<string, unknown>) =>
-    request<{ success: true; data: unknown }>(`/users/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-    }),
-
-  remove: (id: string) =>
-    request<void>(`/users/${id}`, { method: 'DELETE' }),
-
-  resetPassword: (id: string, new_password?: string, force_password_change?: boolean) =>
-    request<{ success: true; data: { temporary_password: string } }>(`/users/${id}/reset-password`, {
-      method: 'POST',
-      body: JSON.stringify({ new_password, force_password_change }),
-    }),
-
-  orgMappings: {
-    list: (userId: string) =>
-      request<{ success: true; data: OrgMappingRow[] }>(`/users/${userId}/org-mappings`),
-
-    add: (userId: string, body: unknown) =>
-      request<{ success: true; data: OrgMappingRow }>(`/users/${userId}/org-mappings`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
-
-    remove: (userId: string, orgId: string) =>
-      request<void>(`/users/${userId}/org-mappings/${orgId}`, { method: 'DELETE' }),
   },
 };

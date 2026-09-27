@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { users as usersApi } from '../../api/resources';
+import { useUserAdminScope } from '../../providers/UserAdminScope';
 import type { WeightStatus } from './types';
 
 /** `${org_id}:${campaign_type_id}` — the composite key every param/result uses. */
@@ -30,6 +31,7 @@ export function useWeightStatus(
 ): Record<string, WeightStatus> {
   const [others, setOthers] = useState<Record<string, { total: number; count: number }>>({});
   const [loaded, setLoaded] = useState<Set<string>>(new Set());
+  const { tenant_id: scopeTenantId } = useUserAdminScope();
 
   // Sorted + joined so the effect keys off the SET of pairs, not array
   // identity — reordering rows must not refetch.
@@ -43,7 +45,7 @@ export function useWeightStatus(
     Promise.all(keys.map(async (k) => {
       const [orgId, campaignTypeId] = k.split(':') as [string, string];
       try {
-        const res = await usersApi.assignmentWeights(orgId, campaignTypeId);
+        const res = await usersApi.assignmentWeights(orgId, campaignTypeId, { tenant_id: scopeTenantId });
         const rows = res.data.filter((r) => r.user_id !== excludeUserId);
         return [k, {
           total: rows.reduce((s, r) => s + Number(r.weight ?? 0), 0),
@@ -68,7 +70,7 @@ export function useWeightStatus(
     });
 
     return () => { cancelled = true; };
-  }, [key, excludeUserId]);
+  }, [key, excludeUserId, scopeTenantId]);
 
   const result: Record<string, WeightStatus> = {};
   for (const p of pairs) {

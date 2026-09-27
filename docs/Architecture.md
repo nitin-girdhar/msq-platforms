@@ -97,6 +97,7 @@ caddy (ports 80/443, profile "sso-proxy", root docker-compose.yml, infra/Caddyfi
 | GET | `/users/assignable`, `/users/team`, `/users/org-chart` | identity |
 | POST | `/users/:id/reset-password` | identity |
 | GET | `/users/:id/org-mappings` | identity |
+| — | every `/users*` route above takes an optional `?tenant_id=` — honoured for super_admin only (lookup-admin's selected tenant); by-id routes 404 a user outside it | identity |
 | POST | `/users/:id/org-mappings` | identity |
 | DELETE | `/users/:id/org-mappings/:orgId` | identity |
 | GET | `/orgs`, `/orgs/all`, `/lead-sources` | identity |
@@ -788,9 +789,46 @@ screen that had drifted (only one had export, only one had the password-policy o
 disagreed about who could set a password). It is now a single module, `@platform/team-web`,
 following `@hr/web`'s pattern: the package exports the page-level `TeamShell`, its capability
 predicates and a server loader, and a host mounts it with a workspace dep, a `transpilePackages`
-entry and a thin `page.tsx`. Mounted today in admin-web only; lms-web's `/dashboard/users`
-redirects to it and its `/dashboard/team` stays a `Placeholder`, so adding a second mount later is
-those same three lines rather than a third fork.
+entry and a thin `page.tsx`. Mounted in admin-web (`/admin/dashboard/team`) and lookup-admin
+(`/sa/dashboard/users`, tenant-scoped — see below); lms-web's `/dashboard/users` redirects to the
+admin-web mount and its `/dashboard/team` stays a `Placeholder`.
+
+**Super admin: another tenant's users, by explicit scope (lookup-admin `/sa/dashboard/users`).**
+lookup-admin's navbar used to carry two unrelated org controls: the shared **branch chip**
+(`BranchSwitcher`, which re-mints the super admin's *own* session via `/auth/switch-org`) and the
+Tenant / Org dropdowns. The chip is now suppressed wherever a host passes `scopeSlot` (only
+lookup-admin does), so the console shows one scope control. The
+**Tenant / Org dropdowns** (`TenantScopeSwitcher` / `OrgScopeSwitcher`) only write the
+`msq_admin_tenant_id` / `msq_admin_org_id` cookies, which each SA screen reads and sends as an
+explicit `tenant_id` / `org_id`. The Users screen used to ignore the dropdowns — `GET /users` read
+only the session — so it always showed the super admin's home tenant. It now mounts
+`@platform/team-web`'s `TeamShell` (People) plus a read-only **Reporting lines** view inside a
+`UserAdminScopeProvider` (`@platform/ui-kit`), and every users call names the selected tenant:
+
+- **identity-service** takes an optional `tenant_id` on every `/users*` route (query param, DELETE
+  included; body schemas unchanged). `resolveTargetScope` honours it for `super_admin` **only**
+  and checks the tenant exists; anyone else gets their session tenant regardless. An `org_id` must
+  sit inside the resolved tenant for **every** actor (400 otherwise).
+- **`scopeContext`** re-points the request context at that tenant (and branch) so catalogs, manager
+  candidates, assignable users, weights, create and update run against it unchanged. It rewrites
+  **only** a super admin's context: for every other role `ctx.org_id` is the
+  `app.current_org_id` their RLS keys on, and re-pointing it would hand them another branch's rows.
+  A super admin working a tenant other than its session's must name a branch where the route
+  would otherwise fall back to "the caller's branch" (weights, manager candidates, team, org chart),
+  and may not use the legacy `role_name`-only create (it lands in the caller's own branch).
+- **By-id fences.** `super_admin` runs on the unrestricted service connection, and the org-mapping
+  routes use the service connection for everyone, so no RLS policy fenced them to a tenant. Every
+  by-id route (`GET/PATCH/DELETE /users/:id`, reset-password, org-mappings list/add/remove) now
+  asserts the target user belongs to the resolved tenant (home branch or any mapping) and 404s
+  otherwise; org-mappings list drops rows from other tenants; remove also checks the branch.
+  Before this, `GET /users?org_id=` read any tenant's branch, and a tenant admin could list or
+  revoke another tenant's user's mappings by id.
+- **UI.** `UserAdminScopeProvider` is set by lookup-admin alone; the shared users resource, the
+  UserForm hooks (`useRoleCatalog`, `useCampaignTypeCatalog`, `ManagerSelect`, `useWeightStatus`)
+  and team-web's modals read it and append `tenant_id`. No provider (admin-web, lms-web) means no
+  param and unchanged behaviour. `loadTeamData(cookie, scope, { tenantId, orgId })` reads the
+  roster for that tenant and its branches from `/lookups/organizations`. A new user starts in the
+  selected branch (or the tenant's first) instead of the super admin's own.
 
 **The roster follows the org chart, not the rank ladder.** `GET /users` previously scoped by
 branch or tenant and then filtered `ur.rank < actorRank` — "everyone below me in my branch", which
@@ -949,13 +987,15 @@ Two props let the consoles drop their copies:
 - **`scopeSlot`** — the same slot contract as the LMS-only `notificationSlot`, carrying
   lookup-admin's tenant + org selectors. It renders inline on `sm:+` and in the mobile second row
   below, where the selects go full-width (`w-full sm:w-[200px]`) instead of a fixed 200px that
-  would overflow.
+  would overflow. Passing a `scopeSlot` also hides `BranchSwitcher` — the slot is that console's
+  scope, and the actor's session branch is not.
 
 The mobile strip's `has-[nav]:border-t` trick — which collapses it to zero height when
 `ProductSwitcher` returns `null` for a single-product user — does not apply when a `scopeSlot` is
 passed, since that always renders; `AppNavbar` swaps to an unconditional border/padding in that
 case. Both consoles also gained the FitClass logo (a copy of `fitclass-emblem.png` now sits in
-each app's `public/`, as `lms-web` already did), the branch pill, and a sticky header.
+each app's `public/`, as `lms-web` already did), the branch pill (admin-web only — see `scopeSlot`
+above), and a sticky header.
 
 #### The active chip needs `withBasePath()`
 
@@ -1009,6 +1049,15 @@ Creating a user, resetting a password, or moving someone between branches from t
 - **Content**: account-created (login URL + temp password), password-reset (temp password included only when system-generated — never when the admin typed a specific one), branch-changed (added/removed branch names + new home branch). `APP_NAME` / `AUTH_URL` drive the product name and sign-in link.
 
 Existing databases: `db_scripts/one_time/apply_admin_team_notify_capability.sql` (+ `_dryrun`).
+
+### Team create/edit keeps the member's HR profile in step (`hr.employee_profiles`)
+
+Every HRMS attendance, leave-accrual and Leave Administration → Employees screen reads `hr.employee_profiles`, but until this change nothing in the product wrote it — the Team panel wrote only `iam.*`, and `POST /hr/employees` had no UI caller — so every member added after the 2026-08 seed/backfill was invisible to HR.
+
+- **Flow**: after identity-service's own writes for `POST /users` and `PATCH /users/:id`, `users.service#syncHrProfile` calls `lib/hr-service-client.ts` → hr-service `POST /api/v1/internal/employees/sync` with `X-Internal-Secret`, body `{ user_id, tenant_id, home_org_id, is_active, date_of_joining?, actor_id }`. `tenant_id` is resolved from the home branch (`getTenantIdForOrg`), `actor_id` from the verified session — never from the browser. The route is **not** in the api-gateway allowlist (it is `EXEMPT` in hr-service's gateway-route-coverage test).
+- **Upsert (hr-service `internal.repository`)**: idempotent. Verifies the branch belongs to the tenant and the user holds an active mapping there, then creates the profile (joining date from the Add member form, default today) or re-files `org_id` to the home branch and mirrors `is_active`. It runs on the `tenant_admin` Postgres path (`tenantWide`), **not** `withServiceTx` — a home-branch move rewrites a row in another branch, which `org_isolation_policy` would hide, while `tenant_isolation_policy` still fences reads and `WITH CHECK` to the one tenant. Joining date, code, department, designation and weekly-off are **HR-owned** after creation (Leave Administration → Employees, `PATCH /hr/employees/:userId`) and never overwritten. A profile HR soft-deleted is reported (`outcome: 'deleted'`), not resurrected.
+- **Not atomic, by design**: it has to run after identity commits (hr-service checks the mapping on its own connection). A failure never rolls back the identity change; the response carries `hr_profile_synced: false` (`PATCH /users/:id` now returns `200 { success, data: { hr_profile_synced } }` instead of `204`) and the Team modals show an amber notice. Re-saving retries; `db_scripts/one_time/backfill_hr_employee_profiles.sql` remains the bulk repair.
+- **Manager field**: the leave approver chain walks `iam.reporting_lines`, so the Edit modal must not rewrite the line by accident. `ManagerSelect` only clears a selection once candidates for the *current* branch have loaded **and** the home branch has moved (`shouldClearManager`); the modal sends `manager_id` only when it changed or home moved. Previously the clear effect ran against the not-yet-loaded list, blanked the manager on open, and Save closed the reporting line — sending that user's leave approvals to the org-admin fallback.
 
 ## The single reporting hierarchy (P4, `1.27.0`)
 
@@ -1264,7 +1313,7 @@ Two rules when adding a grid:
 
 The module is exposed on the `./grid` subpath, not the root barrel, and imports nothing from `ag-grid-community` — apps with no grid (`auth-web`, hr-web, todo-web) import `@platform/ui-kit` and must not be made to resolve AG Grid.
 
-Current grids: `TeamTable` (`@platform/team-web`), `LookupTable` + `UsersTable` (lookup-admin), `LeadsTable` + `FollowUpGrid` + `LeadsHistoryShell` (`@lms/web`).
+Current grids: `TeamTable` (`@platform/team-web`, also lookup-admin's Users), `LookupTable` (lookup-admin), `LeadsTable` + `FollowUpGrid` + `LeadsHistoryShell` (`@lms/web`).
 
 ### Per-product packages (nested repos: `msq-lms`, `msq-hrms`, `msq-todo`)
 
@@ -1292,7 +1341,7 @@ Each product repo carries the same three-package shape, plus a web-component pac
 >
 > **New-tenant seeding (follow-up):** a tenant created after `26` runs gets zero rows in these 7 tables until seeded, and `marketing_leads.stage_id` is `NOT NULL` — so lead intake for a brand-new tenant needs these 7 wired into the versioned catalog-defaults (`db_scripts/23` / `seedTenantDefaults`), the same two-step pattern P3.1→P3.2 used for the first 8. Tracked in `26`'s KNOWN FOLLOW-UP.
 
-`apps/lookup-admin` (port 3005) is a separate Next.js app providing the super_admin-only web UI for managing these lookup tables, tenants, and organizations (all 15 tenant-scoped tables now via their owning product service; the 4 shared iam/entity lookups + tenants/organizations via admin-service), plus a Users management UI (`app/dashboard/users/`) that calls the pre-existing identity-service Users CRUD, reset-password, and org-mappings endpoints. For the 15 tenant-scoped tables, the table page renders a `TenantSelector` (a `<select>` driven by the URL's `tenant_id` search param) above the grid; no tenant selected means an empty/prompt state instead of a fetch, and "New"/edit actions (and parent-lookup option fetches, e.g. lead-stage for a stage-outcome) pass the selected `tenant_id` through. This selector is advisory only — the real enforcement is the backend's required `tenant_id` query param, the `authenticateSuperAdmin` gate, and the tenant-pinned admin RLS.
+`apps/lookup-admin` (port 3005) is a separate Next.js app providing the super_admin-only web UI for managing these lookup tables, tenants, and organizations (all 15 tenant-scoped tables now via their owning product service; the 4 shared iam/entity lookups + tenants/organizations via admin-service), plus a Users management UI (`app/dashboard/users/`) — `@platform/team-web`'s `TeamShell` scoped to the navbar's selected tenant/branch via `UserAdminScopeProvider` (see "Super admin: another tenant's users, by explicit scope"). For the 15 tenant-scoped tables, the table page renders a `TenantSelector` (a `<select>` driven by the URL's `tenant_id` search param) above the grid; no tenant selected means an empty/prompt state instead of a fetch, and "New"/edit actions (and parent-lookup option fetches, e.g. lead-stage for a stage-outcome) pass the selected `tenant_id` through. This selector is advisory only — the real enforcement is the backend's required `tenant_id` query param, the `authenticateSuperAdmin` gate, and the tenant-pinned admin RLS.
 
 **Shell (module-grouped nav).** The dashboard is built on `@platform/ui-kit/shell` (the same `AppSidebar`/`MobileSidebar`/`UserMenu` chrome every product app uses). The left rail groups every table by `LookupTableDef.module` (`platform`/`lms`/`hr`/`tasks`/`capabilities`, see `src/lib/lookupTableConfig.ts`) via `NavGroup`/`filterNavGroups` (added to `@platform/ui-kit/shell/nav` for this) — flat `NavItem[]` usage in the other product apps is untouched. Each group lands on `/dashboard/m/[module]`, a card pane listing that module's tables (plus a few hand-built screens folded in as extra cards: Users and Catalog Versions under Platform, Meta Page Mapping / Meta Campaign Mapping / Meta Lead Pull under LMS, the Capability Matrix under Capabilities); a table card opens the existing `/dashboard/lookups/[table]` CRUD page.
 

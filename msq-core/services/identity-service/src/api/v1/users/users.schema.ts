@@ -4,6 +4,9 @@ export const listUsersQuerySchema = z.object({
   page:      z.coerce.number().int().positive().default(1),
   page_size: z.coerce.number().int().positive().max(500).default(100),
   org_id:    z.string().uuid().optional(),
+  // The tenant to read, for a super_admin working another tenant from
+  // lookup-admin. Ignored for every other actor — see resolveTargetScope.
+  tenant_id: z.string().uuid().optional(),
   // Which slice of the roster to return.
   //   'reports' — the actor's reporting subtree (iam.vw_user_team_members), at
   //               any depth. Available to everyone; a manager with no reports
@@ -19,6 +22,17 @@ export const listUsersQuerySchema = z.object({
 });
 
 export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
+
+// Explicit admin scope for the routes that act on ONE user by id (read, update,
+// delete, reset-password, org mappings). A query param on every verb, DELETE
+// included, so one shape serves them all. Honoured for super_admin only; for
+// anyone else the session tenant applies and a foreign org_id is a 400.
+export const adminScopeQuerySchema = z.object({
+  tenant_id: z.string().uuid().optional(),
+  org_id:    z.string().uuid().optional(),
+});
+
+export type AdminScopeQuery = z.infer<typeof adminScopeQuerySchema>;
 
 export const getAssignableQuerySchema = z.object({
   org_id: z.string().uuid().optional(),
@@ -77,6 +91,8 @@ export const getAssignableQuerySchema = z.object({
   // bearing: the capability drops hr_admin and the fitness roles, the band
   // drops super_admin and read_only. Accepts org_ids for a multi-branch filter.
   purpose: z.enum(['assign', 'filter']).default('assign'),
+  // lookup-admin's selected tenant (super_admin only) — see resolveTargetScope.
+  tenant_id: z.string().uuid().optional(),
 });
 
 export type GetAssignableQuery = z.infer<typeof getAssignableQuerySchema>;
@@ -93,6 +109,7 @@ const PHOTO_MAX_B64_CHARS = 2_900_000;
 // the actor's own org; the service checks it belongs to the actor's tenant.
 export const orgScopedQuerySchema = z.object({
   org_id: z.string().uuid().optional(),
+  tenant_id: z.string().uuid().optional(),
 });
 
 export type OrgScopedQuery = z.infer<typeof orgScopedQuerySchema>;
@@ -104,6 +121,7 @@ export type OrgScopedQuery = z.infer<typeof orgScopedQuerySchema>;
 export const assignmentWeightsQuerySchema = z.object({
   org_id: z.string().uuid().optional(),
   campaign_type_id: z.string().uuid().optional(),
+  tenant_id: z.string().uuid().optional(),
 });
 
 export type AssignmentWeightsQuery = z.infer<typeof assignmentWeightsQuerySchema>;

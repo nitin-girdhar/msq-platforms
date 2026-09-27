@@ -11,7 +11,7 @@ const config = {
   // and the `handle /sa/*` block in infra/Caddyfile, which reverse-proxies
   // lookup-admin on :3005.
   basePath: '/sa',
-  transpilePackages: ['@platform/ui-kit'],
+  transpilePackages: ['@platform/ui-kit', '@platform/team-web'],
   async rewrites() {
     const apiGateway = process.env['API_GATEWAY_INTERNAL_URL'] ?? 'http://localhost:4000';
     return [

@@ -34,7 +34,8 @@ interface Props {
   // lookup-admin's tenant + org selectors. Same slot contract as
   // notificationSlot: the shared navbar carries no knowledge of what's inside.
   // Rendered inline on sm+ and in the mobile second row below, so wide controls
-  // never squeeze the top bar off-screen.
+  // never squeeze the top bar off-screen. Passing one also hides BranchSwitcher:
+  // the slot IS the console's scope, and the session branch is not.
   scopeSlot?: React.ReactNode;
   // admin-web's origin (adminWebOrigin()), for the standalone "Admin" link.
   // Deliberately NOT plumbed through ProductSwitcher/licensedProducts: admin-web
@@ -137,8 +138,12 @@ export default function AppNavbar({
             apps/admin-web/app/dashboard/layout.tsx), so anchoring the tabs
             against the user menu keeps them in the same place on every app,
             whether or not the pill (which self-hides for single-branch and
-            non-switching actors) shows. */}
-        <BranchSwitcher user={user} homeHref={homeHref} />
+            non-switching actors) shows.
+            Suppressed when the host passes a scopeSlot: that console scopes
+            itself from its own selectors (lookup-admin's tenant + org), so the
+            actor's session branch would be a second, contradictory scope
+            control that none of its pages read. */}
+        {!scopeSlot && <BranchSwitcher user={user} homeHref={homeHref} />}
         {/* Inline on sm+; on mobile both the scope controls and the switcher drop
             to their own full-width rows below so they don't get squeezed out by
             the rest of the bar. Rendering each twice (rather than reflowing one

@@ -1,0 +1,20 @@
+meta {
+  name: List Users (SA, selected tenant)
+  type: http
+  seq: 15
+}
+
+docs {
+  As super_admin: the roster of {{tenantId}} (optionally one branch via org_id), not the
+  session tenant. For any other role tenant_id is ignored; an org_id outside the tenant is a 400.
+}
+
+get {
+  url: {{baseUrl}}/users?tenant_id={{tenantId}}&org_id={{orgId}}&scope=tenant&page_size=500
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

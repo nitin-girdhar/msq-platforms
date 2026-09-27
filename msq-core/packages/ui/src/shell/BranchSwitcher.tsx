@@ -22,9 +22,18 @@ interface Props {
 // (tenant_admin/super_admin) get every branch in their tenant, since they
 // aren't individually mapped to each one -- /auth/my-orgs resolves which list
 // applies server-side.
+//
+// When /auth/my-orgs says `can_view_all`, an "All branches" row sits on top of
+// the list (and is the login default). Picking it re-mints the session with the
+// branch_scope:'all' claim (session.all_branches), which branch-scoped screens
+// such as Leads read to stop narrowing to the session org. It is a view choice,
+// not extra access — the server still decides what each read may reach.
+const ALL_BRANCHES_KEY = '__all__';
+
 export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
   const { open, setOpen, search, setSearch, rootRef, searchInputRef } = useDropdown();
   const [orgs, setOrgs] = useState<UserOrgOption[] | null>(null);
+  const [canViewAll, setCanViewAll] = useState(false);
   const [switching, setSwitching] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,7 +45,9 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
     auth
       .myOrgs()
       .then((res) => {
-        if (!cancelled) setOrgs(res.data.orgs);
+        if (cancelled) return;
+        setOrgs(res.data.orgs);
+        setCanViewAll(res.data.can_view_all === true);
       })
       .catch(() => {
         if (!cancelled) setOrgs([]);
@@ -58,17 +69,25 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
 
   if (!canSwitchBranch) return null;
 
-  const multiBranch = (orgs?.length ?? 0) > 1;
+  const allActive = user.all_branches === true;
+  // The "All" row counts as a choice, so a tenant with a single branch still
+  // gets a dropdown (All vs that branch) when the actor may view all.
+  const choiceCount = (orgs?.length ?? 0) + (canViewAll ? 1 : 0);
+  const multiBranch = choiceCount > 1;
+  const chipLabel = allActive ? 'All branches' : user.org_name;
+  const showAllRow = canViewAll && !search.trim();
 
-  const handleSwitch = async (org: UserOrgOption) => {
-    if (switching || org.org_id === user.org_id) {
+  // null = "All branches".
+  const handleSwitch = async (org: UserOrgOption | null) => {
+    const alreadyActive = org === null ? allActive : !allActive && org.org_id === user.org_id;
+    if (switching || alreadyActive) {
       setOpen(false);
       return;
     }
-    setSwitching(org.org_id);
+    setSwitching(org === null ? ALL_BRANCHES_KEY : org.org_id);
     setError(null);
     try {
-      await auth.switchOrg(org.org_id);
+      await auth.switchOrg(org === null ? { all_branches: true } : { org_id: org.org_id });
       // Full navigation (not router.push): the layout is server-rendered from
       // the new cookie, so this rebuilds nav/sidebar for the role held in the
       // selected branch. Reload the current page so the user stays where they
@@ -100,13 +119,13 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
           clipRule="evenodd"
         />
       </svg>
-      <span className="truncate text-xs font-semibold text-[#0F172A]">{user.org_name}</span>
+      <span className="truncate text-xs font-semibold text-[#0F172A]">{chipLabel}</span>
     </span>
   );
 
   if (!multiBranch) {
     return (
-      <div className="hidden items-center rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 md:flex" title={user.org_name}>
+      <div className="hidden items-center rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 md:flex" title={chipLabel}>
         {chip}
       </div>
     );
@@ -121,7 +140,7 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
         aria-expanded={open}
         disabled={!!switching}
         className="flex items-center gap-1.5 rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 transition-colors hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-        title={`Branch: ${user.org_name}`}
+        title={`Branch: ${chipLabel}`}
       >
         {chip}
         <svg className="h-3.5 w-3.5 shrink-0 text-[#64748B]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
@@ -160,13 +179,41 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
             </div>
           )}
           <div className="max-h-72 overflow-y-auto">
+            {showAllRow && (
+              <button
+                type="button"
+                role="option"
+                aria-selected={allActive}
+                onClick={() => handleSwitch(null)}
+                disabled={!!switching}
+                className={`flex w-full items-center justify-between gap-2 border-b border-[#F1F5F9] px-4 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                  allActive ? 'bg-[#F0F7FF]' : 'hover:bg-[#F8FAFC] cursor-pointer'
+                }`}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-[#0F172A]">All branches</span>
+                  <span className="block truncate text-xs text-[#64748B]">Every branch in {user.tenant_name}</span>
+                </span>
+                {switching === ALL_BRANCHES_KEY ? (
+                  <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />
+                ) : allActive ? (
+                  <svg className="h-4 w-4 shrink-0 text-[#0b6cbf]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                    <path
+                      fillRule="evenodd"
+                      d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                ) : null}
+              </button>
+            )}
             {filteredOrgs.length === 0 && (
               <p className="px-4 py-4 text-center text-xs text-[#64748B]">
                 {search ? `No branches match "${search}"` : 'No branches available'}
               </p>
             )}
             {filteredOrgs.map((org) => {
-              const active = org.org_id === user.org_id;
+              const active = !allActive && org.org_id === user.org_id;
               const busy = switching === org.org_id;
               return (
                 <button

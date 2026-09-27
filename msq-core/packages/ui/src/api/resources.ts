@@ -11,13 +11,15 @@ const { request } = createApiClient('/api');
 export const auth = {
   logout: () => request<{ success: true; data: null }>('/auth/logout', { method: 'POST' }),
 
+  // can_view_all: the server's answer to whether the switcher may offer
+  // "All branches" — decided there, never inferred from the client.
   myOrgs: () =>
-    request<{ success: true; data: { orgs: import('@platform/types').UserOrgOption[] } }>('/auth/my-orgs'),
+    request<{ success: true; data: { orgs: import('@platform/types').UserOrgOption[]; can_view_all?: boolean } }>('/auth/my-orgs'),
 
-  switchOrg: (org_id: string) =>
+  switchOrg: (target: { org_id: string } | { all_branches: true }) =>
     request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/switch-org', {
       method: 'POST',
-      body: JSON.stringify({ org_id }),
+      body: JSON.stringify(target),
     }),
 };
 

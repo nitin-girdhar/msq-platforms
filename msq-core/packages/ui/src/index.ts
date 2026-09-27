@@ -15,6 +15,8 @@ export { MultiSelect, type SelectOption } from './components/MultiSelect';
 export { SearchableSelect, type SearchableOption } from './components/SearchableSelect';
 export { FilterField } from './components/FilterField';
 export { PhotoUploadModal, PhotoAvatar, type PhotoUploadGate } from './components/PhotoUpload';
+// Browser-native dictation (Web Speech API) for notes/reason/comment fields.
+export { SpeechInputButton } from './components/SpeechInputButton';
 
 // Create/Edit user form fields. Shared because admin-web "Team" and lms-web
 // "Users" are the same screen twice — they drifted apart while each app owned
@@ -62,6 +64,13 @@ export {
 export { useIsMobile } from './hooks/useIsMobile';
 export { useDismissible, useDropdown } from './hooks/useDropdown';
 export { useAnchoredPanel, type AnchoredPanelRect } from './hooks/useAnchoredPanel';
+export {
+  useSpeechToText,
+  appendDictation,
+  type DictationLang,
+  type UseSpeechToTextOptions,
+  type UseSpeechToTextReturn,
+} from './hooks/useSpeechToText';
 
 export { createApiClient, type ApiRequestError } from './api/http';
 export { appBasePath, withBasePath } from './api/base-path';

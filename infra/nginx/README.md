@@ -108,6 +108,11 @@ Two nginx footguns the snippet works around, both silent:
   header inherited from the server block. That is why each location in the
   snippet repeats the HSTS line — without it, `/sw.js` would be the one response
   on the origin served without HSTS.
+- **No `Permissions-Policy` is set today — keep `microphone=(self)` if one is added.**
+  The speak-to-type button on notes/reason fields (`SpeechInputButton` in
+  `@platform/ui-kit`) needs the microphone. A policy that omits it (or
+  `microphone=()`) silently hides dictation — and because of the `add_header`
+  rule above, it would have to be repeated in every location.
 - **`proxy_hide_header Cache-Control` comes first.** Without it the response
   carries Next's `max-age=0` AND the new value, and which one wins is up to the
   client.

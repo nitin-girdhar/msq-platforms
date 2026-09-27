@@ -47,3 +47,4 @@ Run every item before marking a frontend task complete or opening a PR.
 - [ ] Modals use `@platform/ui-kit` `Modal` (Escape-to-close, `role="dialog"`, `aria-modal`)
 - [ ] Form modals leave backdrop-click disabled (the default); `closeOnBackdropClick` is set only on read-only viewers
 - [ ] Icon-only buttons have `aria-label`
+- [ ] New free-text notes/reason/comment fields have a `SpeechInputButton` (appends via `appendDictation`, `disabled` while submitting)

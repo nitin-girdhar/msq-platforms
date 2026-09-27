@@ -315,6 +315,16 @@ Import generic building blocks from `@platform/ui-kit` rather than re-implementi
   (subject to `locked` during an in-flight submit).
 - `Pagination`, `DownloadButton`, `MonthGrid`, `Placeholder`.
 - Hooks: `useDropdown`, `useIsMobile`.
+- `SpeechInputButton` + `appendDictation` — speak-to-type for every free-text notes/reason/
+  comment field. Browser-native Web Speech API (no package, no backend). Put it in the field's
+  label row (`<div className="flex items-center justify-between gap-2">label + button</div>`);
+  for a single-line input sharing a row, place it after the input with `compact`. Wire it as
+  `onText={(t) => setX((p) => appendDictation(p, t, maxLength?))}` and pass the form's in-flight
+  flag as `disabled`. It carries an EN/HI toggle (`en-IN` default, `hi-IN` writes Devanagari;
+  the browser can't auto-detect language) remembered per user in `localStorage`. Renders nothing
+  where the API is missing (Firefox); needs HTTPS or localhost; Chrome sends the audio to
+  Google's speech service. Dictation only fills text — never auto-submit an Enter-to-submit
+  input from it. Lower-level hook: `useSpeechToText`.
 - `createApiClient` (fetch wrapper).
 - `@platform/ui-kit/grid` (subpath): `GRID_DEFAULT_COL_DEF`, `TEXT_FILTER_PARAMS`,
   `normalizeFilterText` — the one AG Grid column-filter configuration every grid shares.

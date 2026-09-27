@@ -53,14 +53,14 @@ export class AuthController {
 
   myOrgs = async (request: FastifyRequest, reply: FastifyReply) => {
     const token = request.cookies[config.authCookieName];
-    const orgs = await service.getMyOrgs(token);
-    return reply.status(200).send({ success: true, data: { orgs } });
+    const { orgs, can_view_all } = await service.getMyOrgs(token);
+    return reply.status(200).send({ success: true, data: { orgs, can_view_all } });
   };
 
   switchOrg = async (request: FastifyRequest, reply: FastifyReply) => {
     const token = request.cookies[config.authCookieName];
     const body = switchOrgSchema.parse(request.body);
-    const { token: new_token, user } = await service.switchOrg(token, body.org_id);
+    const { token: new_token, user } = await service.switchOrg(token, body);
     return reply
       .setCookie(config.authCookieName, new_token, sessionCookieOptions())
       .status(200)

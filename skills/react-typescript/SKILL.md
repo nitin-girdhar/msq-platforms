@@ -326,6 +326,10 @@ Import generic building blocks from `@platform/ui-kit` rather than re-implementi
   Google's speech service. Dictation only fills text — never auto-submit an Enter-to-submit
   input from it. Lower-level hook: `useSpeechToText`.
 - `createApiClient` (fetch wrapper).
+- `NavIcon` (`@platform/ui-kit/shell`) — sidebar symbols. Give every new `NavItem` an `icon`
+  (a `NavIconName`, e.g. `'history'`) so the collapsed rail shows a symbol instead of initials.
+  To add a glyph, paste its Lucide 0.469 children into `GLYPHS` in `shell/NavIcon.tsx` — do not
+  add `lucide-react` or another icon package.
 - `@platform/ui-kit/grid` (subpath): `GRID_DEFAULT_COL_DEF`, `TEXT_FILTER_PARAMS`,
   `normalizeFilterText` — the one AG Grid column-filter configuration every grid shares.
 

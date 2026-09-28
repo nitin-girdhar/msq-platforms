@@ -22,6 +22,7 @@ export const ADMIN_NAV: NavGroup[] = [
         ? {
             id: m.key,
             label: m.label,
+            icon: m.icon,
             href: `/dashboard/m/${m.key}`,
             capability: CAPABILITY.SUPERADMIN_ROLES_MANAGE,
             exact: true,
@@ -29,6 +30,7 @@ export const ADMIN_NAV: NavGroup[] = [
         : {
             id: m.key,
             label: m.label,
+            icon: m.icon,
             href: `/dashboard/m/${m.key}`,
             capability: CAPABILITY.SUPERADMIN_LOOKUPS,
           },

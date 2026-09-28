@@ -147,7 +147,7 @@ export const users = {
   // for roles a tenant has not filed under one — a real bucket, not an error.
   roleCatalog: (scope?: AdminScope) =>
     request<{ success: true; data: {
-      roles: Array<{ id: string; name: string; label: string; rank: number; department_id: string | null; department_label: string | null }>;
+      roles: Array<{ id: string; name: string; label: string; rank: number; department_id: string | null; department_label: string | null; works_leads: boolean }>;
       departments: Array<{ id: string; label: string }>;
     } }>(withAdminScope('/users/role-catalog', scope)),
 

@@ -687,8 +687,14 @@ export async function getDepartmentsForTenant(tenantId: string) {
 // department_id is nullable and, on a freshly provisioned tenant, is NULL for
 // every role (entity.seed_tenant_rbac clones templates without one). Callers
 // must therefore treat "no department" as a real bucket, not an error.
+//
+// works_leads: whether the role holds lms.leads — the same predicate
+// getAssignableUsers' filter purpose uses, and for the same reason (the LMS
+// product root is held by admins and roles that never touch a lead). The user
+// form hides lead weights and the "reassign their leads" hand-over for roles
+// without it. Advisory only: it is a display hint, not an authorization gate.
 export async function getRoleCatalog(tenantId: string, maxRank: number) {
-  return withServiceTx(async (tx) => {
+  const rows = await withServiceTx(async (tx) => {
     const rows = (await tx.execute(sql`
       SELECT ur.id, ur.name, ur.label, ur.rank,
              ur.department_id, d.label AS department_label
@@ -702,6 +708,11 @@ export async function getRoleCatalog(tenantId: string, maxRank: number) {
     `)) as Array<Record<string, unknown>>;
     return rows;
   });
+  const leadRoles = new Set(
+    (await filterRowsByCapability(tenantId, rows.map((r) => ({ role_name: r['name'] })), CAPABILITY.LMS_LEADS))
+      .map((r) => r.role_name as string),
+  );
+  return rows.map((r) => ({ ...r, works_leads: leadRoles.has(r['name'] as string) }));
 }
 
 // Who may be set as a user's manager in `orgId`.

@@ -1184,6 +1184,9 @@ app.post('/hr/attendance/regularizations/:id/reject', { ...withAuth }, async (re
 app.get('/hr/attendance/reports/summary', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/reports/summary', req, reply, req.userCtx);
 });
+app.get('/hr/attendance/reports/detail', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/reports/detail', req, reply, req.userCtx);
+});
 // HR — Shifts & shift assignments (attendance module)
 app.get('/hr/shifts', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/shifts', req, reply, req.userCtx);

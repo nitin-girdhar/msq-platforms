@@ -1066,7 +1066,9 @@ SELECT
   COUNT(*) FILTER (WHERE st.name = 'wfh')                AS wfh_count,
   COUNT(*) FILTER (WHERE ad.is_late)                     AS late_count,
   COUNT(*) FILTER (WHERE ad.is_early_exit)               AS early_exit_count,
-  AVG(ad.worked_minutes)::numeric(10,2)                  AS avg_worked_minutes
+  AVG(ad.worked_minutes)::numeric(10,2)                  AS avg_worked_minutes,
+  -- Appended last: CREATE OR REPLACE VIEW can only add columns at the end.
+  COUNT(*) FILTER (WHERE st.name = 'missed_punch')       AS missed_punch_count
 FROM hr.attendance_days ad
 JOIN iam.users               u  ON u.id  = ad.user_id
 -- Catalog joins are qualified on tenant_id: these views are read under

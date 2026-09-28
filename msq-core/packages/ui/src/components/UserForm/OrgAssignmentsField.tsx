@@ -37,7 +37,9 @@ interface Props {
  * so an admin can see and remove them.
  */
 interface PoolScope {
-  state: 'no_role' | 'no_department' | 'ok';
+  /** no_leads: the role lacks lms.leads, so it is never routed leads and no
+   *  weight UI is shown at all. Any rows it already holds are left untouched. */
+  state: 'no_role' | 'no_leads' | 'no_department' | 'ok';
   types: CampaignTypeOption[];
   mismatched: WeightEntry[];
   departmentLabel: string | null;
@@ -107,6 +109,7 @@ export default function OrgAssignmentsField({
   const poolScopeFor = (a: OrgAssignment): PoolScope => {
     const role = a.role_id ? roleById.get(a.role_id) : undefined;
     if (!role) return { state: 'no_role', types: [], mismatched: [], departmentLabel: null };
+    if (role.works_leads === false) return { state: 'no_leads', types: [], mismatched: [], departmentLabel: null };
     if (!role.department_id) {
       return { state: 'no_department', types: [], mismatched: a.weights, departmentLabel: null };
     }
@@ -144,6 +147,8 @@ export default function OrgAssignmentsField({
     };
     for (const a of assignments) {
       const role = a.role_id ? roleById.get(a.role_id) : undefined;
+      // No weight UI renders for a role that doesn't work leads — nothing to check.
+      if (role?.works_leads === false) continue;
       for (const t of campaignTypes) {
         if (role?.department_id && t.department_id === role.department_id) add(a.org_id, t.id);
       }
@@ -378,6 +383,7 @@ export default function OrgAssignmentsField({
 
 /** Why a branch assignment offers no weight inputs, when it offers none. */
 function PoolScopeHint({ pool }: { pool: PoolScope }) {
+  if (pool.state === 'no_leads') return null;
   if (pool.state === 'no_role') {
     return <p className={HINT}>Select a role to set lead weights — weights follow the role&apos;s department.</p>;
   }

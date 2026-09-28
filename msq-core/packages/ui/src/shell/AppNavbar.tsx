@@ -37,6 +37,11 @@ interface Props {
   // never squeeze the top bar off-screen. Passing one also hides BranchSwitcher:
   // the slot IS the console's scope, and the session branch is not.
   scopeSlot?: React.ReactNode;
+  // A page filter that sits right beside the branch pill — lms-web's Leads
+  // "Type" filter. Same slot contract again: the host decides what renders and
+  // on which page (the component may return null), the navbar only places it.
+  // Inline on sm+; on mobile it drops to the second row, like scopeSlot.
+  filterSlot?: React.ReactNode;
   // admin-web's origin (adminWebOrigin()), for the standalone "Admin" link.
   // Deliberately NOT plumbed through ProductSwitcher/licensedProducts: admin-web
   // is capability-gated (canOpenAdminConsole), not a licensed product, so it must
@@ -63,6 +68,7 @@ export default function AppNavbar({
   title,
   notificationSlot,
   scopeSlot,
+  filterSlot,
   adminWebUrl,
   lookupAdminUrl,
 }: Props) {
@@ -90,10 +96,12 @@ export default function AppNavbar({
   // The mobile strip collapses to nothing when ProductSwitcher returns null
   // (single product, no extra links) — that's what has-[nav]: buys. A scopeSlot
   // has no such escape hatch: it always renders, so the row's border and padding
-  // must be unconditional whenever one is passed.
+  // must be unconditional whenever one is passed. A filterSlot is the opposite
+  // case — it renders nothing off its own page — so it joins the has-[] test via
+  // its wrapper, which is :empty exactly when the filter chose not to render.
   const mobileRowClass = scopeSlot
     ? 'flex flex-col gap-2 border-t border-[#E2E8F0] px-2 py-1.5 sm:hidden'
-    : 'flex flex-col gap-2 sm:hidden has-[nav]:border-t has-[nav]:border-[#E2E8F0] has-[nav]:px-2 has-[nav]:py-1.5';
+    : 'flex flex-col gap-2 sm:hidden has-[nav,[data-slot=filter]:not(:empty)]:border-t has-[nav,[data-slot=filter]:not(:empty)]:border-[#E2E8F0] has-[nav,[data-slot=filter]:not(:empty)]:px-2 has-[nav,[data-slot=filter]:not(:empty)]:py-1.5';
   return (
     <header className="sticky top-0 z-30 shrink-0 border-b border-[#E2E8F0] bg-white">
       <div className="flex h-14 min-w-0 items-center gap-2 px-2 sm:gap-4 sm:px-5">
@@ -144,6 +152,7 @@ export default function AppNavbar({
             actor's session branch would be a second, contradictory scope
             control that none of its pages read. */}
         {!scopeSlot && <BranchSwitcher user={user} homeHref={homeHref} />}
+        {filterSlot && <div className="hidden items-center sm:flex">{filterSlot}</div>}
         {/* Inline on sm+; on mobile both the scope controls and the switcher drop
             to their own full-width rows below so they don't get squeezed out by
             the rest of the bar. Rendering each twice (rather than reflowing one
@@ -176,6 +185,7 @@ export default function AppNavbar({
         {scopeSlot && (
           <div className="flex min-w-0 flex-wrap items-center gap-2">{scopeSlot}</div>
         )}
+        {filterSlot && <div data-slot="filter" className="flex min-w-0 items-center">{filterSlot}</div>}
       </div>
     </header>
   );

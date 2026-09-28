@@ -9,6 +9,8 @@ export interface RoleOption {
   rank: number;
   department_id: string | null;
   department_label: string | null;
+  /** The role holds lms.leads — gates the lead-weight and lead hand-over UI. */
+  works_leads: boolean;
 }
 
 export interface DepartmentOption {

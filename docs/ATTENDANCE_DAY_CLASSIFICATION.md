@@ -26,7 +26,14 @@ employee who punches out for lunch is no longer credited for the break either.
 Unclosed sessions contribute **zero**. If a check-in is never closed — either
 because the day ended or because a later check-in superseded it — those minutes
 are lost and `has_open_session` is set on the day, which surfaces in the UI as
-"Missing check-out" with a pointer to regularization.
+"Missing check-out" with a pointer to regularization. Once the work day is over
+the whole day becomes **`missed_punch`** (below).
+
+Sessions are paired by `pairSessions` (one open cursor, in time order): a
+check-out closes the open check-in; a second check-in while one is open
+**abandons** the earlier one; an orphan check-out is ignored. The day classifier
+(`summarizeSessions`) and the detailed report (§7) both use it, so the report
+lists exactly the sessions the status counted.
 
 Punches **awaiting face review** also contribute zero — see §6.
 
@@ -34,10 +41,26 @@ Punches **awaiting face review** also contribute zero — see §6.
 
 | Condition | Status |
 |---|---|
-| `worked_minutes` is null (checked in, not out yet) | `present` (tentative) |
+| any check-in never closed, **work day over** | `missed_punch` |
+| any check-in never closed, day still running | `present` (tentative) |
 | `worked_minutes >= min_full_day_minutes` | `present` |
 | `worked_minutes >= min_half_day_minutes` | `half_day` |
 | below the half-day floor | `absent` |
+
+**`missed_punch`** (schema 1.52.0, product decision 2026-09-28): an unclosed
+check-in on a finished day makes the **whole** day missed, whatever the closed
+sessions add up to — e.g. 09:00–13:00 closed + 14:00 check-in with no check-out
+is `missed_punch`, not `half_day`. It is neither present nor paid until the
+employee regularizes it. The closed minutes stay in `worked_minutes`. Before
+1.52.0 such a day stayed `present` forever: the live punch wrote the tentative
+row and the nightly job only fills days that have no row.
+
+"Work day over" is `isDayFinished` (`lib/attendance/time.ts`): the org-local date
+has moved past it, or — for a night shift — the next morning has reached the
+shift's end time. The live punch always writes the tentative `present` (a punch
+only lands in the day that is running); the nightly job's finalize pass (§4.8)
+turns it into `missed_punch`. A later check-out recomputes the day from its
+punches, so a premature flip heals itself.
 
 A day with punches **can now be `absent`**. It keeps its `first_in`, `last_out`,
 `worked_minutes` and `resolution_source = 'events'`, which distinguishes it from
@@ -251,6 +274,18 @@ pnpm --filter @crm/hr-service resolve-attendance -- --from=YYYY-MM-DD --to=YYYY-
 Against a scratch database. Confirm existing rows are **not** rewritten, and that
 a day with no punches still resolves to `absent` with `resolution_source = 'job'`.
 
+**Finalize pass.** After filling missing days the job re-derives, from their
+punches alone (`resolveFromEvents`), every day in its window that the live punch
+wrote with `has_open_session` and that is not yet `missed_punch`. Once the day is
+over it becomes `missed_punch` (log line `finalized_missed_punch=N`). Punches
+alone — not the full precedence — so a check-in on a weekly off or holiday is
+finalized too instead of being re-resolved to `weekly_off`. Regularized rows are
+never touched. Check: a check-in-only day from two days ago → `missed_punch`;
+today's open check-in → still `present`.
+
+Existing databases were backfilled once by
+`db_scripts/one_time/apply_missed_punch_status.sql` (+ `_dryrun.sql`).
+
 ### 4.9 Face review — the buddy-punch scenario
 
 Set `require_face_match = true`, `face_match_action = 'flag'`, assign the split
@@ -369,7 +404,9 @@ enabling face matching; if it spikes, check CompreFace before assuming fraud.
 
 | Concern | File |
 |---|---|
-| Status rule, threshold precedence, session summing | `msq-hrms/services/hr-service/src/lib/attendance/resolve.ts` |
+| Status rule, threshold precedence, session pairing + summing | `msq-hrms/services/hr-service/src/lib/attendance/resolve.ts` |
+| Work-day-over test (`isDayFinished`) | `msq-hrms/services/hr-service/src/lib/attendance/time.ts` |
+| Detailed report shaping / file rendering | `msq-hrms/services/hr-service/src/lib/attendance/report-detail.ts`, `report-export.ts` |
 | Segment matching + segment-set validation | `msq-hrms/services/hr-service/src/lib/attendance/segments.ts` |
 | Day precedence + shared field derivation | `msq-hrms/services/hr-service/src/lib/attendance/day-resolution.ts` |
 | Punch flow, live rollup, shift CRUD, face-review decisions | `msq-hrms/services/hr-service/src/api/v1/attendance/attendance.repository.ts` |
@@ -379,3 +416,27 @@ enabling face matching; if it spikes, check CompreFace before assuming fraud.
 
 All three write paths — live punch, nightly job, face-review recompute — share
 `deriveFromEvents`, so they agree by construction rather than by convention.
+
+## 7. Detailed attendance report
+
+Attendance Admin → Reports → **Download** (`GET /hr/attendance/reports/detail?month=YYYY-MM&format=xlsx|csv`),
+gated like the summary: `hr.attendance.admin.reports.view` on the route and
+`hr.attendance.admin` in the service. Scope is the caller's current branch
+(`org_id` from the verified session, never the query).
+
+| Sheet | One row per | Columns |
+|---|---|---|
+| Summary | employee | the on-screen counts incl. Missed Punch |
+| Daily Detail (= the csv) | employee × every date of the month up to today | status, remarks (holiday name, leave type + half, missed check-out, regularized, face review pending, off-window punch), shift, first in / last out, all sessions (`09:00–13:00 (4h 00m); 14:00–MISSING`), worked, late, early exit, WFH, regularization (status, approver, requested status/times, reason) |
+| Punches | check-in → check-out session | check-in, check-out (`MISSING` if never closed), duration, location (Office/WFH/Remote), note |
+
+Row colours in Daily Detail: grey = weekly off / holiday, blue = leave, yellow =
+half day, orange = missed punch, red = absent / not marked, green = in progress;
+italic = regularized.
+
+Display rules for days that have no `attendance_days` row yet (the nightly job
+has not reached them): holiday → weekly off → approved leave, else "Not Marked"
+("Not Marked Yet" for today). Today's open check-in shows "In Progress", not
+Present. Punches withheld by face review (pending/rejected) are listed on their
+own Punches row as "not counted" and are not paired, exactly as the classifier
+treats them.

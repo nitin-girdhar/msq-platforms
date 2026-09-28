@@ -19,4 +19,5 @@ export const vwAttendanceMonthlySummary = hrSchema.view('vw_attendance_monthly_s
   lateCount:         bigint('late_count', { mode: 'number' }),
   earlyExitCount:    bigint('early_exit_count', { mode: 'number' }),
   avgWorkedMinutes:  numeric('avg_worked_minutes'),
+  missedPunchCount:  bigint('missed_punch_count', { mode: 'number' }),
 }).existing();

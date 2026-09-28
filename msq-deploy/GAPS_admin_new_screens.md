@@ -145,7 +145,7 @@ Then, per environment:
 All built from `admin_new_screens`, **after DB steps 1–5**:
 
 - **api-gateway**: new `/campaign-types*`, `/users/campaign-type-catalog`, and `/meta/*` super-admin routes (`superAdminGuard`)
-- **identity-service**: users/org-mapping/weights by campaign type, with department validation
+- **identity-service**: users/org-mapping/weights by campaign type, with department validation; `/users/role-catalog` now returns `works_leads` per role (holds `lms.leads`). The rebuilt team-web reads this flag to hide the lead-weight and lead hand-over UI for non-lead roles. Deploy order doesn't matter: against an old identity-service the flag is missing and the UI behaves as before, showing weights for every role.
 - **lookup-admin**: new screens Meta Campaigns, Meta Mappings, Lead Pull, Re-run Assignment
 - **leads-service**: campaign-types API, reclassify, assignment rerun, intake typing
 - **meta-conversion-api**: campaigns sync/confirm, page-org-map, pages, lead pull. **Now runs a background poller** (`workers/pull-poller.ts`).

@@ -2689,24 +2689,32 @@ $$;
 --   * the lead carries NO type (p_campaign_type_id IS NULL) -- every lead
 --     predating 1.49.0 and every manually created one, which is why adding this
 --     predicate to the policy changes nothing until the backfill runs;
---   * the type is the tenant's DEFAULT -- see below, this is load-bearing;
 --   * the type is not tied to a department (department_id IS NULL) -- the
 --     documented meaning of that NULL is "visible to all";
---   * the user's role in that branch holds `lms.leads.view.all_types`;
+--   * the type is the tenant's DEFAULT and the user's role has NO department,
+--     or sits in the default type's own department -- see below;
+--   * the user's role in that branch is an anchor (super_admin, tenant_admin,
+--     org_admin) or holds `lms.leads.view.all_types`;
 --   * the user's role sits in the type's department.
 --
--- WHY is_default IS UNCONDITIONALLY VISIBLE. The default type is the catch-all:
--- it is where every unmatched campaign, every walk-in and every manually created
--- lead lands, and it is what the 1.49.0 backfill stamped on the entire existing
--- pipeline. Fencing it by department would mean that on the day the backfill ran
--- a read_only auditor -- who sits in no department and holds no all_types --
--- stopped seeing the branch entirely, and so did every ladder role whose
--- department was not yet wired up. The boundary this function exists to draw is
--- "keep HIRING leads away from sales", not "fence the general pool off from
--- anyone who has not been assigned a department". Consequence worth knowing:
--- moving is_default onto another type makes THAT type universally visible. That
--- is the intended meaning of default, and it is also why a tenant can only have
--- one (uix_campaign_types_one_default).
+-- THE DEFAULT TYPE IS FENCED FROM OTHER DEPARTMENTS ONLY (1.51.1). The default
+-- is the catch-all: every unmatched campaign, every walk-in and every manually
+-- created lead lands there, and it is what the 1.49.0 backfill stamped on the
+-- entire existing pipeline. Until 1.51.1 it was unconditionally visible, so an
+-- HR-department role saw the whole Sales pool -- the opposite half of the
+-- "Sales sees sales, HR sees hiring" separation. It is now hidden from a role
+-- that sits in a DIFFERENT department (unless it holds all_types), but still
+-- shown to a role with NO department at all. That second half is load-bearing:
+-- read_only auditors and the anchors are department-less by design, and a
+-- ladder role whose department was never wired up must not lose the branch
+-- overnight. Consequence worth knowing: moving is_default onto another type
+-- makes THAT type visible to its own department plus every department-less
+-- role. A tenant can only have one default (uix_campaign_types_one_default).
+--
+-- ORDER MATTERS FOR COST: this runs once per row inside RLS, and nearly every
+-- row is default-typed. The role's department (one indexed mapping lookup)
+-- settles the default for every Sales and every department-less user before the
+-- far more expensive iam.fn_role_capability_matrix is ever reached.
 --
 -- Modelled on iam.fn_user_can_manage_users above, and for the same reasons:
 -- iam.fn_user_org_role is the one authority on which role applies in a branch,
@@ -2744,15 +2752,40 @@ BEGIN
   FROM marketing.campaign_types ct
   WHERE ct.id = p_campaign_type_id;
 
-  -- The catch-all pool: everyone who can see the row's branch can see it.
-  IF COALESCE(v_is_default, FALSE) THEN RETURN TRUE; END IF;
-
   -- A type nobody has assigned a department to is everybody's. Also the answer
   -- for a dangling id, which fails open on purpose: this predicate narrows an
   -- ALREADY org-scoped result set, so failing closed here would hide rows from
   -- their own branch over a data error, while failing open leaks nothing across
   -- a tenant or a branch boundary.
   IF v_type_dept IS NULL THEN RETURN TRUE; END IF;
+
+  -- The user's own role's department. Resolved through the MAPPING, not
+  -- iam.users.role_id, so someone mapped into three branches is judged by the
+  -- role they hold in THIS one.
+  SELECT ur.department_id INTO v_role_dept
+  FROM iam.user_org_mapping uom
+  JOIN iam.user_roles ur ON ur.id = uom.role_id
+  WHERE uom.user_id = p_user_id
+    AND uom.org_id  = p_org_id
+    AND uom.is_active
+  LIMIT 1;
+
+  IF v_role_dept IS NULL THEN
+    -- Fall back to the global role row, matching iam.fn_effective_role_id's
+    -- second path (a legacy user with no mapping in their own home org).
+    SELECT ur.department_id INTO v_role_dept
+    FROM iam.users u
+    JOIN iam.user_roles ur ON ur.id = u.role_id
+    WHERE u.id = p_user_id AND u.is_active AND NOT u.is_deleted;
+  END IF;
+
+  -- Same department: visible, default or not.
+  IF v_role_dept = v_type_dept THEN RETURN TRUE; END IF;
+
+  -- The catch-all pool, for a role that belongs to no department (read_only,
+  -- the anchors, an unwired ladder role). A role IN another department falls
+  -- through: it sees the default only via the anchor/all_types checks below.
+  IF COALESCE(v_is_default, FALSE) AND v_role_dept IS NULL THEN RETURN TRUE; END IF;
 
   SELECT r.role INTO v_role FROM iam.fn_user_org_role(p_user_id, p_org_id) r;
   IF v_role IS NULL THEN RETURN FALSE; END IF;
@@ -2771,29 +2804,7 @@ BEGIN
   WHERE m.role_name = v_role
     AND m.capability_key = 'lms.leads.view.all_types';
 
-  IF COALESCE(v_granted, FALSE) THEN RETURN TRUE; END IF;
-
-  -- Otherwise: the user's own role must sit in the type's department. Resolved
-  -- through the MAPPING, not iam.users.role_id, so someone mapped into three
-  -- branches is judged by the role they hold in THIS one.
-  SELECT ur.department_id INTO v_role_dept
-  FROM iam.user_org_mapping uom
-  JOIN iam.user_roles ur ON ur.id = uom.role_id
-  WHERE uom.user_id = p_user_id
-    AND uom.org_id  = p_org_id
-    AND uom.is_active
-  LIMIT 1;
-
-  IF v_role_dept IS NULL THEN
-    -- Fall back to the global role row, matching iam.fn_effective_role_id's
-    -- second path (a legacy user with no mapping in their own home org).
-    SELECT ur.department_id INTO v_role_dept
-    FROM iam.users u
-    JOIN iam.user_roles ur ON ur.id = u.role_id
-    WHERE u.id = p_user_id AND u.is_active AND NOT u.is_deleted;
-  END IF;
-
-  RETURN v_role_dept IS NOT NULL AND v_role_dept = v_type_dept;
+  RETURN COALESCE(v_granted, FALSE);
 END; $$;
 
 -- ── lms.sync_lead_campaign_type ───────────────────────────────────────

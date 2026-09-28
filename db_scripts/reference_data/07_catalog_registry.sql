@@ -83,6 +83,20 @@ INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label,
   ('hr.attendance_statuses', 'attendance', 1, 'wfh',        'Work From Home',  7)
 ON CONFLICT (catalog_key, version, name) DO NOTHING;
 
+-- hr.attendance_statuses v2 (schema 1.52.0): adds 'missed_punch' — a finished
+-- day with a check-in never closed by a check-out. Not present, not paid,
+-- until regularized. v1 is left untouched per the append-only rule above.
+INSERT INTO entity.catalog_defaults (catalog_key, product, version, name, label, sort_order) VALUES
+  ('hr.attendance_statuses', 'attendance', 2, 'present',      'Present',         1),
+  ('hr.attendance_statuses', 'attendance', 2, 'absent',       'Absent',          2),
+  ('hr.attendance_statuses', 'attendance', 2, 'half_day',     'Half Day',        3),
+  ('hr.attendance_statuses', 'attendance', 2, 'on_leave',     'On Leave',        4),
+  ('hr.attendance_statuses', 'attendance', 2, 'holiday',      'Holiday',         5),
+  ('hr.attendance_statuses', 'attendance', 2, 'weekly_off',   'Weekly Off',      6),
+  ('hr.attendance_statuses', 'attendance', 2, 'wfh',          'Work From Home',  7),
+  ('hr.attendance_statuses', 'attendance', 2, 'missed_punch', 'Missed Punch',    8)
+ON CONFLICT (catalog_key, version, name) DO NOTHING;
+
 -- lms.roles / hr.roles / task.roles (module: capabilities) default rows and
 -- their catalog_versions entries were removed here (schema_version 1.19.0)
 -- along with the tables they seeded — role/rank resolution runs on the
@@ -95,9 +109,15 @@ INSERT INTO entity.catalog_versions (catalog_key, product, modules, current_vers
   ('task.task_statuses',     'tasks',      ARRAY['tasks'],               1),
   ('task.task_priorities',   'tasks',      ARRAY['tasks'],               1),
   ('hr.leave_types',         'leave',      ARRAY['leave'],               1),
-  ('hr.attendance_statuses', 'attendance', ARRAY['attendance'],          1),
+  ('hr.attendance_statuses', 'attendance', ARRAY['attendance'],          2),
   ('hr.leave_request_statuses','leave',     ARRAY['leave'],               1),
   ('hr.employment_types',    'leave',      ARRAY['leave','attendance'],  1)
 ON CONFLICT (catalog_key) DO NOTHING;
+
+-- Bumps above never reach an already-registered catalog (DO NOTHING), so
+-- raise it explicitly. Existing tenants get the new row from
+-- one_time/apply_missed_punch_status.sql, not from here.
+UPDATE entity.catalog_versions SET current_version = 2
+WHERE catalog_key = 'hr.attendance_statuses' AND current_version < 2;
 
 COMMIT;

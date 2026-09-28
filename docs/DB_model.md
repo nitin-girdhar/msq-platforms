@@ -1327,10 +1327,15 @@ The function returns TRUE when **any** of:
 
 1. the lead carries no type (`campaign_type_id IS NULL`);
 2. the type is the tenant's **default** — the catch-all pool where unmatched
-   campaigns, walk-ins and manually created leads land. This clause is what makes
-   the 1.49.0 backfill a true no-op: it stamped `sales` on the whole existing
-   pipeline, and without it a `read_only` auditor (no department, no `all_types`)
-   would have lost the entire branch the moment it committed;
+   campaigns, walk-ins and manually created leads land — **and the caller's role
+   has no department** (or sits in the default's own department, which clause 6
+   covers anyway). This clause is what made the 1.49.0 backfill a true no-op: it
+   stamped `sales` on the whole existing pipeline, and without it a `read_only`
+   auditor (no department, no `all_types`) would have lost the entire branch the
+   moment it committed. Until **1.51.1** the default was visible to everyone; it
+   is now hidden from a role in a *different* department (an HR role no longer
+   sees the Sales pool) unless clause 4 or 5 applies. Run
+   `db_scripts/one_time/report_default_type_fence_dryrun.sql` before deploying;
 3. the type has no `department_id`;
 4. the caller is `super_admin` / `tenant_admin` / `org_admin`;
 5. the caller's role in that branch holds `lms.leads.view.all_types`;
@@ -1892,6 +1897,8 @@ Tenant-scoped lookups (see "Tenant-scoped lookups" above for the admin-CRUD/RLS 
 
 Extra columns: `hr.leave_types.is_paid` (BOOLEAN, NOT NULL DEFAULT TRUE), `hr.leave_types.sort_order` (INT).
 
+`hr.attendance_statuses` machine names (catalog v2, 1.52.0): `present`, `absent`, `half_day`, `on_leave`, `holiday`, `weekly_off`, `wfh`, `missed_punch`. hr-service keys on these names; a tenant may relabel but must not rename. Existing tenants received `missed_punch` via `one_time/apply_missed_punch_status.sql`.
+
 ---
 
 ### hr.designations
@@ -2231,6 +2238,7 @@ One resolved row per `(user, work_date)` — the daily rollup screens read from.
 
 **Unique:** `(user_id, work_date)`
 **Computed by:** the shared `computeDayResolution` (`lib/attendance/day-resolution.ts`), called both from the nightly job and from the face-review clear/reject actions — see Architecture.md → "Review queue".
+**Missed punch (1.52.0):** a row with `has_open_session` whose work day is over resolves to status `missed_punch` (not present, not paid until regularized) — the live punch writes a tentative `present`, the nightly job's finalize pass flips it. `worked_minutes` keeps the closed sessions' minutes. See docs/ATTENDANCE_DAY_CLASSIFICATION.md §1.
 
 ---
 
@@ -2394,7 +2402,7 @@ Append-only.
 | `hr.vw_leave_balances`                       | hr        | yes              | Current leave balance per (user, leave_type), summed from `hr.leave_ledger` |
 | `hr.vw_leave_requests_enriched`              | hr        | yes              | Leave requests with resolved user/leave-type/status display fields |
 | `hr.vw_team_leave_calendar`                  | hr        | yes              | Team leave calendar for a manager's subtree                 |
-| `hr.vw_attendance_monthly_summary`           | hr        | yes              | Per-user monthly attendance rollup                          |
+| `hr.vw_attendance_monthly_summary`           | hr        | yes              | Per-user monthly attendance rollup (status counts; `missed_punch_count` appended last in 1.52.0) |
 | `hr.vw_org_attendance_today`                 | hr        | yes              | Today's resolved attendance for an org                      |
 | `task.vw_tasks_enriched`                     | task      | yes              | Tasks with resolved assignee/status/priority/list display fields |
 

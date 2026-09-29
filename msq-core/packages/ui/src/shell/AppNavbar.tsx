@@ -142,7 +142,7 @@ export default function AppNavbar({
         </span>
         <div className="flex-1" />
         {/* Branch pill BEFORE the product tabs, not after: admin-web's header is
-            hand-rolled but mounts BranchSwitcher in the same slot order (see
+            rendered through this same navbar (see
             apps/admin-web/app/dashboard/layout.tsx), so anchoring the tabs
             against the user menu keeps them in the same place on every app,
             whether or not the pill (which self-hides for single-branch and

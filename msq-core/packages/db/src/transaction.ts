@@ -38,14 +38,28 @@ export interface RoleTxContext {
   tenantWide?: boolean;
 }
 
+// The tenant a super_admin's transaction is fenced to, when the session did not
+// carry one: the tenant of the branch it is switched into. Read on the service
+// connection because it must answer before any tenant GUC exists.
+async function tenantOfOrg(orgId: string): Promise<string | null> {
+  const rows = (await serviceDrizzle().execute(
+    sql`SELECT tenant_id FROM entity.organizations WHERE id = ${orgId}::uuid`,
+  )) as unknown as Array<{ tenant_id: string }>;
+  return rows[0]?.tenant_id ?? null;
+}
+
 export async function withRoleTx<T>(ctx: RoleTxContext, fn: (tx: DrizzleTx) => Promise<T>): Promise<T> {
+  // A platform super_admin acting in a product screen is fenced to the tenant its
+  // session is switched into — the same tenant_admin RLS every tenant admin runs
+  // under, pinned to that tenant. It used to run on root_service (BYPASSRLS), so
+  // every read that relied on RLS alone returned EVERY tenant's rows, whichever
+  // tenant the navbar said it was in. Deliberately cross-tenant super_admin work
+  // (lookup-admin consoles, existence/membership checks) never comes through
+  // here: it uses withTenantConfigTx or a commented withServiceTx.
   if (ctx.role === 'super_admin') {
-    return serviceDrizzle().transaction(async (tx) => {
-      await tx.execute(sql`SELECT set_config('app.current_user_id', ${ctx.user_id}, true)`);
-      if (ctx.org_id) await tx.execute(sql`SELECT set_config('app.current_org_id', ${ctx.org_id}, true)`);
-      if (ctx.tenant_id) await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${ctx.tenant_id}, true)`);
-      return fn(tx);
-    });
+    const tenantId = ctx.tenant_id || (ctx.org_id ? await tenantOfOrg(ctx.org_id) : null);
+    if (!tenantId) throw new Error('withRoleTx: super_admin session has no tenant to fence to');
+    return withRoleTx({ ...ctx, role: 'tenant_admin', tenant_id: tenantId }, fn);
   }
   if (ctx.role === 'tenant_admin' || ctx.tenantWide) {
     return tenantDrizzle().transaction(async (tx) => {

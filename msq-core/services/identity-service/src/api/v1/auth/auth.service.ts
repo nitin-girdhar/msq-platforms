@@ -256,9 +256,15 @@ export async function getMyOrgs(token: string | undefined): Promise<MyOrgsResult
   // iam.user_org_mapping (that mapping is for actors scoped to specific
   // branches) -- getUserOrgs would only surface their home org, so list every
   // org in the tenant instead. Every other role keeps today's mapped-orgs list.
-  const rows = isTenantWideRole(payload.platform_role)
-    ? await repo.getTenantOrgs(db_user.tenant_id, db_user.home_org_id, db_user.role_name, db_user.role_label, db_user.rank)
-    : await repo.getUserOrgs(payload.sub);
+  //
+  // A platform super_admin gets every active branch of every active tenant,
+  // tagged with its tenant, so the navbar can switch across tenants. Decided off
+  // the DB row (platformRoleOf), not the token claim.
+  const rows = platformRoleOf(db_user) === 'super_admin'
+    ? await repo.getAllTenantOrgs(db_user.home_org_id, db_user.role_name, db_user.role_label, db_user.rank)
+    : isTenantWideRole(payload.platform_role)
+      ? await repo.getTenantOrgs(db_user.tenant_id, db_user.home_org_id, db_user.role_name, db_user.role_label, db_user.rank)
+      : await repo.getUserOrgs(payload.sub);
   return {
     orgs: rows.map((r) => ({
       org_id: r.org_id,
@@ -267,6 +273,7 @@ export async function getMyOrgs(token: string | undefined): Promise<MyOrgsResult
       role_label: r.role_label,
       rank: r.rank,
       is_home: r.is_home,
+      ...(r.tenant_id ? { tenant_id: r.tenant_id, tenant_name: r.tenant_name ?? '' } : {}),
     })),
     can_view_all: canViewAllBranches(payload.platform_role),
   };
@@ -285,9 +292,23 @@ export async function switchOrg(
   token: string | undefined,
   target: SwitchOrgInput,
 ): Promise<LoginResult> {
-  const { payload } = await resolveSession(token);
+  const { payload, db_user: actor } = await resolveSession(token);
+  const isSuperAdmin = platformRoleOf(actor) === 'super_admin';
 
   const all_branches = 'all_branches' in target;
+  // Naming a tenant is the super_admin's cross-tenant "All branches of <tenant>".
+  // Anyone else acts only inside their own tenant, so the field is refused
+  // outright rather than silently ignored.
+  const requestedTenantId = all_branches ? target.tenant_id : undefined;
+  if (requestedTenantId && !isSuperAdmin) {
+    void logActivity({
+      action_type: 'org_switch_denied',
+      performed_by: payload.sub,
+      org_id: payload.org_id,
+      new_value: { all_branches: true, requested_tenant_id: requestedTenantId },
+    });
+    throw new ForbiddenError('You cannot switch to another tenant');
+  }
   if (all_branches && !canViewAllBranches(payload.platform_role)) {
     void logActivity({
       action_type: 'org_switch_denied',
@@ -299,11 +320,19 @@ export async function switchOrg(
   }
 
   // The acting user always comes from the verified token. For "All branches"
-  // no org is passed, so getUserById resolves the user's own home org.
-  const org_id = all_branches ? undefined : target.org_id;
-  const db_user = all_branches
-    ? await repo.getUserById(payload.sub)
-    : await repo.getUserById(payload.sub, target.org_id, payload.platform_role);
+  // no org is passed, so getUserById resolves the user's own home org — except
+  // for a super_admin, whose "All branches" stays in the tenant it names (or the
+  // one it is already in), anchored on a real branch of that tenant.
+  let org_id: string | undefined = all_branches ? undefined : target.org_id;
+  if (all_branches && isSuperAdmin) {
+    org_id = requestedTenantId
+      ? (await repo.anchorOrgForTenant(requestedTenantId, actor.home_org_id)) ?? undefined
+      : payload.org_id;
+    if (!org_id) throw new ForbiddenError('That tenant has no active branch to switch into');
+  }
+  const db_user = org_id
+    ? await repo.getUserById(payload.sub, org_id, payload.platform_role)
+    : await repo.getUserById(payload.sub);
   if (!db_user) {
     // Always the caller's own, verified org — never the requested one. The
     // requested org_id is client input and may belong to ANOTHER tenant: filing
@@ -345,12 +374,31 @@ export async function switchOrg(
     });
   }
 
+  // Where the session came from, and whether it crossed tenants. A cross-tenant
+  // switch is also filed under the SOURCE branch, so both tenants' audit trails
+  // show the super_admin entering and leaving.
+  const cross_tenant = Boolean(payload.tenant_id) && payload.tenant_id !== db_user.tenant_id;
+  const switchMeta = {
+    ...(all_branches ? { all_branches: true } : {}),
+    from_org_id: payload.org_id,
+    from_tenant_id: payload.tenant_id,
+    to_tenant_id: db_user.tenant_id,
+    cross_tenant,
+  };
   await logActivity({
     action_type: 'org_switch',
     performed_by: db_user.id,
     org_id: db_user.org_id,
-    ...(all_branches ? { new_value: { all_branches: true } } : {}),
+    new_value: switchMeta,
   });
+  if (cross_tenant) {
+    await logActivity({
+      action_type: 'org_switch_out',
+      performed_by: db_user.id,
+      org_id: payload.org_id,
+      new_value: { ...switchMeta, to_org_id: db_user.org_id },
+    });
+  }
 
   return {
     token: new_token,

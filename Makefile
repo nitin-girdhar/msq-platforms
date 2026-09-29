@@ -93,8 +93,8 @@ logs: ## Stream Docker Compose logs
 	$(COMPOSE) logs -f
 
 # ── Cleanup ────────────────────────────────────────────────────────────────────
-clean: ## Remove build artefacts (dist/.turbo/tsbuildinfo/.next in every workspace)
+clean: ## Remove build artefacts + caches (dist/.next per workspace; .turbo, tsbuildinfo, __pycache__, py tool caches anywhere)
 	node scripts/clean.js build
 
-clean-all: ## Remove build artefacts AND all node_modules (full reset — run make install after)
+clean-all: ## clean + every node_modules and Python venv in the tree, incl. msq-e2e-validation (run make install after)
 	node scripts/clean.js all

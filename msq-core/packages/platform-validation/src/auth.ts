@@ -52,9 +52,11 @@ export const changePasswordSchema = createChangePasswordSchema();
 
 // Either one branch, or "All branches" (only honoured for users whose branch
 // list is the whole tenant — enforced in identity-service, not here).
+// `tenant_id` with all_branches is a platform super_admin's cross-tenant
+// "All branches of <tenant>"; identity-service refuses it for anyone else.
 export const switchOrgSchema = z.union([
   z.object({ org_id: z.string().uuid('Invalid organization id') }).strict(),
-  z.object({ all_branches: z.literal(true) }).strict(),
+  z.object({ all_branches: z.literal(true), tenant_id: z.string().uuid('Invalid tenant id').optional() }).strict(),
 ]);
 
 export type LoginInput = z.infer<typeof loginSchema>;

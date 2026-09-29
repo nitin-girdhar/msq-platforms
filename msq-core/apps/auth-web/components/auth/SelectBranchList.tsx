@@ -13,6 +13,21 @@ interface Props {
 // Post-login branch picker. Lists every branch the user is mapped to and
 // re-mints the session for the chosen one via /auth/switch-org. Users with a
 // single branch (or a failed lookup) are sent straight to the product.
+//
+// A platform super_admin's list spans every tenant (rows carry tenant_id /
+// tenant_name), so it is grouped under a heading per tenant; picking a branch
+// enters that tenant.
+function groupByTenant(orgs: UserOrgOption[]): Array<{ key: string; name: string | null; orgs: UserOrgOption[] }> {
+  if (!orgs.some((o) => o.tenant_id)) return [{ key: 'all', name: null, orgs }];
+  const groups = new Map<string, { key: string; name: string | null; orgs: UserOrgOption[] }>();
+  for (const o of orgs) {
+    const key = o.tenant_id ?? '';
+    const g = groups.get(key) ?? { key, name: o.tenant_name ?? null, orgs: [] };
+    g.orgs.push(o);
+    groups.set(key, g);
+  }
+  return [...groups.values()].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+}
 export default function SelectBranchList({ callbackUrl }: Props) {
   const [orgs, setOrgs] = useState<UserOrgOption[] | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
@@ -71,8 +86,13 @@ export default function SelectBranchList({ callbackUrl }: Props) {
         </div>
       )}
 
+      {groupByTenant(orgs).map((group) => (
+      <section key={group.key} className="flex flex-col gap-2">
+        {group.name && (
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">{group.name}</h2>
+        )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        {orgs.map((org) => {
+        {group.orgs.map((org) => {
           const busy = switching === org.org_id;
           return (
             <button
@@ -107,6 +127,8 @@ export default function SelectBranchList({ callbackUrl }: Props) {
           );
         })}
       </div>
+      </section>
+      ))}
     </div>
   );
 }

@@ -28,6 +28,13 @@ interface Props {
 // branch_scope:'all' claim (session.all_branches), which branch-scoped screens
 // such as Leads read to stop narrowing to the session org. It is a view choice,
 // not extra access — the server still decides what each read may reach.
+//
+// A platform super_admin's list spans EVERY tenant (each row carries tenant_id /
+// tenant_name — /auth/my-orgs returns them for super_admin alone). The menu then
+// opens with a Tenant picker; the branch list and the "All branches" row follow
+// the picked tenant, and switching re-mints the session into that tenant. After
+// the reload every screen is fenced to it by RLS (withRoleTx runs super_admin as
+// tenant_admin pinned to the session tenant) — this control only picks which.
 const ALL_BRANCHES_KEY = '__all__';
 
 export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
@@ -36,6 +43,9 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
   const [canViewAll, setCanViewAll] = useState(false);
   const [switching, setSwitching] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Cross-tenant only: the tenant whose branches the menu is showing. Starts on
+  // the session's own tenant; changing it does not switch anything by itself.
+  const [pickedTenantId, setPickedTenantId] = useState(user.tenant_id);
 
   const canSwitchBranch = user.rank < RANKS.TENANT_ADMIN || isTenantWideRole(user.role);
 
@@ -57,24 +67,36 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
     };
   }, [canSwitchBranch]);
 
+  const isCrossTenant = (orgs ?? []).some((o) => Boolean(o.tenant_id));
+  const tenants = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const o of orgs ?? []) if (o.tenant_id) byId.set(o.tenant_id, o.tenant_name ?? o.tenant_id);
+    return [...byId].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [orgs]);
+  const pickedTenantName = tenants.find((t) => t.id === pickedTenantId)?.name ?? user.tenant_name;
+
   const filteredOrgs = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const list = orgs ?? [];
+    const list = isCrossTenant ? (orgs ?? []).filter((o) => o.tenant_id === pickedTenantId) : (orgs ?? []);
     const sorted = [...list].sort((a, b) => Number(b.is_home) - Number(a.is_home));
     if (!q) return sorted;
     return sorted.filter(
       (org) => org.org_name.toLowerCase().includes(q) || org.role_label.toLowerCase().includes(q),
     );
-  }, [orgs, search]);
+  }, [orgs, search, isCrossTenant, pickedTenantId]);
 
   if (!canSwitchBranch) return null;
 
-  const allActive = user.all_branches === true;
+  // "All branches" is active only for the tenant the session is actually in.
+  const sessionAll = user.all_branches === true;
+  const allActive = sessionAll && (!isCrossTenant || pickedTenantId === user.tenant_id);
   // The "All" row counts as a choice, so a tenant with a single branch still
   // gets a dropdown (All vs that branch) when the actor may view all.
   const choiceCount = (orgs?.length ?? 0) + (canViewAll ? 1 : 0);
   const multiBranch = choiceCount > 1;
-  const chipLabel = allActive ? 'All branches' : user.org_name;
+  const branchLabel = sessionAll ? 'All branches' : user.org_name;
+  // A super_admin can be in any tenant, so the chip always names which one.
+  const chipLabel = isCrossTenant ? `${user.tenant_name} · ${branchLabel}` : branchLabel;
   const showAllRow = canViewAll && !search.trim();
 
   // null = "All branches".
@@ -87,7 +109,11 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
     setSwitching(org === null ? ALL_BRANCHES_KEY : org.org_id);
     setError(null);
     try {
-      await auth.switchOrg(org === null ? { all_branches: true } : { org_id: org.org_id });
+      await auth.switchOrg(
+        org === null
+          ? { all_branches: true, ...(isCrossTenant ? { tenant_id: pickedTenantId } : {}) }
+          : { org_id: org.org_id },
+      );
       // Full navigation (not router.push): the layout is server-rendered from
       // the new cookie, so this rebuilds nav/sidebar for the role held in the
       // selected branch. Reload the current page so the user stays where they
@@ -105,13 +131,13 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
       const current = path + window.location.search;
       window.location.assign(appPath === '/' ? withBasePath(homeHref) : current);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not switch branch');
+      setError(err instanceof Error ? err.message : isCrossTenant ? 'Could not switch tenant/branch' : 'Could not switch branch');
       setSwitching(null);
     }
   };
 
   const chip = (
-    <span className="flex items-center gap-1.5 max-w-[220px]">
+    <span className={`flex items-center gap-1.5 ${isCrossTenant ? 'max-w-[300px]' : 'max-w-[220px]'}`}>
       <svg className="h-3.5 w-3.5 shrink-0 text-[#64748B]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
         <path
           fillRule="evenodd"
@@ -159,14 +185,32 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
           className="absolute right-0 top-[calc(100%+8px)] z-50 w-72 overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg"
         >
           <p className="border-b border-[#F1F5F9] px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8]">
-            Switch branch
+            {isCrossTenant ? 'Switch tenant & branch' : 'Switch branch'}
           </p>
+          {isCrossTenant && (
+            <div className="border-b border-[#F1F5F9] p-2">
+              <label htmlFor="branch-switcher-tenant" className="sr-only">Tenant</label>
+              <select
+                id="branch-switcher-tenant"
+                value={pickedTenantId}
+                onChange={(e) => { setPickedTenantId(e.target.value); setSearch(''); }}
+                disabled={!!switching}
+                className="w-full rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#0F172A] focus:border-[#0b6cbf] focus:outline-none"
+              >
+                {tenants.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}{t.id === user.tenant_id ? ' (current)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           {error && (
             <p role="alert" className="border-b border-[#F1F5F9] bg-red-50 px-4 py-2 text-xs text-red-700">
               {error}
             </p>
           )}
-          {(orgs?.length ?? 0) > 6 && (
+          {(isCrossTenant ? (orgs ?? []).filter((o) => o.tenant_id === pickedTenantId).length : (orgs?.length ?? 0)) > 6 && (
             <div className="border-b border-[#F1F5F9] p-2">
               <input
                 ref={searchInputRef}
@@ -192,7 +236,7 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
               >
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-[#0F172A]">All branches</span>
-                  <span className="block truncate text-xs text-[#64748B]">Every branch in {user.tenant_name}</span>
+                  <span className="block truncate text-xs text-[#64748B]">Every branch in {isCrossTenant ? pickedTenantName : user.tenant_name}</span>
                 </span>
                 {switching === ALL_BRANCHES_KEY ? (
                   <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />

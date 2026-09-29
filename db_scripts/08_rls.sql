@@ -1517,6 +1517,7 @@ ALTER TABLE task.task_comments FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON task.task_comments;
 DROP POLICY IF EXISTS self_insert_policy      ON task.task_comments;
 DROP POLICY IF EXISTS tenant_isolation_policy ON task.task_comments;
+DROP POLICY IF EXISTS tenant_self_insert_policy ON task.task_comments;
 CREATE POLICY org_isolation_policy ON task.task_comments AS PERMISSIVE FOR SELECT TO app_user
   USING (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid);
 -- INSERT own author rows only (org + author must match the session).
@@ -1527,6 +1528,14 @@ CREATE POLICY self_insert_policy ON task.task_comments AS PERMISSIVE FOR INSERT 
   );
 CREATE POLICY tenant_isolation_policy ON task.task_comments AS PERMISSIVE FOR SELECT TO tenant_admin
   USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted));
+-- 1.55.0: tenant_admin INSERT of its own author rows, on a task in any branch of
+-- its tenant (the tenant-wide twin of self_insert_policy). Without it a tenant
+-- admin -- and a super_admin switched into a tenant -- could not comment at all.
+CREATE POLICY tenant_self_insert_policy ON task.task_comments AS PERMISSIVE FOR INSERT TO tenant_admin
+  WITH CHECK (
+    org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)
+    AND user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid
+  );
 
 -- RLS policies for lms/hr/task.roles and .member_roles were removed here
 -- (schema_version 1.19.0) along with the tables.

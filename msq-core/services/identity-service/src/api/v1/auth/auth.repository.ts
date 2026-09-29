@@ -23,6 +23,12 @@ import { isTenantWideRole } from '@platform/authz';
  * individually mapped to every branch via iam.user_org_mapping (that mapping
  * is for actors scoped to specific branches), so without this they could
  * never switch into an unmapped branch despite holding tenant-wide authority.
+ *
+ * A platform super_admin reaches an active branch of ANY active tenant — the
+ * cross-tenant switch in the navbar. Read off the DB row (u.platform_role), never
+ * the token claim, so a forged or stale claim cannot widen it. Everything the
+ * switched session then reads is fenced to that tenant by RLS (withRoleTx runs
+ * super_admin under tenant_admin pinned to the session tenant).
  */
 async function findUser(predicate: SQL, org_id?: string, actor_platform_role?: string): Promise<DatabaseUser | null> {
   return withServiceTx(async (tx) => {
@@ -51,7 +57,10 @@ async function findUser(predicate: SQL, org_id?: string, actor_platform_role?: s
         JOIN iam.user_roles    ur     ON ur.id  = u.role_id
         JOIN entity.organizations home   ON home.id = u.org_id
         JOIN entity.organizations tgt    ON tgt.id  = ${org_id}::uuid AND NOT tgt.is_deleted
-        JOIN entity.tenants       t      ON t.id    = home.tenant_id
+        -- The TARGET org's tenant: tenant_id above is tgt's, and the name must
+        -- match it (it named the home tenant, invisible until a super_admin
+        -- could switch across tenants).
+        JOIN entity.tenants       t      ON t.id    = tgt.tenant_id
         LEFT JOIN iam.users    m      ON m.id    = u.manager_id
         LEFT JOIN iam.user_org_mapping uom   ON uom.user_id = u.id
                                         AND uom.org_id  = ${org_id}::uuid
@@ -62,6 +71,7 @@ async function findUser(predicate: SQL, org_id?: string, actor_platform_role?: s
             u.org_id = ${org_id}::uuid
             OR uom.user_id IS NOT NULL
             ${tenantWideActor ? sql`OR tgt.tenant_id = home.tenant_id` : sql``}
+            OR (u.platform_role = 'super_admin' AND tgt.is_active AND t.is_active AND NOT t.is_deleted)
           )
         LIMIT 1
       `)) as Array<Record<string, unknown>>;
@@ -228,6 +238,9 @@ export interface UserOrgRow {
   role_label: string;
   rank: number;
   is_home: boolean;
+  /** Set only on the super_admin cross-tenant list (getAllTenantOrgs). */
+  tenant_id?: string;
+  tenant_name?: string;
 }
 
 // Every branch in the actor's tenant, for tenant-wide roles (tenant_admin /
@@ -258,6 +271,53 @@ export async function getTenantOrgs(
       rank,
       is_home: String(r['org_id']) === home_org_id,
     }));
+  });
+}
+
+// Every active branch of every active tenant, for a platform super_admin's
+// cross-tenant switcher. Same "own authority everywhere" rule as getTenantOrgs:
+// the role columns are the super_admin's own. Grouped by tenant for the picker.
+export async function getAllTenantOrgs(
+  home_org_id: string,
+  role_name: string,
+  role_label: string,
+  rank: number,
+): Promise<UserOrgRow[]> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT o.id AS org_id, o.name AS org_name, t.id AS tenant_id, t.name AS tenant_name
+      FROM entity.organizations o
+      JOIN entity.tenants t ON t.id = o.tenant_id AND t.is_active AND NOT t.is_deleted
+      WHERE o.is_active AND NOT o.is_deleted
+      ORDER BY t.name, o.name
+    `)) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      org_id: String(r['org_id']),
+      org_name: String(r['org_name']),
+      role_name,
+      role_label,
+      rank,
+      is_home: String(r['org_id']) === home_org_id,
+      tenant_id: String(r['tenant_id']),
+      tenant_name: String(r['tenant_name']),
+    }));
+  });
+}
+
+// The branch a super_admin's "All branches of <tenant>" session anchors on: the
+// token always carries a real org_id (RLS and writes need one). Its home branch
+// when that sits in the tenant, else the tenant's first active branch by name.
+export async function anchorOrgForTenant(tenant_id: string, home_org_id: string): Promise<string | null> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT o.id
+      FROM entity.organizations o
+      JOIN entity.tenants t ON t.id = o.tenant_id AND t.is_active AND NOT t.is_deleted
+      WHERE o.tenant_id = ${tenant_id}::uuid AND o.is_active AND NOT o.is_deleted
+      ORDER BY (o.id = ${home_org_id}::uuid) DESC, o.name
+      LIMIT 1
+    `)) as Array<{ id: string }>;
+    return rows[0]?.id ?? null;
   });
 }
 

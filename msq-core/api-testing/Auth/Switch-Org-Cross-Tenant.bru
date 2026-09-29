@@ -1,0 +1,38 @@
+meta {
+  name: Switch Org (super admin, other tenant)
+  type: http
+  seq: 9
+}
+
+docs {
+  Super admin only: re-mint the session into "All branches" of another tenant
+  ({{switchTenantId}}). Anyone else gets 403 "You cannot switch to another tenant".
+  Every screen afterwards shows only that tenant's data (withRoleTx fences a
+  super_admin to its session tenant). Use Switch-Org with an org_id of that tenant
+  to enter one branch instead.
+}
+
+post {
+  url: {{baseUrl}}/auth/switch-org
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "all_branches": true,
+    "tenant_id": "{{switchTenantId}}"
+  }
+}
+
+tests {
+  test("super admin lands in the requested tenant", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.data.user.tenant_id).to.equal(bru.getEnvVar("switchTenantId"));
+    expect(res.body.data.user.all_branches).to.equal(true);
+  });
+}

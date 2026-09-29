@@ -99,6 +99,9 @@ export interface UserOrgOption {
   rank: number;
   /** True when this org is the user's home org (iam.users.org_id). */
   is_home: boolean;
+  /** Present only for a platform super_admin, whose list spans every tenant. */
+  tenant_id?: string;
+  tenant_name?: string;
 }
 
 /**

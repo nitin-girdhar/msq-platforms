@@ -16,7 +16,9 @@ export const auth = {
   myOrgs: () =>
     request<{ success: true; data: { orgs: import('@platform/types').UserOrgOption[]; can_view_all?: boolean } }>('/auth/my-orgs'),
 
-  switchOrg: (target: { org_id: string } | { all_branches: true }) =>
+  // `tenant_id` with all_branches: a platform super_admin's "All branches of
+  // <tenant>" — refused server-side for everyone else.
+  switchOrg: (target: { org_id: string } | { all_branches: true; tenant_id?: string }) =>
     request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/switch-org', {
       method: 'POST',
       body: JSON.stringify(target),

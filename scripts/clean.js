@@ -1,9 +1,14 @@
 #!/usr/bin/env node
-// Discovers workspace packages dynamically from pnpm-workspace.yaml instead of
-// a hardcoded path list (the old version listed packages/services that no
-// longer exist — apps/web, packages/permissions, services/auth-service, etc.
-// — and silently skipped everything real: packages/db, services/identity-service,
-// the msq-lms/msq-hrms/msq-todo subfolders, ...).
+// Two passes:
+//  1. Workspace packages (discovered from pnpm-workspace.yaml) get their build
+//     output removed — dist/ and .next/ are only deleted here, because those
+//     names are too generic to delete blindly anywhere in the tree.
+//  2. A recursive walk of the whole hub (skipping .git) removes caches whose
+//     names are unambiguous: .turbo, *.tsbuildinfo, Python bytecode/tool
+//     caches, and — in 'all' mode — every node_modules and Python venv.
+//     This catches what pass 1 cannot see: product-root .turbo dirs
+//     (msq-lms/.turbo), non-workspace node projects (msq-e2e-validation), and
+//     Python scripts (msq-lms/meta-sync-scripts/__pycache__).
 const fs = require('fs');
 const path = require('path');
 
@@ -36,47 +41,72 @@ function expandGlob(glob) {
 }
 
 function findWorkspacePackageDirs() {
-  const globs = readWorkspaceGlobs();
-  const dirs = new Set(['.']); // repo root itself (root node_modules/.turbo)
-  for (const g of globs) {
+  const dirs = new Set();
+  for (const g of readWorkspaceGlobs()) {
     for (const dir of expandGlob(g)) dirs.add(dir);
   }
   return [...dirs];
 }
 
-const buildArtifactNames = ['dist', '.next', '.turbo'];
-const nodeModulesName = 'node_modules';
+// Pass 1 — generic build-output names, workspace packages only.
+const workspaceBuildDirs = ['dist', '.next'];
 
-function removeIfExists(abs, label) {
-  if (fs.existsSync(abs)) {
-    fs.rmSync(abs, { recursive: true, force: true });
-    console.log('removed', path.relative(root, abs) || label);
-    return 1;
-  }
-  return 0;
-}
+// Pass 2 — unambiguous cache names, anywhere in the tree.
+const cacheDirs = new Set([
+  '.turbo',
+  '__pycache__',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+]);
+const cacheFileSuffixes = ['.tsbuildinfo', '.pyc', '.pyo'];
+// Full-reset only (need `make install` / `pip install -r` afterwards).
+const depDirs = new Set(['node_modules', '.venv', 'venv']);
+
+// Never descend into these (VCS metadata, or dependency trees we either just
+// deleted or are deliberately keeping in 'build' mode).
+const skipDirs = new Set(['.git', 'node_modules', '.venv', 'venv']);
 
 let removed = 0;
 
-for (const dir of findWorkspacePackageDirs()) {
-  const dirAbs = path.join(root, dir);
-  if (!fs.existsSync(dirAbs)) continue;
+function remove(abs) {
+  fs.rmSync(abs, { recursive: true, force: true });
+  console.log('removed', path.relative(root, abs));
+  removed++;
+}
 
-  for (const name of buildArtifactNames) {
-    removed += removeIfExists(path.join(dirAbs, name));
-  }
-  // *.tsbuildinfo — usually 0 or 1 per package, glob manually.
-  for (const f of fs.readdirSync(dirAbs)) {
-    if (f.endsWith('.tsbuildinfo')) {
-      removed += removeIfExists(path.join(dirAbs, f));
-    }
-  }
-  if (mode === 'all') {
-    removed += removeIfExists(path.join(dirAbs, nodeModulesName));
+for (const dir of findWorkspacePackageDirs()) {
+  for (const name of workspaceBuildDirs) {
+    const abs = path.join(root, dir, name);
+    if (fs.existsSync(abs)) remove(abs);
   }
 }
 
+function walk(dirAbs) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dirAbs, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    const abs = path.join(dirAbs, e.name);
+    if (e.isDirectory()) {
+      if (cacheDirs.has(e.name) || (mode === 'all' && depDirs.has(e.name))) {
+        remove(abs);
+      } else if (!skipDirs.has(e.name)) {
+        walk(abs);
+      }
+    } else if (cacheFileSuffixes.some((s) => e.name.endsWith(s))) {
+      remove(abs);
+    }
+  }
+}
+
+walk(root);
+
 console.log(`\nDone. ${removed} item(s) removed.`);
 if (mode === 'all') {
-  console.log('Run: pnpm install  (then pnpm -r build / pnpm turbo build for packages)');
+  console.log('Run: make install  (pnpm install; also `npm install` in msq-e2e-validation and');
+  console.log('     `pip install -r requirements.txt` for any Python scripts you use)');
 }

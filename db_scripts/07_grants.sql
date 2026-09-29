@@ -488,7 +488,10 @@ REVOKE INSERT, UPDATE, DELETE ON task.task_status_log FROM app_user, tenant_admi
 GRANT ALL PRIVILEGES          ON task.task_status_log TO root_service;
 
 GRANT SELECT, INSERT          ON task.task_comments TO app_user;
-GRANT SELECT                  ON task.task_comments TO tenant_admin;
+-- INSERT since 1.55.0: tenant admins (and a super_admin switched into a tenant,
+-- which now runs as tenant_admin) comment on tasks; the RLS policy limits it to
+-- their own author rows inside their tenant.
+GRANT SELECT, INSERT          ON task.task_comments TO tenant_admin;
 REVOKE UPDATE, DELETE         ON task.task_comments FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES          ON task.task_comments TO root_service;
 

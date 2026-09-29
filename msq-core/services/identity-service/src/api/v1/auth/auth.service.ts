@@ -305,7 +305,9 @@ export async function switchOrg(
       action_type: 'org_switch_denied',
       performed_by: payload.sub,
       org_id: payload.org_id,
-      new_value: { all_branches: true, requested_tenant_id: requestedTenantId },
+      // Never the requested tenant's id: this row lands in the CALLER's tenant
+      // feed, whose admins must not learn another tenant's identifiers.
+      new_value: { all_branches: true, requested_other_tenant: requestedTenantId !== payload.tenant_id },
     });
     throw new ForbiddenError('You cannot switch to another tenant');
   }
@@ -338,11 +340,20 @@ export async function switchOrg(
     // requested org_id is client input and may belong to ANOTHER tenant: filing
     // the row there leaked this user's id into that tenant's activity feed and
     // let anyone write into any tenant's audit trail (openissues cycle 4, #1).
+    //
+    // The requested branch is named only when it sits in the caller's own tenant.
+    // A branch of another tenant is recorded as just that: its id is not this
+    // tenant's to see, and GET /activities is read by this tenant's admins.
+    const requestedTenant = !all_branches && org_id ? await repo.getOrgTenantId(org_id) : null;
     void logActivity({
       action_type: 'org_switch_denied',
       performed_by: payload.sub,
       org_id: payload.org_id,
-      new_value: all_branches ? { all_branches: true } : { requested_org_id: org_id },
+      new_value: all_branches
+        ? { all_branches: true }
+        : requestedTenant === payload.tenant_id
+          ? { requested_org_id: org_id }
+          : { requested_other_tenant: true },
     });
     throw new ForbiddenError('You do not have access to the selected branch');
   }
@@ -377,26 +388,28 @@ export async function switchOrg(
   // Where the session came from, and whether it crossed tenants. A cross-tenant
   // switch is also filed under the SOURCE branch, so both tenants' audit trails
   // show the super_admin entering and leaving.
+  //
+  // Each row names only ids of the tenant whose feed it lands in: GET
+  // /activities is read by that tenant's admins, and the other tenant's branch
+  // or tenant id is not theirs to see (the leak sweep caught exactly that). A
+  // cross-tenant row therefore says only that it crossed; a same-tenant switch
+  // keeps the branch it came from.
   const cross_tenant = Boolean(payload.tenant_id) && payload.tenant_id !== db_user.tenant_id;
-  const switchMeta = {
-    ...(all_branches ? { all_branches: true } : {}),
-    from_org_id: payload.org_id,
-    from_tenant_id: payload.tenant_id,
-    to_tenant_id: db_user.tenant_id,
-    cross_tenant,
-  };
   await logActivity({
     action_type: 'org_switch',
     performed_by: db_user.id,
     org_id: db_user.org_id,
-    new_value: switchMeta,
+    new_value: {
+      ...(all_branches ? { all_branches: true } : {}),
+      ...(cross_tenant ? { cross_tenant: true } : { from_org_id: payload.org_id }),
+    },
   });
   if (cross_tenant) {
     await logActivity({
       action_type: 'org_switch_out',
       performed_by: db_user.id,
       org_id: payload.org_id,
-      new_value: { ...switchMeta, to_org_id: db_user.org_id },
+      new_value: { cross_tenant: true },
     });
   }
 

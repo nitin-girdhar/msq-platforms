@@ -43,7 +43,7 @@ export default async function LookupTablePage({ params }: PageProps) {
   if (config.scope === 'org') {
     // Both a tenant AND an org must be picked before there is anything to
     // scope the request to — an org id alone is ambiguous cross-tenant, and
-    // the navbar's OrgScopeSwitcher is disabled without a tenant anyway.
+    // the session always carries a tenant now, so this is only a guard.
     if (selectedTenantId && selectedOrgId) {
       const result = await fetchRows(`?tenant_id=${selectedTenantId}&org_id=${selectedOrgId}`);
       if (!result.ok) return <LookupLoadError title={config.title} status={result.status} />;

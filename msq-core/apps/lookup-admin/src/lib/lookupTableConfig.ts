@@ -58,8 +58,8 @@ export interface LookupTableDef {
   //    selection before rows can be listed/created/edited.
   //  - 'org': rows belong to one organization within a tenant
   //    (hr.designations) — the page requires BOTH a tenant and an org
-  //    selection; the two navbar switchers cascade (see
-  //    components/shell/OrgScopeSwitcher.tsx).
+  //    selection -- the tenant and branch picked in the navbar's
+  //    tenant/branch switcher (the session).
   scope?: 'global' | 'tenant' | 'org';
   // Rows whose `rank` is fixed by the platform, keyed by the row's `name`.
   // Declared here rather than special-cased inside the form components, so the

@@ -304,6 +304,17 @@ export async function getAllTenantOrgs(
   });
 }
 
+// Tenant of a branch, for deciding whether an id may be written into the
+// caller's own tenant's audit feed. Null for an unknown id.
+export async function getOrgTenantId(org_id: string): Promise<string | null> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT tenant_id FROM entity.organizations WHERE id = ${org_id}::uuid
+    `)) as Array<{ tenant_id: string }>;
+    return rows[0]?.tenant_id ?? null;
+  });
+}
+
 // The branch a super_admin's "All branches of <tenant>" session anchors on: the
 // token always carries a real org_id (RLS and writes need one). Its home branch
 // when that sits in the tenant, else the tenant's first active branch by name.

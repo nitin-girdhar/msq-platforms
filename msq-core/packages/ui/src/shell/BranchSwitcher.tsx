@@ -95,8 +95,13 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
   const choiceCount = (orgs?.length ?? 0) + (canViewAll ? 1 : 0);
   const multiBranch = choiceCount > 1;
   const branchLabel = sessionAll ? 'All branches' : user.org_name;
-  // A super_admin can be in any tenant, so the chip always names which one.
-  const chipLabel = isCrossTenant ? `${user.tenant_name} · ${branchLabel}` : branchLabel;
+  // A super_admin can be in any tenant, so the chip always names which one —
+  // unless the branch name already starts with it ("MSquare Professionals -
+  // KSH"), where repeating the tenant only pushes the branch off the chip.
+  const fullLabel = isCrossTenant ? `${user.tenant_name} · ${branchLabel}` : branchLabel;
+  const chipLabel = isCrossTenant && user.tenant_name && branchLabel.startsWith(user.tenant_name)
+    ? branchLabel
+    : fullLabel;
   const showAllRow = canViewAll && !search.trim();
 
   // null = "All branches".
@@ -151,7 +156,7 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
 
   if (!multiBranch) {
     return (
-      <div className="hidden items-center rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 md:flex" title={chipLabel}>
+      <div className="hidden items-center rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 md:flex" title={fullLabel}>
         {chip}
       </div>
     );
@@ -166,7 +171,7 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
         aria-expanded={open}
         disabled={!!switching}
         className="flex items-center gap-1.5 rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 transition-colors hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-        title={`Branch: ${chipLabel}`}
+        title={`Branch: ${fullLabel}`}
       >
         {chip}
         <svg className="h-3.5 w-3.5 shrink-0 text-[#64748B]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
@@ -210,7 +215,9 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
               {error}
             </p>
           )}
-          {(isCrossTenant ? (orgs ?? []).filter((o) => o.tenant_id === pickedTenantId).length : (orgs?.length ?? 0)) > 6 && (
+          {/* Always for a super_admin — every tenant, however few branches it has —
+              so finding a branch works the same whichever tenant is picked. */}
+          {(isCrossTenant || (orgs?.length ?? 0) > 6) && (
             <div className="border-b border-[#F1F5F9] p-2">
               <input
                 ref={searchInputRef}

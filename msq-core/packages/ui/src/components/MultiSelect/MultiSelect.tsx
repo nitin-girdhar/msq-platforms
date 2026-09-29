@@ -29,12 +29,20 @@ interface Props {
   maxChips?: number;
   /** Adds a "Select all" action beside "Clear all". */
   selectAllLabel?: string;
+  /**
+   * 'field' (default): the labelled form control every filter bar uses.
+   * 'chip': a navbar pill matching the branch switcher — no label above, the
+   * label becomes a prefix ("Type: All types" / "Type: Sales" /
+   * "Type: 2 selected") and the list opens right-aligned under it.
+   */
+  variant?: 'field' | 'chip';
 }
 
 export default function MultiSelect({
   label, placeholder, options, selected, onChange, loading = false, disabled = false,
-  allLabel, maxChips = Number.POSITIVE_INFINITY, selectAllLabel,
+  allLabel, maxChips = Number.POSITIVE_INFINITY, selectAllLabel, variant = 'field',
 }: Props) {
+  const isChip = variant === 'chip';
   const { open, setOpen, search, setSearch, rootRef, searchInputRef } = useDropdown();
 
   const selectedIds = useMemo(() => new Set(selected.map((o) => o.id)), [selected]);
@@ -67,12 +75,44 @@ export default function MultiSelect({
       ? `${selected.length} selected`
       : null;
 
-  return (
-    <div ref={rootRef} className="relative flex min-w-0 flex-col gap-1">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
-        {label}
-      </span>
+  // Chip text: the label as a prefix, then the selection in one short phrase.
+  const chipValue = selected.length === 0
+    ? placeholder
+    : summary ?? (selected.length === 1 ? String(selected[0]!.label) : `${selected.length} selected`);
 
+  return (
+    <div ref={rootRef} className={`relative flex min-w-0 ${isChip ? 'shrink-0' : 'flex-col gap-1'}`}>
+      {!isChip && (
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
+          {label}
+        </span>
+      )}
+
+      {isChip ? (
+        <button
+          type="button"
+          onClick={() => { if (!disabled) setOpen((v) => !v); }}
+          disabled={disabled}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label={`${label}: ${chipValue}`}
+          title={`${label}: ${chipValue}`}
+          className={`flex max-w-[240px] items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-semibold text-[#0F172A] transition-colors hover:bg-[#F8FAFC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b6cbf]/30 disabled:cursor-not-allowed disabled:opacity-60 ${
+            selected.length > 0 ? 'border-[#0b6cbf]' : 'border-[#E2E8F0]'
+          }`}
+        >
+          <svg className="h-3.5 w-3.5 shrink-0 text-[#64748B]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+            <path fillRule="evenodd" d="M2.628 1.601C5.028 1.206 7.49 1 10 1s4.973.206 7.372.601a.75.75 0 0 1 .628.74v2.288a2.25 2.25 0 0 1-.659 1.59l-4.682 4.683a2.25 2.25 0 0 0-.659 1.59v3.037c0 .684-.31 1.33-.844 1.757l-1.937 1.55A.75.75 0 0 1 8 18.25v-5.757a2.25 2.25 0 0 0-.659-1.591L2.659 6.22A2.25 2.25 0 0 1 2 4.629V2.34a.75.75 0 0 1 .628-.74Z" clipRule="evenodd" />
+          </svg>
+          <span className="truncate">
+            <span className="font-medium text-[#64748B]">{label}:</span>{' '}
+            <span className={selected.length > 0 ? 'text-[#0b6cbf]' : ''}>{chipValue}</span>
+          </span>
+          <svg className="h-3.5 w-3.5 shrink-0 text-[#64748B]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clipRule="evenodd" />
+          </svg>
+        </button>
+      ) : (
       <button
         type="button"
         onClick={() => { if (!disabled) setOpen((v) => !v); }}
@@ -107,11 +147,14 @@ export default function MultiSelect({
           ))
         )}
       </button>
+      )}
 
       {open && (
         <div
           role="listbox"
-          className="absolute top-full z-50 mt-1 w-full min-w-[180px] overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg"
+          className={isChip
+            ? 'absolute right-0 top-[calc(100%+8px)] z-50 w-60 overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg'
+            : 'absolute top-full z-50 mt-1 w-full min-w-[180px] overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg'}
         >
           <div className="border-b border-[#F1F5F9] p-2">
             <input

@@ -12,7 +12,7 @@ interface Props {
   table: string;
   config: LookupTableDef;
   rows: Record<string, unknown>[];
-  // Set app-wide by the navbar tenant/org switchers (dashboard/layout.tsx);
+  // The session's tenant/branch (navbar switcher, via src/lib/tenant-scope.ts);
   // this screen consumes them, it does not pick them.
   selectedTenantId?: string | undefined;
   selectedOrgId?: string | undefined;
@@ -56,7 +56,7 @@ export default function LookupTableShell({
     : isTenantScoped && !selectedTenantId;
 
   const scopeHint = isOrgScoped && selectedTenantId && !selectedOrgId
-    ? 'Pick an org in the top bar to add one.'
+    ? 'Pick a branch in the top bar to add one.'
     : 'Pick a tenant in the top bar to add one.';
 
   return (
@@ -90,7 +90,7 @@ export default function LookupTableShell({
 
       {scopeMissing ? (
         <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
-          {isOrgScoped ? 'Pick a tenant and an org in the top bar to manage this table.' : 'Pick a tenant in the top bar to manage this table.'}
+          {isOrgScoped ? 'Pick a branch in the top bar to manage this table (not All branches).' : 'Pick a tenant in the top bar to manage this table.'}
         </p>
       ) : (
         <LookupTable config={config} rows={typedRows} onEdit={setEditTarget} />

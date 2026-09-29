@@ -1,26 +1,34 @@
-import { cookies } from 'next/headers';
-import { GATEWAY_URL } from './server-session';
-import { TENANT_COOKIE, ORG_COOKIE, type TenantOption, type OrgOption } from './tenant-cookie';
+import { cache } from 'react';
+import { GATEWAY_URL, getServerSession } from './server-session';
+import type { TenantOption } from './tenant-cookie';
 
-// The admin's active tenant, chosen once in the navbar and applied to every
-// tenant-scoped screen underneath it. It lives in a cookie rather than a
-// `tenant_id` search param so a page-to-page navigation (or a hard reload)
-// keeps the scope — the old per-page selector reset to "— Select a tenant —"
-// on every hop and had to be re-picked on each screen.
+// The tenant and branch every SA screen acts on are the SESSION's — the same
+// tenant/branch switcher (BranchSwitcher) every other tool's navbar carries.
+// There used to be a separate SA-only Tenant/Org selection kept in cookies, so
+// the SA console and LMS/HRMS/Tasks/Admin could silently sit in two different
+// tenants; one switcher now scopes them all.
 //
-// Advisory only, exactly as the per-page selector was: the real authorization
-// is the admin-service's required `tenant_id` query param + super-admin gate.
-// Re-exported so server components keep a single import site for the scope.
-export { TENANT_COOKIE, ORG_COOKIE, type TenantOption, type OrgOption };
+// Still advisory as far as authorization goes: the super-admin-only APIs keep
+// their required, server-validated `tenant_id`/`org_id` params; this only
+// decides which values the pages send. Every page calls these two helpers, so
+// no page changed when the source moved from cookies to the session.
+export type { TenantOption };
+
+// One /auth/me per request, however many of the helpers a page calls.
+const scopeSession = cache(getServerSession);
 
 export async function getSelectedTenantId(): Promise<string | undefined> {
-  const jar = await cookies();
-  return jar.get(TENANT_COOKIE)?.value || undefined;
+  return (await scopeSession())?.session.tenant_id || undefined;
 }
 
+// "All branches" (session.all_branches) means no single branch is selected —
+// tenant-level screens then span the tenant, and branch-level lookups ask for
+// a branch. The token still carries a real org_id in that state, which is why
+// the claim, not the org_id, decides.
 export async function getSelectedOrgId(): Promise<string | undefined> {
-  const jar = await cookies();
-  return jar.get(ORG_COOKIE)?.value || undefined;
+  const s = (await scopeSession())?.session;
+  if (!s || s.all_branches) return undefined;
+  return s.org_id || undefined;
 }
 
 export async function fetchTenants(cookieHeader: string): Promise<TenantOption[]> {
@@ -31,40 +39,4 @@ export async function fetchTenants(cookieHeader: string): Promise<TenantOption[]
   if (!res.ok) return [];
   const body = (await res.json()) as { data: Record<string, unknown>[] };
   return body.data.map((t) => ({ id: String(t['id']), name: String(t['name']) }));
-}
-
-// Orgs for the navbar scope come from admin-service's /lookups/organizations,
-// NOT identity-service's /orgs/all. /orgs/all is doubly wrong here: it projects
-// only (id, name) — no tenant_id to filter on, so the switcher rendered an
-// empty list — and it scopes rows to the CALLER's own tenant, so a super_admin
-// scoped to another tenant would get that tenant's orgs missing entirely.
-// /lookups/organizations is the same super-admin-gated, cross-tenant route the
-// Organizations grid already reads, and it carries tenant_id.
-//
-// SNAKE_CASE, and it matters. This read `o.tenantId` / `o.isActive`, but the
-// route answers `tenant_id` / `is_active` (verified against the running
-// gateway) — the platform-wide JSON contract, which is snake_case everywhere.
-// Neither name exists on the response, so every org mapped to the STRING
-// "undefined", OrgScopeSwitcher's `o.tenant_id === selectedTenantId` matched
-// nothing, and the Org dropdown rendered empty for every tenant. TypeScript
-// could not catch it: the response is cast, not parsed, so the annotation was
-// asserting a shape the server never sent.
-//
-// `is_active` was the mirror image and silently harmless — `undefined !== false`
-// is true, so the filter passed everything through and deactivated branches
-// would have been offered as scopes the moment the tenant_id bug was fixed.
-export async function fetchOrgs(cookieHeader: string): Promise<OrgOption[]> {
-  const res = await fetch(`${GATEWAY_URL}/lookups/organizations`, {
-    headers: { cookie: cookieHeader },
-    cache: 'no-store',
-  });
-  if (!res.ok) return [];
-  const body = (await res.json()) as {
-    data: Array<{ id: string; name: string; tenant_id: string; is_active?: boolean }>;
-  };
-  // Deactivated branches stay listable on their own admin grid but must never
-  // be offered as an active scope.
-  return body.data
-    .filter((o) => o.is_active !== false)
-    .map((o) => ({ id: String(o.id), name: o.name, tenant_id: String(o.tenant_id) }));
 }

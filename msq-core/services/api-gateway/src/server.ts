@@ -182,6 +182,16 @@ app.get('/public/v1/users', { preHandler: [publicApiKeyAuth('users:read')] }, as
   const client = req.publicClient!;
   return proxyTo(config.identityServiceUrl, '/api/v1/public/users', req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
 });
+app.get('/public/v1/leads', { preHandler: [publicApiKeyAuth('leads:list')] }, async (req, reply) => {
+  const client = req.publicClient!;
+  return proxyTo(config.leadsServiceUrl, '/api/v1/public/leads', req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
+});
+// POST, not GET: the body carries phone numbers/emails, which must not land in
+// URLs and access logs.
+app.post('/public/v1/leads/find', { preHandler: [publicApiKeyAuth('leads:find')] }, async (req, reply) => {
+  const client = req.publicClient!;
+  return proxyTo(config.leadsServiceUrl, '/api/v1/public/leads/find', req, reply, publicUserContext(client), { extraHeaders: publicScopeHeaders(client) });
+});
 app.get('/public/v1/leads/:id', { preHandler: [publicApiKeyAuth('leads:read')] }, async (req, reply) => {
   const client = req.publicClient!;
   const { id } = req.params as { id: string };
@@ -1006,6 +1016,12 @@ app.get('/hr/leave/requests/preview', { ...withAuth }, async (req, reply) => {
 app.get('/hr/leave/requests/team', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/leave/requests/team', req, reply, req.userCtx);
 });
+// Detail views (leave.getById / regularizations.get in hr-web) — these were
+// called by the UI but never proxied, so they 404'd at the gateway.
+app.get('/hr/leave/requests/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}`, req, reply, req.userCtx);
+});
 app.patch('/hr/leave/requests/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}`, req, reply, req.userCtx);
@@ -1165,6 +1181,10 @@ app.get('/hr/attendance/regularizations', { ...withAuth }, async (req, reply) =>
 // Requester-side edit and withdraw of a still-pending request. hr-service has
 // always exposed these; the gateway did not, so hr-web's edit and cancel
 // buttons 404'd.
+app.get('/hr/attendance/regularizations/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/regularizations/${id}`, req, reply, req.userCtx);
+});
 app.patch('/hr/attendance/regularizations/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/attendance/regularizations/${id}`, req, reply, req.userCtx);

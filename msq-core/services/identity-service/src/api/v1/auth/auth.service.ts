@@ -305,10 +305,14 @@ export async function switchOrg(
     ? await repo.getUserById(payload.sub)
     : await repo.getUserById(payload.sub, target.org_id, payload.platform_role);
   if (!db_user) {
+    // Always the caller's own, verified org — never the requested one. The
+    // requested org_id is client input and may belong to ANOTHER tenant: filing
+    // the row there leaked this user's id into that tenant's activity feed and
+    // let anyone write into any tenant's audit trail (openissues cycle 4, #1).
     void logActivity({
       action_type: 'org_switch_denied',
       performed_by: payload.sub,
-      org_id: org_id ?? payload.org_id,
+      org_id: payload.org_id,
       new_value: all_branches ? { all_branches: true } : { requested_org_id: org_id },
     });
     throw new ForbiddenError('You do not have access to the selected branch');

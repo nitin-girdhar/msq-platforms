@@ -14,7 +14,11 @@ import { withServiceTx, sqlUuidArr } from '@platform/db';
 //
 // LEFT joins, not inner: a branch with no geo FK set must still be returned,
 // with nulls.
-export async function listBranches(tenantId: string, orgId?: string, filter: GeoFilter = {}) {
+//
+// orgIds: null = every branch of the tenant; otherwise only these (already
+// validated against the key's scope). An empty set reaches nothing.
+export async function listBranches(tenantId: string, orgIds: string[] | null, filter: GeoFilter = {}) {
+  if (orgIds && orgIds.length === 0) return [];
   return withServiceTx(async (tx) => {
     return (await tx.execute(sql`
       SELECT o.id, o.name, o.brand_name, o.city, o.timezone, o.is_active,
@@ -27,8 +31,8 @@ export async function listBranches(tenantId: string, orgId?: string, filter: Geo
       LEFT JOIN geo.countries co ON co.id = o.country_id AND co.tenant_id = o.tenant_id
       WHERE o.tenant_id = ${tenantId}::uuid
         AND NOT o.is_deleted
-        ${orgId ? sql`AND o.id = ${orgId}::uuid` : sql``}
-        ${filter.cityIds?.length    ? sql`AND o.city_id    = ANY(${sqlUuidArr(filter.cityIds)})`    : sql``}
+        ${orgIds ? sql`AND o.id = ANY(${sqlUuidArr(orgIds)})` : sql``}
+        ${filter.cityIds?.length   ? sql`AND o.city_id    = ANY(${sqlUuidArr(filter.cityIds)})`    : sql``}
         ${filter.stateIds?.length   ? sql`AND o.state_id   = ANY(${sqlUuidArr(filter.stateIds)})`   : sql``}
         ${filter.countryIds?.length ? sql`AND o.country_id = ANY(${sqlUuidArr(filter.countryIds)})` : sql``}
       ORDER BY o.name
@@ -128,24 +132,56 @@ export async function listCities(tenantId: string, opts: PresenceOptions = {}) {
 // Joins through iam.user_org_mapping (not the legacy iam.users.role_id
 // mirror) so role_label reflects the role held in the branch being queried —
 // the same source of truth users.repository.ts's internal listUsers uses.
-export async function listUsers(tenantId: string, orgId?: string) {
+//
+// One row per (user, branch membership); branch_id is the membership's branch
+// and org_id the user's home branch. Both the home branch AND the membership's
+// branch must be in the tenant, so a membership another tenant granted can
+// never surface here. The department is the one of the role held in that
+// branch (iam.user_roles.department_id), joined on tenant too.
+export interface UserFilter {
+  departmentIds?: string[];
+  managerIds?:    string[];
+}
+
+export async function listUsers(tenantId: string, orgIds: string[] | null, filter: UserFilter = {}) {
+  if (orgIds && orgIds.length === 0) return [];
   return withServiceTx(async (tx) => {
     return (await tx.execute(sql`
       SELECT u.id, u.full_name, u.email, u.mobile AS phone, u.org_id,
+             uom.org_id AS branch_id, bo.name AS branch_name,
              ur.label AS role_label, u.is_active,
+             ur.department_id, d.name AS department_name, d.label AS department_label,
              u.manager_id, m.full_name AS manager_name
       FROM iam.user_org_mapping uom
       JOIN iam.users u             ON u.id  = uom.user_id
       JOIN iam.user_roles ur       ON ur.id = uom.role_id
       JOIN entity.organizations o  ON o.id  = u.org_id
+      JOIN entity.organizations bo ON bo.id = uom.org_id AND bo.tenant_id = o.tenant_id
+      LEFT JOIN iam.departments d  ON d.id  = ur.department_id AND d.tenant_id = o.tenant_id
       LEFT JOIN iam.users m        ON m.id  = u.manager_id
       WHERE o.tenant_id = ${tenantId}::uuid
         AND NOT o.is_deleted
+        AND NOT bo.is_deleted
         AND NOT u.is_deleted
         AND uom.is_active
-        ${orgId ? sql`AND uom.org_id = ${orgId}::uuid` : sql``}
-      ORDER BY u.full_name
+        ${orgIds ? sql`AND uom.org_id = ANY(${sqlUuidArr(orgIds)})` : sql``}
+        ${filter.departmentIds?.length ? sql`AND ur.department_id = ANY(${sqlUuidArr(filter.departmentIds)})` : sql``}
+        ${filter.managerIds?.length    ? sql`AND u.manager_id     = ANY(${sqlUuidArr(filter.managerIds)})`    : sql``}
+      ORDER BY u.full_name, bo.name
     `)) as Array<Record<string, unknown>>;
+  });
+}
+
+// The subset of orgIds that are live branches of the tenant. Used to validate
+// a tenant-wide key's ?branch_id list in one round trip.
+export async function orgsBelongingToTenant(orgIds: string[], tenantId: string): Promise<string[]> {
+  if (orgIds.length === 0) return [];
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT id FROM entity.organizations
+      WHERE id = ANY(${sqlUuidArr(orgIds)}) AND tenant_id = ${tenantId}::uuid AND NOT is_deleted
+    `)) as Array<{ id: string }>;
+    return rows.map((r) => r.id);
   });
 }
 

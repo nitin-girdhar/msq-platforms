@@ -1063,7 +1063,18 @@ SELECT
   COUNT(*) FILTER (WHERE st.name = 'on_leave')           AS on_leave_count,
   COUNT(*) FILTER (WHERE st.name = 'holiday')            AS holiday_count,
   COUNT(*) FILTER (WHERE st.name = 'weekly_off')         AS weekly_off_count,
-  COUNT(*) FILTER (WHERE st.name = 'wfh')                AS wfh_count,
+  -- WFH overlaps present by design: a work-from-home punch is an ordinary
+  -- present day flagged on the EVENT (is_wfh), never a status the resolver
+  -- sets — so counting st.name = 'wfh' alone always read 0. A day counts when a
+  -- counted WFH punch falls inside its first_in..last_out, or when an approved
+  -- regularization asked for the wfh status.
+  COUNT(*) FILTER (WHERE st.name = 'wfh' OR EXISTS (
+    SELECT 1 FROM hr.attendance_events e
+    WHERE e.user_id = ad.user_id AND e.is_wfh
+      AND e.face_review_status IS DISTINCT FROM 'rejected'
+      AND e.face_review_status IS DISTINCT FROM 'pending'
+      AND e.occurred_at BETWEEN ad.first_in AND COALESCE(ad.last_out, ad.first_in)
+  ))                                                     AS wfh_count,
   COUNT(*) FILTER (WHERE ad.is_late)                     AS late_count,
   COUNT(*) FILTER (WHERE ad.is_early_exit)               AS early_exit_count,
   AVG(ad.worked_minutes)::numeric(10,2)                  AS avg_worked_minutes,

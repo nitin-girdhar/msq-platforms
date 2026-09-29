@@ -528,6 +528,13 @@ REVOKE USAGE ON SCHEMA hr, task               FROM lms_svc;
 -- three logins read the template catalog. Read-only — the catalog is seeded and
 -- administered, never written on the send path.
 GRANT USAGE ON SCHEMA public, iam, entity, geo, comms, lms, marketing, ext TO lms_svc;
+-- leads-service serves GET /activities (the Activity screen) from
+-- audit.activities under lms_svc — a NOINHERIT login, so app_user's grant does
+-- not reach it. Without schema USAGE the read failed "permission denied for
+-- schema audit" (500) for every non-tenant role. RLS still fences the rows:
+-- org_isolation_policy names lms_svc (08_rls.sql auto-naming loop). (1.54.0)
+GRANT USAGE  ON SCHEMA audit           TO lms_svc;
+GRANT SELECT ON TABLE  audit.activities TO lms_svc;
 GRANT USAGE ON SCHEMA public, iam, entity, geo, comms, hr                  TO hr_svc;
 GRANT USAGE ON SCHEMA public, iam, entity, geo, comms, task                TO task_svc;
 

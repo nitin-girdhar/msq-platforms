@@ -72,6 +72,51 @@ caddy (ports 80/443, profile "sso-proxy", root docker-compose.yml, infra/Caddyfi
 | GET/POST | `/meta/webhook/:integrationId` | meta-conversion-api |
 | GET/POST | `/meta/webhook` (shared app across tenants) | meta-conversion-api |
 
+### Partner API (API key, `/public/v1/*`)
+
+Authenticated by an `iam.api_clients` key (`Authorization: Bearer crmk_…` or `X-Api-Key`), never a JWT. Keys are issued on the admin **API Tokens** screen, where each key gets an explicit set of **scopes**. The checkboxes are rendered from `API_SCOPES` in `@platform/auth-constants`, so adding a scope there is all that is needed for it to appear. Each route requires exactly one scope (`publicApiKeyAuth(scope)` in the gateway).
+
+**Tenant is never a request parameter.** It comes from the verified key (`X-Tenant-Id`), so a key can only ever read its own tenant.
+
+**Branch reach comes from the key:**
+- A key bound to one branch sees that branch only.
+- A key bound to several branches sees only those.
+- A tenant-wide key (`scope_all_orgs`) sees every branch.
+- `branch_id` narrows within that reach. A branch outside it is a 400.
+- On the list/find/users/branches endpoints, a multi-branch key is fenced to its branches even when no `branch_id` is sent. Before 1.53.0, `/users` and `/branches` returned the whole tenant in that case.
+
+Downstream handlers run under `withServiceTx`, because there is no user context for RLS. They use a mandatory explicit `tenant_id` filter and a whitelisted column list.
+
+| Method | Path | Scope | Service | Filters |
+|---|---|---|---|---|
+| POST | `/public/v1/leads` | `leads:write` | leads | create a lead |
+| GET | `/public/v1/leads` | `leads:list` | leads | `branch_id`, `assigned_to`, `source`, `stage`, `outcome` (csv; source/stage/outcome take a uuid or the catalog `name`), `start_date`, `end_date` (see below), `include_inactive`, `limit` (≤500, default 100), `offset` |
+| POST | `/public/v1/leads/find` | `leads:find` | leads | body `{ phones?: [], emails?: [], branch_id?: [], include_inactive? }`, ≤100 values combined |
+| GET | `/public/v1/leads/:id` | `leads:read` | leads | — |
+| GET | `/public/v1/users` | `users:read` | identity | `branch_id`, `department_id`, `manager_id` (csv uuids) |
+| GET | `/public/v1/branches` | `branches:read` | identity | `branch_id`, `country_id`, `state_id`, `city_id` (csv uuids) |
+| GET | `/public/v1/locations/{countries,states,cities}` | `locations:read` | identity | geo drill-down |
+| POST | `/public/v1/communications/send` | `comms:send` | communication | — |
+| GET | `/public/v1/lead-report` | `lead-report:read` | leads | browser page, `?key=` |
+
+- **Date filters:** `start_date` and `end_date` take `YYYY-MM-DD` or an ISO timestamp with offset. A bare date is a calendar day in the lead's branch timezone, and `end_date` includes that whole day.
+- **Lead rows** (list/find) return:
+  - contact fields and address
+  - branch id and name
+  - source, stage and outcome (`name` + `label`)
+  - assignee (id and name)
+  - `next_followup_at`, `is_active`, `created_at`, `updated_at`
+
+  They never include `raw_webhook_data`, `metadata`, `tags`, `outcome_comment` or campaign internals.
+- **Superseded leads:** both list and find return only active leads unless `include_inactive` is set.
+- **Find matching:**
+  - Phones match on the **last 10 digits**, so `+91 98…`, `098…` and `98…` all meet.
+  - Emails match on trimmed lowercase.
+  - Each row carries `matched_on` (`phone`/`email`).
+  - The response also lists the inputs with no match under `not_found`.
+- **User rows:** one row per (user, branch membership). `branch_id` is the membership branch and `org_id` the home branch. `department_*` is the department of the role held in that branch (`iam.user_roles.department_id`).
+- **Scope split:** `leads:read`, `leads:list` and `leads:find` are deliberately separate. A key issued for one-at-a-time lookups never gains bulk access to the lead book.
+
 ### Protected (JWT required)
 | Method | Path | Service |
 |---|---|---|
@@ -138,6 +183,7 @@ caddy (ports 80/443, profile "sso-proxy", root docker-compose.yml, infra/Caddyfi
 | POST | `/hr/attendance/check-in`, `/hr/attendance/check-out` | hr |
 | GET/PUT | `/hr/attendance/rules`, `/hr/attendance/rules/admin` (incl. `require_face_match` / `face_match_threshold` / `face_match_action` / `photo_change_cooldown_days` / `image_retention_days`) | hr |
 | GET | `/hr/attendance/reports/summary?month=&format=json\|csv\|xlsx` — monthly per-employee counts (incl. `missed_punch_count`); `hr.attendance.admin.reports.view` + `hr.attendance.admin` | hr |
+| GET | `/hr/attendance/regularizations/:id`, `/hr/leave/requests/:id` — detail views (proxied since 1.52.0; before that they 404'd at the gateway) | hr |
 | GET | `/hr/attendance/reports/detail?month=&format=xlsx\|csv` — detailed download: Summary / Daily Detail (employee × day) / Punches (per session) sheets; csv = Daily Detail. Same gate; current branch only (see ATTENDANCE_DAY_CLASSIFICATION.md §7) | hr |
 | POST | `/users/me/photo` (self), `/users/:id/photo` (admin) — avatar upload; `consent` must be true | identity |
 | GET | `/users/:id/photo` — avatar bytes, ETag + `Cache-Control: private` | identity |
@@ -569,7 +615,7 @@ also used by the nightly job, which likewise excludes `face_review_status='rejec
 
 ## Activity logging
 
-Fire-and-forget: every service calls `@platform/audit-log`'s `logActivity()` in-process (writes are `void`'d or errors are swallowed internally). This ensures activity logging never blocks or fails a user-facing request. Reads (`GET /activities`, admin-only) are served by leads-service and scoped by RLS via `withRoleTx` — never bypassed for the read path.
+Fire-and-forget: every service calls `@platform/audit-log`'s `logActivity()` in-process (writes are `void`'d or errors are swallowed internally). This ensures activity logging never blocks or fails a user-facing request. Reads (`GET /activities`) are served by leads-service, gated on the `lms.history.view.org` capability (not a rank), and scoped by RLS via `withRoleTx` **plus** an explicit session-tenant predicate in `listActivities` — a super_admin transaction runs BYPASSRLS, so RLS alone let it read every tenant's feed. leads-service reads as `lms_svc`, which needs `USAGE ON SCHEMA audit` + `SELECT ON audit.activities` (07_grants.sql). Every activity is filed under the **acting user's own verified org** — never a client-supplied one: `org_switch_denied` used to be filed under the org the caller asked for, which put tenant A user ids into tenant B's feed (fixed 1.54.0).
 
 ## Meta Conversion API
 

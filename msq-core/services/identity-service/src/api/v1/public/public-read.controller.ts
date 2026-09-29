@@ -47,6 +47,46 @@ async function resolveScope(request: FastifyRequest): Promise<{ tenantId: string
   return { tenantId };
 }
 
+// Resolves the set of branches a /branches or /users call may read: the key's
+// own binding, optionally narrowed by a caller-supplied ?branch_id csv.
+// orgIds null = tenant-wide key with no narrowing (every branch of the tenant);
+// an empty array = the key reaches no branch, so the caller gets no rows.
+// Unlike resolveScope, a multi-branch key is fenced to its X-Allowed-Org-Ids
+// even when no branch_id is sent.
+async function resolveOrgScope(request: FastifyRequest): Promise<{ tenantId: string; orgIds: string[] | null }> {
+  const tenantId = String(request.headers['x-tenant-id'] ?? '').trim();
+  if (!tenantId || !UUID_RE.test(tenantId)) throw new UnauthorizedError('Tenant context missing');
+
+  const q = request.query as { branch_id?: unknown };
+  const requested = typeof q.branch_id === 'string' && q.branch_id
+    ? q.branch_id.split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+  if (requested.some((id) => !UUID_RE.test(id))) throw new BadRequestError('branch_id must be a comma-separated list of UUIDs');
+
+  const headerOrg = String(request.headers['x-org-id'] ?? '').trim();
+  if (headerOrg) {
+    if (!UUID_RE.test(headerOrg)) throw new BadRequestError('Invalid branch context');
+    if (requested.some((id) => id !== headerOrg)) throw new BadRequestError('branch_id is not permitted for this API key');
+    return { tenantId, orgIds: [headerOrg] };
+  }
+
+  const scopeAllOrgs = String(request.headers['x-scope-all-orgs'] ?? '') === 'true';
+  if (scopeAllOrgs) {
+    if (requested.length === 0) return { tenantId, orgIds: null };
+    const owned = await repo.orgsBelongingToTenant(requested, tenantId);
+    if (owned.length !== new Set(requested).size) throw new BadRequestError('branch_id is not permitted for this API key');
+    return { tenantId, orgIds: owned };
+  }
+
+  const allowed = String(request.headers['x-allowed-org-ids'] ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (requested.length === 0) return { tenantId, orgIds: allowed };
+  if (requested.some((id) => !allowed.includes(id))) throw new BadRequestError('branch_id is not permitted for this API key');
+  return { tenantId, orgIds: [...new Set(requested)] };
+}
+
 // Optional geo filters, shared by /branches and the three /locations routes.
 // Comma-separated uuids; anything malformed is dropped rather than rejected,
 // so a bad id degrades to "no filter" exactly as an absent parameter does.
@@ -55,6 +95,16 @@ async function resolveScope(request: FastifyRequest): Promise<{ tenantId: string
 function parseUuidCsv(value: unknown): string[] {
   if (typeof value !== 'string' || !value) return [];
   return value.split(',').map((s) => s.trim()).filter((s) => UUID_RE.test(s));
+}
+
+// Strict variant for the /users filters: a malformed id is a 400, not a
+// dropped filter — silently widening "users of department X" to every user in
+// the tenant is the wrong failure for a caller who mistyped an id.
+function parseUuidCsvStrict(value: unknown, name: string): string[] {
+  if (typeof value !== 'string' || !value) return [];
+  const ids = value.split(',').map((s) => s.trim()).filter(Boolean);
+  if (ids.some((s) => !UUID_RE.test(s))) throw new BadRequestError(`${name} must be a comma-separated list of UUIDs`);
+  return ids;
 }
 
 function geoFilter(request: FastifyRequest) {
@@ -71,9 +121,9 @@ function geoFilter(request: FastifyRequest) {
 
 export class PublicReadController {
   getBranches = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { tenantId, orgId } = await resolveScope(request);
+    const { tenantId, orgIds } = await resolveOrgScope(request);
     const { hasBranches: _ignored, ...filter } = geoFilter(request);
-    const data = await repo.listBranches(tenantId, orgId, filter);
+    const data = await repo.listBranches(tenantId, orgIds, filter);
     return reply.send({ success: true, data });
   };
 
@@ -101,8 +151,12 @@ export class PublicReadController {
   };
 
   getUsers = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { tenantId, orgId } = await resolveScope(request);
-    const data = await repo.listUsers(tenantId, orgId);
+    const { tenantId, orgIds } = await resolveOrgScope(request);
+    const q = request.query as Record<string, unknown>;
+    const data = await repo.listUsers(tenantId, orgIds, {
+      departmentIds: parseUuidCsvStrict(q['department_id'], 'department_id'),
+      managerIds: parseUuidCsvStrict(q['manager_id'], 'manager_id'),
+    });
     return reply.send({ success: true, data });
   };
 }

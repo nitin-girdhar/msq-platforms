@@ -165,7 +165,8 @@ What it serves, and why none of it involves cookies, CORS or basePath:
 | Route | Caller | Auth |
 |---|---|---|
 | `POST /public/v1/leads` | partner integrations | `Authorization: Bearer` / `X-Api-Key` |
-| `GET /public/v1/{branches,users,leads/:id,locations/*}` | partner integrations | same |
+| `GET /public/v1/{branches,users,leads,leads/:id,locations/*}` | partner integrations | same |
+| `POST /public/v1/leads/find` | partner integrations | same |
 | `POST /public/v1/communications/send` | partner integrations | same, plus `publicCommsGuard` |
 | `GET /public/v1/lead-report` | a person, in a browser | `?key=<api key>` — `extractKey()` falls back to the query param because a top-level navigation cannot set a header |
 | `POST /intake/webhook` | ad platforms | `X-Api-Key`, constant-time compare |

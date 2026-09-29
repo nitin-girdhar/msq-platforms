@@ -97,3 +97,4 @@ db_scripts/tools/*
 .env*uat
 msq-deploy/.env-dev
 msq-deploy/.env-prd
+openissues.md

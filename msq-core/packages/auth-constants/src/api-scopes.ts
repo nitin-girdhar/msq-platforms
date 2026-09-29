@@ -4,7 +4,16 @@
 
 export const API_SCOPES = [
   'leads:write',
+  // Single lead by id (/public/v1/leads/:id).
   'leads:read',
+  // Bulk, filtered lead listing (GET /public/v1/leads). Separate from
+  // leads:read so a key issued for one-at-a-time lookups never silently
+  // gains the whole tenant's lead book.
+  'leads:list',
+  // Lookup by phone/email arrays (POST /public/v1/leads/find). Its own scope
+  // because it answers "is this person already a lead?" across the key's
+  // branches — a dedupe/enumeration capability a partner may not need.
+  'leads:find',
   'branches:read',
   // Where a tenant operates: the country/state/city drill-down behind
   // /public/v1/locations/*. Separate from branches:read so a partner can be

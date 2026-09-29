@@ -69,6 +69,19 @@ a true no-show (`resolution_source = 'job'`, no times) and keeps it regularizabl
 Higher-precedence outcomes are unchanged and still win over punches: holiday →
 weekly off → approved leave → events → absent.
 
+**Leave halves.** Only a leave's own first day can be a start half and only its
+last day an end half (`isHalfLeaveDay`). Mon–Wed ending Wednesday first-half is
+`on_leave`, `on_leave`, `half_day`. Before 1.52.0 every day of such a leave was
+`half_day`.
+
+**Employment window.** The job resolves only days between `date_of_joining` and
+`date_of_exit`; before 1.52.0 it wrote pre-joining days as `absent`. The report
+shows days outside the window as "Not Employed".
+
+**WFH** is a flag on the punch (`is_wfh`), not a status the resolver sets. The
+monthly summary's `wfh_count` counts days with a counted WFH punch (plus any day
+regularized to `wfh`), overlapping `present` by design.
+
 ### Threshold precedence
 
 ```

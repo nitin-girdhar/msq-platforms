@@ -50,9 +50,12 @@ export function createChangePasswordSchema(minLength: number = DEFAULT_PASSWORD_
 
 export const changePasswordSchema = createChangePasswordSchema();
 
-export const switchOrgSchema = z.object({
-  org_id: z.string().uuid('Invalid organization id'),
-});
+// Either one branch, or "All branches" (only honoured for users whose branch
+// list is the whole tenant — enforced in identity-service, not here).
+export const switchOrgSchema = z.union([
+  z.object({ org_id: z.string().uuid('Invalid organization id') }).strict(),
+  z.object({ all_branches: z.literal(true) }).strict(),
+]);
 
 export type LoginInput = z.infer<typeof loginSchema>;
 export type SwitchOrgInput = z.infer<typeof switchOrgSchema>;

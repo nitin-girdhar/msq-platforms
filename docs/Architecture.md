@@ -4,10 +4,12 @@
 
 ```
 Browser
-  └─→ Per-product Next.js apps (P4.3) — one image each, shared SSO cookie on .app.com:
-        auth-web (3000, auth.app.com) · lms-web (3001) · hr-web (3002) · todo-web (3003)
+  └─→ Per-product Next.js apps (P4.3) — one image each, ONE ORIGIN, one path prefix each,
+      sharing a host-only SSO cookie (path=/). Each app sets a matching Next `basePath`:
+        /  auth-web (3000) · /lms lms-web (3001) · /hrms hr-web (3002) · /todo todo-web (3003)
+        /admin admin-web (3004) · /sa lookup-admin (3005)
         ├─ Server Components: reads JWT from cookie server-side for SSR
-        └─ Client Components: fetch /api/* (rewritten to API Gateway)
+        └─ Client Components: fetch <basePath>/api/* (rewritten to API Gateway)
               └─→ API Gateway (port 4000)
                     ├─ Public: /auth/login, /auth/logout, /intake/webhook
                     │          /meta/webhook/:integrationId (per-tenant app, HMAC-verified)
@@ -16,7 +18,7 @@ Browser
                           ├─→ identity-service       (4001)  (auth + users + orgs)
                           ├─→ leads-service          (4002)  (leads + assignments + analytics + activities)
                           ├─→ meta-conversion-api    (4003)
-                          ├─→ notifications-service  (4004)  (LMS lead-event visibility notifications)
+                          ├─→ notifications-service  (4004)  (LMS lead-event visibility notifications over SSE; Web Push device registration + follow-up push)
                           ├─→ communication-service  (4005)  (stateless send relay; no rank authz — enforced at gateway; also called service-to-service by identity-service for Team notification emails)
                           ├─→ admin-service          (4006)  (super_admin-only CRUD for system lookup tables)
                           ├─→ hr-service             (4007)  (leave + attendance + shifts + face verification)
@@ -28,7 +30,8 @@ Browser
                           │ compreface-ui(nginx, admin UI ops-only) → compreface-api ↔ compreface-core (ML) │
                           │ compreface-admin        ── all backed by compreface-postgres-db (its OWN DB,     │
                           │                            NOT the app cluster)                                  │
-                          │ Defined in msq-hrms/docker-compose.yml (nested repo), not the root compose file  │
+                          │ Defined in msq-hrms/docker-compose.yml (nested repo), pulled into the root      │
+                          │ compose project by its `include:` block — see "One compose project" below       │
                           └────────────────────────────────────────────────────────────────────────────────┘
 
 admin-web    (port 3004) ─→ API Gateway (port 4000) ─→ identity-service / hr-service / etc.
@@ -41,9 +44,17 @@ lookup-admin (port 3005) ─→ API Gateway (port 4000) ─→ admin-service (40
 Meta (Facebook) ─→ API Gateway /meta/webhook/:integrationId ─→ meta-conversion-api  (per-tenant app)
 Meta (Facebook) ─→ API Gateway /meta/webhook                ─→ meta-conversion-api  (shared app, multi-tenant)
 
-caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) — reverse-proxies
-  *.app.com subdomains to the per-product apps locally, simulating the production SSO cookie-domain
-  topology described under JWT & auth below. Optional; only relevant when testing cross-product SSO.
+caddy (ports 80/443, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) — fronts ALL
+  six web apps on ONE host, dispatching by path prefix (`@lms path /lms /lms/*` + `handle @lms` ->
+  lms-web, ... and a final bare `handle` -> auth-web for the root). Uses `handle`, never
+  `handle_path`: each app is compiled with a matching `basePath` and expects to receive its own
+  prefix. Each prefix is matched via a NAMED matcher listing both the bare path and the wildcard —
+  `/lms/*` alone does not match a bare `/lms`, which fell through to auth-web and 404'd, and
+  `handle` accepts only one matcher token so the two paths cannot be written inline. The site
+  address comes from
+  CADDY_SITE_ADDRESS (`http://app.localhost` locally — the explicit scheme suppresses ACME;
+  `apps.fitclass.in` in production, where Caddy issues the certificate). A single origin is what
+  makes the platform installable as one PWA holding one push subscription.
 ```
 
 ## API endpoints (via Gateway — port 4000)
@@ -61,6 +72,51 @@ caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) �
 | GET/POST | `/meta/webhook/:integrationId` | meta-conversion-api |
 | GET/POST | `/meta/webhook` (shared app across tenants) | meta-conversion-api |
 
+### Partner API (API key, `/public/v1/*`)
+
+Authenticated by an `iam.api_clients` key (`Authorization: Bearer crmk_…` or `X-Api-Key`), never a JWT. Keys are issued on the admin **API Tokens** screen, where each key gets an explicit set of **scopes**. The checkboxes are rendered from `API_SCOPES` in `@platform/auth-constants`, so adding a scope there is all that is needed for it to appear. Each route requires exactly one scope (`publicApiKeyAuth(scope)` in the gateway).
+
+**Tenant is never a request parameter.** It comes from the verified key (`X-Tenant-Id`), so a key can only ever read its own tenant.
+
+**Branch reach comes from the key:**
+- A key bound to one branch sees that branch only.
+- A key bound to several branches sees only those.
+- A tenant-wide key (`scope_all_orgs`) sees every branch.
+- `branch_id` narrows within that reach. A branch outside it is a 400.
+- On the list/find/users/branches endpoints, a multi-branch key is fenced to its branches even when no `branch_id` is sent. Before 1.53.0, `/users` and `/branches` returned the whole tenant in that case.
+
+Downstream handlers run under `withServiceTx`, because there is no user context for RLS. They use a mandatory explicit `tenant_id` filter and a whitelisted column list.
+
+| Method | Path | Scope | Service | Filters |
+|---|---|---|---|---|
+| POST | `/public/v1/leads` | `leads:write` | leads | create a lead |
+| GET | `/public/v1/leads` | `leads:list` | leads | `branch_id`, `assigned_to`, `source`, `stage`, `outcome` (csv; source/stage/outcome take a uuid or the catalog `name`), `start_date`, `end_date` (see below), `include_inactive`, `limit` (≤500, default 100), `offset` |
+| POST | `/public/v1/leads/find` | `leads:find` | leads | body `{ phones?: [], emails?: [], branch_id?: [], include_inactive? }`, ≤100 values combined |
+| GET | `/public/v1/leads/:id` | `leads:read` | leads | — |
+| GET | `/public/v1/users` | `users:read` | identity | `branch_id`, `department_id`, `manager_id` (csv uuids) |
+| GET | `/public/v1/branches` | `branches:read` | identity | `branch_id`, `country_id`, `state_id`, `city_id` (csv uuids) |
+| GET | `/public/v1/locations/{countries,states,cities}` | `locations:read` | identity | geo drill-down |
+| POST | `/public/v1/communications/send` | `comms:send` | communication | — |
+| GET | `/public/v1/lead-report` | `lead-report:read` | leads | browser page, `?key=` |
+
+- **Date filters:** `start_date` and `end_date` take `YYYY-MM-DD` or an ISO timestamp with offset. A bare date is a calendar day in the lead's branch timezone, and `end_date` includes that whole day.
+- **Lead rows** (list/find) return:
+  - contact fields and address
+  - branch id and name
+  - source, stage and outcome (`name` + `label`)
+  - assignee (id and name)
+  - `next_followup_at`, `is_active`, `created_at`, `updated_at`
+
+  They never include `raw_webhook_data`, `metadata`, `tags`, `outcome_comment` or campaign internals.
+- **Superseded leads:** both list and find return only active leads unless `include_inactive` is set.
+- **Find matching:**
+  - Phones match on the **last 10 digits**, so `+91 98…`, `098…` and `98…` all meet.
+  - Emails match on trimmed lowercase.
+  - Each row carries `matched_on` (`phone`/`email`).
+  - The response also lists the inputs with no match under `not_found`.
+- **User rows:** one row per (user, branch membership). `branch_id` is the membership branch and `org_id` the home branch. `department_*` is the department of the role held in that branch (`iam.user_roles.department_id`).
+- **Scope split:** `leads:read`, `leads:list` and `leads:find` are deliberately separate. A key issued for one-at-a-time lookups never gains bulk access to the lead book.
+
 ### Protected (JWT required)
 | Method | Path | Service |
 |---|---|---|
@@ -75,7 +131,7 @@ caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) �
 | GET | `/leads/:id/assignments` | leads |
 | GET/POST | `/leads/:id/follow-ups` | leads |
 | PATCH/DELETE | `/leads/:id/follow-ups/:followUpId` | leads |
-| GET | `/follow-ups` | leads |
+| GET | `/follow-ups` (`org_ids`, `campaign_type_ids` — same scope rule as `/leads`) | leads |
 | GET/POST | `/campaigns` | leads |
 | GET/PATCH/DELETE | `/campaigns/:id` | leads |
 | GET | `/campaigns/platforms`, `/campaigns/statuses` | leads |
@@ -86,6 +142,7 @@ caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) �
 | GET | `/users/assignable`, `/users/team`, `/users/org-chart` | identity |
 | POST | `/users/:id/reset-password` | identity |
 | GET | `/users/:id/org-mappings` | identity |
+| — | every `/users*` route above takes an optional `?tenant_id=` — honoured for super_admin only (lookup-admin's selected tenant); by-id routes 404 a user outside it | identity |
 | POST | `/users/:id/org-mappings` | identity |
 | DELETE | `/users/:id/org-mappings/:orgId` | identity |
 | GET | `/orgs`, `/orgs/all`, `/lead-sources` | identity |
@@ -99,6 +156,17 @@ caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) �
 | POST | `/meta/crm-event` | meta-conversion-api |
 | POST | `/meta/capi/auto-trigger` | meta-conversion-api |
 | GET/POST/PATCH | `/meta/integration` | meta-conversion-api |
+| GET/POST | `/meta/page-org-map` (super_admin, `?tenant_id=`) | meta-conversion-api |
+| PATCH/DELETE | `/meta/page-org-map/:mappingId` (super_admin, `?tenant_id=`) | meta-conversion-api |
+| GET | `/meta/pages` (super_admin, `?tenant_id=`) | meta-conversion-api — Graph `/me/accounts`, returns `{page_id, name}` only |
+| GET | `/meta/campaigns` (super_admin, `?tenant_id=`, optional `?mapping_status=`) | meta-conversion-api — the three mapping grids, with a per-campaign lead count |
+| POST | `/meta/campaigns/sync` (super_admin, `?tenant_id=`) | meta-conversion-api — the "Fetch campaigns" button; walks the tenant's ad accounts |
+| PATCH | `/meta/campaigns/:metaCampaignId` (super_admin, `?tenant_id=`, `?dry_run=`) | meta-conversion-api — confirm/correct a type, then fan out the reclassification |
+| GET | `/meta/lead-pull/campaigns` (super_admin, `?tenant_id=`, optional `?page_ids=`) | meta-conversion-api — the campaign multiselect; the response says the filter is **post-fetch** |
+| POST | `/meta/lead-pull/runs` (super_admin, `?tenant_id=`) | meta-conversion-api — enqueues a pull, **202 + `run_id`**; 409 while one is live |
+| GET | `/meta/lead-pull/runs/:runId` (super_admin, `?tenant_id=`) | meta-conversion-api — status, progress, delta summary (polled by the UI) |
+| GET | `/meta/lead-pull/runs/:runId/leads` (super_admin, `?tenant_id=`, optional `?verdict=`) | meta-conversion-api — the staged rows behind each summary number |
+| POST | `/meta/lead-pull/runs/:runId/apply` (super_admin, `?tenant_id=`) | meta-conversion-api — applies the importable rows through the canonical write path |
 | GET/POST | `/lookups/:slug` (super_admin only) | admin-service (shared iam/entity: org-types, tenant-domains, tenant-plan-types, user-roles) |
 | PATCH | `/lookups/:slug/:id` (super_admin only) | admin-service |
 | GET/POST/PATCH | `/lookups/{lms-roles,lead-stage,lead-stage-outcome,interaction-types,follow-up-statuses,lead-sources,marketing-platforms,campaign-statuses}` (super_admin, `?tenant_id=`) | leads-service (N-6) |
@@ -106,7 +174,7 @@ caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) �
 | GET/POST/PATCH | `/lookups/{task-statuses,task-priorities,task-roles}` (super_admin, `?tenant_id=`) | tasks-service (N-6) |
 | GET/POST | `/lookups/tenants` (super_admin only) | admin-service |
 | PATCH | `/lookups/tenants/:id` (super_admin only) | admin-service |
-| GET/POST | `/lookups/organizations` (super_admin only) — GET lists orgs **across all tenants** (each row carries `tenantId`; callers filter client-side). This is lookup-admin's org source for the navbar Org scope and the departments `org_id` FK; identity-service's `/orgs/all` is NOT usable there, as it omits `tenant_id` and is pinned to the caller's own tenant | admin-service |
+| GET/POST | `/lookups/organizations` (super_admin only) — GET lists orgs **across all tenants** (each row carries `tenant_id` and `is_active`, **snake_case** like every other response on the platform; callers filter client-side). This is lookup-admin's org source for the navbar Org scope and the departments `org_id` FK; identity-service's `/orgs/all` is NOT usable there, as it omits `tenant_id` and is pinned to the caller's own tenant | admin-service |
 | PATCH | `/lookups/organizations/:id` (super_admin only, tenant-scoped) | admin-service |
 | GET | `/capabilities` (super_admin only) — the global `iam.capabilities` tree (tool→page→tab→operation→scope) | admin-service |
 | GET | `/roles/:id/capabilities?tenant_id=` (super_admin only) — platform defaults + this tenant's overrides for one role | admin-service |
@@ -114,6 +182,9 @@ caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) �
 | GET | `/departments?tenant_id=` (super_admin only) — read-only; `iam.departments` is written by hr-service | admin-service |
 | POST | `/hr/attendance/check-in`, `/hr/attendance/check-out` | hr |
 | GET/PUT | `/hr/attendance/rules`, `/hr/attendance/rules/admin` (incl. `require_face_match` / `face_match_threshold` / `face_match_action` / `photo_change_cooldown_days` / `image_retention_days`) | hr |
+| GET | `/hr/attendance/reports/summary?month=&format=json\|csv\|xlsx` — monthly per-employee counts (incl. `missed_punch_count`); `hr.attendance.admin.reports.view` + `hr.attendance.admin` | hr |
+| GET | `/hr/attendance/regularizations/:id`, `/hr/leave/requests/:id` — detail views (proxied since 1.52.0; before that they 404'd at the gateway) | hr |
+| GET | `/hr/attendance/reports/detail?month=&format=xlsx\|csv` — detailed download: Summary / Daily Detail (employee × day) / Punches (per session) sheets; csv = Daily Detail. Same gate; current branch only (see ATTENDANCE_DAY_CLASSIFICATION.md §7) | hr |
 | POST | `/users/me/photo` (self), `/users/:id/photo` (admin) — avatar upload; `consent` must be true | identity |
 | GET | `/users/:id/photo` — avatar bytes, ETag + `Cache-Control: private` | identity |
 | POST | `/hr/attendance/face/enroll` (self or hr_admin/org_admin; `consent` must be true; sources the avatar) | hr |
@@ -132,15 +203,17 @@ caddy (port 80, profile "sso-proxy", root docker-compose.yml, infra/Caddyfile) �
 
 ## JWT & auth
 
-- **Cookie**: `fc_session` (httpOnly, sameSite=lax, secure in production). When `COOKIE_DOMAIN` is set (`.app.com`), identity-service scopes the cookie to the parent domain so every product subdomain (`lms.`/`hr.`/`todo.`/`auth.`) shares one SSO session — one login at `auth.app.com` authenticates all. Unset in single-host dev → host-only cookie (on `localhost` the cookie is still shared across ports because cookies ignore the port).
+- **Cookie**: name from `authCookieName()` (`@platform/auth-constants`) — `AUTH_COOKIE_NAME` env var, default `fc_session`. A browser cookie is keyed by `(name, domain)`, and **the per-environment name is the isolation mechanism**: `apps.fitclass.in` and `apps-uat.fitclass.in` both sit under `fitclass.in`, so a *same-named* cookie set by one is delivered to the other's host, where the api-gateway verifies the foreign-signed token against its own `JWT_SECRET`, rejects it as `Invalid token`, and 401s every client-side API call while SSR (which forwards the request's own cookie) still succeeds. Distinct names — `fc_session` (prod), `fc_session_uat`, `fc_session_dev` — mean each environment simply never reads the others' cookie. Every container in an environment must carry that environment's name: identity-service, api-gateway, and all six web apps. Attributes: httpOnly, sameSite=lax, `path=/`, secure in production. **`COOKIE_DOMAIN`** is each environment's existing scope: prod is `.fitclass.in` (unchanged — a re-login overwrites the cookie in place, so no session is dropped), UAT `apps-uat.fitclass.in`, dev `app.localhost`. Note a bare host as `COOKIE_DOMAIN` is still a *domain* cookie (browsers store `apps.fitclass.in` as `.apps.fitclass.in` and offer it to sub-hosts); only an unset value is truly host-only. Tightening prod to host-only is a future change that needs a maintenance-window logout, out of scope here. Changing an environment's cookie *name* logs that environment's users out once, by design.
 - **Algorithm**: HS256 with `JWT_SECRET` by default; RS256 when `JWT_PRIVATE_KEY`/`JWT_KID` are configured (public key served via JWKS). Verifiers — gateway, identity-service, and every web app's Edge middleware + server session helpers (`@platform/ui-kit`) — select the key by the token's `alg` header, so both coexist during migration. In the split topology (P4.3) product apps carry **only** `JWT_PUBLIC_KEY` (verify); identity-service alone holds the signing key. Issuer `fitclass-crm`, audience `fitclass-crm:web`.
-- **SSO across product apps (P4.3)**: each product app's `middleware.ts` is `createProductMiddleware()` from `@platform/ui-kit/middleware` — it verifies the shared cookie and, when absent/invalid, redirects to `NEXT_PUBLIC_AUTH_URL/login?callbackUrl=<full-url>`. Because the cookie is already present on `.app.com`, a user switching products via the in-navbar `ProductSwitcher` (cross-origin links to sibling product origins) lands authenticated with no re-login. `auth-web` validates the post-login `callbackUrl` against an origin allowlist (`allowedRedirectOrigins()`) before redirecting — an off-allowlist or attacker-supplied origin falls back to the LMS dashboard (open-redirect guard).
+- **SSO across product apps (P4.3)**: each product app's `middleware.ts` is `createProductMiddleware()` from `@platform/ui-kit/middleware` — it verifies the shared cookie and, when absent/invalid, redirects to `<AUTH_URL>/login?callbackUrl=<full-url>`. The `sso.ts` helpers (`authOrigin()`, `productOrigins()`, `adminOrigin()`, `adminWebOrigin()`) resolve **base URLs**, not bare origins: a value may carry a path prefix (`https://apps.app.com/lms`) so all six apps can sit behind one host — one PWA scope, one push subscription. Every URL is therefore built by CONCATENATION (`${base}/login`); `new URL('/login', base)` would discard the prefix. Because the cookie is already present on the auth host, a user switching products via the in-navbar `ProductSwitcher` lands authenticated with no re-login. `auth-web` validates the post-login `callbackUrl` against `allowedRedirectOrigins()`, each entry normalized to its origin, before redirecting; an attacker-supplied host is rejected and the user falls back to the session-derived landing (`sessionDestination()`, or `/no-access`) rather than a hardcoded product. Under one host that check accepts any path on that host — deliberate and correct, since every internal path is then our own app; see the comment on `resolveCallback`.
+- **`basePath` and what Next does *not* prefix**: each product app compiles a `basePath` (`/lms`, `/hrms`, `/todo`, `/admin`, `/sa`) into its image — changing a prefix is a rebuild and redeploy, never an env flip. Next applies it automatically to `<Link>`/router navigation, `next/image`, `/_next/*` assets, `rewrites()` **sources**, and middleware **matchers**; it deliberately leaves absolute rewrite destinations alone, which is why `/hrms/api/leave` reaches the gateway as `/leave`. Two consequences are easy to get wrong: (1) `config.matcher` and `protectedPrefixes` are **app-relative** — Next prepends the prefix at build time and `request.nextUrl.pathname` arrives with it already stripped, so spelling it out yourself yields `/hrms/hrms/...`, which matches nothing and silently leaves routes unauthenticated; (2) `fetch()` gets **no** prefixing, so a bare `fetch('/api/…')` under one origin would hit auth-web at the root instead of the calling app. `createApiClient()` resolves its mount through `withBasePath()` (`packages/ui/src/api/base-path.ts`), which reads the value Next compiles in — so all call sites keep passing `'/api'`, and a shared package built into two apps gets the right prefix in each.
 - **Password watermark**: `pwd_iat = floor(password_changed_at / 1000)`. `/auth/me` rejects any session where `payload.pwd_iat < db.passwordChangedAt`.
 - **Session revocation**: the `iam.token_blocklist` (via `@platform/db`) backs both single-session logout (per-`jti` row) and bulk revocation (jti-less row scoped to `user_id`). Password change/self, admin reset, deactivation, role change, and soft-delete all insert a jti-less **user-scoped** row so every prior token for that user is rejected at the gateway and `/auth/me` — not only at `/auth/me` via the watermark. Self-change scopes the revocation to the freshly issued token's `iat` so the new session survives. Note: a user-scoped bulk row must set **only** `user_id` (never `org_id`/`tenant_id`), otherwise it would match the org-/tenant-level bulk branches and log out the whole org/tenant.
 - **Shrunk token (P1.3)**: the JWT carries identity (`sub`, `email`), the coarse `platform_role` (`super_admin` | `tenant_admin` | `org_admin` | `member`), `org_id`/`tenant_id`, `licensed_products`, and `pwd_iat`/`jti` — but **no** global product role/rank. Product authority is resolved per request from each product's own `<product>.member_roles` table, so a stolen or stale token can never assert a product rank it wasn't granted. `platform_role` drives which Postgres role `withRoleTx` selects (RLS) and platform-level gates; `licensed_products` is a UX convenience (the gateway's DB-backed entitlement gate remains authoritative).
 - **Gateway**: validates JWT with `jose` (Edge-compatible). Injects `X-User-Id`, `X-Platform-Role`, `X-Org-Id`, `X-Tenant-Id` headers onto every proxied request (no rank/product-role header). Also injects `X-Internal-Secret` so downstream services can verify the request came through the gateway. A pre-P1.3 token lacking `platform_role` is rejected (401) — a hard cutover forcing one re-login.
 - **Services**: never re-verify the JWT — they trust the injected headers from the gateway (reject requests missing `X-Internal-Secret`), and resolve the acting user's rank/role from the DB, never a header: product services (`leads`/`hr`/`tasks`) via `resolveMemberRole('<product>', …)` against `<product>.member_roles`; identity-service via `resolveGlobalRank(…)` on the `iam.user_roles` ladder (user management stays on the global ladder); admin/meta from the coarse `platformRank(platform_role)`. LMS/Tasks membership is required (no grant → 403); HR does not require a grant (every employee has self-service — a missing grant just means no elevated HR authority). notifications resolves LMS rank for lead-event visibility; communication-service is a stateless relay that does no rank authz (its send-block is enforced at the gateway).
 - **Branch switching**: a session is always scoped to exactly one org (the JWT's `org_id` drives `app.current_org_id` / RLS). Users mapped to multiple branches via `iam.user_org_mapping` list them with `GET /auth/my-orgs` and re-mint the session for another branch with `POST /auth/switch-org { org_id }` — no re-authentication. The target org is validated server-side against the caller's active mapping rows (403 otherwise), the new JWT is re-minted for that branch (`org_id` + the branch's `platform_role`; product role/rank is resolved per-service from `<product>.member_roles` for the active org), and the previous token's `jti` is revoked so only one active branch exists per session. `/auth/me` resolves role/org the same org-scoped way, so the web app's role-gated nav follows the active branch. The web app surfaces this as a post-login `/select-branch` page (when >1 mapping) and a navbar `BranchSwitcher` dropdown; both do a full navigation after switching so the server-rendered layout rebuilds from the new cookie. Tenant admins (rank ≥ 90) bypass all of this — their `tenant_admin` RLS policies already span every branch in the tenant.
+- **"All branches" session scope.** Users whose `GET /auth/my-orgs` lists every branch of the tenant (the same `isTenantWideRole` rule; the response now carries `can_view_all`) also get an **All branches** row at the top of the navbar `BranchSwitcher`, and it is their **login default**. `POST /auth/switch-org { all_branches: true }` re-mints the token on the user's *home* org with the claim `branch_scope: 'all'` (403 for anyone without `can_view_all`); `/auth/me` surfaces it as `SessionUser.all_branches`. Picking a single branch (`{ org_id }`) drops the claim. The token always keeps a real `org_id` because RLS and writes need one — the claim is a **read-filter hint, never a grant**: branch-scoped LMS screens (Leads, Follow-ups) read it via `sessionBranchFilter(actor)` (`msq-lms/packages/lms-web/src/lib/leads/branch-scope.ts`) and send no `org_ids` for "All" and `[session org]` for a picked branch, while the services still decide reach from the `lms.leads.view` scope (non-tenant/all scopes are pinned to the session org whatever is sent). Before this, a tenant-wide user's Leads grids ignored the switcher entirely: `/leads` sent no `org_ids` and returned the whole tenant, while `/follow-ups` was hard-pinned to the session org — the two views on one page disagreed.
 
 ## Database pools
 
@@ -155,7 +228,7 @@ Three postgres.js pools exist, all with `transform: { column: { from: postgres.t
 ### Transaction helpers
 
 - **`withRoleTx(ctx, fn)`** — Dispatches based on `ctx.role`: `super_admin` uses serviceDb, `tenant_admin` uses tenantDb, others use appDb with `SET LOCAL ROLE app_user` + GUCs.
-  - **`ctx.tenantWide`** — opt-in flag that selects the `tenant_admin` Postgres role for an actor whose *capability* reaches every branch in the tenant, even when `platform_role` is not literally `tenant_admin`. Cross-branch reach in this platform is a capability (`lms.leads.view.tenant`), but `platform_role` is a four-value denormalisation that collapses any tenant-defined role — a regional manager, say — to `member`. Without the flag such an actor passes every app-layer gate and then reads **zero** rows, because RLS is still pinned to `app.current_org_id`. This is not an RLS bypass: `tenant_isolation_policy` still fences every row to `app.current_tenant_id`, taken from the verified session, so it widens *branch* reach inside one tenant and can never cross tenants. Like `readOnly`, it is a caller assertion — whoever sets it must already have resolved the capability. Set today by `leads.repository.listLeads`, `orgs.repository.getOrgs`, `users.service.getAssignableUsers` and the assignment writes. On the assignment paths (single assign/reassign/unassign and bulk) the flag is gated by **coverage**, not by the capability ladder: `writeCtxForOrg(ctx, leadOrgId)` in `assignments.service` asserts the lead's branch is one of `getCoveredOrgIds(ctx)` and otherwise throws 403. Gating on the ladder instead (`lms.leads.view` = tenant/all) is what broke Bulk Assign for multi-branch `org`-scope roles: they resolve to `org`, so picking any branch other than the one they were switched into read back zero leads and failed as "One or more leads were not found".
+  - **`ctx.tenantWide`** — opt-in flag that selects the `tenant_admin` Postgres role for an actor whose *capability* reaches every branch in the tenant, even when `platform_role` is not literally `tenant_admin`. Cross-branch reach in this platform is a capability (`lms.leads.view.tenant`), but `platform_role` is a four-value denormalisation that collapses any tenant-defined role — a regional manager, say — to `member`. Without the flag such an actor passes every app-layer gate and then reads **zero** rows, because RLS is still pinned to `app.current_org_id`. This is not an RLS bypass: `tenant_isolation_policy` still fences every row to `app.current_tenant_id`, taken from the verified session, so it widens *branch* reach inside one tenant and can never cross tenants. Like `readOnly`, it is a caller assertion — whoever sets it must already have resolved the capability. Set today by `leads.repository.listLeads`, `orgs.repository.getOrgs`, `users.service.getAssignableUsers` and the assignment writes. On the assignment paths (single assign/reassign/unassign and bulk) the flag is gated by **coverage**, not by the capability ladder: `writeCtxForOrg(ctx, leadOrgId)` in `assignments.service` asserts the lead's branch is one of `getCoveredOrgIds(ctx)` and otherwise throws 403. Gating on the ladder instead (`lms.leads.view` = tenant/all) is what broke Bulk Assign for multi-branch `org`-scope roles: they resolve to `org`, so picking any branch other than the one they were switched into read back zero leads and failed as "One or more leads were not found". The **lead edit and delete** paths (`PATCH`/`DELETE /leads/:id`) now use the same coverage gate, shared as `leadWriteCtx(ctx, leadOrgId)` in `leads-service/src/lib/lead-write-scope.ts` (which also owns `resolveLeadOrgId` and the single `getCoveredOrgIds`, re-exported by `assignments.repository`). Before that, both writes were pinned to `ctx.org_id` while `listLeads` showed the whole tenant, so editing or reassigning a lead in any other branch matched zero rows and surfaced as **"Lead not found"** — and the delete silently changed nothing while answering 204. The write now runs in the lead's own branch (`{ ...ctx, org_id: leadOrgId }`, so audit triggers stamp the right org), every statement keeps an explicit `org_id = leadOrgId` predicate rather than leaning on the widened RLS fence, and a branch the actor neither administers nor is mapped to is a 403 instead of a misleading 404. Cross-branch reach here is deliberately **not** taken from the `lms.leads.edit` ladder: its widest rung is `.any`, which `resolveScope` reports as `all` but which means org-wide, so a branch admin holding it must not become tenant-wide.
   - **`ctx.readOnly`** — adds `SET LOCAL transaction_read_only = on` (and `SET LOCAL ROLE readonly_user` on the app path) so a read path is physically incapable of writing. Applied on every `tenantWide` read.
 - **`withServiceTx(fn)`** — No role switch, BYPASSRLS. Used for auth lookups, seed scripts, activity logging, and webhook ingestion.
 
@@ -170,6 +243,18 @@ Some tables also have:
 
 `root_service` has `BYPASSRLS` and is unaffected by these policies.
 
+### Soft-deleted branches are RLS's job — except under `withServiceTx`
+
+Both policies on `entity.organizations` carry `NOT is_deleted`, so on the `withRoleTx` path a
+`security_invoker` view that joins organizations drops a soft-deleted branch's rows without any
+query saying so. `withServiceTx` (`root_service`, `BYPASSRLS`) gets no such help, and **every
+reporting path that runs without a user context is service-tx**: the public report page, the daily
+`send-lead-report` cron, and the `lms.lead_report_snapshot` rows it persists. Those queries must
+spell out `AND NOT o.is_deleted` themselves — including inside a CTE whose rows a rollup later sums.
+The source report's ALL BRANCHES total was wrong for exactly this reason: the per-branch join
+filtered, the `counters` CTE behind the rollup did not, so a deleted branch's leads vanished from
+every branch row and still landed in the tenant total.
+
 The `iam` write policies are the exception to the `org_id = app.current_org_id` shape: since `1.43.0` the user-management policies on `iam.users`, `iam.user_org_mapping` and `iam.reporting_lines` scope to the actor's **membership** (`iam.fn_user_active_orgs`) and ask `iam.fn_user_can_manage_users` per row. See *User management is a capability, per branch* under Permissions.
 
 ## Assignment model
@@ -178,9 +263,13 @@ Assignments are **not** a separate table. The assignment is stored as `lms.marke
 
 ### Weighted auto-assignment
 
-When a new lead is created without an explicit `assigned_user_id` (Meta sync, manual lead creation), `resolveAutoAssignedUser(tx, orgId)` in leads-service (`services/leads-service/src/lib/assignment.ts` — moved out of `@platform/db` in P-1, it is LMS business logic) picks who receives it. Applies uniformly across every lead-creation path — both `services/meta-conversion-api/.../lead-sync.service.ts` and `services/leads-service/.../leads.repository.ts createLead()` call it.
+When a new lead is created without an explicit `assigned_user_id` (Meta sync, manual lead creation), `resolveAutoAssignedUser(tx, orgId, campaignTypeId)` in leads-service (`services/leads-service/src/lib/assignment.ts` — moved out of `@platform/db` in P-1, it is LMS business logic) picks who receives it. Applies uniformly across every lead-creation path, all inside leads-service: intake `createWebhookLead` (which the Meta webhook and lead-pull Apply reach through `meta-conversion-api/.../lead-sync.service.ts` → `POST /intake/webhook` — lead-sync never calls it directly), `leads.repository.ts` `createLead()` and the branch transfer, and the campaign reclassify fan-out. Every one of them logs `lead.autoassign_skipped` when the pick finds nobody.
 
-**Eligibility:** active `iam.user_org_mapping` row for the org, an **active, non-deleted `iam.users` row**, an `lms.lead_assignment_weights` row with `weight > 0`, a role rank strictly between `READ_ONLY` and `ADMIN` (org admins and read-only users are never auto-assigned leads), and a role holding the `LMS` capability.
+**Weights follow the role's department (1.50.2).** A weight only routes when the member's role department equals the campaign type's department — the same rule `lms.fn_user_sees_campaign_type` uses for visibility — so a Sales rep weighted for Hiring is never handed hiring leads they cannot see. New weights breaking the rule are refused (identity-service 400, DB trigger); pre-existing ones are kept, skipped by the picker with reason `no_department_match`, and reported by `one_time/report_weight_department_mismatch_dryrun.sql`. Once the role or weights are fixed, the super-admin **Re-run Auto-Assignment** screen (lookup-admin → leads-service `POST /lead-assignment/rerun`, dry run first, 500 leads per call) assigns leads that arrived unassigned — only leads with no owner and no logged interaction.
+
+**The pool is `(branch x campaign type)`, not just the branch, as of `1.49.0`.** A hiring lead routes to that branch's HR rotation and a sales lead to its sales rotation, because `lms.lead_assignment_weights` is keyed on `(user_org_mapping_id, campaign_type_id)` — one person holds one row per pool they belong to. See *Campaign-type routing* below.
+
+**Eligibility:** active `iam.user_org_mapping` row for the org, an **active, non-deleted `iam.users` row**, an `lms.lead_assignment_weights` row **for that campaign type** with `weight > 0`, a role rank strictly between `READ_ONLY` and `ADMIN` (org admins and read-only users are never auto-assigned leads), and a role holding the `LMS` capability. The `LMS` gate still applies to every type — hiring leads are LMS leads too, living in `lms.marketing_leads` and worked on the same screens. What a pool's members see of the *other* types is a separate question, answered by `lms.fn_user_sees_campaign_type()` inside the row policy, not by the picker.
 
 Since `1.44.0` the weight lives in `lms.lead_assignment_weights`, keyed by the membership's surrogate `iam.user_org_mapping.id`, rather than in a `lead_assignment_weight` column on the mapping itself — the mapping is shared by every product and only LMS ever read that column. **No row means weight 0**, so the picker's join to the weights table does the `> 0` filtering that the column's `NOT NULL DEFAULT 0` used to require an explicit predicate for. See *Per-product settings on a membership* in `docs/DB_model.md` for the pattern other products should follow instead of adding a column here.
 
@@ -192,16 +281,146 @@ Deactivating a user now zeroes the weight on every one of their memberships in t
 
 Both server paths therefore gate on `!== undefined`, never on truthiness — `reassignUserLeadsInOrg` (deactivation) always did; `moveUserBranch` did not until this change, so a null branch move was indistinguishable from an omitted one and silently skipped the reassign, leaving the pipeline pointed at a user no longer in that org. That is precisely what the reassign-then-move saga exists to prevent, so the two paths now draw the same line.
 
+**Lead UI is shown only for roles that work leads.** `GET /users/role-catalog` returns `works_leads` per role, resolved against `lms.leads` (the same predicate as `/users/assignable?purpose=filter`, not the `lms` product root, which admins hold too). The shared `OrgAssignmentsField` hides the lead-assignment weight for a role with `works_leads === false`, and `EditUserModal` skips the "Reassign their leads to" panel for a user whose current home-branch role lacks it. That user's deactivation or branch move still sends `reassign_leads_to: null`, so stray leads are unassigned, not stranded. The flag is display-only. Weight rows a non-lead role already holds are left untouched, and an absent flag (older identity-service) keeps the previous always-shown behaviour.
+
 The UI never omits the key while the reassign panel is open: it requires a successor whenever the branch still has anyone eligible (`/users/assignable`, which gates on real branch membership and the LMS capability, not the rank ladder), and sends `null` only when it does not. Leads are never left owned by a login that can no longer act on them. The reassign only fires when the user actually **leaves** the branch — `homeMoved && !stillHoldsOldOrg` — so moving home between branches they keep strands nothing and is correctly a no-op.
 
 **Algorithm — deficit-based weighted round-robin:**
-1. Count each eligible user's current *open* workload: leads assigned to them in this org where the lead's stage has `is_terminated = false` (no hardcoded stage names — picks up `new`/`contacting`/`on_hold`/`qualified`, and any future non-terminal stage, automatically)
+1. Count each eligible user's current *open* workload **in this same pool**: leads assigned to them in this org, **carrying this campaign type**, where the lead's stage has `is_terminated = false` (no hardcoded stage names — picks up `new`/`contacting`/`on_hold`/`qualified`, and any future non-terminal stage, automatically)
 2. `deficit = (weight / 100 * total_open_including_new_lead) - current_open_count`
 3. Assign to whichever eligible user has the highest deficit; ties broken randomly
 
-This deterministically converges to each user's target %, self-corrects as leads resolve (convert/reject/transfer), and is not retroactive — changing weights only affects future unassigned leads. If no users in the org have a weight set, `resolveAutoAssignedUser` returns `null` and the lead stays unassigned (today's default behavior, unchanged).
+**Both halves of the deficit are measured in the same pool, and that is load-bearing.** Counting a user's whole open book instead would let a rep with 50 open *sales* leads look permanently over-served in the *hiring* rotation and starve them of hiring leads altogether — invisible on a small test dataset, systematic in production.
+
+This deterministically converges to each user's target %, self-corrects as leads resolve (convert/reject/transfer), and is not retroactive — changing weights only affects future unassigned leads.
+
+**No more silent nulls.** `resolveAutoAssignedUser` returns `{ userId, reason }` where `reason` is `'assigned' | 'no_weighted_users' | 'no_capable_users'`, replacing the bare `null` it used to return. The old shape could not tell a branch with nobody weighted apart from one whose weighted members all lack the LMS capability, and callers had nothing to log either way: 10 of 30 production branches sat with no weighted user and auto-assign failed silently for a long time before anyone noticed. Every caller now logs a non-`'assigned'` reason — intake emits `lead.autoassign_skipped` with `{ org_id, campaign_type, reason }`. A lead whose type cannot be resolved at all yields `'no_weighted_users'`, because no weight row can carry a NULL type; it does **not** fall back to an untyped cross-pool rotation.
 
 **Managing weights:** `GET/PUT /users/assignment-weights` (identity-service, org-admin rank required for PUT). The PUT endpoint validates every `user_id` is actually eligible and that weights sum to exactly 100 (or all 0, disabling auto-assignment for the org) — both checked at the application layer inside the same transaction as the write, not via a DB constraint.
+
+**The Python port (`meta-sync-scripts/common/lead_writer.py::resolve_auto_assigned_user`) mirrors this pool-scoped picker, with one known gap.** It ports the rank-ladder eligibility bounds and the type-scoped deficit formula (both halves of it) statement-for-statement, but does **not** replicate the `hasCapability(tenantId, roleName, CAPABILITY.LMS)` filter documented above — there is no Python equivalent of that RBAC lookup in this package. In practice this means a weighted org member whose role sits in-band on the rank ladder but holds no `LMS` capability grant could be selected by a Python-ingested lead (`sync_leads.py`, `import_downloaded_leads.py`) where the TypeScript path would exclude them. This predates the campaign-types phase and is a pre-existing TypeScript/Python divergence, not something introduced by campaign-type support — flagged here rather than fixed silently, per the scope boundary that keeps behavioural mismatches between the two paths visible instead of quietly patched in only one.
+
+### Campaign-type routing
+
+**What a campaign type is.** `marketing.campaign_types` is a tenant-scoped catalog — `sales`, `hiring`, whatever a tenant adds next — carrying `department_id` (the team it routes to; NULL = visible to everyone), `match_keywords`, `is_default` and `match_priority`. Every tenant is seeded with `sales` (the `is_default` catch-all) and `hiring` by `entity.seed_tenant_rbac()`.
+
+**Who sees which type (1.51.1).** `lms.fn_user_sees_campaign_type`, inside `lms.marketing_leads`' RLS, separates departments both ways: a department-bound type is visible to roles in that department, the three anchors, and holders of `lms.leads.view.all_types`. The `is_default` type (Sales) is additionally visible to roles with **no** department (read_only, unwired roles) — but, since 1.51.1, **not** to a role in another department, so HR roles stop seeing the Sales pool. The Leads page Type filter (navbar `filterSlot`) is shown to, and honoured by leads-service for, `lms.leads.view.all_types` holders only. `db_scripts/one_time/report_default_type_fence_dryrun.sql` lists who loses the default pool before the change reaches a server.
+
+**How a lead gets one.** `resolveCampaignForLead(tx, orgId, input)` in `leads-service/src/lib/campaign-resolution.ts` resolves it, most specific first:
+
+1. the `campaign_type_id` the caller supplied — the Meta path, where **meta-conversion-api** resolved the mapping from `ext.meta_campaigns` and passed it in;
+2. the page/form default (`ext.meta_page_form_org_map.default_campaign_type_id`), likewise **passed in** by the caller;
+3. the tenant's `is_default` type — walk-ins, the public `POST /public/v1/leads` API, manual lead creation, anything with no Meta campaign at all.
+
+Both caller-supplied ids are checked against the org's tenant before use, and a foreign or unknown id is a **400, never a silent fall-through to the default** — the public intake route spreads the caller's whole body through, so `campaign_type_id` is genuinely attacker-controlled there.
+
+**leads-service never reads `ext.*`.** That schema belongs to meta-conversion-api, which holds the Graph token and owns the campaign → type mapping; the resolved ids arrive as arguments instead. This is why step 2 is a parameter rather than a lookup, and it is what keeps the two services separable with no new cross-service grant. (`lead_svc` does hold `SELECT` on `ext.meta_campaigns` from 1.49.0's grants; this phase deliberately does not use it.)
+
+**Branch projection of a Meta campaign.** Given a `meta_campaign_id`, resolution looks up `marketing.ad_campaigns` on `(org_id, meta_campaign_id)` and, on a miss, creates that branch's row carrying the type — platform and status resolved exactly as `meta-sync-scripts/sync_campaigns.py` does, against the *campaign's* tenant, with the name falling back to `Meta Campaign <id>`. The insert is `ON CONFLICT (org_id, meta_campaign_id) WHERE meta_campaign_id IS NOT NULL DO NOTHING` followed by a re-select: concurrent webhook deliveries for a brand-new campaign race routinely, and the partial unique index would otherwise turn the loser into a `23505` that fails a perfectly good lead. The `WHERE` in the conflict target is **not optional** — Postgres only infers a *partial* unique index when the predicate is repeated, and without it the statement fails outright. A tenant missing the platform/status catalog row yields no campaign rather than an error: the lead still gets its type, is still created and still routes. Dropping an inbound lead over a missing dropdown entry would be the worse failure.
+
+`meta-sync-scripts/common/campaign_resolution.py` is the Python port of both this resolution and `campaign-mapping.service.ts`'s `ext.meta_campaigns` cache/insert (the two collapse into one module there — see its own docstring for why), called by `lead_writer.create_lead` before auto-assignment. Both paths resolve the type by calling `marketing.fn_match_campaign_type()` — never by reimplementing the keyword match in either language — so a campaign types identically whichever path ingests its first lead.
+
+Meta campaign ids are carried as **strings** end to end. They run to 17 digits, past `Number.MAX_SAFE_INTEGER`, so a JSON number would arrive with its low digits already corrupted and match the wrong campaign; every query casts with `::bigint` instead.
+
+**Reclassification — `POST /internal/campaign-reclassify`.** meta-conversion-api calls this immediately after an admin confirms a campaign → type mapping, because leads-service owns the leads and the routing rules. It is registered on the service's **existing** `/internal` router group, behind the same `authenticateInternal` shared-secret preHandler as `/internal/leads/reassign-org`. Body: `{ meta_campaign_id, campaign_type_id, dry_run, actor_id? }`; `dry_run` defaults to **true**, so a caller that forgets the flag gets an impact preview rather than an unrequested fan-out. One transaction does two different things:
+
+- **Relabel** — unconditional. Every `marketing.ad_campaigns` row for that Meta campaign, and every lead on them, in **every branch**, gets the corrected type.
+- > **Superseded in 1.51.0** — see [Meta lead routing (1.51.0)](#meta-lead-routing-1510).
+
+- **Re-route** — deliberately narrow. A lead changes hands only if it is auto-assigned and untouched by a person since (an `initial` row in `lms.lead_assignment_log` with no later `reassigned`/`bulk_assigned`/`self_assigned`/`reclassified`), sits in a non-terminated stage, has **zero** `lms.lead_interactions`, **and** its current assignee holds no weight for the new type in that branch. Each one is re-picked **in its own branch's** rotation for the new type; an empty target pool leaves it unassigned with a logged reason, never silently back on the old pool.
+
+This conservatism is a product decision, not a heuristic: a lead someone has already called stays with them and only its label is corrected, because yanking a lead mid-conversation is worse than a wrong label. The last condition is also what keeps the fan-out quiet in the common case — a rep weighted for both pools simply keeps their lead.
+
+The move is written as **one** `UPDATE` setting `assigned_user_id` and `campaign_type_id` together. That is the only way `lms.log_lead_assignment()` records it as `reclassified` rather than a plain `reassigned`; splitting it into an unassign then an assign would write `unassigned` + `initial` and the timeline would no longer say *why* the lead moved. Consequently the bulk relabel deliberately **excludes** the re-route candidates, so their type is still `DISTINCT` by the time that statement runs. The per-lead note goes through the `app.lead_transition_note` GUC, which the trigger reads into `lead_assignment_log.note`.
+
+The dry run and the real run share the same counting queries, so the preview cannot promise an impact different from the one the admin confirms. Response: `{ dry_run, campaigns_relabelled, leads_relabelled, leads_reassigned, leads_left_unassigned, by_branch[] }`.
+
+The whole operation runs under `withServiceTx` (BYPASSRLS) — a campaign's leads are spread across every branch that ran it, so there is no single org to scope an RLS transaction to. **The tenant fence is therefore restated explicitly in SQL**, on the campaign type's own `tenant_id`, in every query.
+
+**Managing types:** `GET/POST/PATCH/DELETE /campaign-types` (leads-service), gated on `lms.campaign_types.view` / `lms.campaign_types.manage` — **by capability, never by role name**. Writes go through `withTenantConfigTx`, not `withRoleTx`: `marketing.campaign_types` is tenant-scoped and its write policy keys on `app.current_tenant_id`, a GUC `withRoleTx`'s `app_user` branch never sets. That transaction pins the tenant and **not** `app.current_org_id`, so these reads deliberately join nothing from `iam.departments` or `lms.marketing_leads` — both are fenced on the org GUC and would return zero rows with no error. The delete guard's usage counts therefore run separately, under a documented service transaction, because a type is tenant-wide while its leads live in branches the acting admin may not be scoped to.
+
+Deleting a type is refused while it is the tenant default, or while any lead, campaign or assignment weight still points at it — the FKs are `ON DELETE RESTRICT` but this is a *soft* delete, which they do not police at all.
+
+`name` is not editable and `is_default` is not settable through this API: the name is what weight rows, the Python sync and saved reports refer to a pool by, and moving `is_default` makes that type unconditionally visible to everyone (see `lms.fn_user_sees_campaign_type`), which is a provisioning decision rather than a CRUD field.
+
+**Visibility is the database's answer, not the API's.** Which types a user can see at all is decided by `lms.fn_user_sees_campaign_type()` inside `lms.marketing_leads`' RLS `USING` clause. The `campaign_type_ids` filter on `GET /leads` and `GET /assignments/mine` only *narrows* what the caller may already see.
+
+**CRM campaign CRUD** (`/campaigns`) accepts and returns `campaign_type_id`. Classifying a **Meta** campaign is not done there: that mapping is per Meta campaign and tenant-wide, so it lives in meta-conversion-api, while `/campaigns` edits one branch's record. Changing the type on a campaign relabels the **campaign only** — existing leads keep the type they were routed under, since `lms.sync_lead_campaign_type()` fills a lead's NULL type from its campaign but never overwrites one. Moving the leads too is the reclassify fan-out's job.
+
+### Meta lead routing (1.51.0)
+
+The goal: every Meta lead — webhook, scheduled catch-up or manual pull — reaches the right **tenant and
+branch** (from its **page**) and the right **department** (from its **campaign type**), and is auto-assigned
+from that branch × type pool. Product decisions of 2026-09-26 behind this section: page is the branch key
+(a form-level row is kept only as an override for pages shared by several branches); one shared Meta app;
+a campaign never spans tenants; unconfirmed campaigns route on the rules immediately; re-typing a campaign
+moves **all** its open leads; the scheduled catch-up only stages; roles get LMS access via capabilities (no
+role seeding).
+
+**The type ladder, per lead** (`meta-conversion-api/src/services/campaign-mapping.service.ts::resolveCampaignType`):
+
+1. the campaign's **confirmed** type (`ext.meta_campaigns.campaign_type_id`, written ONLY by an admin confirm);
+2. the first matching **ordered rule** (`marketing.campaign_type_rules`, first match wins in `rule_order`),
+   evaluated on the campaign, lead-form, ad-set and ad **names** by `marketing.fn_match_campaign_type_rules`;
+3. the page (or form-override) **default type** (`ext.meta_page_form_org_map.default_campaign_type_id`);
+4. the tenant's **default** type.
+
+The campaign-name-only rule result is also stored on the campaign as `suggested_campaign_type_id` (+
+`matched_rule_id`) for the admin grid — a suggestion is never read back as the campaign's type. Before
+1.51.0 an unmatched or unnamed campaign stored the fallback (usually Sales) as its type and every later lead
+inherited it. Form / ad-set / ad names are resolved by `lead-names.service.ts`: cache first
+(`ext.meta_forms`, `ext.meta_adsets`, `ext.meta_ads`), one short Graph call per NEW id, and **only for fields
+the tenant has a live rule on**. A campaign row owned by another tenant is flagged (`conflict_reason`) and not
+applied; the lead is still typed from its own rules/defaults.
+
+**Assignment** is unchanged in shape (`leads-service/src/lib/assignment.ts`): branch × type pool, role
+department must equal the type's department, LMS capability, weights. What changed: the reason a pick leaves a
+lead unowned is **stored** on `lms.marketing_leads.auto_assign_reason` (`no_campaign_type` — new, previously
+misreported as `no_weighted_users` — `no_weighted_users`, `no_department_match`, `no_capable_users`), cleared
+by trigger the moment anyone owns the lead; intake returns `assigned_user_id`, so the webhook's `lead:created`
+event carries the real assignee (it was hard-coded null); and a lead inserted with an owner now writes an
+`initial` log row (`trg_lead_assignment_log_insert`).
+
+**Re-typing a campaign** (`POST /internal/campaign-reclassify`) re-routes **every open lead** of the campaign
+(active, not superseded, non-terminated stage) whose owner is not in the new type's pool — interactions and
+manual assignment no longer protect a lead, because a lead of the wrong type sits with a team RLS may not even
+let see it. Unassigned open leads are picked too. An empty target pool unassigns the lead with the reason
+stored. Leads whose branch campaign row was never created are found through `metadata.campaign_id`.
+Re-run Auto-Assignment now also takes untyped leads (typed to the tenant default on the way).
+
+**Campaign discovery (shared app).** `ext.meta_ad_accounts` (platform-level, RLS on with no app policy,
+`root_service` only) lists every ad account `/me/adaccounts` returns; a super admin enables the ones to walk.
+"Fetch campaigns" (`campaign-sync.service.ts::syncCampaigns`) walks the enabled accounts with
+`adsets{promoted_object}` and `ads` expanded, and attributes each campaign to the ONE tenant its promoted pages
+are mapped to — never to the tenant that pressed the button. No tenant → reported as `unattributed`; several →
+reported as a conflict and flagged. `?tenant_id=` on the route only narrows the writes.
+`ext.meta_tenant_config.ad_account_ids` is deprecated.
+
+**Leads that do not land** — unmapped page, missing phone, sync error — are parked in `ext.meta_lead_inbox`
+with their field data (the webhook still answers 200, so Meta never redelivers). A super admin maps the page and
+presses Retry (`lead-inbox.service.ts::retryInbox`), which goes through the same `syncLeadToDatabase`. The
+row resolves itself when the lead later lands by any route (webhook redelivery, Retry, pull Apply).
+
+**Lead pull additions.** Campaign mode (`filters.mode='campaign'`) walks `GET /{campaign}/ads` then
+`/{ad}/leads` on the promoted page's token — only the selected campaigns' leads. Pages mapped to another tenant
+are never walked in either mode. Reconcile predicts each staged lead's type with the ladder above (grid column
+"Routes to"). `POST /lead-pull/runs/:id/remap` re-resolves the branch of unmapped staged rows after an inline
+mapping, and Apply accepts an `applied` run again while it has pending importable rows. A scheduled catch-up
+(`trigger_kind='scheduled'`, `META_CATCHUP_INTERVAL_HOURS` default 6, `META_CATCHUP_WINDOW_DAYS` default 3, 0
+disables) stages one run per tenant with active mappings in its own slot, never applied automatically.
+
+**Console (lookup-admin, super admin).** Campaign Types & Rules (`/dashboard/campaign-types`: types →
+department, ordered rules with reorder, rule tester), Meta Ad Accounts, Meta Lead Inbox, and the updated Meta
+Campaign Mapping (pages, suggestion + matched rule, conflicts, add-rule-on-confirm), Meta Page Mapping (default
+type, form picker, other tenants' pages hidden) and Meta Lead Pull (mode, Branch / Routes-to columns, map-here +
+remap, scheduled run).
+
+**New routes** (gateway → service; all super-admin except the tenant-staff capability path on rules):
+`GET/POST/PATCH/DELETE /campaign-types/rules`, `PUT /campaign-types/rules/order`, `POST /campaign-types/rules/test`
+(leads-service; capability `lms.campaign_types.view/manage`, or super admin with `?tenant_id=`);
+`GET /meta/ad-accounts`, `POST /meta/ad-accounts/sync`, `PATCH /meta/ad-accounts/:id`;
+`GET /meta/pages/:pageId/forms`; `GET /meta/lead-inbox`, `POST /meta/lead-inbox/:id/retry|ignore`;
+`POST /meta/lead-pull/runs/:id/remap`; `GET /meta/lead-pull/runs/latest?trigger_kind=`.
 
 ### Multi-branch users on the roster (`GET /users`)
 
@@ -288,6 +507,15 @@ The rank ceiling and the product-capability gate are unchanged on both paths: co
 walk-in/edit modal all resolve candidates for the org of the lead in hand (`useAssignableCandidates`
 in `@lms/web`, keyed on the lead's `org_id`); Bulk Assign sends the branch selected in its own
 dropdown. Passing nothing is reserved for callers with genuinely no single lead in context.
+
+Bulk Assign's own **Stage** and **Assigned To** filters are the exception to that picker rule: they
+narrow the table, they do not choose a target, so their options are derived from the fetched rows
+(plus the response's `stage_options` for label and pipeline order) rather than from
+`/users/assignable`. Deriving them is what makes every name in the CURRENTLY ASSIGNED column
+selectable — the assignable list answers "who may I assign *to*", which can omit a lead's current
+owner — and it gives the *Unassigned* bucket, which `/leads` cannot express (`assigned_to` is a
+single UUID there). Both filters are client-side over the one 5000-row fetch the page already
+makes, and both reset when the branch changes.
 
 **Membership is a mapping, not a home org.** The write side asks the same branch question the
 picker does: `getUserForAssignment(ctx, targetUserId, orgId)` resolves the target through
@@ -387,7 +615,7 @@ also used by the nightly job, which likewise excludes `face_review_status='rejec
 
 ## Activity logging
 
-Fire-and-forget: every service calls `@platform/audit-log`'s `logActivity()` in-process (writes are `void`'d or errors are swallowed internally). This ensures activity logging never blocks or fails a user-facing request. Reads (`GET /activities`, admin-only) are served by leads-service and scoped by RLS via `withRoleTx` — never bypassed for the read path.
+Fire-and-forget: every service calls `@platform/audit-log`'s `logActivity()` in-process (writes are `void`'d or errors are swallowed internally). This ensures activity logging never blocks or fails a user-facing request. Reads (`GET /activities`) are served by leads-service, gated on the `lms.history.view.org` capability (not a rank), and scoped by RLS via `withRoleTx` **plus** an explicit session-tenant predicate in `listActivities` — a super_admin transaction runs BYPASSRLS, so RLS alone let it read every tenant's feed. leads-service reads as `lms_svc`, which needs `USAGE ON SCHEMA audit` + `SELECT ON audit.activities` (07_grants.sql). Every activity is filed under the **acting user's own verified org** — never a client-supplied one: `org_switch_denied` used to be filed under the org the caller asked for, which put tenant A user ids into tenant B's feed (fixed 1.54.0).
 
 ## Meta Conversion API
 
@@ -400,10 +628,11 @@ Bidirectional integration with Meta (Facebook) Lead Ads:
 4. HMAC-SHA256 verification using the resolved row's `app_secret`
 5. Fetches full lead data from Meta Graph API using the resolved row's `access_token`
 6. Always inserts a new `lms.marketing_leads` row (source resolved from Meta's per-lead `platform` field when present — `fb`→`facebook`, `ig`→`instagram`, `wa`→`whatsapp` — falling back to the static `ext.meta_page_form_org_map.platform` config value if Meta omits or returns an unrecognized platform; stage=new). If an active lead with the same `(org_id, phone)` already exists, the old row is marked `is_active=false, superseded_by=<new_id>` and a `lms.lead_links` record (`link_type='merge'`) is written for audit. A linked `ext.meta_leads` row is created referencing the new marketing lead.
-7. Org (and, for the shared-app path, tenant) is resolved from `ext.meta_page_form_org_map` via `page_id`/`form_id` — `form_id` is authoritative (globally unique across all tenants), `page_id` is a fallback. Unmapped leads are skipped.
+7. Org (and, for the shared-app path, tenant) is resolved from `ext.meta_page_form_org_map`: an exact `form_id` row wins (`form_id` is globally unique across all tenants), else the Page's **page-level** row (`form_id IS NULL`), else the lead is unmapped and skipped. The page-level fallback is restricted to `form_id IS NULL` as of 1.48.1 — it previously took the most recently created active row for the Page whatever its `form_id`, so an unknown form could be attributed to a branch mapped for some unrelated form, disagreeing with the Python `common/mappings.py::resolve()` reading the same table.
 8. Field extraction uses the resolved tenant's `field_mappings` (from `ext.meta_tenant_config.field_mappings`, JSONB) merged over the hardcoded `DEFAULT_FIELD_MAPPINGS` — lets a tenant remap Meta form field keys without a redeploy
 9. Address/job/demographic fields are written to `ext.meta_lead_addresses`, `ext.meta_lead_professional`, `ext.meta_lead_demographics` (1:1, only when at least one field is present)
 10. Any remaining unmapped form fields stored in `ext.meta_lead_custom_fields`
+11. **Campaign attribution and typing.** Before the intake call (the type is an *input* to routing, not a later relabel), `lead-sync.service.ts` resolves the lead's campaign type through `campaign-mapping.service.ts::resolveCampaignType` and forwards `meta_campaign_id`, `meta_campaign_name`, `meta_campaign_status`, `meta_platform`, `campaign_type_id` and `default_campaign_type_id` to leads-service, with `campaign_id`/`adset_id`/`ad_id` in `metadata`. Until 1.49.0's service work these were written into `ext.meta_leads` and forwarded **nowhere** — `IntakeLeadPayload` had no campaign fields at all — so `lms.marketing_leads.campaign_id` was NULL for every live Meta lead and the Campaign row on the lead-edit screen always read `-`.
 
 ### Inbound failure diagnostics
 Step 6 delegates the `lms.marketing_leads` insert to leads-service `POST /api/v1/intake/webhook`; a rejection there surfaces in meta-conversion-api as `evt: webhook.lead_sync_failed`. Two things make that line self-diagnosing:
@@ -413,6 +642,109 @@ Step 6 delegates the `lms.marketing_leads` insert to leads-service `POST /api/v1
 **Only field names cross the service boundary, never values.** The intake request body is a lead's name, phone, email and every Meta form answer, so the client deliberately does not echo the upstream body into the error message; `details` is safe precisely because leads-service builds it from a fixed list of column literals.
 
 Note: the webhook still returns 200 after a per-lead failure, so Meta does not retry and the lead is not persisted anywhere — these log fields are currently the only record of it.
+
+### Campaign discovery and typing
+
+`ext.meta_campaigns` is the **single source of truth** for which type a Meta campaign carries, and meta-conversion-api owns it — it holds the Graph token and owns the whole `ext.*` schema. Rows arrive by two routes.
+
+> **Superseded in 1.51.0** — see [Meta lead routing (1.51.0)](#meta-lead-routing-1510).
+
+**From a lead (`first_seen_source='lead'`).** `campaign-mapping.service.ts::resolveCampaignType` runs on the webhook path inside the existing `withServiceTx` (an inbound Meta delivery carries no session — the same documented system operation as the two page/form resolvers), so every statement filters `tenant_id` explicitly rather than relying on RLS. A **hit** returns the row's type, `suggested` or `confirmed` alike: **routing never waits for a human.** A **miss** inserts the row typed by `marketing.fn_match_campaign_type` — `suggested` with the winning `matched_keyword` when a keyword fires, otherwise `unmapped` with the form default and then the tenant default, so the lead still routes somewhere sane while the row sits in the admin's "needs mapping" grid. The insert is `ON CONFLICT (meta_campaign_id) DO NOTHING` plus a re-select, for the same race that `ensureBranchCampaign` guards against.
+
+**From the Fetch button (`first_seen_source='fetch'`).** `campaign-sync.service.ts` iterates `ext.meta_tenant_config.ad_account_ids`, cursor-paging `GET /act_<id>/campaigns`, and runs a three-way upsert per campaign in its own `withTenantConfigTx` — one transaction per campaign, so a single conflicting row cannot roll back the hundreds already written:
+
+| existing row | what happens |
+|---|---|
+| none | insert, `first_seen_source='fetch'`, run the matcher |
+| `mapping_status='confirmed'` | refresh `name` / `objective` / `effective_status` / `last_synced_at` **only** |
+| `suggested` or `unmapped` | refresh metadata **and** re-run the matcher, since `match_keywords` may have improved |
+
+**A confirmed mapping is never overwritten.** That is the product's explicit "works from next time onwards" guarantee and it is an invariant, not a preference: an inferred type is provisional, an admin's decision is not. `confirmed_by` and `confirmed_at` appear in neither the insert nor the update list — not touching a column is a stronger guarantee than writing it back to itself. `RETURNING (xmax = 0)` is what separates the insert arm from the update arm, which is what makes "a second run reports `0 inserted`" checkable at all; and since a freshly inserted row can never be `confirmed`, `xmax <> 0 AND mapping_status = 'confirmed'` is exactly "a confirmed mapping this fetch left alone".
+
+**One Graph call per NEW campaign, never per lead.** The `ext.meta_campaigns` row is the cache — once it exists, no campaign-name lookup is ever made again. The remaining window is the one *before* the first row commits, when a new campaign goes live and a burst of leads all miss at once; an in-process LRU keyed on campaign id closes it by caching the in-flight **promise**, so concurrent callers share one request. A rejected lookup is evicted rather than cached, so a throttled call does not poison the next five minutes.
+
+**A Graph failure never fails a lead.** `fetchCampaign` returns null instead of throwing, the resolution path is wrapped so that *any* error yields nulls, and the lead is created and routed from the form/tenant default with a `webhook.campaign_name_fetch_failed` warning and an `unmapped` row for the admin to fix. Dropping a real customer lead because a metadata lookup was rate-limited is strictly worse than a temporarily mistyped one.
+
+**Retry and backoff.** `graphGet` retries on 429, 5xx, a dropped socket, and Meta's rate-limit error codes (4, 17, 32, 613, 80004) with exponential backoff and full jitter, and reads `X-Business-Use-Case-Usage` to slow itself *before* Meta blocks it. Permanent failures — #190 expired token, #200 missing `ads_read` — are deliberately **not** retried. `estimated_time_to_regain_access` is in *minutes* and is honoured only as a signal to wait the capped maximum, never literally: this runs from a button, and hanging an admin's request for an hour is not an option. A failing ad account is recorded in `errors` and the run continues; partial success is the honest answer for an operation spanning several accounts. The token needs **`ads_read`**.
+
+For contrast, `msq-lms/meta-sync-scripts/common/graph_api.py` is a bare `requests.get` with a 15s timeout and no retry, backoff or 429 handling at all. That is survivable for a supervised CLI run someone watches and re-runs; it is not survivable for a button, and it is a warning rather than a template.
+
+**Admin surface.** `campaign-admin.service.ts` is kept out of `campaign-mapping.service.ts` for the reason `page-org-map.service.ts` had to be split: the mapping module is the BYPASSRLS webhook path, while every admin operation is an authenticated super_admin acting on **one selected tenant** through `withTenantConfigTx`. All three routes require an explicit `?tenant_id=` and read `ctx.tenant_id` nowhere — platform staff administer a tenant other than their own, and a silent fallback is the exact bug removed from the page/form API one phase earlier. The list query carries **no literal `tenant_id` filter** on purpose: `admin_tenant_config_policy` is the scope, and a redundant filter would make the cross-tenant test pass whether or not the policy works.
+
+`PATCH …?dry_run=true` returns the impact preview and **writes nothing** — not the mapping, not the learned keyword, not the reclassification. An admin checking what a correction would cost must be able to walk away having changed nothing. On a real confirm the mapping commits *first*, in its own transaction, and only then is leads-service asked to fan out: if the fan-out fails the mapping still stands and re-pressing Confirm retries it, whereas fanning out first would leave leads relabelled against a mapping that was never saved.
+
+> **Superseded in 1.51.0** — see [Meta lead routing (1.51.0)](#meta-lead-routing-1510).
+
+`learn_keyword` is opt-in per request. `HIR_Gurugram_Trainer_Sep26` offers `gurugram` as readily as `trainer`, and a wrong keyword silently mistypes every future campaign containing it — so the server proposes the longest unused token and the admin decides. The append is `array_append` guarded by a `NOT … = ANY(…)`, never a rewrite of the whole array, so two admins confirming different campaigns onto the same type cannot lose each other's keyword.
+
+**Shared ad accounts.** `uq_meta_campaigns_campaign_id` is global, not per-tenant. A campaign already registered to tenant A therefore cannot be inserted for tenant B, and the conflicting row is invisible to B under RLS — Postgres answers with a `23505` or `42501`, which the engine reports per campaign as *"Campaign is already registered to a different tenant"* rather than failing the run or leaking whose row it is.
+
+### Lead pull — the backfill for what the webhook missed
+
+The webhook above is the live path, and it misses things: an integration that
+was down, a page mapped late, a form nobody knew about. The only remedy used to
+be a three-stage Python CLI (`download_page_leads.py` → `check_leads_against_db.py`
+→ `import_downloaded_leads.py`) run by hand from a laptop against `output/<run>/`
+CSVs. Schema 1.50.0 moves that into the console: a super admin picks orgs, pages
+and campaigns plus a start date, pulls, sees what is genuinely missing versus
+already present, and applies only the missing rows.
+
+**Two Meta constraints this is designed *with*, not around.**
+
+1. **There is no campaign-scoped lead edge.** Leads come
+   page → `/{page-id}/leadgen_forms` → `/{form-id}/leads`, and `campaign_id` is
+   only a *field* on each lead. So the campaign filter is **post-fetch** and
+   narrowing campaigns cannot make a pull faster or cheaper. Both the campaigns
+   endpoint and the run status say so explicitly, because otherwise the first
+   thing an admin does is select one campaign, wait exactly as long as for all of
+   them, and file a bug.
+2. **Meta ignores the `time_created` filter** (observed; it is why the Python's
+   `in_window()` re-filters every lead client-side). It is sent anyway as an
+   optimisation and **always** re-applied locally — keeping leads whose
+   `created_time` is unparseable rather than dropping them, because losing a real
+   customer to a format surprise is worse than one extra row in a review grid.
+   The newest-first early stop is kept too: once a *whole* page lands before
+   `since`, nothing newer remains behind it, which is what keeps a bounded pull
+   from crawling years of history.
+
+**Page-first, not form-first.** `ext.meta_page_form_org_map`'s `form_id` list
+goes stale the moment someone creates a new form, so a form-driven sync silently
+stops seeing new leads — confirmed live, `ext.meta_leads` already holds form ids
+with no mapping row. The engine asks each Page what forms it has *right now* and
+pulls from all of them, mapped or not. An unmapped form's leads are staged with
+`org_id IS NULL` and reported, never guessed into an org.
+
+**Page access tokens are mandatory.** `/leadgen_forms` and `/{form-id}/leads`
+accept a Page token only; the tenant-level token on `ext.meta_tenant_config` is a
+User/System-User token both edges reject with Meta **#190**. `getManagedPageTokens`
+resolves them via `GET /me/accounts` first. A selected page absent from that
+result is counted as an error **with the reason** ("the Page moved to another
+Business, or the token lost access") and skipped — never swallowed.
+
+**The run row is the queue.** There is no job/queue infrastructure in this repo,
+so `POST /runs` inserts `queued` and returns `run_id` in one fast transaction
+(nothing rides on the gateway timeout) and `workers/pull-poller.ts` claims work
+with `FOR UPDATE SKIP LOCKED`, following notifications-service's `followup-checker`
+`setInterval` + `running` boolean pattern. Both guards are needed: the boolean
+stops a tick landing on a slow one, and only SKIP LOCKED survives a second
+replica. A **reaper** fails runs whose `heartbeat_at` (written per page) has gone
+stale — without it a deploy mid-pull strands the run in `running` and the 409
+guard locks that tenant out forever. See `docs/DB_model.md` for the tables.
+
+**Apply reuses the canonical write path.** It calls `syncLeadToDatabase` — the
+same function the webhook calls — once per importable row rather than writing
+leads itself, so campaign typing, pool routing and every `ext.meta_lead_*` child
+table come for free, and idempotency does too: that function re-checks
+`ext.meta_leads.meta_lead_id` before acting *and* again inside its transaction,
+**at apply time against live data** rather than against a staging snapshot that
+may be hours old. Pressing Apply twice inserts nothing. Four of its behaviours
+are handled explicitly by the caller: it takes no `tenant_id` (that travels in
+`syncContext`), it **throws** on a missing phone and a non-numeric lead id (caught
+**per row**, recorded as `applied_status='failed'`, never aborting the batch),
+`isMetaTestLead` is exported but *not* called inside it (the caller applies it —
+that gap is how 20 Lead Ads Testing Tool submissions once became real leads), and
+its intake call sits between the two dedup checks, so rows are applied
+sequentially under a single SKIP LOCKED claim rather than concurrently.
 
 ### Outbound flow (CRM → Meta CAPI)
 - **Auto-trigger**: When a lead's stage actually changes *and* the lead's source is a Meta one (`lms.lead_sources.name` in `facebook`/`instagram`/`whatsapp` — `META_LEAD_SOURCE_NAMES`, mirrored independently in `lead-sync.service.ts` and `meta-capi-trigger.ts` since the two are separate services), leads-service fires a fire-and-forget HTTP call to meta-conversion-api. Both conditions are checked before the call, so a website/walk-in/referral lead never reaches the CAPI service at all.
@@ -509,9 +841,46 @@ screen that had drifted (only one had export, only one had the password-policy o
 disagreed about who could set a password). It is now a single module, `@platform/team-web`,
 following `@hr/web`'s pattern: the package exports the page-level `TeamShell`, its capability
 predicates and a server loader, and a host mounts it with a workspace dep, a `transpilePackages`
-entry and a thin `page.tsx`. Mounted today in admin-web only; lms-web's `/dashboard/users`
-redirects to it and its `/dashboard/team` stays a `Placeholder`, so adding a second mount later is
-those same three lines rather than a third fork.
+entry and a thin `page.tsx`. Mounted in admin-web (`/admin/dashboard/team`) and lookup-admin
+(`/sa/dashboard/users`, tenant-scoped — see below); lms-web's `/dashboard/users` redirects to the
+admin-web mount and its `/dashboard/team` stays a `Placeholder`.
+
+**Super admin: another tenant's users, by explicit scope (lookup-admin `/sa/dashboard/users`).**
+lookup-admin's navbar used to carry two unrelated org controls: the shared **branch chip**
+(`BranchSwitcher`, which re-mints the super admin's *own* session via `/auth/switch-org`) and the
+Tenant / Org dropdowns. The chip is now suppressed wherever a host passes `scopeSlot` (only
+lookup-admin does), so the console shows one scope control. The
+**Tenant / Org dropdowns** (`TenantScopeSwitcher` / `OrgScopeSwitcher`) only write the
+`msq_admin_tenant_id` / `msq_admin_org_id` cookies, which each SA screen reads and sends as an
+explicit `tenant_id` / `org_id`. The Users screen used to ignore the dropdowns — `GET /users` read
+only the session — so it always showed the super admin's home tenant. It now mounts
+`@platform/team-web`'s `TeamShell` (People) plus a read-only **Reporting lines** view inside a
+`UserAdminScopeProvider` (`@platform/ui-kit`), and every users call names the selected tenant:
+
+- **identity-service** takes an optional `tenant_id` on every `/users*` route (query param, DELETE
+  included; body schemas unchanged). `resolveTargetScope` honours it for `super_admin` **only**
+  and checks the tenant exists; anyone else gets their session tenant regardless. An `org_id` must
+  sit inside the resolved tenant for **every** actor (400 otherwise).
+- **`scopeContext`** re-points the request context at that tenant (and branch) so catalogs, manager
+  candidates, assignable users, weights, create and update run against it unchanged. It rewrites
+  **only** a super admin's context: for every other role `ctx.org_id` is the
+  `app.current_org_id` their RLS keys on, and re-pointing it would hand them another branch's rows.
+  A super admin working a tenant other than its session's must name a branch where the route
+  would otherwise fall back to "the caller's branch" (weights, manager candidates, team, org chart),
+  and may not use the legacy `role_name`-only create (it lands in the caller's own branch).
+- **By-id fences.** `super_admin` runs on the unrestricted service connection, and the org-mapping
+  routes use the service connection for everyone, so no RLS policy fenced them to a tenant. Every
+  by-id route (`GET/PATCH/DELETE /users/:id`, reset-password, org-mappings list/add/remove) now
+  asserts the target user belongs to the resolved tenant (home branch or any mapping) and 404s
+  otherwise; org-mappings list drops rows from other tenants; remove also checks the branch.
+  Before this, `GET /users?org_id=` read any tenant's branch, and a tenant admin could list or
+  revoke another tenant's user's mappings by id.
+- **UI.** `UserAdminScopeProvider` is set by lookup-admin alone; the shared users resource, the
+  UserForm hooks (`useRoleCatalog`, `useCampaignTypeCatalog`, `ManagerSelect`, `useWeightStatus`)
+  and team-web's modals read it and append `tenant_id`. No provider (admin-web, lms-web) means no
+  param and unchanged behaviour. `loadTeamData(cookie, scope, { tenantId, orgId })` reads the
+  roster for that tenant and its branches from `/lookups/organizations`. A new user starts in the
+  selected branch (or the tenant's first) instead of the super admin's own.
 
 **The roster follows the org chart, not the rank ladder.** `GET /users` previously scoped by
 branch or tenant and then filtered `ur.rank < actorRank` — "everyone below me in my branch", which
@@ -555,8 +924,8 @@ Two consoles with confusingly similar names, and the namespace belonged to the w
 
 | console | origin | port | what it is |
 |---|---|---|---|
-| `lookup-admin` | `admin.app.com` | 3005 | the **platform operator** console — cross-tenant lookups, role/grant definition |
-| `admin-web` | `admin-web.app.com` | 3004 | the **tenant admin** console — Team, API tokens, Leave, Attendance |
+| `lookup-admin` | `/sa` (`ADMIN_URL`) | 3005 | the **platform operator** console — cross-tenant lookups, role/grant definition |
+| `admin-web` | `/admin` (`ADMIN_WEB_URL`) | 3004 | the **tenant admin** console — Team, API tokens, Leave, Attendance |
 
 `admin.*` belonged to lookup-admin and was never assignable to a tenant role: admin-service's
 `putGrants` refuses it below `super_admin`, because `admin.roles.manage` **defines capability
@@ -623,6 +992,86 @@ URL — the pill never appeared. It now uses `canOpenAdminConsole(actor)` from `
 (holds any `admin.*` capability), the shell-side equivalent of the `filterNavGroups` guard, so
 the affordance and the guard admit the same people.
 
+### The "SA" pill: lookup-admin joins the switcher row
+
+`lookup-admin` (`/sa`) was reachable only by typing its URL, and once there a super admin had no
+way back out to any product — the console rendered no switcher at all. It now appears as an **"SA"
+pill** in the same unified group as LMS / HRMS / Tasks / Admin, on every app, and carries the full
+switcher itself so the hop works in both directions.
+
+Like Admin, SA is **not a product**. It stays out of `productOrigins()`, `usableProducts()` and
+`PRODUCT_LANDING`, riding in through `ProductSwitcher`'s `extraLinks` instead, so it can never be
+chosen as a post-login landing target by `sessionDestination()` nor compete for the active chip.
+Its URL is `adminOrigin()` (`ADMIN_URL`), newly re-exported from `@platform/ui-kit`'s main barrel —
+it was previously reachable only from the `/middleware` entrypoint, which Server Components do not
+import. An unset `ADMIN_URL` hides the pill outright.
+
+The gate is **`canOpenLookupAdmin(actor)`** in `@platform/rbac`: `superadmin.lookups.manage` **and**
+`rank >= SUPER_ADMIN`. That pair already existed, inlined in lookup-admin's own dashboard layout;
+it moved into the shared package precisely because a second caller appeared. The pill and the
+console must ask one question, or the pill renders a link into the console's own "Access
+restricted" page — the render-then-403 shape the capability tree exists to remove. The rank half
+is not belt-and-braces: admin-service re-checks `rank >= SUPER_ADMIN` on every route behind the
+console independently of any capability, so the capability alone was only ever enough to make the
+console *open*, never to make it *work*.
+
+Sizing note: `ProductSwitcher`'s grid is capped at 5 columns, which is now exactly the full set
+(LMS + HRMS + Tasks + Admin + SA). A sixth pill requires raising that cap or it wraps on mobile.
+
+### One navbar for all five apps
+
+`AppNavbar` (`@platform/ui-kit/shell`) is now the **only** header. LMS / HRMS / Tasks always used
+it; `admin-web` and `lookup-admin` each hand-rolled their own, and that is precisely why the pill
+row broke on a phone: `AppNavbar` mounts `ProductSwitcher` **twice** — inline inside a
+`hidden … sm:flex` wrapper, and again in a `sm:hidden` full-width second row under the bar — while
+the consoles mounted it once, inline, at every breakpoint. `ProductSwitcher`'s root is
+`w-full sm:w-auto` around the 5-column grid, so inside a console's single non-wrapping flex row it
+was pushed off the right edge of the screen. The PWA's `viewport-fit=cover` + safe-area padding
+narrows the usable width further, making it worse on an installed app than in the browser.
+
+Two props let the consoles drop their copies:
+
+- **`activeExtra: 'admin' | 'sa'`** — says *this app is that console*. The pill gets the
+  current-page treatment and points at `homeHref` instead of the cross-origin URL. It cannot be
+  expressed as `activeProduct` (which is now optional) because neither console is a licensed
+  product — see the two sections above. No capability check is applied on this arm: the console's
+  own layout already ran the identical guard to render the page at all.
+- **`scopeSlot`** — the same slot contract as the LMS-only `notificationSlot`, carrying
+  lookup-admin's tenant + org selectors. It renders inline on `sm:+` and in the mobile second row
+  below, where the selects go full-width (`w-full sm:w-[200px]`) instead of a fixed 200px that
+  would overflow. Passing a `scopeSlot` also hides `BranchSwitcher` — the slot is that console's
+  scope, and the actor's session branch is not.
+- **`filterSlot`** — a page filter placed immediately after the branch pill (inline on `sm:+`,
+  mobile second row below). lms-web passes `LeadTypeFilter` (`@lms/web`), the Leads page "Type"
+  filter, which renders `null` off `/dashboard/leads` and for anyone without
+  `lms.leads.view.all_types`; its selection travels to `LeadDashboardShell` as `?types=<id,id>`.
+  Because it may render nothing, the mobile row counts it through
+  `has-[nav,[data-slot=filter]:not(:empty)]` rather than unconditionally.
+
+The mobile strip's `has-[nav]:border-t` trick — which collapses it to zero height when
+`ProductSwitcher` returns `null` for a single-product user — does not apply when a `scopeSlot` is
+passed, since that always renders; `AppNavbar` swaps to an unconditional border/padding in that
+case. Both consoles also gained the FitClass logo (a copy of `fitclass-emblem.png` now sits in
+each app's `public/`, as `lms-web` already did), the branch pill (admin-web only — see `scopeSlot`
+above), and a sticky header.
+
+#### The active chip needs `withBasePath()`
+
+`ProductSwitcher` renders raw `<a>` elements because most of its chips are cross-origin. Next
+applies `basePath` to `<Link>`, router navigation and `/_next/*` — **never to a raw anchor** — so
+the ACTIVE chip, which is the only same-app link in the group, must go through `withBasePath()`.
+Un-prefixed, `/attendance` resolves against the origin root, which under the single-origin topology
+is auth-web, and 404s. That was a live bug: clicking HRMS while already on HR sent the user to
+`https://<host>/attendance`. The rule now lives in one place, `productHref()` in
+`shell/products.ts`, whose two arms are deliberately asymmetric — inactive concatenates
+`origins[p]` (the prefix is already in the base URL), active prefixes the landing path. Extra links
+(Admin/SA) run through `withBasePath()` directly, which returns an absolute URL untouched, so only
+the active console's own `homeHref` is affected.
+
+The same rule applies to `AppErrorBoundary`'s "Back to …" button, which each app feeds an
+app-relative `homeHref`. Its sibling "Sign in again" anchor stays `href="/"` un-prefixed on
+purpose: that root is auth-web, which resolves the session and redirects.
+
 ### User management is a capability, per branch (`1.43.0`)
 
 Creating a user is authorized by **`admin.team.manage`, evaluated against the target branch** — not by a rank floor and not by the session's `org_id`. (The key was `lms.users.manage` until `1.45.0`; the mechanism below is unchanged.)
@@ -658,6 +1107,15 @@ Creating a user, resetting a password, or moving someone between branches from t
 - **Content**: account-created (login URL + temp password), password-reset (temp password included only when system-generated — never when the admin typed a specific one), branch-changed (added/removed branch names + new home branch). `APP_NAME` / `AUTH_URL` drive the product name and sign-in link.
 
 Existing databases: `db_scripts/one_time/apply_admin_team_notify_capability.sql` (+ `_dryrun`).
+
+### Team create/edit keeps the member's HR profile in step (`hr.employee_profiles`)
+
+Every HRMS attendance, leave-accrual and Leave Administration → Employees screen reads `hr.employee_profiles`, but until this change nothing in the product wrote it — the Team panel wrote only `iam.*`, and `POST /hr/employees` had no UI caller — so every member added after the 2026-08 seed/backfill was invisible to HR.
+
+- **Flow**: after identity-service's own writes for `POST /users` and `PATCH /users/:id`, `users.service#syncHrProfile` calls `lib/hr-service-client.ts` → hr-service `POST /api/v1/internal/employees/sync` with `X-Internal-Secret`, body `{ user_id, tenant_id, home_org_id, is_active, date_of_joining?, actor_id }`. `tenant_id` is resolved from the home branch (`getTenantIdForOrg`), `actor_id` from the verified session — never from the browser. The route is **not** in the api-gateway allowlist (it is `EXEMPT` in hr-service's gateway-route-coverage test).
+- **Upsert (hr-service `internal.repository`)**: idempotent. Verifies the branch belongs to the tenant and the user holds an active mapping there, then creates the profile (joining date from the Add member form, default today) or re-files `org_id` to the home branch and mirrors `is_active`. It runs on the `tenant_admin` Postgres path (`tenantWide`), **not** `withServiceTx` — a home-branch move rewrites a row in another branch, which `org_isolation_policy` would hide, while `tenant_isolation_policy` still fences reads and `WITH CHECK` to the one tenant. Joining date, code, department, designation and weekly-off are **HR-owned** after creation (Leave Administration → Employees, `PATCH /hr/employees/:userId`) and never overwritten. A profile HR soft-deleted is reported (`outcome: 'deleted'`), not resurrected.
+- **Not atomic, by design**: it has to run after identity commits (hr-service checks the mapping on its own connection). A failure never rolls back the identity change; the response carries `hr_profile_synced: false` (`PATCH /users/:id` now returns `200 { success, data: { hr_profile_synced } }` instead of `204`) and the Team modals show an amber notice. Re-saving retries; `db_scripts/one_time/backfill_hr_employee_profiles.sql` remains the bulk repair.
+- **Manager field**: the leave approver chain walks `iam.reporting_lines`, so the Edit modal must not rewrite the line by accident. `ManagerSelect` only clears a selection once candidates for the *current* branch have loaded **and** the home branch has moved (`shouldClearManager`); the modal sends `manager_id` only when it changed or home moved. Previously the clear effect ran against the not-yet-loaded list, blanked the manager on open, and Save closed the reporting line — sending that user's leave approvals to the org-admin fallback.
 
 ## The single reporting hierarchy (P4, `1.27.0`)
 
@@ -701,7 +1159,174 @@ See `docs/DB_model.md#iamreporting_lines` for the table shape and `msq-hrms/serv
 | `hr` | `/hr/*` **except** `/hr/employees*` and `/hr/modules` (ungated) | `leave` OR `attendance` |
 | `task` | `/tasks*`, `/task-lists*` | `tasks` |
 
-Everything else (users, orgs, api-clients, lookups, meta, communications, auth, notifications) is ungated. Per-service `require-module` middleware in **leads-service** (`lms`), **hr-service** (`leave`/`attendance`), and **tasks-service** (`tasks`) stays as **defense-in-depth** — a call that bypasses the gateway is still rejected. `@platform/authz.hasProduct()`/`assertProduct()` (async) resolve entitlement via a 60s per-tenant cached read; the DB source is injected at gateway startup (`configureProductSource`) so the package stays free of `@platform/db` and safe to import from the Next.js apps. The lead product's key is `lms` (renamed from legacy `crm`; the `crm`→`lms` schema rename landed in P1.0). Every tenant is backfilled with an active `lms` row, so the rollout is non-breaking.
+Everything else (users, orgs, api-clients, lookups, meta, communications, auth, notifications) is ungated. `/notifications/*` covers `/notifications/stream` (SSE) **and** the Web Push registration routes (`POST`/`DELETE /notifications/push/subscribe`, `GET /notifications/push/public-key`); those are ungated on purpose — registering your own device to receive your own notifications is self-service, the same category as `/users/me/photo`, and no capability could meaningfully gate "may this user be told about their own work". They are still authenticated (JWT at the gateway, HMAC-signed headers at the service) and identity is never read from the request body. See the Web push & PWA section below and `msq-core/packages/web-push/README.md`. Per-service `require-module` middleware in **leads-service** (`lms`), **hr-service** (`leave`/`attendance`), and **tasks-service** (`tasks`) stays as **defense-in-depth** — a call that bypasses the gateway is still rejected. `@platform/authz.hasProduct()`/`assertProduct()` (async) resolve entitlement via a 60s per-tenant cached read; the DB source is injected at gateway startup (`configureProductSource`) so the package stays free of `@platform/db` and safe to import from the Next.js apps. The lead product's key is `lms` (renamed from legacy `crm`; the `crm`→`lms` schema rename landed in P1.0). Every tenant is backfilled with an active `lms` row, so the rollout is non-breaking.
+
+## Web push & PWA
+
+The platform is installable as a single Progressive Web App from a unified origin, with one push subscription covering every product.
+
+### Unified origin topology
+
+All six product apps run behind one host (`apps.fitclass.in` in production, `app.localhost` in development) with path-based routing, each compiled with its own `basePath`:
+
+| URL prefix | App |
+|---|---|
+| `/` | auth-web |
+| `/lms` | lms-web |
+| `/hrms` | hr-web |
+| `/todo` | todo-web |
+| `/admin` | admin-web |
+| `/sa` | lookup-admin |
+
+**Caddy** (reverse proxy) dispatches by path prefix using a named matcher per app — `@lms path /lms /lms/*` followed by `handle @lms` — with a final bare `handle` for the root. Both the bare path and the wildcard must be listed: `/lms/*` does not match a bare `/lms` (nothing for `*` to match), so a hand-typed `apps.fitclass.in/lms` would fall through to auth-web and 404. Each app's `basePath` is compiled into its Docker image — changing a prefix is a rebuild, not an env flip.
+
+### One compose project across four repos
+
+The product apps and services live in the nested `msq-lms/`, `msq-hrms/` and `msq-todo/` repos, each with its own `docker-compose.yml`. The root `docker-compose.yml` pulls all three in with an **`include:`** block, and because all four files declare the same project name (`name: msq`), every service lands in one project on one default network (`msq_default`), addressable by container name. `docker compose --profile sso-proxy up --build` from the platform root therefore starts the whole platform — Caddy reaches `lms-web`/`hr-web`/`todo-web`, and the gateway reaches the product services (its `*_SERVICE_URL` values are hardcoded to those container names, because the `.env` values are `http://localhost:<port>` for native `pnpm turbo dev` and would point a container at itself).
+
+Two rejected alternatives, both of which fail concretely:
+
+- **`COMPOSE_FILE=a;b;c`** resolves every merged file's relative paths against the *project* directory, so each product repo's `context: ..` climbs one level above the platform root and the build dies on `GetFileAttributesEx …\msq-lms: The system cannot find the file specified`. `include:` resolves paths against each file's own directory, which is what these files were written for.
+- **`docker network create platform-net` + `external: true`** needs an out-of-band setup step before anything works and leaves four separate projects whose `up`/`down` lifecycles drift apart.
+
+Running a product repo standalone from its own directory still works unchanged; it then needs `DB_CONTAINER_NAME` / `API_GATEWAY_INTERNAL_URL` in its own `.env` pointing at msq-core's containers. Note that Compose interpolates `${VARS}` from the **project** `.env` — the platform root's — so the product repos' variables (`DB_LMS_SVC_USER`, `LEADS_SERVICE_PORT`, the `COMPREFACE_*` set, …) must exist there too; the per-repo `.env` files remain the source for the standalone path.
+
+This single origin is **mandatory for push to work**: a PWA's scope and push subscription are per-origin. On iOS, navigating cross-origin drops the user out of the installed standalone mode into a separate storage jar, breaking the shared session cookie — so every unauthenticated bounce must stay within the same origin. The unified topology eliminates that failure mode and gives every user one install, one icon, one push subscription covering every product.
+
+Environments are isolated by a **per-environment cookie name** (`fc_session` prod, `fc_session_uat`, `fc_session_dev`) rather than by cookie scope — a cookie is keyed by `(name, domain)`, so a distinct name means a sibling environment under the shared `fitclass.in` parent never reads it, even though `COOKIE_DOMAIN` (`.fitclass.in` on prod) would let the browser deliver it there. `COOKIE_DOMAIN` on each environment stays at its existing value; prod's `.fitclass.in` is deliberately left unchanged so a re-login overwrites the cookie in place and no session is dropped. Making prod's cookie host-only is a possible future tightening, but it orphans the wide-scoped cookie and needs a maintenance-window logout.
+
+### Push delivery path
+
+Follow-up due notifications flow through two channels:
+
+1. **SSE (Server-Sent Events)** — for users with an open tab. `followup-checker` polls `lms.marketing_leads.scheduled_at` on an interval and delivers overdue/due-soon events via `connectionManager.sendToUser()` as `followup:due` / `followup:missed`.
+2. **Web Push (device notifications)** — for users with the app closed or in the background. Push is a second delivery channel hung off the same call site. When no SSE stream is open, `followup-checker` sends the same events to Web Push instead. The client re-subscribes on every app launch (reconciling if the Home Screen icon was deleted), so the subscription is always live.
+
+**Notification deep link.** The push payload's `url` is `/lms/dashboard/follow-ups?leadId=<id>`. lms-web has no per-lead detail *route* — `/dashboard/leads` carries no `[id]` segment, so `/lms/dashboard/leads/<id>` would open a 404 on the user's phone. The follow-ups grid accepts `?leadId=` instead and opens that lead's history on arrival (`FollowUpsShell`'s `focusLeadId`), so tapping a notification lands on the lead it is about. The id is a **hint, not an authorization**: the shell matches it against the follow-ups the API already scoped to the acting user and ignores anything it does not find, so the parameter can never be used to pull another user's lead. It is consumed once, so dismissing the modal does not re-open it.
+
+**Leads page follow-up tiles.** The single "Follow-up Required" tile is split into **Follow-up Due** (scheduled now or later) and **Follow-up Overdue** (`scheduled_at < NOW()`), counted from the same `GET /follow-ups` response the embedded Follow-ups view renders (`useFollowUps`, fetched once by `LeadDashboardShell` and passed to `FollowUpsShell` as `pipeline`) — so a tile's number is always the number of rows its click shows. They are recounted on page load, on refetch and on realtime lead events, not on a clock. Clicking Due shows only the Upcoming section, Overdue only Missed. Both follow the navbar branch choice and the page's campaign-type filter.
+
+Both channels **dedupe per lead+schedule** and reset daily in the tenant's timezone, preventing notification spam across restarts or deploys.
+
+### Push subscriptions (`notify.push_subscriptions`)
+
+The table holds WebPush subscriptions — one row per device per user. RLS enforces isolation:
+- `org_id` and `tenant_id` for organization and tenant scope
+- **`user_id` for personal scope** — a subscription belongs to one user and is never org-shared
+
+The table is referenced only by the notifications-service for push sends; it never leaves the platform and is not synced elsewhere.
+
+### Ungated registration routes (`/notifications/push/*`)
+
+Push subscription routes are deliberately ungated like `/users/me/photo` — self-service, authenticated but not capability-gated. Registering your own device to receive your own notifications is not something that could meaningfully be blocked by a capability: the JWT already carries the user's identity, and no role should gate "may this user hear about their own work". The routes remain guarded by JWT verification at the gateway and identity is never read from the request body.
+
+### Service worker caching & tenant isolation
+
+The service worker implements a security rule from `.claude/CLAUDE.md`:
+
+- **`/api/*` is never cached.** A cached API response writes tenant data to device storage that survives logout and outlives the session — a direct violation of the "no data leakage across tenant" rule. The service worker returns a network-only passthrough for any `/api/*` request.
+- **`/_next/static/*` is cached** for fast app-shell loads on return visits (cache-first strategy).
+- **`/`**, `/manifest.webmanifest`, `/icons/*`, `/offline` are cached on install.
+
+This ensures that switching tenants/orgs, logging out, or uninstalling completely purges all persistent device storage belonging to the previous user.
+
+### Icon set (`auth-web/public/icons/`)
+
+All icons are generated from `assets/brand/fitclass-emblem.png` — the circular
+brand emblem (navy ring + feather) on transparency — by
+`scripts/generate-pwa-icons.py` (needs Pillow; re-run it if the branding
+changes). They live in auth-web's `public/` because auth-web owns the root
+origin — the paths are origin-absolute, so every product path under the
+single-origin topology resolves them without its own copy.
+
+Do **not** regenerate them from `fitclass-logo-white.webp`. That asset is the
+full LOCKUP (emblem + FITCLASS wordmark + tagline) on a square 1600x1600
+canvas. It used to also be the source for the navbar and login-panel logo,
+but is not any more — see "UI emblem" below, where squeezing that square
+lockup down to those elements' height turned out to crush it into an
+illegible smudge. The icon set is emblem-only at every size, same reasoning.
+
+| File | Size | Artwork | Used by |
+|---|---|---|---|
+| `icon-192.png` | 192x192 | emblem, 92% box | manifest; also the notification `icon`/`badge` in `sw.js` |
+| `icon-512.png` | 512x512 | emblem, 92% box | manifest; splash screen |
+| `icon-512-maskable.png` | 512x512 | emblem, 76% box | manifest `purpose: 'maskable'` |
+| `apple-touch-icon.png` | 180x180 | emblem, 90% box | iOS Home Screen, via `pwa/metadata.ts` |
+| `favicon.png` | 256x256 | emblem, 94% box | browser tab, via `pwa/metadata.ts` |
+
+Four constraints are baked into the generator and are easy to regress:
+
+- **Every file is opaque RGB, backed with white.** iOS does not composite
+  alpha at all and renders a transparent `apple-touch-icon` as a solid black
+  square. White is the ground the emblem is drawn on, and its navy ring
+  supplies the edge, so the icon still reads as a defined shape against both
+  light and dark home screens.
+- **The artwork is composited onto white BEFORE the downscale.** Resampling
+  white-on-transparent RGBA directly produces dark fringing, because fully
+  transparent pixels still carry RGB 0 and bleed into the antialiased edges.
+- **The maskable icon keeps its artwork inside the centred 80% safe zone**
+  (the generator uses a 76% content box). Android launchers crop maskable
+  icons to a circle/squircle and anything outside that zone is clipped. The
+  emblem is itself a circle, so it can use nearly all of the safe zone — a
+  square lockup could only have used 80%/sqrt(2) = 57%.
+- **The source is trimmed at an alpha threshold, not with `getbbox()`.** The
+  master carries a band of near-invisible artefacts below the emblem (alpha
+  <= 34, left over from the lockup's wordmark); a plain `getbbox()` includes
+  them and pushes the emblem off-centre by ~40px.
+
+Declaring `icons` in `pwa/metadata.ts` **suppresses Next's `app/icon.png`
+file convention** for every app that spreads it, which is why the favicon has
+to be listed there explicitly — omitting it drops the tab icon platform-wide.
+Next does not basePath-prefix metadata icon hrefs (verified against
+lookup-admin's `/sa`), so both entries stay origin-absolute and resolve
+against auth-web at the root. The per-app `app/icon.png` files are therefore
+unreferenced and still served at `<basePath>/icon.png`; the generator
+overwrites all five with a copy of `favicon.png` so they cannot linger as
+stale branding.
+
+**Changing any icon is a service-worker change.** `sw.js` cache-firsts
+`/icons/*` into `fc-static-<SW_VERSION>`, so installed clients keep serving
+the previous artwork until `SW_VERSION` is bumped — see the release checklist
+in `msq-deploy/deploy_linux.md`.
+
+### UI emblem (`public/fitclass-emblem.png`, one copy per app)
+
+The navbar (`AppNavbar.tsx`, every app) and four auth-web pages — `login`
+(both the desktop aside and the mobile card), `no-access`, `offline`, and
+`select-branch` — render the brand mark inline at a small fixed height
+(`h-9`–`h-11`, 36–44px). All of them use `fitclass-emblem.png`, generated by
+the same `scripts/generate-pwa-icons.py` as the icon set above, one copy per
+app's `public/` (`UI_EMBLEM_DESTS`) — same distribution convention as
+`fitclass-logo-white.webp`.
+
+**These spots used to point at `fitclass-logo-white.webp` (the full square
+lockup) and it rendered as an illegible smudge everywhere.** The lockup's
+real file is square (1600x1600, aspect 1:1: emblem circle, "FITCLASS"
+wordmark, and the tagline stacked vertically inside that square). Every one
+of these call sites passed `next/image` a `width`/`height` prop describing a
+*wide* aspect ratio (e.g. `220x50`, ~4.4:1) that did not match the real file,
+paired with a CSS class like `h-9 w-auto object-contain`. The browser used
+the declared (wrong) aspect ratio to size the element box — wide and short —
+then `object-contain` fit the *real* square content inside that box by its
+constraining dimension (the height), rendering the entire lockup, wordmark
+and tagline included, into a ~36–44px square. At that size the stacked text
+is not readable — confirmed live via an incognito fetch of the page (ruling
+out any cache) and reproduced byte-for-byte by simulating the same CSS box
+math in Pillow.
+
+The fix is the same one already applied to the icon set: use the **emblem
+alone** (no wordmark, no tagline) everywhere it has to render small, sized
+correctly (`width={160} height={160}`, matching the real 1:1 file, so
+`object-contain` no longer has a mismatched box to shrink into). Unlike the
+icon set, this asset keeps a **transparent surround** rather than a white
+fill — it has to sit on both the navbar's white background and the navy
+(`#0b1f3a`) login/offline/no-access/select-branch cards without a visible
+square edge on either. The lockup file remains correct and unchanged for any
+future spot with enough room to render the wordmark and tagline legibly
+(there is currently no such spot).
+
+This is also a service-worker-cached asset (`.png` matches `isStaticAsset()`
+in `sw.js`) — bump `SW_VERSION` whenever it changes, same as the icon set.
 
 ## Tenant provisioning & default catalogs (P3B)
 
@@ -722,16 +1347,31 @@ All packages live in `packages/` and are consumed via workspace references (`@cr
 | `@platform/validation` | `platform-validation` | Zod schemas for request validation (folder is `platform-validation`; package name is `@platform/validation`, not `@crm/validation`) |
 | `@platform/authz` | `platform-authz` | Identity/tenancy checks (`hasRole`, `hasMinimumRole`, `hasAnyRole`), org-scope resolution, user-management rank gates, product-grant primitive (`hasProduct`/`assertProduct`), and the coarse platform-tier `RANKS` + `platformRank()` (the shared cross-product ladder was dissolved in P1.3) |
 | `@platform/rbac` | `rbac` | The capability primitive — `can(actor, CAPABILITY.…)` — read by the gateway, every service, `@platform/db`, and `@platform/ui-kit` for UI gating (see "UI gating reads capabilities" below) |
-| `@platform/ui-kit` | `ui` | Shared Next.js shell/middleware for every product app — `AppSidebar`, `MobileSidebar`, `UserMenu`, `ProductSwitcher`, `createProductMiddleware()` (SSO cookie verification + redirect), `shell/nav` (`NavGroup`/`filterNavGroups`), `branchOptionsForActor` |
+| `@platform/ui-kit` | `ui` | Shared Next.js shell/middleware for every product app — `AppSidebar`, `MobileSidebar`, `UserMenu`, `ProductSwitcher`, `createProductMiddleware()` (SSO cookie verification + redirect), `shell/nav` (`NavGroup`/`filterNavGroups`; each `NavItem` may name an `icon` drawn by `shell/NavIcon` — inline Lucide-derived SVGs keyed by name so nav configs stay plain data, plus the custom `fan-out` glyph for Bulk Assign; an entry without one falls back to its initials in the collapsed rail), `branchOptionsForActor`; plus the filter-toolbar primitives every screen's filter bar is built from — `MultiSelect`, `UserPicker`, `FilterField` (the label-over-control wrapper that keeps a bare input on the same baseline as a `MultiSelect`) and `useAnchoredPanel` (fixed-position geometry for a dropdown that must escape a dialog; anchors by `bottom` when it flips upward) |
 | `@platform/audit-log` | `audit-log` | `logActivity()` — fire-and-forget writer to `audit.activities`, called in-process by every service (see "Activity logging") |
 | `@platform/blob-storage` | `blob-storage` | Avatar/photo byte storage driver — backs `iam.users.photo_key` and the punch-selfie store used by face verification |
 | `@platform/http` | `http` | Shared HTTP client helpers for inter-service calls |
 | `@platform/logger` | `logger` | Shared `pino` logger wrapper |
 | `@platform/service-auth` | `service-auth` | Internal-service-secret auth — verifies the gateway-injected `X-Internal-Secret` header |
-| `@platform/auth-constants` | `auth-constants` | `AUTH_COOKIE_NAME` and other auth constants |
+| `@platform/auth-constants` | `auth-constants` | `authCookieName()` (per-env session cookie name), `hs256Accepted()`, `requireStrongSecret()`, JWT issuer/audience and other auth constants |
 | `@platform/team-web` | `team-web` | Shared team-management UI (`TeamShell`, `TeamTable`, `CreateUserModal`, `EditUserModal`, `ResetPasswordModal`) — extracted out of `admin-web` for reuse |
 | `@crm/permissions` | — | **Deprecated compat barrel** — re-exports the four `*/authz` packages so existing imports keep working; being migrated away and then removed |
 | `@crm/internal-client` | — | HTTP client for inter-service calls (superseded by `@platform/http` in newer services) |
+
+### Grids share one column-filter config (`@platform/ui-kit/grid`)
+
+Every grid in the platform is a bare `AgGridReact` (AG Grid 35.3 Community) — there is no wrapper component, and each of the six grid files used to declare its own copy of `defaultColDef` with no `filterParams` at all, so column filtering ran entirely on undocumented AG Grid defaults.
+
+`@platform/ui-kit/grid` is now the single source of truth for that config: `GRID_DEFAULT_COL_DEF` (assign it straight to the grid's `defaultColDef`), `TEXT_FILTER_PARAMS`, and `normalizeFilterText`. `normalizeFilterText` is wired in as the text filter's `textFormatter`, which AG Grid applies to **both** the cell value and the text typed into the filter box — NFD-normalise, strip combining marks, trim, lowercase — so a column filter matches regardless of case, accents or stray whitespace, and stays that way across AG Grid upgrades rather than depending on `caseSensitive` happening to default to `false`.
+
+Two rules when adding a grid:
+
+- **Assign `GRID_DEFAULT_COL_DEF`; never re-declare the literal.** It is a module-level constant, so no `useMemo` is needed. The shared default deliberately does **not** set `filter` — columns opting out with `filter: false` (the pinned action columns, FollowUpGrid's "Due In") must stay off, and number/date columns must keep resolving to their own filter type instead of being forced to text.
+- **A column whose `cellRenderer` shows a label must have a `valueGetter` returning that same label.** The filter matches the column value, so a Status column rendering a `StatusBadge` reading "Call Attempted" while its `valueGetter` returned the raw stage `contacting` made typing the on-screen text return nothing (fixed in `LeadsTable`).
+
+The module is exposed on the `./grid` subpath, not the root barrel, and imports nothing from `ag-grid-community` — apps with no grid (`auth-web`, hr-web, todo-web) import `@platform/ui-kit` and must not be made to resolve AG Grid.
+
+Current grids: `TeamTable` (`@platform/team-web`, also lookup-admin's Users), `LookupTable` (lookup-admin), `LeadsTable` + `FollowUpGrid` + `LeadsHistoryShell` (`@lms/web`).
 
 ### Per-product packages (nested repos: `msq-lms`, `msq-hrms`, `msq-todo`)
 
@@ -759,11 +1399,54 @@ Each product repo carries the same three-package shape, plus a web-component pac
 >
 > **New-tenant seeding (follow-up):** a tenant created after `26` runs gets zero rows in these 7 tables until seeded, and `marketing_leads.stage_id` is `NOT NULL` — so lead intake for a brand-new tenant needs these 7 wired into the versioned catalog-defaults (`db_scripts/23` / `seedTenantDefaults`), the same two-step pattern P3.1→P3.2 used for the first 8. Tracked in `26`'s KNOWN FOLLOW-UP.
 
-`apps/lookup-admin` (port 3005) is a separate Next.js app providing the super_admin-only web UI for managing these lookup tables, tenants, and organizations (all 15 tenant-scoped tables now via their owning product service; the 4 shared iam/entity lookups + tenants/organizations via admin-service), plus a Users management UI (`app/dashboard/users/`) that calls the pre-existing identity-service Users CRUD, reset-password, and org-mappings endpoints. For the 15 tenant-scoped tables, the table page renders a `TenantSelector` (a `<select>` driven by the URL's `tenant_id` search param) above the grid; no tenant selected means an empty/prompt state instead of a fetch, and "New"/edit actions (and parent-lookup option fetches, e.g. lead-stage for a stage-outcome) pass the selected `tenant_id` through. This selector is advisory only — the real enforcement is the backend's required `tenant_id` query param, the `authenticateSuperAdmin` gate, and the tenant-pinned admin RLS.
+`apps/lookup-admin` (port 3005) is a separate Next.js app providing the super_admin-only web UI for managing these lookup tables, tenants, and organizations (all 15 tenant-scoped tables now via their owning product service; the 4 shared iam/entity lookups + tenants/organizations via admin-service), plus a Users management UI (`app/dashboard/users/`) — `@platform/team-web`'s `TeamShell` scoped to the navbar's selected tenant/branch via `UserAdminScopeProvider` (see "Super admin: another tenant's users, by explicit scope"). For the 15 tenant-scoped tables, the table page renders a `TenantSelector` (a `<select>` driven by the URL's `tenant_id` search param) above the grid; no tenant selected means an empty/prompt state instead of a fetch, and "New"/edit actions (and parent-lookup option fetches, e.g. lead-stage for a stage-outcome) pass the selected `tenant_id` through. This selector is advisory only — the real enforcement is the backend's required `tenant_id` query param, the `authenticateSuperAdmin` gate, and the tenant-pinned admin RLS.
 
-**Shell (module-grouped nav).** The dashboard is built on `@platform/ui-kit/shell` (the same `AppSidebar`/`MobileSidebar`/`UserMenu` chrome every product app uses). The left rail groups every table by `LookupTableDef.module` (`platform`/`lms`/`hr`/`tasks`/`capabilities`, see `src/lib/lookupTableConfig.ts`) via `NavGroup`/`filterNavGroups` (added to `@platform/ui-kit/shell/nav` for this) — flat `NavItem[]` usage in the other product apps is untouched. Each group lands on `/dashboard/m/[module]`, a card pane listing that module's tables (plus a couple of hand-built screens folded in as extra cards: Users under Platform, the Capability Matrix under Capabilities); a table card opens the existing `/dashboard/lookups/[table]` CRUD page.
+**Shell (module-grouped nav).** The dashboard is built on `@platform/ui-kit/shell` (the same `AppSidebar`/`MobileSidebar`/`UserMenu` chrome every product app uses). The left rail groups every table by `LookupTableDef.module` (`platform`/`lms`/`hr`/`tasks`/`capabilities`, see `src/lib/lookupTableConfig.ts`) via `NavGroup`/`filterNavGroups` (added to `@platform/ui-kit/shell/nav` for this); each module's rail icon comes from `ModuleDef.icon` — flat `NavItem[]` usage in the other product apps is untouched. Each group lands on `/dashboard/m/[module]`, a card pane listing that module's tables (plus a few hand-built screens folded in as extra cards: Users and Catalog Versions under Platform, Meta Page Mapping / Meta Campaign Mapping / Meta Lead Pull under LMS, the Capability Matrix under Capabilities); a table card opens the existing `/dashboard/lookups/[table]` CRUD page.
 
 **FK fields.** `LookupFieldConfig`'s old `select`/`geo-select` types (backed by a bare `selectOptionsFrom` string, plus a hardcoded country→state→city cascade component) were replaced by a single `fk` type carrying an `FkConfig` (`table` or `endpoint`, optional `dependsOn` for chaining, `scope: 'tenant'|'global'`). One `FkSelect` component resolves the option list, chains to any depth (the geo cascade is now just three ordinary fields), disables until its parent has a value, and surfaces a fetch error instead of silently rendering an empty list.
+
+**Meta page → branch mapping.** The LMS module exposes a bespoke screen at `/dashboard/meta-mappings`
+(registered as an `EXTRA_CARDS` entry on `/dashboard/m/lms`, not in `lookupTableConfig.ts`) for
+`ext.meta_page_form_org_map` — the table that decides which branch every inbound Meta lead lands
+in. It reads and writes the gateway's `/meta/page-org-map` routes (super_admin, `?tenant_id=`), with
+`/meta/pages` populating a page picker so an admin selects a named Page instead of pasting a raw
+numeric id. Page discovery is best-effort: it spends the tenant's stored Meta credentials on a live
+Graph API call, so a tenant with no active integration degrades to a raw-id input rather than taking
+the screen down. The table does not fit the generic `[table]` grid — a row is a `(page_id, form_id)`
+routing key, and a **NULL `form_id` is meaningful** (the page-level catch-all covering every form on
+that page, at most one active per page). `page_id`/`form_id` are immutable on edit (they are the
+row's identity); only branch and `is_active` are patchable, and removal is a deactivate, never the
+DELETE route. The navbar org scope narrows the grid **client-side**, because the list route validates
+its query with `tenantScopedQuerySchema` (tenant_id only) and would silently drop an `org_id`.
+
+**Meta lead pull.** The LMS module also exposes a bespoke screen at `/dashboard/lead-pull`
+(registered as an `EXTRA_CARDS` entry on `/dashboard/m/lms`, not in `lookupTableConfig.ts`) that moves
+the three-stage backfill CLI (download -> reconcile -> import) a developer used to run by hand into a
+button: pick branches/pages/campaigns and a required `since` date, `POST /meta/lead-pull/runs`
+(super_admin, `?tenant_id=`) enqueues a background run and returns immediately with a `run_id`, and
+the client polls `GET /meta/lead-pull/runs/:runId` — backing off when the tab is hidden, stopping once
+the run reaches a terminal status (`completed`/`failed`/`applied`). The delta summary renders the
+run's live `verdict_summary` (computed from the staged rows, not the run's own `counts.verdicts`
+snapshot), and every number opens the staged rows behind it via `GET .../runs/:runId/leads?verdict=`
+in an AG Grid. `POST .../runs/:runId/apply` is enabled only once a run is `completed`; it is
+idempotent server-side (re-applying inserts nothing — every row comes back `already_synced`), but the
+button still disables during `applying` rather than relying on that alone. The two duplicate verdicts
+(`phone_duplicate`, `email_duplicate`) are importable on purpose — the UI explains why next to the
+Apply button, matching the backend comment in `lead-reconcile.service.ts`. The campaign filter is
+applied **post-fetch** (Meta has no campaign-scoped lead edge), and the form says so next to the
+campaign control so narrowing it is never mistaken for making the pull cheaper. A `truncated` run
+(the per-form Graph page cap was hit) renders a prominent, non-dismissable warning rather than a
+footnote, since the pull's data is then genuinely incomplete. Page discovery reuses the same
+best-effort `/meta/pages` call `meta-mappings` makes and degrades the page filter to a typed
+comma-separated id list under the same conditions.
+
+**Known doc/code mismatch (reported, not worked around):** the phase brief that drove this screen
+lists `hiring_form` as its own verdict bucket. `lead-reconcile.service.ts` does not classify leads
+that way — that behaviour was deliberately removed once campaign types could route a recruitment
+lead somewhere (see that file's header comment). A lead on a hiring-shaped form still gets a normal
+verdict and is separately flagged per row with `is_hiring_form` + `suggested_campaign_type_id`; the
+UI surfaces that as a badge in the staged-leads grid rather than as a summary bucket that does not
+exist server-side.
 
 **Capability administration.** The Capabilities module additionally exposes a Capability Matrix screen (`/dashboard/capabilities/matrix`) for granting/revoking `iam.capabilities` nodes to a role, per tenant — the UI side of the endpoints documented above. It reads the global capability tree once, then per (tenant, role) reads `iam.role_capabilities` (platform defaults + that tenant's overrides) and PUTs the diff. `iam.capabilities`/`iam.role_capabilities` gained Drizzle table definitions in `@platform/db/schema` for this (they previously had none, despite existing in the DB since Tier C3). Role catalog CRUD (the `user-roles`/`lms-roles`/`hr-roles`/`task-roles` cards in this module) still goes through the existing `/lookups/{slug}` tables, unchanged.
 

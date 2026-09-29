@@ -154,11 +154,85 @@ BEGIN
   ON CONFLICT DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
 
+  -- The two campaign types a tenant starts with (1.49.0), seeded HERE rather
+  -- than in entity.seed_tenant_lms_catalogs() with the other LMS catalogs for
+  -- one hard reason: they reference iam.departments, which is seeded four lines
+  -- above this and does not exist when that function runs.
+  --
+  -- They are also written as LITERALS rather than cloned from tenant_id IS NULL
+  -- templates, unlike every catalog in that function. marketing.campaign_types
+  -- has tenant_id NOT NULL and therefore has no template rows -- because a
+  -- template could not carry department_id, the one column that makes a type
+  -- mean anything, and a per-tenant department id is not clonable.
+  --
+  -- `sales` is is_default with NO keywords: it is the fallback every unmatched
+  -- campaign lands on, and giving it keywords would let it win a match against a
+  -- more specific type. `hiring` carries the keywords and a LOWER match_priority
+  -- so it beats anything a tenant adds later at the default 100.
+  INSERT INTO marketing.campaign_types
+    (tenant_id, department_id, name, label, description,
+     match_keywords, is_default, match_priority, sort_order)
+  SELECT p_tenant_id, d.id, v.name, v.label, v.description,
+         v.match_keywords, v.is_default, v.match_priority, v.sort_order
+  FROM (VALUES
+    ('sales',  'sales', 'Sales',  'Campaigns that look for customers.',
+     '{}'::TEXT[], TRUE,  100, 1),
+    ('hiring', 'hr',    'Hiring', 'Campaigns that look for staff. Routes to the HR pool.',
+     '{}'::TEXT[], FALSE, 50, 2)
+  ) AS v(name, dept, label, description, match_keywords, is_default, match_priority, sort_order)
+  JOIN iam.departments d ON d.tenant_id = p_tenant_id AND d.name = v.dept
+  ON CONFLICT (tenant_id, name) DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
+
+  -- 1.51.0: the matcher reads ORDERED RULES (marketing.campaign_type_rules), not
+  -- match_keywords, which new tenants now get empty. The starter rules route
+  -- explicit recruitment words to Hiring on the campaign name. `hr`, `job` and
+  -- `trainer` -- in the pre-1.51.0 keyword list -- are deliberately LEFT OUT:
+  -- at a fitness business "Personal_Trainer" and "Job_Offer_Membership" are
+  -- SALES campaign names, and a keyword that sends them to the HR pool is worse
+  -- than no keyword at all. Tenants add their own from the Campaign Types screen.
+  -- Seeded only when the tenant has no live rules, so re-provisioning never
+  -- stacks a second copy on top of an admin's edits.
+  IF NOT EXISTS (SELECT 1 FROM marketing.campaign_type_rules
+                 WHERE tenant_id = p_tenant_id AND NOT is_deleted) THEN
+    INSERT INTO marketing.campaign_type_rules (tenant_id, rule_order, match_field, pattern, campaign_type_id)
+    SELECT p_tenant_id, v.rule_order, 'campaign_name', v.pattern, ct.id
+    FROM (VALUES (10, 'hiring'), (20, 'hire'), (30, 'recruit'), (40, 'recruitment'), (50, 'vacancy'))
+         AS v(rule_order, pattern)
+    JOIN marketing.campaign_types ct ON ct.tenant_id = p_tenant_id AND ct.name = 'hiring';
+    GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
+  END IF;
+
+  -- department_id is resolved HERE and cannot come from the template it clones:
+  -- template roles are global (tenant_id IS NULL) while iam.departments is
+  -- tenant-scoped, so a template row has no tenant department to point at. It
+  -- was passed as a literal NULL until 1.49.0, which left the column unused on
+  -- every role in every tenant.
+  --
+  -- It matters now because it is half of the campaign-type visibility rule: a
+  -- type tied to a department is visible to roles IN that department (see
+  -- lms.fn_user_sees_campaign_type). With every role department-less, nobody
+  -- below manager tier could ever see a hiring lead -- not even HR, the team the
+  -- routing exists to serve.
+  --
+  -- The anchors stay department-less deliberately: read_only, org_admin,
+  -- tenant_admin and super_admin are cross-department by definition, and the
+  -- ones that need to see every type get there by capability, not by belonging.
   INSERT INTO iam.user_roles (tenant_id, department_id, name, label, description, rank, is_active)
-  SELECT p_tenant_id, NULL, r.name, r.label, r.description, r.rank, r.is_active
+  SELECT p_tenant_id, d.id, r.name, r.label, r.description, r.rank, r.is_active
   FROM iam.user_roles r
+  LEFT JOIN (VALUES
+    ('sales_representative',   'sales'),
+    ('senior_sales_executive', 'sales'),
+    ('org_manager',            'sales'),
+    ('org_sr_manager',         'sales'),
+    ('hr_admin',               'hr')
+  ) AS rd(role_name, dept_name) ON rd.role_name = r.name
+  LEFT JOIN iam.departments d
+    ON d.tenant_id = p_tenant_id AND d.name = rd.dept_name AND NOT d.is_deleted
   WHERE r.tenant_id IS NULL AND r.name <> 'super_admin'
-  ON CONFLICT (tenant_id, name) WHERE tenant_id IS NOT NULL DO NOTHING;
+  ON CONFLICT (tenant_id, name) WHERE tenant_id IS NOT NULL DO UPDATE
+    SET department_id = COALESCE(iam.user_roles.department_id, EXCLUDED.department_id);
   GET DIAGNOSTICS v_n = ROW_COUNT; v_rows := v_rows + v_n;
 
   -- Copy each template role's platform-default grants onto the tenant's copy.

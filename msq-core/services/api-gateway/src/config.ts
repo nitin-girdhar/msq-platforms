@@ -1,4 +1,4 @@
-import { requireStrongSecret as sharedRequireStrongSecret } from '@platform/auth-constants';
+import { requireStrongSecret as sharedRequireStrongSecret, authCookieName } from '@platform/auth-constants';
 import { timeoutFromEnv } from '@platform/http';
 
 function requireEnv(name: string): string {
@@ -23,6 +23,10 @@ export const config = {
   port: parseInt(process.env['GATEWAY_PORT'] ?? '4000', 10),
   nodeEnv,
   jwtSecret: requireStrongSecret('JWT_SECRET'),
+  // Session cookie name. Per-environment (fc_session / fc_session_uat / …) so a
+  // cookie from a sibling environment under the same parent domain is never
+  // read here and rejected as "Invalid token" — see authCookieName().
+  authCookieName: authCookieName(process.env['AUTH_COOKIE_NAME']),
   // Shared secret injected into every upstream request so services can
   // reject calls that bypass the gateway
   serviceSecret: requireStrongSecret('INTERNAL_SERVICE_SECRET'),
@@ -81,6 +85,13 @@ export const config = {
   // in the latency path of an outbound message send and fails CLOSED, so it is
   // kept short: a slow leads-service should block the send quickly, not hang it.
   knownContactsTimeoutMs: timeoutFromEnv('GATEWAY_KNOWN_CONTACTS_TIMEOUT_MS', 5_000),
+  // The two super-admin Meta campaign calls that do real work inline: POST
+  // /meta/campaigns/sync (walks a tenant's ad accounts with Graph backoff) and
+  // PATCH /meta/campaigns/:id (the lead re-route fan-out, which
+  // meta-conversion-api itself allows 60s). Kept LONGER than that 60s so the
+  // service reports its own outcome instead of this proxy answering 504 over work
+  // that then completes.
+  metaAdminLongTimeoutMs: timeoutFromEnv('GATEWAY_META_ADMIN_TIMEOUT_MS', 120_000),
 } as const;
 
 if (config.nodeEnv === 'production') {

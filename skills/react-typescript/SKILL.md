@@ -1,7 +1,7 @@
 # React / Next.js — CRM Monorepo Skill
 
 > **Authoritative baseline for all frontend work in the product web apps (`apps/lms-web`, `apps/hr-web`, `apps/todo-web`, `apps/auth-web`) and `apps/lookup-admin`.**
-> **P4.3 update:** the former single `apps/web` was split into one thin Next app per product (`lms-web`/`hr-web`/`todo-web`, each its own image on its own subdomain) plus `auth-web` (login/change-password/select-branch at `auth.app.com`). Shared chrome (navbar, sidebars, product switcher, user/branch menus) now lives in `@platform/ui-kit/shell` and is product-agnostic — apps pass nav items, product origins, home targets, and any product-specific UI (e.g. the LMS notification bell) in as props/slots. SSO: identity-service sets the `fc_session` cookie on `COOKIE_DOMAIN`; product apps verify via `@platform/ui-kit/middleware`'s `createProductMiddleware()` and bounce to the auth origin. Each app keeps its own `@/*`-aliased `app/`, `middleware.ts`, `next.config.ts`, and `src/config/navigation.ts`; wherever this doc says `apps/web`, read it as "the relevant product app".
+> **P4.3 update:** the former single `apps/web` was split into one thin Next app per product (`lms-web`/`hr-web`/`todo-web`, each its own image on its own subdomain) plus `auth-web` (login/change-password/select-branch at `auth.app.com`). Shared chrome (navbar, sidebars, product switcher, user/branch menus) now lives in `@platform/ui-kit/shell` and is product-agnostic — apps pass nav items, product origins, home targets, and any product-specific UI (e.g. the LMS notification bell) in as props/slots. SSO: identity-service sets the session cookie (name from `authCookieName()` — `AUTH_COOKIE_NAME` env, default `fc_session`, distinct per non-prod environment so a sibling environment's cookie under a shared parent domain is never read); product apps verify via `@platform/ui-kit/middleware`'s `createProductMiddleware()` and bounce to the auth origin. Each app keeps its own `@/*`-aliased `app/`, `middleware.ts`, `next.config.ts`, and `src/config/navigation.ts`; wherever this doc says `apps/web`, read it as "the relevant product app".
 > This skill documents how the frontend is *actually* built in this repo. When you add or
 > refactor code, match these patterns exactly so every screen reads the same way. If a
 > requirement seems to demand a different approach, flag it before diverging.
@@ -224,7 +224,12 @@ export default function LeadDashboardShell({ actor, enabledModules }: {
   re-exports its primitives as *named* exports from the barrel, so consume them as
   `import { Modal } from '@platform/ui-kit'`.)
 - Keep mutation error handling in the Shell (or hook) and show it inline near the action.
-- Tables are **AG Grid** (`ag-grid-react`) configured in the Shell/Table component.
+- Tables are **AG Grid** (`ag-grid-react`) configured in the Shell/Table component. Assign
+  `GRID_DEFAULT_COL_DEF` from `@platform/ui-kit/grid` to `defaultColDef` — never re-declare the
+  literal. It carries the shared case-/accent-insensitive column-filter params, and it
+  intentionally leaves `filter` to each column so `filter: false` and number/date columns are
+  unaffected. A column with a label-rendering `cellRenderer` (a status/source badge) must have a
+  `valueGetter` returning that same label, or its filter won't match the text on screen.
 
 ---
 
@@ -310,7 +315,23 @@ Import generic building blocks from `@platform/ui-kit` rather than re-implementi
   (subject to `locked` during an in-flight submit).
 - `Pagination`, `DownloadButton`, `MonthGrid`, `Placeholder`.
 - Hooks: `useDropdown`, `useIsMobile`.
+- `SpeechInputButton` + `appendDictation` — speak-to-type for every free-text notes/reason/
+  comment field. Browser-native Web Speech API (no package, no backend). Put it in the field's
+  label row (`<div className="flex items-center justify-between gap-2">label + button</div>`);
+  for a single-line input sharing a row, place it after the input with `compact`. Wire it as
+  `onText={(t) => setX((p) => appendDictation(p, t, maxLength?))}` and pass the form's in-flight
+  flag as `disabled`. It carries an EN/HI toggle (`en-IN` default, `hi-IN` writes Devanagari;
+  the browser can't auto-detect language) remembered per user in `localStorage`. Renders nothing
+  where the API is missing (Firefox); needs HTTPS or localhost; Chrome sends the audio to
+  Google's speech service. Dictation only fills text — never auto-submit an Enter-to-submit
+  input from it. Lower-level hook: `useSpeechToText`.
 - `createApiClient` (fetch wrapper).
+- `NavIcon` (`@platform/ui-kit/shell`) — sidebar symbols. Give every new `NavItem` an `icon`
+  (a `NavIconName`, e.g. `'history'`) so the collapsed rail shows a symbol instead of initials.
+  To add a glyph, paste its Lucide 0.469 children into `GLYPHS` in `shell/NavIcon.tsx` — do not
+  add `lucide-react` or another icon package.
+- `@platform/ui-kit/grid` (subpath): `GRID_DEFAULT_COL_DEF`, `TEXT_FILTER_PARAMS`,
+  `normalizeFilterText` — the one AG Grid column-filter configuration every grid shares.
 
 Build a component in `@platform/ui-kit` when it has **zero CRM domain knowledge** and is reused across
 apps/modules. Otherwise build it under `apps/web/components/<domain>/`.

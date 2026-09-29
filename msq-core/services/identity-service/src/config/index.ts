@@ -1,4 +1,4 @@
-import { requireStrongSecret } from '@platform/auth-constants';
+import { requireStrongSecret, authCookieName } from '@platform/auth-constants';
 import { timeoutFromEnv } from '@platform/http';
 
 function requireEnv(name: string): string {
@@ -44,6 +44,11 @@ export const config = {
   databaseUrlService: requireEnv('DATABASE_URL_SERVICE'),
   logLevel: process.env['LOG_LEVEL'] ?? 'info',
   secureCookies: process.env['COOKIE_SECURE'] === 'true',
+  // Session cookie name — this is the SIGNING side of the pair the gateway
+  // verifies. Per-environment (fc_session prod / fc_session_uat / fc_session_dev)
+  // so a cookie set by one environment is never READ by a sibling under the same
+  // parent domain and rejected there as "Invalid token". See authCookieName().
+  authCookieName: authCookieName(process.env['AUTH_COOKIE_NAME']),
   // Parent domain the session cookie is scoped to, e.g. `.app.com`, so every
   // product UI on a subdomain (lms./hr./todo./auth.) shares one SSO session.
   // Unset in local single-host dev → host-only cookie (the pre-split behavior).
@@ -68,6 +73,12 @@ export const config = {
   // a lot of leads — but bounded, because until it returns identity is holding
   // the org/role change open. See lib/leads-service-client.ts.
   leadsServiceTimeoutMs: timeoutFromEnv('IDENTITY_LEADS_SERVICE_TIMEOUT_MS', 30_000),
+  // hr-service owns hr.employee_profiles (N-5) — identity invokes it to create /
+  // re-file a member's HR profile after a Team create, branch move or
+  // (de)activation. Runs after identity's own writes; a failure is reported,
+  // never rolled back into the identity change. See lib/hr-service-client.ts.
+  hrServiceUrl: process.env['HR_SERVICE_URL'] ?? 'http://localhost:4007',
+  hrServiceTimeoutMs: timeoutFromEnv('IDENTITY_HR_SERVICE_TIMEOUT_MS', 10_000),
   // communication-service (SMTP relay) for the Team notification emails — account
   // created / password reset / branch changed. The call is fire-and-forget: a
   // failure here only logs, it never fails the admin's request. See

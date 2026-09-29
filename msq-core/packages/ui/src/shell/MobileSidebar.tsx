@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
 import { filterNav, filterNavGroups, isNavGroups, type NavItem, type NavGroup } from './nav';
+import NavIcon from './NavIcon';
 
 const TOGGLE_EVENT = 'fc:sidebar-toggle';
 const SET_EVENT = 'fc:sidebar-set';
@@ -36,11 +37,12 @@ function MobileNavLink({ item, pathname }: { item: NavItem; pathname: string }) 
       aria-current={active ? 'page' : undefined}
       className={
         active
-          ? 'rounded-lg bg-[#EFF6FF] px-3 py-2.5 text-sm font-semibold text-[#0b6cbf]'
-          : 'rounded-lg px-3 py-2.5 text-sm font-medium text-[#475569] transition-colors hover:bg-[#F8FAFC] hover:text-[#0F172A]'
+          ? 'flex items-center gap-2.5 rounded-lg bg-[#EFF6FF] px-3 py-2.5 text-sm font-semibold text-[#0b6cbf]'
+          : 'flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-[#475569] transition-colors hover:bg-[#F8FAFC] hover:text-[#0F172A]'
       }
     >
-      {item.label}
+      {item.icon && <NavIcon name={item.icon} className="h-4 w-4 shrink-0" />}
+      <span className="truncate">{item.label}</span>
     </Link>
   );
 }

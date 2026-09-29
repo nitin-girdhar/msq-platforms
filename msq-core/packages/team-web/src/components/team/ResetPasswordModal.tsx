@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { users as usersApi } from '../../lib/api';
 import { canOverridePasswordPolicy } from '@platform/authz';
-import { Modal, Button } from '@platform/ui-kit';
+import { Modal, Button, useUserAdminScope } from '@platform/ui-kit';
 import TemporaryPasswordPanel from './TemporaryPasswordPanel';
 
 interface Props {
@@ -44,6 +44,7 @@ type Mode = 'generate' | 'specific';
 const FORM_ID = 'reset-password-form';
 
 export default function ResetPasswordModal({ open, onClose, userId, email, actorRole, forcePasswordChange, canNotify }: Props) {
+  const adminScope = useUserAdminScope();
   const [mode, setMode] = useState<Mode>('generate');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -92,6 +93,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
         mode === 'specific' ? useOverrideFloor : undefined,
         forcePasswordChange,
         canNotify ? sendEmailNotification : undefined,
+        adminScope,
       );
       setPassword('');
       setConfirm('');

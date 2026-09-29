@@ -12,12 +12,45 @@ import {
 export const NO_ACCESS_PATH = '/no-access';
 
 /**
+ * The allowlist reduced to bare ORIGINS.
+ *
+ * allowedRedirectOrigins() returns BASE URLs, and under the single-origin
+ * topology those carry a path prefix (`https://apps.app.com/lms`). Comparing a
+ * callback's `url.origin` against them literally would never match, so each
+ * entry is normalized here. A malformed entry is dropped rather than thrown on:
+ * one bad env value must not take the login redirect down.
+ */
+function allowedOrigins(bases: readonly string[]): string[] {
+  const origins: string[] = [];
+  for (const base of bases) {
+    try {
+      origins.push(new URL(base).origin);
+    } catch {
+      // Not an absolute URL — unusable as an allowlist entry, so ignore it.
+    }
+  }
+  return origins;
+}
+
+/**
  * Open-redirect guard for the post-login `callbackUrl`. An ABSOLUTE callback is
  * honored only when its origin is one of our own product/auth origins; anything
  * else (an attacker-supplied host) is rejected. A RELATIVE path is accepted only
  * in single-host dev, where auth and the products share one origin (no
  * configured cross-app origins). This is what keeps
  * `?callbackUrl=https://evil.example` from turning login into a redirector.
+ *
+ * DELIBERATELY COARSE, and correct — do not "fix" this back to a prefix match.
+ * Every app now lives behind ONE host under a path prefix (apps.app.com is
+ * auth-web; /lms /hrms /todo /admin /sa are the others), so matching on origin
+ * accepts ANY path on that host, not just the six configured prefixes. That is
+ * the right boundary: under a single origin every internal path IS our own
+ * application, one PWA scope and one cookie jar, and a same-origin redirect
+ * cannot hand a session to anybody else. The property this guard exists for —
+ * refusing to bounce the user to a host we do not control — is untouched, and
+ * the foreign-origin test cases pin it. Narrowing this to a path-prefix match
+ * would only break legitimate return targets (a deep link into a product route,
+ * a prefix added by a later deploy) while adding no security.
  *
  * Returns null when there is no usable target, rather than a hardcoded product
  * default. The old default sent EVERY user to the LMS dashboard, which an
@@ -27,13 +60,15 @@ export const NO_ACCESS_PATH = '/no-access';
 export function resolveCallback(raw: string | undefined): string | null {
   if (!raw) return null;
 
-  const origins = allowedRedirectOrigins();
+  // `bases` (not the normalized list) decides single-host dev: "no cross-app
+  // URLs are configured", which a dropped malformed entry must not fake.
+  const bases = allowedRedirectOrigins();
   try {
     const url = new URL(raw);
-    return origins.includes(url.origin) ? url.toString() : null;
+    return allowedOrigins(bases).includes(url.origin) ? url.toString() : null;
   } catch {
     // Not absolute → a path. Trust it only when we're single-host (no split).
-    if (raw.startsWith('/') && !raw.startsWith('//') && origins.length === 0) return raw;
+    if (raw.startsWith('/') && !raw.startsWith('//') && bases.length === 0) return raw;
     return null;
   }
 }

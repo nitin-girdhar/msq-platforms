@@ -36,7 +36,37 @@ export type TeamPageData =
  * drifted apart in the first place. A host supplies the cookie header and
  * decides what to render on `ok: false`.
  */
-export async function loadTeamData(cookieHeader: string, scope?: TeamScope): Promise<TeamPageData> {
+/**
+ * A tenant (and optional branch) administered from OUTSIDE the actor's session —
+ * lookup-admin's navbar selection. Only a super_admin's request honours it
+ * (identity-service resolveTargetScope); the branch lists then come from the
+ * super-admin-gated /lookups/organizations, filtered to the tenant, because
+ * /orgs/all and /auth/my-orgs describe the actor's OWN tenant.
+ */
+export interface TeamAdminScope {
+  tenantId: string;
+  orgId?: string | undefined;
+}
+
+async function loadAdminScopedBranches(cookieHeader: string, tenantId: string): Promise<OrgOption[] | null> {
+  const res = await fetch(`${GATEWAY_URL}/lookups/organizations`, { headers: { cookie: cookieHeader }, cache: 'no-store' });
+  if (!res.ok) {
+    console.error(`[team] GET ${GATEWAY_URL}/lookups/organizations failed: ${res.status} ${res.statusText}`);
+    return null;
+  }
+  const body = await res.json() as { data?: Array<{ id: string; name: string; tenant_id: string; is_active?: boolean }> };
+  return (Array.isArray(body.data) ? body.data : [])
+    .filter((o) => String(o.tenant_id) === tenantId && o.is_active !== false)
+    .map((o) => ({ id: String(o.id), name: o.name }));
+}
+
+export async function loadTeamData(
+  cookieHeader: string,
+  scope?: TeamScope,
+  adminScope?: TeamAdminScope,
+): Promise<TeamPageData> {
+  if (adminScope) return loadAdminScopedTeamData(cookieHeader, adminScope);
+
   // No org_id param: identity-service scopes /users to the caller's own
   // org/tenant from the gateway-verified session, and picks the roster slice
   // from the actor's admin.team.view.* rung (see users.service.ts listUsers).
@@ -83,7 +113,15 @@ export async function loadTeamData(cookieHeader: string, scope?: TeamScope): Pro
   const body = await res.json() as { data?: Record<string, unknown>[]; total?: number; scope?: TeamScope };
   const raw = Array.isArray(body.data) ? body.data : [];
   const total = typeof body.total === 'number' ? body.total : raw.length;
-  const users: TeamRow[] = raw.map((u) => ({
+  const users: TeamRow[] = raw.map(toTeamRow);
+
+  // The server's answer, not the request: it silently narrows a scope the actor
+  // may not use, and the switcher has to show which roster is really on screen.
+  return { ok: true, users, total, orgs, myOrgs, branchesFailed, scope: body.scope ?? 'org' };
+}
+
+function toTeamRow(u: Record<string, unknown>): TeamRow {
+  return {
     ...u,
     name: (u.full_name ?? u.name ?? '') as string,
     role: (u.role_name ?? u.role ?? '') as SessionUser['role'],
@@ -104,9 +142,34 @@ export async function loadTeamData(cookieHeader: string, scope?: TeamScope): Pro
     report_depth: u.report_depth === null || u.report_depth === undefined
       ? null
       : Number(u.report_depth),
-  })) as TeamRow[];
+  } as TeamRow;
+}
 
-  // The server's answer, not the request: it silently narrows a scope the actor
-  // may not use, and the switcher has to show which roster is really on screen.
-  return { ok: true, users, total, orgs, myOrgs, branchesFailed, scope: body.scope ?? 'org' };
+async function loadAdminScopedTeamData(cookieHeader: string, adminScope: TeamAdminScope): Promise<TeamPageData> {
+  const qs = new URLSearchParams({ page_size: '500', scope: 'tenant', tenant_id: adminScope.tenantId });
+  if (adminScope.orgId) qs.set('org_id', adminScope.orgId);
+
+  const [res, branches] = await Promise.all([
+    fetch(`${GATEWAY_URL}/users?${qs.toString()}`, { headers: { cookie: cookieHeader }, cache: 'no-store' }),
+    loadAdminScopedBranches(cookieHeader, adminScope.tenantId),
+  ]);
+  if (!res.ok) {
+    console.error(`[team] GET ${GATEWAY_URL}/users (tenant ${adminScope.tenantId}) failed: ${res.status} ${res.statusText}`);
+    return { ok: false, status: res.status };
+  }
+
+  const body = await res.json() as { data?: Record<string, unknown>[]; total?: number; scope?: TeamScope };
+  const raw = Array.isArray(body.data) ? body.data : [];
+  // Every branch of the tenant is both the list and the assignable set: the
+  // super_admin reaches all of them, and holds no mapping row in any.
+  const orgs = branches ?? [];
+  return {
+    ok: true,
+    users: raw.map(toTeamRow),
+    total: typeof body.total === 'number' ? body.total : raw.length,
+    orgs,
+    myOrgs: orgs,
+    branchesFailed: branches === null,
+    scope: body.scope ?? 'tenant',
+  };
 }

@@ -77,6 +77,17 @@ export interface SessionUser {
    * delivered early so the UI stops rendering things the server would refuse.
    */
   capabilities: string[];
+  /**
+   * True when the session was minted for "All branches" (JWT `branch_scope:
+   * 'all'`) — the navbar switcher's default for users who can see every
+   * branch. `org_id` above is then still a real branch (the home org, needed
+   * by RLS and writes), but branch-scoped screens (Leads, Follow-ups) should
+   * not narrow to it.
+   *
+   * A read-filter hint only, never a grant: how far a read may reach is still
+   * decided server-side by the actor's capability scope. Absent = false.
+   */
+  all_branches?: boolean;
 }
 
 // One branch a user can act in, derived from an active iam.user_org_mapping row.
@@ -111,6 +122,12 @@ export interface JwtPayload {
   jti: string;
   /** Set to true when the user must change their password before any other action */
   force_password_change?: boolean;
+  /**
+   * 'all' = the user picked "All branches" in the navbar switcher (the login
+   * default for users whose switcher lists every tenant branch). Absent = the
+   * session is scoped to `org_id`. A UI filter hint — see SessionUser.all_branches.
+   */
+  branch_scope?: 'all';
   iat?: number;
   exp?: number;
 }

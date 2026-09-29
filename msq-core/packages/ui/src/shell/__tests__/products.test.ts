@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import type { ProductKey } from '@platform/types';
-import { usableProducts, landingFor } from '../products';
+import { usableProducts, landingFor, productHref } from '../products';
 
 // Capability sets copied from the shipped defaults in db_scripts/07 (the tool
 // nodes plus enough beneath them to satisfy the "something usable under it"
@@ -22,10 +22,13 @@ const ORG_ADMIN = [...LMS_ADMIN, ...HR_ADMIN, 'tasks', 'tasks.view', 'tasks.list
 const actor = (capabilities: string[]) => ({ capabilities });
 
 const ALL: ProductKey[] = ['lms', 'hr', 'task'];
+// Path-style base URLs: every product sits behind one host under its own
+// prefix, so landingFor() must CONCATENATE base + landing path and keep the
+// prefix (`new URL(path, base)` would drop it).
 const ORIGINS: Record<ProductKey, string> = {
-  lms: 'https://lms.app.com',
-  hr: 'https://hr.app.com',
-  task: 'https://todo.app.com',
+  lms: 'https://apps.app.com/lms',
+  hr: 'https://apps.app.com/hrms',
+  task: 'https://apps.app.com/todo',
 };
 
 describe('usableProducts', () => {
@@ -71,17 +74,58 @@ describe('usableProducts', () => {
 
 describe('landingFor', () => {
   it('follows lms → hr → task priority', () => {
-    expect(landingFor(['hr', 'lms'], ORIGINS)).toBe('https://lms.app.com/dashboard/leads');
-    expect(landingFor(['task', 'hr'], ORIGINS)).toBe('https://hr.app.com/attendance');
-    expect(landingFor(['task'], ORIGINS)).toBe('https://todo.app.com/tasks');
+    expect(landingFor(['hr', 'lms'], ORIGINS)).toBe('https://apps.app.com/lms/dashboard/leads');
+    expect(landingFor(['task', 'hr'], ORIGINS)).toBe('https://apps.app.com/hrms/attendance');
+    expect(landingFor(['task'], ORIGINS)).toBe('https://apps.app.com/todo/tasks');
   });
 
-  it('skips a product with no configured origin rather than linking a broken host', () => {
-    expect(landingFor(['lms', 'hr'], { ...ORIGINS, lms: '' })).toBe('https://hr.app.com/attendance');
+  it('keeps the product path prefix in the landing URL', () => {
+    // The whole point of the base-URL generalization: /hrms must survive into
+    // the landing URL, or the user lands on auth-web's root instead of HR.
+    expect(landingFor(['hr'], ORIGINS)).toBe('https://apps.app.com/hrms/attendance');
+  });
+
+  it('skips a product with no configured base URL rather than linking a broken host', () => {
+    expect(landingFor(['lms', 'hr'], { ...ORIGINS, lms: '' })).toBe(
+      'https://apps.app.com/hrms/attendance',
+    );
   });
 
   it('returns null when nothing is reachable', () => {
     expect(landingFor([], ORIGINS)).toBeNull();
     expect(landingFor(['lms'], { lms: '', hr: '', task: '' })).toBeNull();
+  });
+});
+
+describe('productHref', () => {
+  // Same env handling as api/__tests__/base-path.test.ts: Next substitutes this
+  // as a literal at build time, so in vitest it is an ordinary env var and has
+  // to be cleared between cases.
+  afterEach(() => {
+    delete process.env['__NEXT_ROUTER_BASEPATH'];
+  });
+
+  it('prefixes the ACTIVE chip with this app basePath', () => {
+    // The shipped bug: from HR, the HRMS chip pointed at a bare '/attendance',
+    // which the browser resolved against the origin root — auth-web — and 404'd.
+    process.env['__NEXT_ROUTER_BASEPATH'] = '/hrms';
+    expect(productHref('hr', ORIGINS, true)).toBe('/hrms/attendance');
+  });
+
+  it('leaves an inactive chip cross-origin, prefix already in the base URL', () => {
+    process.env['__NEXT_ROUTER_BASEPATH'] = '/lms';
+    expect(productHref('hr', ORIGINS, false)).toBe('https://apps.app.com/hrms/attendance');
+  });
+
+  it('degrades to the bare path with no basePath — single-host dev', () => {
+    expect(productHref('hr', ORIGINS, true)).toBe('/attendance');
+    expect(productHref('task', ORIGINS, true)).toBe('/tasks');
+  });
+
+  it('never mixes the two: an active chip ignores its own origin entry', () => {
+    // We are already on this host; re-linking absolutely would be a pointless
+    // full-origin hop and would break single-host dev, where origins are empty.
+    process.env['__NEXT_ROUTER_BASEPATH'] = '/lms';
+    expect(productHref('lms', ORIGINS, true)).toBe('/lms/dashboard/leads');
   });
 });

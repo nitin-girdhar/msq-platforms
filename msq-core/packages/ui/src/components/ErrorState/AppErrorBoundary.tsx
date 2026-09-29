@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { withBasePath } from '../../api/base-path';
 import { ErrorState } from './ErrorState';
 
 // The body of every app's `app/error.tsx`. Each app's file is a one-liner over
@@ -60,6 +61,11 @@ export function AppErrorBoundary({ error, reset, homeHref, homeLabel = 'Go back'
           // A full navigation, not a router push: the middleware must re-run to
           // perform the bounce to the auth origin, and a client-side transition
           // would skip it.
+          //
+          // Deliberately NOT withBasePath()'d, unlike homeHref below: '/' is the
+          // shared origin's root, which auth-web owns. It resolves the session
+          // and redirects (sessionDestination), so this is the one href here
+          // that genuinely means the root and not "this app's root".
           <a href="/" className={`${buttonClass} bg-slate-900 text-white hover:bg-slate-800`}>
             Sign in again
           </a>
@@ -72,8 +78,12 @@ export function AppErrorBoundary({ error, reset, homeHref, homeLabel = 'Go back'
             >
               Try again
             </button>
+            {/* withBasePath() because this is a raw <a>, which Next does not
+                prefix — every app passes an app-relative homeHref ('/attendance',
+                '/dashboard/leads'), and un-prefixed those resolve against the
+                origin root (auth-web) and 404. See api/base-path.ts. */}
             <a
-              href={homeHref}
+              href={withBasePath(homeHref)}
               className={`${buttonClass} border border-slate-200 text-slate-700 hover:bg-slate-50`}
             >
               {homeLabel}

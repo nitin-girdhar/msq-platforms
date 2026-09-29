@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
-import { can, CAPABILITY, ANCHOR_RANK } from '@platform/rbac';
-import { buildLoginUrl, buildChangePasswordUrl } from '@platform/ui-kit';
-import { AppSidebar, MobileSidebar, HamburgerButton, UserMenu } from '@platform/ui-kit/shell';
+import { canOpenLookupAdmin } from '@platform/rbac';
+import { productOrigins, adminWebOrigin } from '@platform/ui-kit';
+import { AppNavbar, AppSidebar, MobileSidebar } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { fetchTenants, fetchOrgs, getSelectedTenantId, getSelectedOrgId } from '@/src/lib/tenant-scope';
 import { ADMIN_NAV } from '@/src/config/navigation';
@@ -15,32 +15,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const result = await getServerSession();
   if (!result) redirect('/login');
 
-  const { session } = result;
+  const { session, licensedProducts } = result;
   // Authenticated but not granted: render a clean denial in place instead of
   // redirecting to /login. The old redirect looped forever — the login page saw
   // a valid session and bounced straight back here (see login/page.tsx).
   //
   // Tier C3: the gate is the admin.lookups.manage capability AND the super_admin
-  // rank. BOTH, deliberately — this is not belt-and-braces.
+  // rank. BOTH, deliberately — see canOpenLookupAdmin() for why, and why
+  // relaxing either one alone only moves where the 403 lands.
   //
-  // The rank floor is what admin-service actually enforces: every route behind
-  // this console re-checks `rank >= RANKS.SUPER_ADMIN` on its own (see
-  // capabilities.controller.ts), independently of any capability. So the
-  // capability alone was never sufficient to make the console WORK — it was only
-  // sufficient to make it OPEN.
-  //
-  // That gap was reachable by accident. The Capability Matrix screen renders the
-  // whole catalog for whichever role is selected, `admin` subtree included, so
-  // ticking `admin` + `admin.lookups.manage` onto (say) a sales role let its
-  // users through this door and into a console where every data call 403s on
-  // rank — the render-then-403 shape the capability tree exists to remove, this
-  // time produced by the admin UI itself. Matching the server's floor here means
-  // a mis-tick grants nothing rather than a broken console.
-  //
-  // To genuinely widen this console to a lower rank, relax admin-service's rank
-  // check to the capability first, then relax this one. Changing either alone
-  // just moves where the 403 lands.
-  if (!can(session, CAPABILITY.SUPERADMIN_LOOKUPS_MANAGE) || session.rank < ANCHOR_RANK.SUPER_ADMIN) {
+  // Inlined here until the SA pill needed the same answer. It now lives in
+  // @platform/rbac so this guard and every pill linking to this console ask one
+  // question: a pill that could appear for someone this page then refuses is the
+  // render-then-403 shape the capability tree exists to remove.
+  if (!canOpenLookupAdmin(session)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] px-6">
         <div className="w-full max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8 text-center shadow-sm">
@@ -76,15 +64,28 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-[#F8FAFC] lg:h-full lg:min-h-0 lg:overflow-hidden">
-      <header className="flex shrink-0 items-center gap-3 border-b border-[#E2E8F0] bg-white px-4 py-3 sm:px-6">
-        <HamburgerButton />
-        <span className="text-base font-bold tracking-tight text-[#0F172A]">Admin</span>
-        <div className="ml-auto flex items-center gap-3">
-          <TenantScopeSwitcher tenants={tenants} selectedTenantId={selectedTenantId} />
-          <OrgScopeSwitcher orgs={orgs} selectedTenantId={selectedTenantId} selectedOrgId={selectedOrgId} />
-          <UserMenu user={session} loginUrl={buildLoginUrl()} changePasswordUrl={buildChangePasswordUrl()} />
-        </div>
-      </header>
+      {/* The shared navbar, not a hand-rolled one — the responsive rules
+          (product pills inline on sm+, full-width row on mobile) live there and
+          nowhere else. activeExtra="sa" gives the SA pill the current-page
+          highlight the products get on their own headers; Admin rides alongside
+          it only when that console would actually admit this user, which
+          AppNavbar asks canOpenAdminConsole() for. The title is still the only
+          thing on screen that says which of the two consoles you are in. */}
+      <AppNavbar
+        user={session}
+        licensedProducts={licensedProducts}
+        productOrigins={productOrigins()}
+        activeExtra="sa"
+        homeHref="/dashboard"
+        title="Super Admin"
+        adminWebUrl={adminWebOrigin()}
+        scopeSlot={
+          <>
+            <TenantScopeSwitcher tenants={tenants} selectedTenantId={selectedTenantId} />
+            <OrgScopeSwitcher orgs={orgs} selectedTenantId={selectedTenantId} selectedOrgId={selectedOrgId} />
+          </>
+        }
+      />
       <MobileSidebar actor={session} items={ADMIN_NAV} />
       <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">
         <AppSidebar actor={session} items={ADMIN_NAV} />

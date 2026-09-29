@@ -17,6 +17,12 @@ export interface UserContext {
 export interface ProxyOptions {
   forwardCookies?: boolean;
   extraHeaders?: Record<string, string>;
+  /**
+   * Per-route override of config.proxyTimeoutMs, for the few admin routes whose
+   * legitimate work outlasts the default (see the /meta/campaigns block in
+   * server.ts). Use sparingly: the default is the platform's latency budget.
+   */
+  timeoutMs?: number;
 }
 
 // Injects the acting user's identity headers (verified by the gateway from the
@@ -74,7 +80,13 @@ export async function proxyTo(
   }
 
   const method = request.method.toUpperCase();
-  const hasBody = ['POST', 'PUT', 'PATCH'].includes(method);
+  // DELETE is included because DELETE /notifications/push/subscribe identifies
+  // the registration to remove by its endpoint in the body (the endpoint is a
+  // ~500-char URL; putting it in the query string is the worse option). This is
+  // safe for every other DELETE route: Fastify only populates `request.body`
+  // when the client actually sent a parseable one, so a body-less DELETE still
+  // forwards nothing and sets no Content-Type — see the note below.
+  const hasBody = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
 
   let body: string | undefined;
   if (hasBody && request.body !== undefined) {
@@ -96,7 +108,7 @@ export async function proxyTo(
       method,
       headers: forwardHeaders,
       ...(body !== undefined ? { body } : {}),
-      timeoutMs: config.proxyTimeoutMs,
+      timeoutMs: options?.timeoutMs ?? config.proxyTimeoutMs,
       // The registered route pattern, not the resolved URL — keeps record ids
       // out of an error string that is logged and may reach a client.
       target: request.routeOptions?.url ?? path,

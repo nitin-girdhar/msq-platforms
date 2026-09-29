@@ -15,6 +15,7 @@ import { revokeAllUserSessions } from '../../../lib/jwt.js';
 import { clearLockout } from '../auth/auth.repository.js';
 import { config } from '../../../config/index.js';
 import { sendUserEmail } from '../../../lib/communication-service-client.js';
+import { syncEmployeeProfileViaHrService } from '../../../lib/hr-service-client.js';
 import { buildAccountCreatedEmail, buildPasswordResetEmail, buildBranchChangedEmail } from './user-emails.js';
 import * as repo from './users.repository.js';
 import type { UpdateUserFields } from './users.repository.js';
@@ -113,18 +114,51 @@ function rankForRole(roleName: string): number {
  * Fails as a whole. A partially-applied assignment list would leave a user with
  * access they were never meant to have in one branch and none in another.
  */
+/**
+ * The DEPARTMENT RULE (1.50.2): a lead-assignment weight belongs to the user's
+ * department. A role with no department cannot be weighted, and a weight is only
+ * valid for a campaign type in the role's own department — the same rule
+ * lms.fn_user_sees_campaign_type applies to visibility, so nobody is ever
+ * weighted for leads they would not be allowed to see. The DB trigger
+ * (lms.fn_assert_weight_type_tenant) re-asserts it; this turns it into a 400
+ * that names the role instead of a raw check_violation.
+ */
+function assertWeightDepartment(
+  role: { label: string; department_id: string | null },
+  type: { label: string; department_id: string | null },
+): void {
+  if (!role.department_id) {
+    throw new BadRequestError(`Role "${role.label}" has no department — assign one before setting lead weights`);
+  }
+  if (type.department_id !== role.department_id) {
+    throw new BadRequestError(
+      `"${type.label}" leads belong to a different department than the role "${role.label}" — `
+      + 'weight this user only in their own department\'s campaign types',
+    );
+  }
+}
+
 async function resolveAssignments(
   ctx: RoleTxContext,
   actorRank: number,
   assignments: OrgAssignmentInput[],
+  // The target user's EXISTING weight rows per branch (edit only). Pre-1.50.2
+  // rows that break the department rule are kept by decision, so re-saving them
+  // unchanged must not be refused; only NEW (org, type) pairs are checked.
+  existingWeightTypesByOrg?: Map<string, Set<string>>,
 ): Promise<repo.ResolvedAssignment[]> {
   const orgIds = assignments.map((a) => a.org_id);
   const roleIds = [...new Set(assignments.map((a) => a.role_id))];
+  // Never trust a client-supplied campaign_type_id as tenant-scoped — same
+  // posture as org_id/role_id below. Re-derived from the DB against the
+  // ACTOR's own tenant, not asserted by the request.
+  const typeIds = [...new Set(assignments.flatMap((a) => (a.weights ?? []).map((w) => w.campaign_type_id)))];
   const tenantId = await resolveTenantId(ctx);
 
-  const [orgs, roles] = await Promise.all([
+  const [orgs, roles, campaignTypes] = await Promise.all([
     repo.getOrgsInTenant(orgIds, tenantId),
     repo.getRolesByIdsForTenant(roleIds, tenantId),
+    repo.getCampaignTypesInTenant(typeIds, tenantId),
   ]);
 
   const knownOrgs = new Set(orgs.map((o) => o.id));
@@ -137,6 +171,22 @@ async function resolveAssignments(
   const missingRoles = roleIds.filter((id) => !roleById.has(id));
   if (missingRoles.length > 0) {
     throw new BadRequestError(`Role not found in this tenant: ${missingRoles.join(', ')}`);
+  }
+
+  const knownTypes = new Set(campaignTypes.map((t) => t.id));
+  const missingTypes = typeIds.filter((id) => !knownTypes.has(id));
+  if (missingTypes.length > 0) {
+    throw new BadRequestError(`Campaign type not found in this tenant: ${missingTypes.join(', ')}`);
+  }
+
+  const typeById = new Map(campaignTypes.map((t) => [t.id, t]));
+  for (const a of assignments) {
+    const role = roleById.get(a.role_id)!;
+    const existing = existingWeightTypesByOrg?.get(a.org_id);
+    for (const w of a.weights ?? []) {
+      if (existing?.has(w.campaign_type_id)) continue;
+      assertWeightDepartment(role, typeById.get(w.campaign_type_id)!);
+    }
   }
 
   // Which branches may this actor place someone into?
@@ -176,7 +226,7 @@ async function resolveAssignments(
   return assignments.map((a) => ({
     org_id:  a.org_id,
     role_id: a.role_id,
-    ...(a.lead_assignment_weight !== undefined ? { lead_assignment_weight: a.lead_assignment_weight } : {}),
+    ...(a.weights !== undefined ? { weights: a.weights } : {}),
   }));
 }
 
@@ -191,6 +241,100 @@ async function resolveTenantId(ctx: RoleTxContext): Promise<string> {
   const tenantId = await repo.getTenantIdForOrg(ctx.org_id);
   if (!tenantId) throw new BadRequestError('Could not resolve a tenant for this session');
   return tenantId;
+}
+
+// The tenant (and optionally branch) a request operates on.
+//
+// Only a super_admin may name a tenant other than its session's: lookup-admin's
+// navbar Tenant / Org selection reaches here as `tenant_id` / `org_id`, which is
+// how that console administers a tenant without re-minting its own session. For
+// everyone else `tenant_id` is ignored — the session tenant is the only one they
+// can act in, and RLS says so underneath regardless.
+//
+// An `org_id` must sit inside the resolved tenant, for every actor. super_admin
+// runs on the unrestricted service connection (withRoleTx), so without this an
+// org filter reached any tenant's branch with no RLS to stop it.
+export interface TargetScope {
+  tenantId: string;
+  orgId?: string;
+}
+
+export async function resolveTargetScope(
+  ctx: RoleTxContext,
+  requested: { tenant_id?: string | undefined; org_id?: string | undefined },
+): Promise<TargetScope> {
+  let tenantId: string;
+  if (ctx.role === 'super_admin' && requested.tenant_id) {
+    if (!(await repo.tenantExists(requested.tenant_id))) throw new NotFoundError('Tenant not found');
+    tenantId = requested.tenant_id;
+  } else {
+    tenantId = await resolveTenantId(ctx);
+  }
+  if (requested.org_id) {
+    const orgTenantId = await repo.getTenantIdForOrg(requested.org_id);
+    if (orgTenantId !== tenantId) {
+      throw new BadRequestError('That organization does not belong to this tenant.');
+    }
+  }
+  return { tenantId, ...(requested.org_id ? { orgId: requested.org_id } : {}) };
+}
+
+// Fence for every route that acts on ONE user by id. The target must belong to
+// the tenant the request operates on — a 404, not a 403, so a probe cannot tell
+// "exists elsewhere" from "does not exist". Load-bearing for super_admin (no RLS
+// on its connection) and for the org-mapping routes (service connection for
+// everyone); a harmless re-check of RLS for the rest.
+async function assertTargetInScope(
+  ctx: RoleTxContext,
+  targetUserId: string,
+  requestedTenantId?: string,
+): Promise<string> {
+  const { tenantId } = await resolveTargetScope(ctx, { tenant_id: requestedTenantId });
+  if (!(await repo.userBelongsToTenant(targetUserId, tenantId))) throw new NotFoundError('User not found');
+  return tenantId;
+}
+
+// The request context re-pointed at the resolved scope, so the existing catalog,
+// weights, assignable, create and update logic — all of which read the tenant
+// through resolveTenantId(ctx) / ctx.tenant_id and the branch through
+// ctx.org_id — runs against the tenant (and branch) lookup-admin selected.
+//
+// ONLY super_admin's context is rewritten. For every other actor ctx.org_id is
+// the app.current_org_id GUC their RLS policies key on: re-pointing it at a
+// requested branch would hand them that branch's rows. Their context is returned
+// exactly as the session built it (resolveTargetScope has already refused a
+// foreign org_id). super_admin runs on the service connection, where the GUCs
+// carry no RLS weight and the explicit tenant checks are the fence.
+//
+// `crossTenant` = a super_admin working a tenant other than its session's. Its
+// own ctx.org_id then names a branch OUTSIDE the tenant, so a route that falls
+// back to "the caller's branch" must be given one instead (`requireOrg`).
+export interface ScopedContext {
+  ctx: RoleTxContext;
+  tenantId: string;
+  orgId?: string;
+  crossTenant: boolean;
+}
+
+export async function scopeContext(
+  ctx: RoleTxContext,
+  requested: { tenant_id?: string | undefined; org_id?: string | undefined },
+  opts: { requireOrg?: boolean } = {},
+): Promise<ScopedContext> {
+  const scope = await resolveTargetScope(ctx, requested);
+  if (ctx.role !== 'super_admin') {
+    return { ctx, tenantId: scope.tenantId, ...(scope.orgId ? { orgId: scope.orgId } : {}), crossTenant: false };
+  }
+  const crossTenant = scope.tenantId !== (await resolveTenantId(ctx));
+  if (crossTenant && opts.requireOrg && !scope.orgId) {
+    throw new BadRequestError('Pick a branch (org_id) in this tenant for this action.');
+  }
+  return {
+    ctx: { ...ctx, tenant_id: scope.tenantId, org_id: scope.orgId ?? ctx.org_id },
+    tenantId: scope.tenantId,
+    ...(scope.orgId ? { orgId: scope.orgId } : {}),
+    crossTenant,
+  };
 }
 
 export async function getRoleCatalog(ctx: RoleTxContext, actorRank: number) {
@@ -279,12 +423,19 @@ export async function listUsers(
   orgId?: string,
   requestedScope?: UserListScope,
   roleName: string | null = null,
+  requestedTenantId?: string,
 ) {
   // Only actors whose scope actually crosses orgs (tenant admin+) may look up another
   // org's users — same threshold as the Leads History org filter. Anyone else's org_id
   // param is ignored and they get their own org, same as before this param existed.
   const canQueryOtherOrg = canSeeOrgFilter(ctx.role);
   const effectiveOrgId = orgId && canQueryOtherOrg ? orgId : undefined;
+
+  // The tenant the roster is read from. The repository's tenant clauses read
+  // ctx.tenant_id, so the scoped context is what carries a super_admin's
+  // lookup-admin selection down — and the org filter is proven to sit inside it.
+  const { tenantId } = await resolveTargetScope(ctx, { tenant_id: requestedTenantId, org_id: effectiveOrgId });
+  const scopedCtx: RoleTxContext = { ...ctx, tenant_id: tenantId };
 
   // The requested scope is a REQUEST, never an authority — a branch-level actor
   // asking for 'tenant' is silently downgraded rather than refused, matching how
@@ -296,20 +447,40 @@ export async function listUsers(
   // same posture as `org_id` above, which is ignored for an actor who may not
   // use it. Narrowing is always allowed: asking for your own team is never a
   // widening of reach.
-  const scope: UserListScope =
+  let scope: UserListScope =
     requestedScope && RANKED.indexOf(requestedScope) <= RANKED.indexOf(widest)
       ? requestedScope
       : widest;
+  // 'org' with no branch named means "my branch" — ctx.org_id. For a super_admin
+  // working another tenant that is its OWN home branch, outside the tenant being
+  // viewed, so it widens to the tenant instead of reading the wrong roster.
+  if (scope === 'org' && !effectiveOrgId && requestedTenantId && tenantId !== (await resolveTenantId(ctx))) {
+    scope = 'tenant';
+  }
 
   // An explicit org_id is a branch filter, so it pins the listing to that branch
   // whatever the scope says — asking for one branch and getting the whole tenant
   // back would be the more surprising outcome.
   const tenantWide = scope === 'tenant' && !effectiveOrgId;
 
-  return repo.listUsers(ctx, actorRank, page, pageSize, effectiveOrgId, tenantWide, scope);
+  return repo.listUsers(scopedCtx, actorRank, page, pageSize, effectiveOrgId, tenantWide, scope);
 }
 
-export async function getUserById(ctx: RoleTxContext, targetUserId: string) {
+export async function getUserById(
+  ctx: RoleTxContext,
+  targetUserId: string,
+  requestedTenantId?: string,
+  orgId?: string,
+) {
+  // super_admin holds no membership in the target's branch, so the branch-joined
+  // read below never finds anyone outside its own session org. It reads by
+  // tenant instead — pinned to the resolved tenant, never wider.
+  if (ctx.role === 'super_admin') {
+    const { tenantId } = await resolveTargetScope(ctx, { tenant_id: requestedTenantId, org_id: orgId });
+    const user = await repo.getUserByIdInTenant(ctx, targetUserId, tenantId, orgId);
+    if (!user) throw new NotFoundError('User not found');
+    return user;
+  }
   const user = await repo.getUserById(ctx, targetUserId);
   if (!user) throw new NotFoundError('User not found');
   return user;
@@ -438,7 +609,7 @@ export async function getAssignableUsers(
   );
 }
 
-export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
+export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string, campaignTypeId?: string) {
   const tenantId = await resolveTenantId(ctx);
   // Reading another branch's weights is the same visibility as the cross-org
   // filter on the roster, so it takes the same guard — and the org must be in
@@ -450,15 +621,54 @@ export async function getAssignmentWeights(ctx: RoleTxContext, orgId?: string) {
     const [org] = await repo.getOrgsInTenant([orgId], tenantId);
     if (!org) throw new BadRequestError('Branch not found in this tenant');
   }
-  return repo.getAssignmentWeights(ctx, orgId, tenantId);
+  // A stale/foreign campaign_type_id would otherwise read through the view as a
+  // silent empty result — validate it up front so the caller gets a clean 400
+  // instead. Also closes the same cross-tenant-scope gap org_id/role_id are
+  // already checked for.
+  if (campaignTypeId !== undefined) {
+    const [type] = await repo.getCampaignTypesInTenant([campaignTypeId], tenantId);
+    if (!type) throw new BadRequestError('Campaign type not found in this tenant');
+  }
+  return repo.getAssignmentWeights(ctx, orgId, tenantId, campaignTypeId);
 }
 
 export async function updateAssignmentWeights(
   ctx: RoleTxContext,
-  weights: Array<{ user_id: string; weight: number }>,
+  weights: Array<{ user_id: string; campaign_type_id: string; weight: number }>,
 ) {
+  // Never trust a client-supplied campaign_type_id as tenant-scoped — derive
+  // the tenant server-side and re-check every id against it, same posture as
+  // resolveAssignments.
+  const tenantId = await resolveTenantId(ctx);
+  const typeIds = [...new Set(weights.map((w) => w.campaign_type_id))];
+  const campaignTypes = await repo.getCampaignTypesInTenant(typeIds, tenantId);
+  const knownTypes = new Set(campaignTypes.map((t) => t.id));
+  const missingTypes = typeIds.filter((id) => !knownTypes.has(id));
+  if (missingTypes.length > 0) {
+    throw new BadRequestError(`Campaign type not found in this tenant: ${missingTypes.join(', ')}`);
+  }
+
+  // Department rule, per user's role in THIS branch, exempting rows they already
+  // hold. A user with no membership here is left to the repository's
+  // eligibility check, which already names them.
+  const typeById = new Map(campaignTypes.map((t) => [t.id, t]));
+  const memberships = await repo.getMembershipRolesInOrg(ctx.org_id, [...new Set(weights.map((w) => w.user_id))]);
+  for (const w of weights) {
+    const m = memberships.get(w.user_id);
+    if (!m || m.weight_type_ids.has(w.campaign_type_id)) continue;
+    assertWeightDepartment({ label: m.role_label, department_id: m.department_id }, typeById.get(w.campaign_type_id)!);
+  }
+
   await repo.updateAssignmentWeights(ctx, weights);
   await logActivity({ action_type: 'assignment_weights_updated', performed_by: ctx.user_id, org_id: ctx.org_id });
+}
+
+// The tenant's full campaign-type catalog, for OrgAssignmentsField's read-through
+// (gated on admin.team.manage rather than leads-service's LMS_CAMPAIGN_TYPES_VIEW —
+// see users.controller.ts's getCampaignTypeCatalog).
+export async function getCampaignTypeCatalog(ctx: RoleTxContext) {
+  const tenantId = await resolveTenantId(ctx);
+  return repo.getAllCampaignTypesForTenant(tenantId);
 }
 
 export async function getTeamMembers(ctx: RoleTxContext) {
@@ -469,7 +679,60 @@ export async function getOrgChart(ctx: RoleTxContext) {
   return repo.getOrgChart(ctx);
 }
 
-export async function createUser(ctx: RoleTxContext, actorRank: number, data: CreateUserInput, notify = false) {
+// Files the member's HR profile (hr.employee_profiles) under their home branch
+// with their current active state — via hr-service, which owns that table. Run
+// after identity's own writes, on every create and update: the call is an
+// idempotent upsert, so it also heals members created before this existed.
+// Returns false (never throws) when it could not be done; the identity change
+// stands either way and the caller surfaces the flag.
+async function syncHrProfile(
+  ctx: RoleTxContext,
+  userId: string,
+  homeOrgId: string,
+  isActive: boolean,
+  dateOfJoining?: string,
+): Promise<boolean> {
+  // The tenant comes from the branch itself, not the actor: a super_admin's
+  // session tenant is not necessarily the one they are managing.
+  let tenantId: string | null;
+  try {
+    tenantId = await repo.getTenantIdForOrg(homeOrgId);
+  } catch (err) {
+    console.error('[identity-service] HR profile sync skipped, tenant lookup failed:', (err as Error).message);
+    return false;
+  }
+  if (!tenantId) return false;
+  return syncEmployeeProfileViaHrService({
+    userId,
+    tenantId,
+    homeOrgId,
+    isActive,
+    dateOfJoining,
+    actorId: ctx.user_id,
+  });
+}
+
+export async function createUser(
+  ctx: RoleTxContext,
+  actorRank: number,
+  data: CreateUserInput,
+  notify = false,
+  requestedTenantId?: string,
+) {
+  // A super_admin creating inside the tenant lookup-admin has selected. The
+  // branch context is the new member's home branch, so the audit row, the
+  // welcome email and the manager check all name a branch of THAT tenant.
+  const scoped = await scopeContext(ctx, {
+    tenant_id: requestedTenantId,
+    org_id: data.org_assignments?.length ? data.home_org_id : undefined,
+  });
+  // The legacy role_name-only path places the member in ctx.org_id — for a
+  // super_admin working another tenant, its own home branch in a different
+  // tenant. Refused rather than guessed: the branch must be named.
+  if (scoped.crossTenant && !data.org_assignments?.length) {
+    throw new BadRequestError('Choose the branch and role (org_assignments) for a user in this tenant.');
+  }
+  ctx = scoped.ctx;
   // Multi-branch path: every branch/role pair is validated against the tenant
   // and the actor's ceiling before anything is written.
   const resolved = data.org_assignments
@@ -556,18 +819,28 @@ export async function createUser(ctx: RoleTxContext, actorRank: number, data: Cr
       });
     }
 
+    const hrProfileSynced = await syncHrProfile(ctx, result.id, homeOrgId, true, data.date_of_joining);
+
     return {
       id: result.id,
       email: data.email,
       temporary_password: temporaryPassword,
       manager_granted_in_home_org: managerGrantedInHome,
+      hr_profile_synced: hrProfileSynced,
     };
   } catch (err) {
     throw asDuplicateUserConflict(err);
   }
 }
 
-export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUserId: string, data: UpdateUserInput, notify = false) {
+export async function updateUser(
+  ctx: RoleTxContext, actorRank: number, targetUserId: string, data: UpdateUserInput, notify = false,
+  requestedTenantId?: string,
+): Promise<{ hr_profile_synced: boolean }> {
+  await assertTargetInScope(ctx, targetUserId, requestedTenantId);
+  // Branch resolution, branch moves, lead-reassignment checks and the email's
+  // branch names all read the tenant off ctx — point it at the target's tenant.
+  ctx = (await scopeContext(ctx, { tenant_id: requestedTenantId })).ctx;
   const beforeUser = await repo.getUserByIdAsService(targetUserId);
   if (!beforeUser) throw new NotFoundError('User not found');
 
@@ -655,6 +928,8 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
   // org this user actually sits in, not the actor's.
   const targetOrgId = (beforeUser as Record<string, unknown> | null)?.['org_id'] as string ?? ctx.org_id;
   const targetCtx: RoleTxContext = { ...ctx, org_id: targetOrgId };
+  // What the HR profile must mirror once this update is done.
+  const isActiveAfter = data.is_active ?? Boolean((beforeUser as Record<string, unknown>)['is_active']);
 
   if (data.role_name !== undefined) {
     const roleRow = await repo.resolveRoleByName(data.role_name, targetOrgId);
@@ -736,7 +1011,9 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
   // Supersedes the legacy single-org move below: when the caller sends the full
   // branch list, home comes from home_org_id and `org_id` is ignored entirely.
   if (data.org_assignments) {
-    const resolved = await resolveAssignments(ctx, actorRank, data.org_assignments);
+    const resolved = await resolveAssignments(
+      ctx, actorRank, data.org_assignments, await repo.getWeightTypesByOrgForUser(targetUserId),
+    );
     const newHomeOrgId = data.home_org_id!;
     const homeAssignment = resolved.find((a) => a.org_id === newHomeOrgId)!;
     const homeMoved = newHomeOrgId !== targetOrgId;
@@ -805,7 +1082,7 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
       await logActivity({ action_type: 'user_deactivated', performed_by: ctx.user_id, subject_user_id: targetUserId, org_id: newHomeOrgId });
       await revokeAllUserSessions(targetUserId, { revokedBy: ctx.user_id, reason: 'user_deactivated' });
     }
-    return;
+    return { hr_profile_synced: await syncHrProfile(ctx, targetUserId, newHomeOrgId, isActiveAfter) };
   }
 
   const isMovingBranch = data.org_id !== undefined && data.org_id !== targetOrgId;
@@ -879,9 +1156,19 @@ export async function updateUser(ctx: RoleTxContext, actorRank: number, targetUs
     const toName = branchMove?.newOrgName ?? null;
     notifyBranchChange(toName ? [toName] : [], fromNames, toName);
   }
+
+  return {
+    hr_profile_synced: await syncHrProfile(ctx, targetUserId, isMovingBranch ? data.org_id! : targetOrgId, isActiveAfter),
+  };
 }
 
-export async function deleteUser(ctx: RoleTxContext, actorRank: number, targetUserId: string) {
+export async function deleteUser(
+  ctx: RoleTxContext,
+  actorRank: number,
+  targetUserId: string,
+  requestedTenantId?: string,
+) {
+  await assertTargetInScope(ctx, targetUserId, requestedTenantId);
   await assertCanManageTarget(actorRank, targetUserId);
   await repo.softDeleteUser(ctx, targetUserId);
   await revokeAllUserSessions(targetUserId, { revokedBy: ctx.user_id, reason: 'user_deleted' });
@@ -894,7 +1181,9 @@ export async function resetPassword(
   targetUserId: string,
   data: ResetPasswordInput,
   notify = false,
+  requestedTenantId?: string,
 ) {
+  await assertTargetInScope(ctx, targetUserId, requestedTenantId);
   const { targetOrgId } = await assertCanManageTarget(actorRank, targetUserId);
   const targetCtx: RoleTxContext = { ...ctx, org_id: targetOrgId };
 
@@ -968,8 +1257,13 @@ export async function resetPassword(
   return { temporary_password: temporaryPassword };
 }
 
-export async function listOrgMappings(targetUserId: string) {
-  return toApiRows(await repo.listOrgMappings(targetUserId));
+// Read on the service connection for every caller, so the tenant fence is the
+// only thing keeping one tenant's admin from reading another tenant's user's
+// branches by id. Mappings the target holds in OTHER tenants are dropped too.
+export async function listOrgMappings(ctx: RoleTxContext, targetUserId: string, requestedTenantId?: string) {
+  const tenantId = await assertTargetInScope(ctx, targetUserId, requestedTenantId);
+  const rows = await repo.listOrgMappings(targetUserId);
+  return toApiRows(rows.filter((r) => r.tenantId === tenantId));
 }
 
 export async function addOrgMapping(
@@ -977,7 +1271,9 @@ export async function addOrgMapping(
   actorRank: number,
   targetUserId: string,
   data: AddOrgMappingInput,
+  requestedTenantId?: string,
 ) {
+  await assertTargetInScope(ctx, targetUserId, requestedTenantId);
   // Blocks granting/revoking access for a user who currently outranks the actor.
   await assertCanManageTarget(actorRank, targetUserId);
 
@@ -985,6 +1281,45 @@ export async function addOrgMapping(
   if (!orgOk) throw new NotFoundError('Organization not found');
   const roleOk = await repo.roleExists(data.role_id);
   if (!roleOk) throw new NotFoundError('Role not found');
+
+  // Everything this grant writes is judged against the TARGET BRANCH's tenant,
+  // not the actor's. They differ for exactly one caller — a platform super_admin
+  // in lookup-admin's OrgAccessPanel, which spans every tenant's branches — and
+  // validating against the actor's tenant (as this did until 1.50.1) let that
+  // caller write a weight row pointing at THEIR OWN tenant's campaign type into
+  // another tenant's branch: a pool that routes nothing, carrying a foreign id.
+  //
+  // Everyone else must also be acting inside that tenant. orgExists alone
+  // accepted any branch id on the platform, so a tenant admin could otherwise
+  // grant a user into a branch of a tenant they have no authority over.
+  // platform_role, not a role name: super_admin is the one tenant-less platform
+  // role, the same distinction checkMoveUserBranchAccess draws.
+  const orgTenantId = await repo.getTenantIdForOrg(data.org_id);
+  if (!orgTenantId) throw new NotFoundError('Organization not found');
+  if (ctx.role !== 'super_admin') {
+    const actorTenantId = await resolveTenantId(ctx);
+    if (orgTenantId !== actorTenantId) {
+      throw new ForbiddenError('You cannot grant access to a branch in another tenant');
+    }
+  } else if (requestedTenantId && orgTenantId !== requestedTenantId) {
+    // A super_admin working one tenant in lookup-admin grants only inside it.
+    throw new BadRequestError('That organization does not belong to this tenant.');
+  }
+
+  // Roles are tenant-owned, so a role id from another tenant is the same class
+  // of mismatch as the campaign type below.
+  const [role] = await repo.getRolesByIdsForTenant([data.role_id], orgTenantId);
+  if (!role) throw new BadRequestError('Role not found in this branch\'s tenant');
+
+  // Never trust a client-supplied campaign_type_id as tenant-scoped. The DB
+  // re-asserts this (trg_lead_assignment_weights_tenant_match), so a missed
+  // check here is a refused write rather than a corrupt row.
+  const [campaignType] = await repo.getCampaignTypesInTenant([data.campaign_type_id], orgTenantId);
+  if (!campaignType) throw new BadRequestError('Campaign type not found in this branch\'s tenant');
+
+  // Department rule — exempting a row the user already holds (kept by decision).
+  const existingTypes = (await repo.getWeightTypesByOrgForUser(targetUserId)).get(data.org_id);
+  if (!existingTypes?.has(data.campaign_type_id)) assertWeightDepartment(role, campaignType);
 
   const row = await repo.addOrgMapping(ctx, targetUserId, data);
 
@@ -1004,7 +1339,12 @@ export async function removeOrgMapping(
   actorRank: number,
   targetUserId: string,
   orgId: string,
+  requestedTenantId?: string,
 ) {
+  // Both ends inside the tenant: the user, and the branch being revoked. The
+  // repository write runs on the service connection for every caller.
+  const { tenantId } = await resolveTargetScope(ctx, { tenant_id: requestedTenantId, org_id: orgId });
+  await assertTargetInScope(ctx, targetUserId, tenantId);
   await assertCanManageTarget(actorRank, targetUserId);
 
   const removed = await repo.removeOrgMapping(targetUserId, orgId);

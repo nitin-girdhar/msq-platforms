@@ -18,6 +18,7 @@ import { RANKS } from '@platform/authz';
 import {
   useIsMobile,
   DownloadButton,
+  FilterField,
   MultiSelect,
   type SelectOption,
   buildFilename,
@@ -28,6 +29,7 @@ import {
 import { canCreateUser } from '../../lib/permissions';
 import type { TeamRow } from '../../lib/types';
 import UserStatusBadge from './UserStatusBadge';
+import { GRID_DEFAULT_COL_DEF } from '@platform/ui-kit/grid';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -343,11 +345,9 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
     gridApi?.onFilterChanged();
   }, [gridApi, search, roleSelected, statusSelected, orgSelected, managerSelected]);
 
-  const defaultColDef: ColDef = useMemo(() => ({
-    resizable: true,
-    suppressMovable: false,
-    cellStyle: { fontSize: '13px', color: '#0F172A' },
-  }), []);
+  // Shared across every grid in the platform — case/accent-insensitive column
+  // filtering lives in @platform/ui-kit/grid, not in a per-file literal.
+  const defaultColDef: ColDef = GRID_DEFAULT_COL_DEF;
 
   if (users.length === 0) {
     return (
@@ -359,14 +359,21 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
 
   return (
     <div className="overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-sm">
-      <div className="flex flex-wrap items-center gap-2 border-b border-[#F1F5F9] p-3 sm:p-4">
-        <input
-          type="search"
-          placeholder="Search by name or email…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="min-w-[200px] flex-1 rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20"
-        />
+      {/* items-end, and the search box carries its own label: every MultiSelect
+          is a label over a 34px trigger, so a bare input in this row sat half a
+          label-height above the dropdowns whatever the alignment. */}
+      <div className="flex flex-wrap items-end gap-2 border-b border-[#F1F5F9] p-3 sm:p-4">
+        <div className="min-w-[200px] flex-1">
+          <FilterField label="Search">
+            <input
+              type="search"
+              placeholder="Search by name or email…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-[34px] w-full rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20"
+            />
+          </FilterField>
+        </div>
         <MultiSelect
           label="Role"
           placeholder="All roles"
@@ -399,12 +406,14 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
             />
           </>
         )}
-        <span className="ml-auto text-xs text-[#64748B]">
-          {filtered.length} of {users.length}
-        </span>
-        {/* Exports what the filters left, not the whole roster — the count beside
-            it is the promise the file has to keep. */}
-        <DownloadButton onExport={exportUsers} rowCount={filtered.length} />
+        <div className="ml-auto flex items-center gap-2 pb-1">
+          <span className="text-xs text-[#64748B]">
+            {filtered.length} of {users.length}
+          </span>
+          {/* Exports what the filters left, not the whole roster — the count beside
+              it is the promise the file has to keep. */}
+          <DownloadButton onExport={exportUsers} rowCount={filtered.length} />
+        </div>
       </div>
 
       {isMobile ? (

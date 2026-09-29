@@ -16,6 +16,8 @@ headers {
 
 docs {
   Requires a key with `branches:read`. Returns tenant branches (id, name,
-  brand_name, city, timezone, is_active). A tenant-wide key may narrow with
-  ?branch_id=<uuid>; a branch-bound key is fixed to its branch.
+  brand_name, city, timezone, is_active, country/state/city id + name).
+  Optional csv filters: ?branch_id=, ?country_id=, ?state_id=, ?city_id=
+  (uuids). A branch-bound key is fixed to its branch; a multi-branch key only
+  ever sees its own branches; branch_id outside them -> 400.
 }

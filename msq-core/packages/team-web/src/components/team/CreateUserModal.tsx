@@ -10,8 +10,10 @@ import {
   OrgAssignmentsField,
   ManagerSelect,
   useRoleCatalog,
+  useCampaignTypeCatalog,
   useUserAssignments,
   branchOptionsForActor,
+  useUserAdminScope,
 } from '@platform/ui-kit';
 import { users as usersApi } from '../../lib/api';
 import TemporaryPasswordPanel from './TemporaryPasswordPanel';
@@ -21,6 +23,13 @@ const PHONE_RE = /^(\+91[\s-]?)?[6-9]\d{9}$/;
 // The submit button lives in the Modal's pinned footer, outside the <form>;
 // the HTML `form` attribute is what still wires it to this form.
 const FORM_ID = 'admin-create-user-form';
+
+// The admin's calendar day, not UTC's: toISOString() would hand an IST admin
+// working before 05:30 yesterday's date.
+function todayLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 interface Props {
   open: boolean;
@@ -39,6 +48,8 @@ interface Props {
 interface CreateSuccess {
   email: string;
   temporaryPassword: string;
+  /** false: the member exists but hr-service could not create their HR profile. */
+  hrProfileSynced: boolean;
 }
 
 export default function CreateUserModal({ open, onClose, actorRank, actor, orgs, myOrgs, branchesFailed, canNotify }: Props) {
@@ -49,6 +60,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
   const [email, setEmail] = useState('');
   const [mobile, setMobile] = useState('');
   const [mobileError, setMobileError] = useState<string | null>(null);
+  const [dateOfJoining, setDateOfJoining] = useState(todayLocal);
   const [forcePasswordChange, setForcePasswordChange] = useState(true);
   const [sendEmailNotification, setSendEmailNotification] = useState(true);
   const [pending, setPending] = useState(false);
@@ -58,9 +70,21 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
   // Only fetch the catalog while the modal is actually open — the Team page
   // mounts this component up-front so the dialog can animate in.
   const { roles, departments, loading: rolesLoading, error: rolesError } = useRoleCatalog(open);
+  const { campaignTypes, error: campaignTypesError } = useCampaignTypeCatalog(open);
+
+  // Mounted by lookup-admin, a super_admin creates inside the tenant its navbar
+  // selected. Its own branch then sits in ANOTHER tenant, so the new user starts
+  // in the selected branch (or the tenant's first) rather than the actor's.
+  const adminScope = useUserAdminScope();
+  const scopedHome = adminScope.tenant_id
+    ? (orgs.find((o) => o.id === adminScope.org_id) ?? orgs[0] ?? null)
+    : null;
+  const seedBranch = scopedHome
+    ? { org_id: scopedHome.id, org_name: scopedHome.name }
+    : { org_id: actor.org_id, org_name: actor.org_name };
 
   const a = useUserAssignments({
-    fallbackOrgId: actor.org_id,
+    fallbackOrgId: seedBranch.org_id,
     roles,
     rolesLoaded: !rolesLoading,
   });
@@ -69,7 +93,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
   // into the branches they hold a mapping row for. This used to narrow to
   // `o.id === actor.org_id` behind a rank >= TENANT_ADMIN gate, which hid every
   // branch but the current one from an admin who worked in several.
-  const branchOptions = branchOptionsForActor(orgs, myOrgs, actor, actorRank >= RANKS.TENANT_ADMIN);
+  const branchOptions = branchOptionsForActor(orgs, myOrgs, seedBranch, actorRank >= RANKS.TENANT_ADMIN);
 
   // Open the picker whenever there is a real choice; the option list has
   // already answered the authority question.
@@ -82,6 +106,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
     setEmail('');
     setMobile('');
     setMobileError(null);
+    setDateOfJoining(todayLocal());
     setForcePasswordChange(true);
     setSendEmailNotification(true);
     setError(null);
@@ -111,6 +136,10 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
       setMobileError('Enter a valid 10-digit Indian mobile number.');
       return;
     }
+    if (!dateOfJoining) {
+      setError('Date of joining is required.');
+      return;
+    }
     if (!a.isComplete) {
       setError(
         a.assignments.length === 0
@@ -126,6 +155,8 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
         first_name: firstName.trim(),
         email: email.trim(),
         force_password_change: forcePasswordChange,
+        // Seeds the member's HR profile (Leave Administration → Employees).
+        date_of_joining: dateOfJoining,
         ...(canNotify ? { send_email_notification: sendEmailNotification } : {}),
         ...a.payload(),
       };
@@ -134,12 +165,16 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
       if (mobile) body.mobile = mobile;
       if (a.managerId) body.manager_id = a.managerId;
 
-      const data = await usersApi.create(body);
+      const data = await usersApi.create(body, adminScope);
       if (!data.temporary_password || !data.data?.email) {
         setError('Unexpected response from server.');
         return;
       }
-      setSuccess({ email: data.data.email, temporaryPassword: data.temporary_password });
+      setSuccess({
+        email: data.data.email,
+        temporaryPassword: data.temporary_password,
+        hrProfileSynced: data.data.hr_profile_synced !== false,
+      });
     } catch (err: unknown) {
       const body = (err as { body?: { details?: Array<{ path: string[]; message: string }> } }).body;
       const detail = body?.details?.map((d) => `${d.path.join('.')}: ${d.message}`).join('; ');
@@ -183,6 +218,12 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
             <span className="font-semibold">{success.email}</span> can now sign in.
           </p>
           <TemporaryPasswordPanel password={success.temporaryPassword} email={success.email} />
+          {!success.hrProfileSynced && (
+            <p role="alert" className="rounded-lg border border-[#FDE68A] bg-[#FFFBEB] px-2.5 py-1.5 text-[11.5px] leading-snug text-[#92400E]">
+              Their HR profile could not be created, so they won&apos;t appear in HRMS attendance or leave yet.
+              Open and save this member again to retry.
+            </p>
+          )}
         </div>
       ) : (
         <form id={FORM_ID} onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
@@ -196,7 +237,22 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
             <Field id="cu-first-name" label="First name *" value={firstName} onChange={setFirstName} disabled={pending} required autoComplete="given-name" />
             <Field id="cu-last-name" label="Last name" value={lastName} onChange={setLastName} disabled={pending} autoComplete="family-name" />
           </div>
-          <Field id="cu-middle-name" label="Middle name" value={middleName} onChange={setMiddleName} disabled={pending} autoComplete="additional-name" />
+          <div className="grid grid-cols-2 gap-3">
+            <Field id="cu-middle-name" label="Middle name" value={middleName} onChange={setMiddleName} disabled={pending} autoComplete="additional-name" />
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="cu-joining" className="text-xs font-semibold text-[#0F172A]">Date of joining *</label>
+              <input
+                id="cu-joining"
+                type="date"
+                value={dateOfJoining}
+                onChange={(e) => setDateOfJoining(e.target.value)}
+                disabled={pending}
+                required
+                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+              />
+              <p className="text-[11px] text-[#64748B]">Used for leave accrual. HR can change it later.</p>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <Field id="cu-email" label="Email *" type="email" value={email} onChange={setEmail} disabled={pending} required autoComplete="off" />
             <div className="flex flex-col gap-1.5">
@@ -246,6 +302,8 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
             onHomeChange={a.setHomeOrgId}
             roles={roles}
             departmentId={a.departmentId}
+            campaignTypes={campaignTypes}
+            campaignTypesUnavailable={Boolean(campaignTypesError)}
             canPickBranches={canPickBranches}
             disabled={pending}
           />

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SessionUser } from '@platform/types';
 import { RANKS } from '@platform/authz';
-import { auth, users } from '../api/resources';
+import { auth, push, users } from '../api/resources';
 import PhotoAvatar from '../components/PhotoUpload/PhotoAvatar';
 import PhotoUploadModal, { type PhotoUploadGate } from '../components/PhotoUpload/PhotoUploadModal';
 
@@ -47,6 +47,41 @@ async function fetchPhotoGate(): Promise<PhotoUploadGate | null> {
   }
 }
 
+/**
+ * Logout must not leave this user's push registration or cached app shell on the
+ * device — a shared phone would otherwise push one person's follow-ups to
+ * whoever logs in next, and serve them a stale cached shell. Every step is
+ * best-effort: awaited so it finishes before the redirect, but never allowed to
+ * throw and block sign-out.
+ */
+async function tearDownDeviceState(): Promise<void> {
+  try {
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window) {
+      const reg = await navigator.serviceWorker.ready;
+      const subscription = await reg.pushManager.getSubscription();
+      if (subscription) {
+        try {
+          await push.unsubscribe(subscription.endpoint);
+        } catch {
+          // Drop the local subscription regardless.
+        }
+        await subscription.unsubscribe();
+      }
+    }
+  } catch {
+    // Fall through to cache clearing + redirect.
+  }
+
+  try {
+    if (typeof window !== 'undefined' && 'caches' in window) {
+      const names = await caches.keys();
+      await Promise.all(names.map((name) => caches.delete(name)));
+    }
+  } catch {
+    // Fall through to redirect.
+  }
+}
+
 export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -72,8 +107,11 @@ export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
     try {
       await auth.logout();
     } catch {
-      // Server-side session cleanup may fail; still redirect to login.
+      // Server-side session cleanup may fail; still tear down and redirect.
     } finally {
+      // Push registration + every cache must go before we hand the device to
+      // the next user. tearDownDeviceState never throws.
+      await tearDownDeviceState();
       // Full navigation to the shared auth origin (cross-origin in the split),
       // clearing the .app.com cookie ends the session for every product.
       window.location.assign(loginUrl);

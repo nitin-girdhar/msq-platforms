@@ -477,7 +477,24 @@ CREATE TABLE IF NOT EXISTS iam.users (
   photo_uploaded_by     UUID,
   photo_consent_at      TIMESTAMPTZ,
   CONSTRAINT chk_user_not_own_manager    CHECK (id <> manager_id),
-  CONSTRAINT chk_users_active_deleted    CHECK (NOT (is_active AND is_deleted))
+  CONSTRAINT chk_users_active_deleted    CHECK (NOT (is_active AND is_deleted)),
+  -- Case is not part of the address: one person typing John@x.com and
+  -- john@x.com means one account. The UNIQUE on email above is case-SENSITIVE,
+  -- so without this the second spelling becomes a SECOND ACCOUNT instead of a
+  -- 409, and whoever was stored as John@x.com cannot sign in as john@x.com --
+  -- email is the primary login credential and the lookup is an equality test.
+  --
+  -- A CHECK rather than a UNIQUE INDEX on lower(email): the index would be
+  -- redundant once every stored value is already lowercase, and it would break
+  -- the ON CONFLICT (email) upserts in dummy_data/. This instead makes an
+  -- un-normalized writer -- an operator script, a psql session -- fail loudly at
+  -- the point of the mistake rather than silently forking an identity.
+  --
+  -- Every application write goes through normalizeEmail() in @platform/validation
+  -- (packages/platform-validation/src/email.ts), which the login lookup also
+  -- calls. Keep the two in sync. Same contract as mobile / normalizeMobile(),
+  -- documented above uix_users_mobile in 06_indexes.sql.
+  CONSTRAINT chk_users_email_lowercase   CHECK (email = lower(email))
 );
 
 -- ── iam.user_org_mapping ─────────────────────────────────────────
@@ -512,12 +529,123 @@ CREATE TABLE IF NOT EXISTS iam.user_org_mapping (
   CONSTRAINT uq_user_org_mapping_id UNIQUE (id)
 );
 
+-- Sits here, in the middle of the iam section, rather than with the other
+-- marketing.* tables below, for the same reason lms.lead_assignment_weights
+-- does: that table FOREIGN KEYs to this one, and a column-level REFERENCES is
+-- resolved at CREATE time, so this must already exist. It needs iam.departments
+-- (above) and entity.tenants, both of which do.
+-- ── CAMPAIGN_TYPES ────────────────────────────────────────────────
+-- What KIND of campaign this is -- sales, hiring, and whatever a tenant adds
+-- next -- and therefore which team its leads belong to. The routing key for
+-- everything downstream: the pool auto-assignment picks from, and the
+-- sales/HR visibility boundary lms.fn_user_sees_campaign_type enforces in RLS.
+--
+-- Tenant-scoped like marketing.campaign_statuses and lms.lead_sources above,
+-- but tenant_id is NOT NULL here: there are no platform TEMPLATE rows to clone.
+-- entity.seed_tenant_rbac() writes the two starter types directly, because they
+-- reference iam.departments, which that same function seeds a few lines earlier.
+-- (seed_tenant_lms_catalogs() clones templates and runs before departments
+-- exist, so it could not have resolved department_id.)
+--
+-- match_keywords is how a Meta campaign NAME becomes a type without anyone
+-- typing anything: marketing.fn_match_campaign_type() matches these
+-- case-insensitively on WORD BOUNDARIES against the campaign name. That match
+-- lives in SQL, not in a service, so the TypeScript intake path and the Python
+-- meta-sync scripts cannot drift apart on what "a hiring campaign" means.
+--
+-- match_priority orders the candidates when a name matches two types -- LOWER
+-- WINS -- with sort_order breaking a tie. A type with no keywords never matches
+-- anything by name; that is the shape of the seeded `sales` type, which is
+-- instead is_default and is what the backfill and the fallback path use.
+--
+-- department_id NULL = visible to everyone. A type with a department is visible
+-- only to users whose role sits in that department, plus anyone holding
+-- lms.leads.view.all_types.
+CREATE TABLE IF NOT EXISTS marketing.campaign_types (
+  id             UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id      UUID    NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  name           TEXT    NOT NULL,
+  label          TEXT    NOT NULL,
+  description    TEXT,
+  -- The team this type routes to. RESTRICT, not CASCADE: deleting a department
+  -- that still routes leads must fail loudly, not silently unroute them.
+  department_id  UUID    REFERENCES iam.departments(id) ON DELETE RESTRICT,
+  match_keywords TEXT[]  NOT NULL DEFAULT '{}',
+  is_default     BOOLEAN NOT NULL DEFAULT FALSE,
+  match_priority INT     NOT NULL DEFAULT 100,
+  sort_order     INT     NOT NULL DEFAULT 0,
+  is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted     BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at     TIMESTAMPTZ,
+  deleted_by     UUID,
+  created_by     UUID,
+  metadata       JSONB   NOT NULL DEFAULT '{}',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT uq_campaign_types_tenant_name UNIQUE (tenant_id, name),
+  CONSTRAINT chk_campaign_types_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+-- At most one default per tenant: uix_campaign_types_one_default in 06_indexes.sql.
+
+-- ── CAMPAIGN_TYPE_RULES (1.51.0) ──────────────────────────────────
+-- The ORDERED rule list that turns Meta names into a campaign type. Replaces
+-- campaign_types.match_keywords + match_priority as the matcher's input: a
+-- keyword list hung off each type could only say "this type wins over that
+-- one", never "this PHRASE wins over that one", so 'PT_Sale' could not be told
+-- to beat 'trainer' without reordering whole types.
+--
+-- FIRST MATCH WINS, in rule_order (lower first). A rule matches when `pattern`
+-- appears in the chosen Meta name on WORD BOUNDARIES, case-insensitive -- the
+-- same predicate fn_match_campaign_type always used. match_field says which
+-- name: the campaign's, the lead form's, the ad set's or the ad's. The campaign
+-- name is known once per campaign; the other three are per LEAD, which is why
+-- the live path evaluates the rules per lead (marketing.fn_match_campaign_type_rules).
+--
+-- A rule whose type is inactive or deleted is skipped by the matcher, not
+-- deleted: re-activating the type brings the rule back in its old position.
+--
+-- rule_order is UNIQUE per tenant among live rules (uix_campaign_type_rules_order
+-- in 06_indexes.sql); the reorder endpoint rewrites the whole list in one
+-- statement.
+CREATE TABLE IF NOT EXISTS marketing.campaign_type_rules (
+  id               UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id        UUID    NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  rule_order       INT     NOT NULL,
+  match_field      TEXT    NOT NULL
+                   CONSTRAINT chk_campaign_type_rules_match_field
+                   CHECK (match_field IN ('campaign_name','form_name','adset_name','ad_name')),
+  pattern          TEXT    NOT NULL CONSTRAINT chk_campaign_type_rules_pattern CHECK (btrim(pattern) <> ''),
+  campaign_type_id UUID    NOT NULL REFERENCES marketing.campaign_types(id) ON DELETE RESTRICT,
+  is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted       BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at       TIMESTAMPTZ,
+  deleted_by       UUID,
+  created_by       UUID,
+  metadata         JSONB   NOT NULL DEFAULT '{}',
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_campaign_type_rules_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
 -- ── lms.lead_assignment_weights ──────────────────────────────────
--- % share of new leads a user should auto-receive within one branch.
--- Sums to 100 (or all-zero = auto-assignment disabled) across a branch;
--- enforced at the application layer, not by a DB constraint. No row for a
--- membership means weight 0, which the picker already treats as "not in the
--- rotation" -- so absence and an explicit zero are the same thing.
+-- % share of new leads a user should auto-receive within one branch, FOR ONE
+-- CAMPAIGN TYPE. Sums to 100 (or all-zero = auto-assignment disabled) across a
+-- (branch x type) pool; enforced at the application layer, not by a DB
+-- constraint. The picker treats both "no row" and "weight 0" as out of rotation,
+-- but they are NOT the same thing to the admin UI: identity-service always
+-- writes a real row (including for 0), so a 0 row means "in this type's pool,
+-- currently at 0%" and no row means "not in this pool at all". Only
+-- reconcileOrgAssignments deletes a row.
+--
+-- The PK became (user_org_mapping_id, campaign_type_id) in 1.49.0. Membership
+-- is PER TYPE: the same person can sit in the sales rotation of their branch at
+-- 40% and in the hiring rotation at 0%, and a hiring lead must never be offered
+-- to the sales pool. Every pre-1.49.0 row was rebuilt under that tenant's
+-- `sales` type, so the behaviour of the picker was unchanged by the migration.
+--
+-- Note the shape of a per-(branch, type) query: this table has NO org_id. The
+-- branch is resolved through iam.fn_mapping_org(user_org_mapping_id), never a
+-- direct column -- see the 1.44.0 note in 09_schema_version.sql.
 --
 -- Was iam.user_org_mapping.lead_assignment_weight (through schema 1.43.0).
 -- Moved here because only LMS ever read it: resolveAutoAssignedUser in
@@ -535,12 +663,19 @@ CREATE TABLE IF NOT EXISTS iam.user_org_mapping (
 -- Both reach it: 07_grants.sql grants USAGE ON SCHEMA lms to lead_svc and
 -- lms_svc alike.
 CREATE TABLE IF NOT EXISTS lms.lead_assignment_weights (
-  user_org_mapping_id UUID PRIMARY KEY
+  user_org_mapping_id UUID NOT NULL
     REFERENCES iam.user_org_mapping(id) ON DELETE CASCADE,
+  -- CASCADE, unlike every other campaign_type_id FK in this file: a weight row
+  -- is membership OF a pool and means nothing once the pool is gone, whereas a
+  -- lead or a campaign carrying a type is a record that must not vanish with it.
+  campaign_type_id UUID NOT NULL
+    REFERENCES marketing.campaign_types(id) ON DELETE CASCADE,
   weight     SMALLINT    NOT NULL DEFAULT 0 CHECK (weight BETWEEN 0 AND 100),
   updated_by UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT pk_lead_assignment_weights
+    PRIMARY KEY (user_org_mapping_id, campaign_type_id)
 );
 
 -- ── iam.reporting_lines ───────────────────────────────────────────
@@ -618,6 +753,11 @@ CREATE TABLE IF NOT EXISTS marketing.ad_campaigns (
   -- edit screen (sourced from marketing_leads_vw -> marketing.ad_campaigns)
   -- is populated for Meta-sourced leads instead of always showing "-".
   meta_campaign_id BIGINT,
+  -- The per-branch projection of the type ext.meta_campaigns holds for this
+  -- Meta campaign. Only the resolved type lives here: the provisional /
+  -- confirm workflow columns stay on ext.meta_campaigns, so this table
+  -- remains a plain CRM record.
+  campaign_type_id UUID REFERENCES marketing.campaign_types(id) ON DELETE RESTRICT,
   CONSTRAINT chk_campaign_dates
     CHECK (ended_at IS NULL OR started_at IS NULL OR started_at < ended_at)
 );
@@ -666,9 +806,25 @@ CREATE TABLE IF NOT EXISTS lms.marketing_leads (
   scheduled_at     TIMESTAMPTZ,
   -- source tracking
   campaign_id      UUID    REFERENCES marketing.ad_campaigns(id) ON DELETE SET NULL,
+  -- DENORMALISED from the campaign on purpose, and kept honest by
+  -- lms.sync_lead_campaign_type() in 04_functions_triggers.sql. Two reasons it
+  -- is a column and not a join: a lead can carry a type with NO campaign at all
+  -- (a walk-in, or a Meta lead whose campaign id we never saw -- the fallback
+  -- there is ext.meta_page_form_org_map.default_campaign_type_id), and the RLS
+  -- predicate on this table reads it on every row, where a nullable join would
+  -- be both slower and harder to reason about.
+  campaign_type_id UUID    REFERENCES marketing.campaign_types(id) ON DELETE RESTRICT,
   source_id        UUID    REFERENCES lms.lead_sources(id),
   -- assignment
   assigned_user_id UUID    REFERENCES iam.users(id) ON DELETE SET NULL,
+  -- Why the auto-assigner left this lead WITHOUT an owner (1.51.0). NULL once
+  -- anyone owns it. Before this the reason was a log line only, so an admin
+  -- looking at an unassigned lead could not tell an empty pool from a
+  -- department mismatch from a missing LMS capability.
+  auto_assign_reason TEXT
+                   CONSTRAINT chk_marketing_leads_auto_assign_reason
+                   CHECK (auto_assign_reason IN ('no_campaign_type','no_weighted_users',
+                                                 'no_department_match','no_capable_users')),
   -- lead linking: dedup chain + transfer supersession
   is_active        BOOLEAN NOT NULL DEFAULT TRUE,
   superseded_by    UUID    REFERENCES lms.marketing_leads(id) ON DELETE SET NULL,
@@ -902,9 +1058,13 @@ CREATE TABLE IF NOT EXISTS lms.lead_assignment_log (
   assigned_by_id       UUID REFERENCES iam.users(id) ON DELETE SET NULL,
   assigned_to_id       UUID REFERENCES iam.users(id) ON DELETE SET NULL,
   previous_assignee_id UUID REFERENCES iam.users(id) ON DELETE SET NULL,
+  -- 'reclassified' (1.49.0) is an assignment that moved because the lead's
+  -- CAMPAIGN TYPE moved -- it left one (branch x type) pool for another, rather
+  -- than a person handing it to a colleague. Written by lms.log_lead_assignment().
   action               TEXT NOT NULL DEFAULT 'reassigned'
                        CONSTRAINT chk_assignment_action CHECK (
-                         action IN ('initial','reassigned','unassigned','self_assigned','bulk_assigned')
+                         action IN ('initial','reassigned','unassigned','self_assigned',
+                                    'bulk_assigned','reclassified')
                        ),
   note                 TEXT,
   assigned_at          TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
@@ -1059,6 +1219,51 @@ COMMENT ON COLUMN comms.message_templates.body_template IS
 COMMENT ON COLUMN comms.message_templates.body_fields IS
   'Ordered placeholder tokens. Token NAMES only — each product service owns its own whitelist and resolver.';
 
+-- ── NOTIFY.PUSH_SUBSCRIPTIONS ────────────────────────────────
+-- One row per installed PWA + browser + device that has granted the Notification
+-- permission. Platform-wide, not LMS-owned: notifications-service is the first
+-- consumer (follow-up due), hr-service (leave approved/rejected) and
+-- tasks-service (task assigned) are expected to follow, so it sits in its own
+-- shared-tier schema rather than under lms.
+--
+-- endpoint is the push service URL issued by the browser vendor (FCM/Mozilla/
+-- Apple) and is the NATURAL KEY, hence UNIQUE. The client re-registers on every
+-- launch — deleting the Home Screen icon destroys the subscription and a fresh
+-- install issues a new endpoint — so the subscribe path must upsert
+-- (ON CONFLICT (endpoint) DO UPDATE) rather than accumulate a row per launch.
+--
+-- p256dh/auth are the client's public key and auth secret from the browser's
+-- PushSubscription; both are required to encrypt a payload for that endpoint.
+--
+-- Rows are hard-deleted, not soft-deleted: on unsubscribe, and when the push
+-- service answers 404/410 Gone (the endpoint no longer exists and never will
+-- again). There is nothing to audit in a dead device registration, so the
+-- is_deleted/deleted_at/soft_delete_row recipe used by the domain tables is
+-- deliberately not applied here.
+--
+-- tenant_id is a plain UUID with no FK, matching iam.token_blocklist: it is
+-- carried for the tenant_admin RLS predicate and denormalized from the org at
+-- subscribe time.
+CREATE TABLE IF NOT EXISTS notify.push_subscriptions (
+  id           UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  user_id      UUID        NOT NULL REFERENCES iam.users(id)            ON DELETE CASCADE,
+  org_id       UUID        NOT NULL REFERENCES entity.organizations(id) ON DELETE CASCADE,
+  tenant_id    UUID        NOT NULL,
+  endpoint     TEXT        NOT NULL UNIQUE,   -- push service URL; natural key, makes re-subscribe idempotent
+  p256dh       TEXT        NOT NULL,          -- client public key   (PushSubscription.keys.p256dh)
+  auth         TEXT        NOT NULL,          -- client auth secret  (PushSubscription.keys.auth)
+  user_agent   TEXT,                          -- debugging aid: "why did my phone stop getting these"
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  last_used_at TIMESTAMPTZ                    -- stamped on each successful send
+);
+
+COMMENT ON TABLE notify.push_subscriptions IS
+  'Web Push subscriptions, one row per installed PWA/browser/device. Platform-wide: notifications-service today, hr-service and tasks-service next. Upsert on endpoint.';
+COMMENT ON COLUMN notify.push_subscriptions.endpoint IS
+  'Push service URL issued by the browser vendor. Natural key (UNIQUE) — the client re-registers on every launch and must upsert, not accumulate rows.';
+COMMENT ON COLUMN notify.push_subscriptions.last_used_at IS
+  'Stamped on each successful send. Lets a pruning job find registrations that have gone quiet without waiting for a 410.';
+
 -- ===================================================================
 -- SECURITY HARDENING BLOCK
 -- (Issues: #4 JWT blocklist, #15 audit.activities RLS, #19 view
@@ -1115,6 +1320,15 @@ CREATE TABLE IF NOT EXISTS ext.meta_tenant_config (
   graph_api_version  TEXT        NOT NULL DEFAULT 'v21.0',
   is_active          BOOLEAN     NOT NULL DEFAULT true,
   capi_trigger_stages UUID[]     NOT NULL DEFAULT '{}',
+  -- The ad accounts a later "Fetch campaigns" button iterates to populate
+  -- ext.meta_campaigns. A column rather than an ext.meta_ad_accounts table
+  -- because an account carries nothing but its id here -- pages are already
+  -- handled the same way (a bare page_id, no ext.meta_pages) and the only
+  -- per-campaign sync state there is lives on ext.meta_campaigns.last_synced_at.
+  -- DEPRECATED (1.51.0): superseded by ext.meta_ad_accounts, which the
+  -- campaign fetch now walks. Kept, unread, for one version so a rollback of
+  -- the service image still finds it.
+  ad_account_ids     TEXT[]      NOT NULL DEFAULT '{}',
   field_mappings     JSONB,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1139,6 +1353,12 @@ CREATE TABLE IF NOT EXISTS ext.meta_page_form_org_map (
   page_id     BIGINT      NOT NULL,
   form_id     BIGINT,
   platform    TEXT        NOT NULL CHECK (platform IN ('fb', 'ig', 'wa')),
+  -- The type a lead arriving through this page/form gets when nothing else
+  -- resolves one: the campaign name matched no keyword, or -- the case only
+  -- this column covers -- the lead carried no campaign id at all. SET NULL
+  -- rather than RESTRICT: losing the fallback degrades routing to the tenant
+  -- default, it does not corrupt anything.
+  default_campaign_type_id UUID REFERENCES marketing.campaign_types(id) ON DELETE SET NULL,
   is_active   BOOLEAN     NOT NULL DEFAULT true,
   -- Recorded by sync_leads.py after each pull run against a form, for
   -- observability/reporting (Meta's /{form-id}/leads edge does not
@@ -1174,6 +1394,185 @@ CREATE TABLE IF NOT EXISTS ext.meta_forms (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_meta_forms_form_id UNIQUE (form_id)
+);
+
+-- ── META_CAMPAIGNS: cache of discovered ad campaigns + their TYPE ──────
+-- The SOURCE OF TRUTH for campaign -> campaign_type. Deliberately shaped like
+-- ext.meta_forms directly above -- tenant-scoped, no org_id, the natural Meta
+-- id carrying the UNIQUE -- because it is the same kind of object: a discovery
+-- cache of something that exists in Meta, not a CRM record.
+--
+-- WHY THE MAPPING LIVES HERE AND NOT ON marketing.ad_campaigns:
+-- ad_campaigns.org_id is NOT NULL, so a CRM campaign row is per BRANCH. A Meta
+-- campaign is not branch-scoped -- only its leads are -- and a proactive fetch
+-- from an ad account has no branch at all to attribute to. Holding the mapping
+-- here means an admin confirms a campaign's type ONCE, not once per branch,
+-- and marketing.ad_campaigns stays a plain per-branch projection that inherits
+-- the type it finds here.
+--
+-- mapping_status drives the three admin grids in a later phase:
+--   suggested  a keyword matched (matched_keyword says which) -- confirm it
+--   unmapped   nothing matched -- pick a type by hand
+--   confirmed  done, and NEVER touched again by a fetch or a sync
+-- An inferred type is PROVISIONAL. Every writer must exclude
+-- mapping_status = 'confirmed' or it will silently undo an admin's decision on
+-- the next sync.
+--
+-- UNIQUE (meta_campaign_id) is GLOBAL, not per-tenant, and that is deliberate:
+-- Meta campaign ids are globally unique, so one row serves every branch -- the
+-- same treatment ext.meta_forms gives form_id. Do not "fix" it to
+-- (tenant_id, meta_campaign_id).
+--
+-- ad_account_id is NULL when the row was discovered from an inbound LEAD
+-- (ext.meta_leads.campaign_id) rather than fetched from an ad account;
+-- first_seen_source records which of the two it was.
+CREATE TABLE IF NOT EXISTS ext.meta_campaigns (
+  id                 UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id          UUID        NOT NULL REFERENCES entity.tenants(id),
+  ad_account_id      TEXT,                     -- 'act_<digits>'; NULL when discovered from a lead
+  meta_campaign_id   BIGINT      NOT NULL,
+  name               TEXT,
+  objective          TEXT,
+  effective_status   TEXT,
+  meta_created_time  TIMESTAMPTZ,
+  -- ── mapping ──
+  campaign_type_id   UUID        REFERENCES marketing.campaign_types(id) ON DELETE RESTRICT,
+  mapping_status     TEXT        NOT NULL DEFAULT 'unmapped'
+                     CONSTRAINT chk_meta_campaigns_mapping_status
+                     CHECK (mapping_status IN ('unmapped','suggested','confirmed')),
+  matched_keyword    TEXT,                     -- which keyword fired; shown in the admin grid
+  -- ── 1.51.0 ──
+  -- campaign_type_id above is now set ONLY by an admin confirm. Until then the
+  -- rule engine's guess lives here, so a guess (or a fallback) can never harden
+  -- into the campaign's type the way the first lead used to fix it: the live
+  -- path reads suggested_campaign_type_id as a suggestion and still evaluates
+  -- the per-lead rules and defaults behind it.
+  suggested_campaign_type_id UUID REFERENCES marketing.campaign_types(id) ON DELETE SET NULL,
+  matched_rule_id    UUID        REFERENCES marketing.campaign_type_rules(id) ON DELETE SET NULL,
+  -- Pages this campaign's ad sets promote (promoted_object.page_id). What the
+  -- shared-app fetch attributes a campaign to a tenant by, and the grid's Page
+  -- column. Empty when the campaign was discovered from a lead only.
+  page_ids           BIGINT[]    NOT NULL DEFAULT '{}',
+  -- Set when the fetch found the campaign's pages mapped to MORE THAN ONE tenant
+  -- (a campaign must never span tenants). Such a campaign is skipped by routing
+  -- decisions made from this row until an admin resolves the page mappings.
+  conflict_reason    TEXT,
+  confirmed_by       UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
+  confirmed_at       TIMESTAMPTZ,
+  first_seen_source  TEXT        CONSTRAINT chk_meta_campaigns_first_seen_source
+                     CHECK (first_seen_source IN ('fetch','lead')),
+  last_synced_at     TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_meta_campaigns_campaign_id UNIQUE (meta_campaign_id)
+);
+
+-- ── META_AD_ACCOUNTS (1.51.0) ─────────────────────────────────────
+-- Every ad account the SHARED Meta integration's token can see
+-- (GET /me/adaccounts), and whether "Fetch campaigns" walks it. Platform-level,
+-- NOT tenant-scoped, and that is the point: in the shared-app model one ad
+-- account routinely carries campaigns for several tenants' pages, so a tenant
+-- cannot own an account -- only a campaign, through its promoted pages.
+--
+-- No tenant_id means no tenant policy can reach it. RLS is enabled with NO
+-- app-role policy, so only root_service (withServiceTx) reads or writes it, and
+-- every caller is a super_admin route that has checked RANKS.SUPER_ADMIN first
+-- -- the same treatment the shared ext.meta_tenant_config row already gets. It
+-- holds no lead data and no credential.
+CREATE TABLE IF NOT EXISTS ext.meta_ad_accounts (
+  id               UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  ad_account_id    TEXT        NOT NULL,     -- 'act_<digits>'
+  name             TEXT,
+  business_name    TEXT,
+  account_status   INT,                      -- Meta's numeric status (1 = active)
+  is_enabled       BOOLEAN     NOT NULL DEFAULT FALSE,
+  last_synced_at   TIMESTAMPTZ,              -- last campaign fetch of this account
+  last_seen_at     TIMESTAMPTZ,              -- last /me/adaccounts listing that returned it
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_meta_ad_accounts_account UNIQUE (ad_account_id),
+  CONSTRAINT chk_meta_ad_accounts_format CHECK (ad_account_id ~ '^act_[0-9]+$')
+);
+
+-- ── META_ADSETS / META_ADS (1.51.0) ───────────────────────────────
+-- Name caches for the two per-lead Meta names the rule engine can match on
+-- (adset_name, ad_name), plus the ad set's promoted page. Same discovery-cache
+-- shape as ext.meta_campaigns: tenant-scoped, global natural-id UNIQUE, no
+-- soft delete. Written by the campaign fetch and, for a brand-new ad set or ad,
+-- by the lead path (one Graph call per NEW id, never per lead).
+CREATE TABLE IF NOT EXISTS ext.meta_adsets (
+  id                UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id         UUID        NOT NULL REFERENCES entity.tenants(id),
+  meta_adset_id     BIGINT      NOT NULL,
+  meta_campaign_id  BIGINT,
+  name              TEXT,
+  promoted_page_id  BIGINT,
+  effective_status  TEXT,
+  last_synced_at    TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_meta_adsets_adset_id UNIQUE (meta_adset_id)
+);
+
+CREATE TABLE IF NOT EXISTS ext.meta_ads (
+  id                UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id         UUID        NOT NULL REFERENCES entity.tenants(id),
+  meta_ad_id        BIGINT      NOT NULL,
+  meta_adset_id     BIGINT,
+  meta_campaign_id  BIGINT,
+  name              TEXT,
+  effective_status  TEXT,
+  last_synced_at    TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_meta_ads_ad_id UNIQUE (meta_ad_id)
+);
+
+-- ── META_LEAD_INBOX (1.51.0) ──────────────────────────────────────
+-- Webhook leads that did NOT become an LMS lead: the page/form had no branch
+-- mapping, the lead had no phone, or the sync threw. (A campaign spanning
+-- tenants does NOT land here: the lead is still created from its page, and only
+-- the campaign row is flagged -- see ext.meta_campaigns.conflict_reason.)
+-- Until 1.51.0 these were a log line only, and because the webhook answers 200
+-- regardless, Meta never redelivered them -- a lost lead left no trace anyone
+-- could act on. A super admin now works this queue: map the page, then Retry.
+--
+-- tenant_id / org_id are NULLABLE: an unmapped page is exactly the case where
+-- neither is known. Rows with no tenant are visible only to the super-admin
+-- service path; rows with a tenant get the N-6 admin policy like every other
+-- console table. raw_field_data is the lead's PII, held so Retry does not
+-- depend on Meta still returning the lead (API retention is ~90 days).
+--
+-- One row per Meta lead (UNIQUE meta_lead_id): a repeat failure bumps
+-- `attempts` and refreshes the reason rather than stacking duplicates.
+CREATE TABLE IF NOT EXISTS ext.meta_lead_inbox (
+  id                UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  meta_lead_id      BIGINT      NOT NULL,
+  tenant_id         UUID        REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  org_id            UUID        REFERENCES entity.organizations(id) ON DELETE SET NULL,
+  integration_id    UUID        REFERENCES ext.meta_tenant_config(id) ON DELETE SET NULL,
+  page_id           BIGINT,
+  form_id           BIGINT,
+  campaign_id       BIGINT,
+  adset_id          BIGINT,
+  ad_id             BIGINT,
+  platform          TEXT        CHECK (platform IN ('fb','ig','wa')),
+  lead_created_at   TIMESTAMPTZ,
+  raw_field_data    JSONB,
+  reason            TEXT        NOT NULL
+                    CONSTRAINT chk_meta_lead_inbox_reason
+                    CHECK (reason IN ('unmapped','missing_contact','sync_failed')),
+  error_text        TEXT,
+  status            TEXT        NOT NULL DEFAULT 'open'
+                    CONSTRAINT chk_meta_lead_inbox_status
+                    CHECK (status IN ('open','resolved','ignored')),
+  attempts          INT         NOT NULL DEFAULT 1,
+  resolved_lead_id  UUID        REFERENCES lms.marketing_leads(id) ON DELETE SET NULL,
+  resolved_by       UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
+  resolved_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_meta_lead_inbox_meta_lead_id UNIQUE (meta_lead_id)
 );
 
 -- ── META_LEADS: raw Meta lead data linked to lms.marketing_leads ──────
@@ -1305,6 +1704,130 @@ CREATE TABLE IF NOT EXISTS ext.meta_lead_demographics (
   relationship_status  TEXT,
   military_status      TEXT,
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ===================================================================
+-- META LEAD PULL — staging for the super-admin backfill (scratch schema)
+--
+-- Replaces the three-stage Python CLI (download_page_leads.py ->
+-- check_leads_against_db.py -> import_downloaded_leads.py) that a developer had
+-- to run from a laptop when the live webhook missed leads: an integration that
+-- was down, a page mapped late, a form nobody knew about.
+--
+-- These two tables are the CLI's output/<run>/ directory, moved into the
+-- database so a browser can show it. They are DISPOSABLE BY DEFINITION: POST
+-- /meta/lead-pull/runs deletes the tenant's previous run before starting a new
+-- one, and the cascade takes the staged rows with it. Nothing downstream may
+-- foreign-key INTO them, and none of the usual domain-table recipe applies --
+-- no is_deleted, no soft_delete_row trigger, no metadata column. That is why
+-- they live in `scratch` and not in `ext`.
+-- ===================================================================
+
+-- ── META_PULL_RUNS: the run row IS the queue ──────────────────────────
+-- There is no job/queue infrastructure in this repo (no bullmq, pg-boss,
+-- agenda, node-cron, Redis, worker process -- verified). The only background
+-- pattern is notifications-service's setInterval poller, so this table is the
+-- queue: POST /runs inserts 'queued' and returns immediately, and a poller in
+-- meta-conversion-api claims work with FOR UPDATE SKIP LOCKED.
+--
+-- heartbeat_at is what makes that safe across a deploy. A run interrupted
+-- mid-pull would otherwise sit in 'running' forever, and because POST /runs
+-- refuses (409) while a run is queued/running/apply_queued/applying, that tenant
+-- could never start another one. The reaper marks a stalled PULL 'failed' and
+-- returns a stalled APPLY to 'completed' (its applied rows are recorded and the
+-- rest still pending, so pressing Apply again resumes).
+--
+-- 'apply_queued' (1.50.1): Apply is queued here and run by the same poller,
+-- not inline in the request -- one intake call per row does not fit inside the
+-- gateway's 30s proxy timeout.
+CREATE TABLE IF NOT EXISTS scratch.meta_pull_runs (
+  id           UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id    UUID        NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  -- NULL for a scheduled catch-up run (1.51.0): no person started it.
+  created_by   UUID        REFERENCES iam.users(id)      ON DELETE CASCADE,
+  status       TEXT        NOT NULL DEFAULT 'queued'
+               CONSTRAINT chk_meta_pull_runs_status
+               CHECK (status IN ('queued','running','completed','failed','apply_queued','applying','applied')),
+  -- The request as submitted: org_ids, page_ids, campaign_ids, since, until.
+  -- Kept verbatim so the summary screen can say what was actually asked for,
+  -- including that a campaign filter was applied POST-FETCH.
+  filters      JSONB       NOT NULL DEFAULT '{}',
+  -- 'manual' = an admin pressed Pull; 'scheduled' = the poller's catch-up run
+  -- (1.51.0). Starting a run clears only the tenant's previous run OF THE SAME
+  -- KIND, so the scheduled catch-up never wipes a pull an admin is reviewing.
+  -- Scheduled runs stage and classify only; they are never applied without a
+  -- person pressing Apply.
+  trigger_kind TEXT        NOT NULL DEFAULT 'manual'
+               CONSTRAINT chk_meta_pull_runs_trigger_kind
+               CHECK (trigger_kind IN ('manual','scheduled')),
+  -- Per-verdict tallies plus pages/forms walked, page-token errors and the
+  -- `truncated` warning. Written once when the pull finishes.
+  counts       JSONB       NOT NULL DEFAULT '{}',
+  heartbeat_at TIMESTAMPTZ,
+  started_at   TIMESTAMPTZ,
+  finished_at  TIMESTAMPTZ,
+  applied_at   TIMESTAMPTZ,
+  applied_by   UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
+  error_text   TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── META_PULL_LEADS: one row per lead Meta returned, classified ───────
+--
+-- org_id IS NULLABLE HERE, unlike ext.meta_page_form_org_map where it is NOT
+-- NULL. That is deliberate and is not an inconsistency to "fix": a staged row
+-- with NO org IS the `unmapped_form` verdict -- a lead Meta returned for a form
+-- nobody has mapped. It is recorded so the admin can SEE it and go fix the
+-- mapping; it can never be applied.
+CREATE TABLE IF NOT EXISTS scratch.meta_pull_leads (
+  id              UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  run_id          UUID        NOT NULL REFERENCES scratch.meta_pull_runs(id) ON DELETE CASCADE,
+  tenant_id       UUID        NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  org_id          UUID        REFERENCES entity.organizations(id) ON DELETE CASCADE,
+  page_id         BIGINT,
+  form_id         BIGINT      NOT NULL,
+  -- Staged because the hiring-form signal below is derived from it and because
+  -- the review grid is unreadable without it -- an admin cannot act on a bare
+  -- 17-digit form id.
+  form_name       TEXT,
+  meta_lead_id    BIGINT      NOT NULL,
+  campaign_id     BIGINT,
+  adset_id        BIGINT,
+  ad_id           BIGINT,
+  platform        TEXT        CHECK (platform IN ('fb','ig','wa')),
+  lead_created_at TIMESTAMPTZ,
+  -- Meta's field_data verbatim. This is what maps 1:1 onto syncLeadToDatabase's
+  -- RawMetaLead parameter at apply time, which is why the columns above are
+  -- shaped the way they are.
+  raw_field_data  JSONB,
+  -- ── classification (lead-reconcile.service.ts) ──
+  verdict         TEXT
+                  CONSTRAINT chk_meta_pull_leads_verdict
+                  CHECK (verdict IN ('already_synced','test_lead','unmapped_form',
+                                     'missing_contact','phone_duplicate','email_duplicate','new')),
+  existing_lead_id UUID       REFERENCES lms.marketing_leads(id) ON DELETE SET NULL,
+  reason          TEXT,
+  -- ── hiring-form signal ──
+  -- In the Python (common/reconcile.py) `hiring_form` was a SKIP verdict,
+  -- because there was nowhere to route a job applicant. After the campaign-type
+  -- work (schema 1.49.0) there is, so it stopped being a verdict and became
+  -- these two columns: the lead classifies and imports normally, and the admin
+  -- is told the form looks like recruitment and which type it would match --
+  -- the fix being to set ext.meta_page_form_org_map.default_campaign_type_id.
+  -- This CHANGES WHAT GETS IMPORTED relative to the Python; see 09_schema_version.
+  is_hiring_form  BOOLEAN     NOT NULL DEFAULT false,
+  suggested_campaign_type_id UUID REFERENCES marketing.campaign_types(id) ON DELETE SET NULL,
+  -- ── apply outcome (lead-apply.service.ts) ──
+  applied_status  TEXT        NOT NULL DEFAULT 'pending'
+                  CONSTRAINT chk_meta_pull_leads_applied_status
+                  CHECK (applied_status IN ('pending','applied','skipped','failed')),
+  applied_lead_id UUID        REFERENCES lms.marketing_leads(id) ON DELETE SET NULL,
+  applied_error   TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Meta pages the same lead across cursor pages more often than its docs
+  -- admit, so the staging insert is ON CONFLICT DO NOTHING against this.
+  CONSTRAINT uq_meta_pull_leads_run_lead UNIQUE (run_id, meta_lead_id)
 );
 
 COMMIT;

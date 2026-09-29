@@ -95,6 +95,11 @@ async function findUser(predicate: SQL, org_id?: string, actor_platform_role?: s
   });
 }
 
+/**
+ * `email` must already be normalized to lowercase by normalizeEmail() -- the
+ * column stores only that form (chk_users_email_lowercase enforces it), so an
+ * un-normalized argument silently matches nothing and the user cannot sign in.
+ */
 export async function getUserByEmail(
   email: string,
   org_id?: string,

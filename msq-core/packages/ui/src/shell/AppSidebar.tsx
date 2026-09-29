@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
 import { filterNav, filterNavGroups, isNavGroups, type NavItem, type NavGroup } from './nav';
+import NavIcon from './NavIcon';
 
 // Remembered per browser so the rail does not spring back open on every
 // navigation. Read after mount — reading during render would make the server
@@ -20,8 +21,8 @@ interface Props {
   items: readonly NavItem[] | readonly NavGroup[];
 }
 
-// Collapsed rail has no room for the label, so each entry falls back to its
-// initials — "Leads History" → "LH".
+// Collapsed rail has no room for the label: it shows the entry's icon, or — for
+// an entry that declares none — its initials, "Leads History" → "LH".
 function monogram(label: string): string {
   return label
     .split(/[\s-]+/)
@@ -47,7 +48,7 @@ function NavLink({ item, pathname, collapsed }: { item: NavItem; pathname: strin
             : 'flex h-9 w-9 items-center justify-center self-center rounded-lg text-xs font-semibold tracking-tight text-[#64748B] transition-colors hover:bg-[#F8FAFC] hover:text-[#0F172A]'
         }
       >
-        {monogram(item.label)}
+        {item.icon ? <NavIcon name={item.icon} className="h-[18px] w-[18px]" /> : monogram(item.label)}
       </Link>
     );
   }
@@ -58,11 +59,12 @@ function NavLink({ item, pathname, collapsed }: { item: NavItem; pathname: strin
       aria-current={active ? 'page' : undefined}
       className={
         active
-          ? 'rounded-lg bg-[#EFF6FF] px-3 py-2 text-sm font-semibold text-[#0b6cbf]'
-          : 'rounded-lg px-3 py-2 text-sm font-medium text-[#475569] transition-colors hover:bg-[#F8FAFC] hover:text-[#0F172A]'
+          ? 'flex items-center gap-2.5 rounded-lg bg-[#EFF6FF] px-3 py-2 text-sm font-semibold text-[#0b6cbf]'
+          : 'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-[#475569] transition-colors hover:bg-[#F8FAFC] hover:text-[#0F172A]'
       }
     >
-      {item.label}
+      {item.icon && <NavIcon name={item.icon} className="h-4 w-4 shrink-0" />}
+      <span className="truncate">{item.label}</span>
     </Link>
   );
 }

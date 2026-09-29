@@ -35,4 +35,18 @@ docs {
   sends nothing). When true AND the acting admin holds admin.team.notify (or rank
   >= org_admin), the user is emailed which branches were added/removed and the
   new home branch. Set false to skip.
+
+  email, when supplied, is normalized to lowercase and trimmed before it is
+  stored (schema 1.48.0) -- the same rule as create. Editing a user's email to a
+  mixed-case value lands the canonical spelling; the database refuses anything
+  else (chk_users_email_lowercase).
+
+  Response: 200 { success: true, data: { hr_profile_synced } } (was 204). Every
+  update re-syncs the member's hr.employee_profiles row (home branch + is_active)
+  through hr-service; hr_profile_synced false means the identity change is saved
+  but the HR profile is not yet in step.
+
+  manager_id: omit it to leave the reporting line untouched. Sending it (even
+  the same value) supersedes today's line; null closes it, which also removes
+  the user's leave approver chain.
 }

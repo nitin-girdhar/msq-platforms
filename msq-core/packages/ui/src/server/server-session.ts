@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import type { JwtPayload, SessionUser } from '@platform/types';
-import { AUTH_COOKIE_NAME } from '@platform/auth-constants';
+import { authCookieName } from '@platform/auth-constants';
 import { verifySessionJwt } from '../auth/verify-edge';
 
 // Server-only session helpers — consumed via `@platform/ui-kit/server`, never
@@ -20,7 +20,7 @@ export interface ServerSession {
 
 export async function getServerSession(): Promise<ServerSession | null> {
   const cookieStore = await cookies();
-  const token = cookieStore.get(AUTH_COOKIE_NAME)?.value;
+  const token = cookieStore.get(authCookieName(process.env['AUTH_COOKIE_NAME']))?.value;
   if (!token) return null;
 
   // RS256 (public key) or legacy HS256, selected by the token's alg — same

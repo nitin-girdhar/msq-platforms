@@ -61,7 +61,9 @@ export function useUserAssignments({
   useEffect(() => {
     if (initialAssignments) return;
     if (assignments.length === 0 && fallbackOrgId) {
-      setAssignments([{ org_id: fallbackOrgId, role_id: '', lead_assignment_weight: 0 }]);
+      // Starts in no pool until explicitly weighted — defaulting every tenant
+      // campaign type to 0% here would silently write a row for each on save.
+      setAssignments([{ org_id: fallbackOrgId, role_id: '', weights: [] }]);
       setHomeOrgId(fallbackOrgId);
     }
   }, [fallbackOrgId, assignments.length, initialAssignments]);
@@ -84,14 +86,14 @@ export function useUserAssignments({
     org_assignments: assignments.map((a) => ({
       org_id: a.org_id,
       role_id: a.role_id,
-      lead_assignment_weight: a.lead_assignment_weight,
+      weights: a.weights,
     })),
     home_org_id: homeOrgId,
   }), [assignments, homeOrgId]);
 
   const reset = useCallback(() => {
     setDepartmentId(ALL_DEPARTMENTS);
-    setAssignments(fallbackOrgId ? [{ org_id: fallbackOrgId, role_id: '', lead_assignment_weight: 0 }] : []);
+    setAssignments(fallbackOrgId ? [{ org_id: fallbackOrgId, role_id: '', weights: [] }] : []);
     setHomeOrgId(fallbackOrgId);
     setManagerId('');
   }, [fallbackOrgId]);

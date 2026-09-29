@@ -3,6 +3,8 @@
 // (see apps/web/src/lib/api/client.ts for the CRM example). Never add
 // domain-specific endpoints here.
 
+import { withBasePath } from './base-path';
+
 export interface ApiRequestError extends Error {
   status: number;
   body: unknown;
@@ -40,8 +42,20 @@ export interface ApiClientOptions {
   redirectOnUnauthorized?: boolean;
 }
 
+/**
+ * `basePath` is the app-relative API mount, in practice always '/api' — the
+ * Next route/rewrite that proxies to the gateway.
+ *
+ * It is resolved through withBasePath() because `fetch()` is the one thing Next
+ * does NOT apply the app's `basePath` to. Under the single-origin topology a
+ * bare '/api' would leave every product's API traffic hitting auth-web at the
+ * root instead of this app's own proxy — see api/base-path.ts for the full
+ * reasoning. Resolved ONCE here, so all nine call sites keep passing '/api'
+ * and none of them has to know which prefix its app was built with.
+ */
 export function createApiClient(basePath: string, options: ApiClientOptions = {}) {
   const redirectOnUnauthorized = options.redirectOnUnauthorized ?? true;
+  const mount = withBasePath(basePath);
 
   async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
@@ -49,7 +63,7 @@ export function createApiClient(basePath: string, options: ApiClientOptions = {}
       headers['Content-Type'] = 'application/json';
     }
 
-    const res = await fetch(`${basePath}${path}`, {
+    const res = await fetch(`${mount}${path}`, {
       ...options,
       headers,
       credentials: 'include',
@@ -61,6 +75,7 @@ export function createApiClient(basePath: string, options: ApiClientOptions = {}
       }
       const err = (await res.json().catch(() => ({ error: res.statusText }))) as {
         error?: string;
+        message?: string;
         details?: unknown;
       };
       const detailMessages =
@@ -69,7 +84,15 @@ export function createApiClient(basePath: string, options: ApiClientOptions = {}
               .flat()
               .filter((v): v is string => typeof v === 'string')
           : [];
-      const message = detailMessages.length > 0 ? detailMessages.join(' ') : (err.error ?? res.statusText);
+      // `error` is our services' own field. `message` is where FASTIFY's default
+      // handler puts the cause, under a generic `error: 'Internal Server Error'`
+      // — a service that has not set an error handler reports itself only there.
+      // Reading `error` alone is how a Web Push outage showed up in the UI as a
+      // bare "Internal Server error" with the real reason (a missing table)
+      // discarded, findable only by reading the server log.
+      const generic = !err.error || err.error === 'Internal Server Error';
+      const fallback = (generic && err.message) || err.error || res.statusText;
+      const message = detailMessages.length > 0 ? detailMessages.join(' ') : fallback;
       throw Object.assign(new Error(message), {
         status: res.status,
         body: err,

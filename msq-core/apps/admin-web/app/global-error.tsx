@@ -6,6 +6,11 @@
 //
 // Deliberately dependency-free with inline styles: it has to work when the app
 // shell, its providers, and even global CSS may be what failed.
+// The href below carries this app's Next `basePath` (/admin) spelled out in
+// full. A raw <a> gets none of Next's basePath handling, and this file is
+// deliberately dependency-free (see above), so it cannot reach for the
+// withBasePath() helper the rest of the app uses. Keep it in step with
+// `basePath` in next.config.js.
 export default function GlobalError({ error }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
     <html lang="en">
@@ -25,7 +30,7 @@ export default function GlobalError({ error }: { error: Error & { digest?: strin
               </p>
             )}
             <a
-              href="/dashboard"
+              href="/admin/dashboard"
               style={{ display: 'inline-block', marginTop: '2rem', padding: '0.5rem 1rem', borderRadius: '0.5rem', background: '#0f172a', color: '#fff', fontSize: '0.875rem', fontWeight: 500, textDecoration: 'none' }}
             >
               Reload

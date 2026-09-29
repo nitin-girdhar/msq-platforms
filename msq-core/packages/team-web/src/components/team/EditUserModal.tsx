@@ -11,8 +11,10 @@ import {
   OrgAssignmentsField,
   ManagerSelect,
   useRoleCatalog,
+  useCampaignTypeCatalog,
   useUserAssignments,
   branchOptionsForActor,
+  useUserAdminScope,
   type OrgAssignment,
 } from '@platform/ui-kit';
 import { users as usersApi, type AssignableUser } from '../../lib/api';
@@ -52,6 +54,8 @@ export default function EditUserModal({
   open, onClose, user, currentUserId, actorRank, actorRole, orgs, myOrgs, branchesFailed, actor, leadProduct, canNotify,
 }: Props) {
   const router = useRouter();
+  // lookup-admin's selected tenant — every call below names it (see lib/api).
+  const adminScope = useUserAdminScope();
   const [firstName, setFirstName] = useState(user.first_name ?? '');
   const [middleName, setMiddleName] = useState(user.middle_name ?? '');
   const [lastName, setLastName] = useState(user.last_name ?? '');
@@ -63,6 +67,8 @@ export default function EditUserModal({
   const [sendEmailNotification, setSendEmailNotification] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Saved, but hr-service could not keep the member's HR profile in step.
+  const [hrNotice, setHrNotice] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
 
   // Branches this user currently holds, loaded per-open. The roster row carries
@@ -93,7 +99,7 @@ export default function EditUserModal({
     setExisting(null);
     setMappingsError(null);
 
-    usersApi.orgMappings(user.id)
+    usersApi.orgMappings(user.id, adminScope)
       .then((res) => {
         if (cancelled) return;
         setExisting(
@@ -102,7 +108,7 @@ export default function EditUserModal({
             .map((m) => ({
               org_id: m.org_id,
               role_id: m.role_id,
-              lead_assignment_weight: Number(m.lead_assignment_weight ?? 0),
+              weights: m.weights.map((w) => ({ campaign_type_id: w.campaign_type_id, weight: Number(w.weight ?? 0) })),
             })),
         );
       })
@@ -115,26 +121,7 @@ export default function EditUserModal({
       });
 
     return () => { cancelled = true; };
-  }, [open, user.id]);
-
-  useEffect(() => {
-    if (!open) return;
-    // No product, nothing to hand over — and importantly no in-flight load, so
-    // the "still loading" guard in handleSave cannot deadlock the form.
-    if (!leadProduct) { setLmsUsers([]); setLmsUsersLoading(false); return; }
-    let cancelled = false;
-    setLmsUsersLoading(true);
-
-    usersApi.assignable({ product: leadProduct, orgId: user.org_id })
-      .then((res) => {
-        if (cancelled) return;
-        setLmsUsers(res.data.filter((u) => u.id !== user.id));
-      })
-      .catch(() => { if (!cancelled) setLmsUsers([]); })
-      .finally(() => { if (!cancelled) setLmsUsersLoading(false); });
-
-    return () => { cancelled = true; };
-  }, [open, user.id, user.org_id, leadProduct]);
+  }, [open, user.id, adminScope]);
 
   const isSelf = user.id === currentUserId;
   // `>=`, not `>`, to match the server: @platform/authz's canManageUser (which
@@ -146,6 +133,7 @@ export default function EditUserModal({
   const canPickBranches = actorRank >= RANKS.TENANT_ADMIN;
 
   const { roles, departments, loading: rolesLoading, error: rolesError } = useRoleCatalog(open);
+  const { campaignTypes, error: campaignTypesError } = useCampaignTypeCatalog(open);
 
   const a = useUserAssignments({
     ...(existing ? { assignments: existing } : {}),
@@ -171,11 +159,38 @@ export default function EditUserModal({
   );
 
   const homeMoved = a.homeOrgId !== user.org_id;
+  const originalHomeRoleId = existing?.find((x) => x.org_id === user.org_id)?.role_id;
+  // Whether the role they hold in the branch whose leads are at stake works
+  // leads (lms.leads). A Fitness Trainer never holds any, so the hand-over
+  // panels have nothing to ask. Stays true until the role is actually known —
+  // guessing "no leads" early would skip a hand-over that was needed. The
+  // 'tasks' product has no such flag, so it keeps the panels as before.
+  const originalHomeRole = originalHomeRoleId ? roles.find((r) => r.id === originalHomeRoleId) : undefined;
+  const holdsLeads = Boolean(leadProduct) && !(leadProduct === 'lms' && originalHomeRole?.works_leads === false);
   // Leaving the branch only MATTERS if there is product work that would be
   // stranded there. With no product the move is just a mapping change.
-  const leavingHomeBranch =
-    Boolean(leadProduct) && homeMoved && !a.assignments.some((x) => x.org_id === user.org_id);
-  const originalHomeRoleId = existing?.find((x) => x.org_id === user.org_id)?.role_id;
+  const leavingBranch = homeMoved && !a.assignments.some((x) => x.org_id === user.org_id);
+  const leavingHomeBranch = holdsLeads && leavingBranch;
+
+  useEffect(() => {
+    if (!open) return;
+    // Nothing to hand over — and importantly no in-flight load, so the "still
+    // loading" guard in handleSave cannot deadlock the form.
+    if (!leadProduct || !holdsLeads) { setLmsUsers([]); setLmsUsersLoading(false); return; }
+    let cancelled = false;
+    setLmsUsersLoading(true);
+
+    usersApi.assignable({ product: leadProduct, orgId: user.org_id }, adminScope)
+      .then((res) => {
+        if (cancelled) return;
+        setLmsUsers(res.data.filter((u) => u.id !== user.id));
+      })
+      .catch(() => { if (!cancelled) setLmsUsers([]); })
+      .finally(() => { if (!cancelled) setLmsUsersLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [open, user.id, user.org_id, leadProduct, holdsLeads, adminScope]);
+
   const currentHomeRoleId = a.assignments.find((x) => x.org_id === a.homeOrgId)?.role_id;
   const roleChanged = Boolean(currentHomeRoleId) && currentHomeRoleId !== originalHomeRoleId;
   const [reassignLeadsTo, setReassignLeadsTo] = useState('');
@@ -207,16 +222,26 @@ export default function EditUserModal({
   const handleClose = () => {
     if (pending) return;
     setError(null);
+    setHrNotice(null);
     onClose();
     router.refresh();
   };
 
   const submitPatch = async (patch: Record<string, unknown>) => {
     setError(null);
+    setHrNotice(null);
     setPending(true);
     try {
-      await usersApi.update(user.id, patch);
+      const res = await usersApi.update(user.id, patch, adminScope);
       router.refresh();
+      // The change itself is saved; stay open so the admin sees why HRMS will
+      // not reflect it yet. Saving again retries (the sync is idempotent).
+      if (res?.data?.hr_profile_synced === false) {
+        setHrNotice(
+          'Saved, but their HR profile could not be updated, so HRMS attendance and leave may not reflect this yet. Save again to retry.',
+        );
+        return false;
+      }
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error.');
@@ -272,7 +297,13 @@ export default function EditUserModal({
     // sending before that would read as "remove everything".
     if (existing !== null) {
       Object.assign(patch, a.payload());
-      patch.manager_id = a.managerId || null;
+      // Only when it actually changed, or the home branch moved (the reporting
+      // line lives on the home branch, so it has to be rewritten there). An
+      // unconditional send superseded the line on every save — and re-validated
+      // a manager who may no longer qualify, failing an unrelated edit.
+      if (homeMoved || a.managerId !== (user.manager_id ?? '')) {
+        patch.manager_id = a.managerId || null;
+      }
       // Only meaningful when a branch actually changes; the server ignores it
       // otherwise. Sent alongside the full assignment set.
       if (canNotify) patch.send_email_notification = sendEmailNotification;
@@ -281,6 +312,9 @@ export default function EditUserModal({
       // out reads as "say nothing", and the server then skips the reassign
       // entirely and leaves the leads on a user no longer in that branch.
       if (leavingHomeBranch) patch.reassign_leads_to = reassignLeadsTo || null;
+      // A role without lms.leads gets no picker, but any stray leads (say from an
+      // earlier sales role) are still unassigned rather than left behind.
+      else if (leadProduct && leavingBranch) patch.reassign_leads_to = null;
     }
 
     if (Object.keys(patch).length === 0) {
@@ -301,6 +335,13 @@ export default function EditUserModal({
       // doing nothing visible. Submit straight through instead.
       if (!leadProduct) {
         const ok = await submitPatch({ is_active: false });
+        if (ok) handleClose();
+        return;
+      }
+      // Their role doesn't work leads: nothing to choose, so no panel. Still an
+      // explicit null so any stray leads are unassigned, not left on a dead account.
+      if (!holdsLeads) {
+        const ok = await submitPatch({ is_active: false, reassign_leads_to: null });
         if (ok) handleClose();
         return;
       }
@@ -372,6 +413,26 @@ export default function EditUserModal({
               {error}
             </div>
           )}
+          {hrNotice && (
+            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {hrNotice}
+            </div>
+          )}
+
+          {/* Shown for reference only — the login identity is not editable here,
+              and the PATCH below never carries it. */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="eu-email" className="text-xs font-semibold text-[#0F172A]">Email</label>
+            <input
+              id="eu-email"
+              type="email"
+              value={user.email}
+              readOnly
+              disabled
+              className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-sm text-[#64748B] shadow-sm disabled:cursor-not-allowed"
+            />
+            <p className="text-[11px] text-[#64748B]">Email can&apos;t be changed.</p>
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
@@ -459,6 +520,8 @@ export default function EditUserModal({
               onHomeChange={a.setHomeOrgId}
               roles={roles}
               departmentId={a.departmentId}
+              campaignTypes={campaignTypes}
+              campaignTypesUnavailable={Boolean(campaignTypesError)}
               canPickBranches={canPickBranches && !isSelf}
               disabled={locked}
               excludeUserId={user.id}
@@ -466,12 +529,12 @@ export default function EditUserModal({
           )}
 
           {leavingHomeBranch && (
-            <div className="flex flex-col gap-2 rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2.5">
-              <p className="text-[12.5px] leading-snug text-[#1E40AF]">
+            <div className="flex flex-col gap-2 rounded-xl border border-l-4 border-[#93C5FD] border-l-[#0b6cbf] bg-[#EFF6FF] px-3 py-2.5">
+              <p className="text-[12.5px] font-medium leading-snug text-[#1E3A8A]">
                 Home branch is moving and they are leaving their current one. Their open leads there need a
                 new owner.
               </p>
-              <label className="text-xs font-semibold text-[#0F172A]">Reassign their leads to</label>
+              <label className="text-xs font-bold text-[#0F172A]">Reassign their leads to</label>
               <UserPicker
                 value={reassignLeadsTo}
                 onChange={setReassignLeadsTo}
@@ -482,7 +545,7 @@ export default function EditUserModal({
                 placeholder={lmsUsersLoading ? 'Loading…' : 'Select a user…'}
               />
               {!lmsUsersLoading && leadCandidates.length === 0 && (
-                <p className="text-[11px] text-[#1E40AF]">
+                <p className="text-[11px] text-[#1E3A8A]">
                   No one else in this branch works on leads, so these leads will be left unassigned
                   and can be picked up later.
                 </p>
@@ -495,6 +558,7 @@ export default function EditUserModal({
             onChange={a.setManagerId}
             homeOrgId={a.homeOrgId}
             excludeUserId={user.id}
+            currentManagerName={user.manager_name}
             disabled={locked}
           />
 
@@ -529,12 +593,12 @@ export default function EditUserModal({
           </label>
 
           {deactivating && leadProduct && (
-            <div ref={deactivatePanelRef} className="flex flex-col gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
-              <p className="text-[12.5px] leading-snug text-red-800">
+            <div ref={deactivatePanelRef} className="flex flex-col gap-2 rounded-xl border border-l-4 border-red-300 border-l-red-600 bg-[#FEF2F2] px-3 py-2.5">
+              <p className="text-[12.5px] font-medium leading-snug text-red-900">
                 Deactivating removes their access immediately. Their open leads in {user.org_name || 'their branch'}{' '}
                 need a new owner.
               </p>
-              <label className="text-xs font-semibold text-[#0F172A]">Reassign their leads to</label>
+              <label className="text-xs font-bold text-[#0F172A]">Reassign their leads to</label>
               <UserPicker
                 value={deactivateReassignTo}
                 onChange={setDeactivateReassignTo}
@@ -545,7 +609,7 @@ export default function EditUserModal({
                 placeholder={lmsUsersLoading ? 'Loading…' : 'Select a user…'}
               />
               {!lmsUsersLoading && leadCandidates.length === 0 && (
-                <p className="text-[11px] text-[#64748B]">
+                <p className="text-[11px] text-[#334155]">
                   No one else in this branch works on leads, so these leads will be left unassigned
                   and can be picked up later.
                 </p>
@@ -555,7 +619,7 @@ export default function EditUserModal({
                   type="button"
                   onClick={() => { setDeactivating(false); setDeactivateReassignTo(''); }}
                   disabled={locked}
-                  className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-lg border border-[#CBD5E1] bg-white px-3 py-1.5 text-xs font-semibold text-[#1E293B] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Cancel
                 </button>
@@ -563,7 +627,7 @@ export default function EditUserModal({
                   type="button"
                   onClick={confirmDeactivate}
                   disabled={locked || lmsUsersLoading || (leadCandidates.length > 0 && !deactivateReassignTo)}
-                  className="rounded-lg border border-red-300 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:border-[#E2E8F0] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]"
+                  className="rounded-lg border border-red-300 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:border-red-300 disabled:bg-red-300 disabled:text-white"
                 >
                   Confirm deactivation
                 </button>

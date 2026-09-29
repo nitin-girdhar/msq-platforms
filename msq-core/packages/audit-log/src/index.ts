@@ -80,12 +80,18 @@ export async function logActivity(input: LogActivityInput): Promise<void> {
 
 // Reads as the caller's own role (app_user/tenant_admin/super_admin) via
 // withRoleTx so the org_isolation_policy/tenant_isolation_policy RLS policies
-// on audit.activities actually scope the result — never bypass RLS for reads.
+// on audit.activities scope the result — never bypass RLS for reads.
+//
+// The explicit tenant predicate is defence in depth, not a duplicate: a
+// super_admin transaction runs on the BYPASSRLS service connection, and with
+// RLS as the only fence it returned the latest 100 activities of EVERY tenant.
+// The feed is always the session tenant's (openissues cycle 4, #3).
 export async function listActivities(ctx: RoleTxContext): Promise<Array<Record<string, unknown>>> {
   return withRoleTx(ctx, async (tx) => {
     return (await tx.execute(sql`
       SELECT id, action_type, performed_by, target_id, target_type, meta, created_at
       FROM audit.activities
+      WHERE org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = ${ctx.tenant_id}::uuid)
       ORDER BY created_at DESC
       LIMIT 100
     `)) as Array<Record<string, unknown>>;

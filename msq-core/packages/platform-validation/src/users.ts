@@ -1,17 +1,35 @@
 import { z } from 'zod';
+import { emailInputSchema } from './email.js';
 import { mobileInputSchema } from './phone.js';
 
-// One branch a user works in: which org, in which role, at what share of that
-// branch's incoming leads. Maps 1:1 onto a row of iam.user_org_mapping.
+// One (org, campaign_type) pool membership and its share of that pool's
+// incoming leads. Maps 1:1 onto a row of lms.lead_assignment_weights as of
+// schema 1.49.0 — the key is (user_org_mapping_id, campaign_type_id), so a
+// user can hold a different weight per campaign type within the same branch.
+const weightEntrySchema = z.object({
+  campaign_type_id: z.string().uuid(),
+  weight: z.number().int().min(0).max(100),
+});
+
+// One branch a user works in: which org, in which role, and their weight per
+// campaign type in that branch. Maps 1:1 onto a row of iam.user_org_mapping
+// plus zero or more lms.lead_assignment_weights rows.
 //
 // role_id, not role_name: roles are tenant-owned and a tenant may define its own
 // department-scoped roles, so a name is only unique once you know the tenant.
 // The id is unambiguous and is what the role-catalog endpoint hands the UI.
+//
+// weights replaces the old scalar lead_assignment_weight — a campaign type
+// absent from this array means "not in that pool", not "weight 0" (see
+// writeAssignmentWeight in users.repository.ts).
 export const orgAssignmentSchema = z.object({
   org_id: z.string().uuid(),
   role_id: z.string().uuid(),
-  lead_assignment_weight: z.number().int().min(0).max(100).optional(),
-});
+  weights: z.array(weightEntrySchema).max(50).optional(),
+}).refine(
+  (v) => !v.weights || new Set(v.weights.map((w) => w.campaign_type_id)).size === v.weights.length,
+  { message: 'Each campaign type may appear only once per branch', path: ['weights'] },
+);
 
 // Shared by create and update. `home_org_id` is iam.users.org_id — the user's
 // primary branch — and must be one of the branches they were actually given.
@@ -45,7 +63,7 @@ export const createUserSchema = refineOrgAssignments(
     first_name: z.string().min(1).max(50),
     middle_name: z.string().max(50).optional(),
     last_name: z.string().max(50).optional(),
-    email: z.string().email(),
+    email: emailInputSchema,
     mobile: mobileInputSchema.optional(),
     // Legacy single-branch path: the user lands in the actor's own org with this
     // role. Superseded by org_assignments when that is present — kept because
@@ -59,6 +77,14 @@ export const createUserSchema = refineOrgAssignments(
     send_email_notification: z.boolean().optional(),
     org_assignments: z.array(orgAssignmentSchema).min(1).optional(),
     home_org_id: z.string().uuid().optional(),
+    // Seeds hr.employee_profiles.date_of_joining when identity-service creates
+    // the member's HR profile (defaults to today there). Not stored on iam.users;
+    // after creation it is HR-owned and edited in HRMS. A future date is allowed:
+    // members are often set up before their first day.
+    date_of_joining: z.string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date of joining must be YYYY-MM-DD')
+      .refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)), 'Date of joining is not a valid date')
+      .optional(),
   }).refine(
     (v) => v.role_name !== undefined || v.org_assignments !== undefined,
     { message: 'Either role_name or org_assignments is required', path: ['role_name'] },
@@ -70,7 +96,7 @@ export const updateUserSchema = refineOrgAssignments(
     first_name: z.string().min(1).max(50).optional(),
     middle_name: z.string().max(50).optional(),
     last_name: z.string().max(50).optional(),
-    email: z.string().email().optional(),
+    email: emailInputSchema.optional(),
     mobile: mobileInputSchema.optional(),
     role_name: z.string().optional(),
     manager_id: z.string().uuid().nullable().optional(),
@@ -110,6 +136,7 @@ export const resetPasswordSchema = z.object({
 export const updateAssignmentWeightsSchema = z.object({
   weights: z.array(z.object({
     user_id: z.string().uuid(),
+    campaign_type_id: z.string().uuid(),
     weight: z.number().int().min(0).max(100),
   })).min(1),
 });
@@ -117,6 +144,7 @@ export const updateAssignmentWeightsSchema = z.object({
 export const addOrgMappingSchema = z.object({
   org_id: z.string().uuid(),
   role_id: z.string().uuid(),
+  campaign_type_id: z.string().uuid(),
   lead_assignment_weight: z.number().int().min(0).max(100).optional(),
 });
 

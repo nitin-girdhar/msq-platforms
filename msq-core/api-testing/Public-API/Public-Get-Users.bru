@@ -15,8 +15,11 @@ headers {
 }
 
 docs {
-  Requires a key with `users:read`. Returns field-minimized users for the tenant
-  (id, full_name, email, phone, org_id, role_label, is_active, manager_id,
-  manager_name) — never password hashes or internal flags. Optional
-  ?branch_id=<uuid> to filter to one branch.
+  Requires a key with `users:read`. Returns field-minimized users for the tenant,
+  one row per branch membership (id, full_name, email, phone, org_id = home
+  branch, branch_id/branch_name = membership branch, role_label,
+  department_id/department_name/department_label, is_active, manager_id,
+  manager_name) — never password hashes or internal flags. Optional csv filters:
+  ?branch_id=, ?department_id=, ?manager_id= (uuids). A multi-branch key only
+  ever sees its own branches; branch_id outside them -> 400.
 }

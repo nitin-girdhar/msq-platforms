@@ -24,7 +24,8 @@ body:json {
     "mobile": "9876543210",
     "manager_id": "{{userId}}",
     "force_password_change": true,
-    "send_email_notification": true
+    "send_email_notification": true,
+    "date_of_joining": "2026-09-27"
   }
 }
 
@@ -34,4 +35,18 @@ docs {
   the new user their login URL + temporary password via communication-service.
   Set false to skip the email. Ignored — no email — if the actor lacks the
   capability, whatever the flag says.
+
+  email is normalized to lowercase and trimmed before it is stored (schema
+  1.48.0): "  Test.User@Example.COM " is saved, and returned, as
+  "test.user@example.com". The database refuses anything else
+  (chk_users_email_lowercase). A second create differing only in case therefore
+  now returns 409 "A user with this email already exists." instead of silently
+  creating a second account for the same person.
+
+  date_of_joining (optional, YYYY-MM-DD, future allowed): seeds the member's
+  hr.employee_profiles row, which identity-service creates via hr-service's
+  internal POST /internal/employees/sync after the user is written. Defaults to
+  today in hr-service. HR-owned afterwards (Leave Administration → Employees).
+  The response's data.hr_profile_synced is false when hr-service could not
+  create the profile — the user still exists; re-saving them retries.
 }

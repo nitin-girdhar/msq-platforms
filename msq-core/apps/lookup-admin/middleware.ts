@@ -28,6 +28,12 @@ export const middleware = createProductMiddleware({
   selfOrigin: adminOrigin(),
 });
 
+// `config.matcher` is APP-RELATIVE: Next prepends this app's `basePath` (/sa)
+// at build time, so spelling the prefix out here would double it and match
+// nothing, silently leaving these routes unauthenticated. `publicPaths` is
+// app-relative for the same reason — `request.nextUrl.pathname` arrives with
+// the prefix already stripped. See DEFAULT_PROTECTED in
+// @platform/ui-kit/middleware for the evidence.
 export const config = {
   matcher: ['/dashboard/:path*', '/api/:path*', '/login', '/change-password'],
 };

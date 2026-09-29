@@ -12,7 +12,11 @@ export { Placeholder } from './components/Placeholder';
 export { MonthGrid, type MonthGridBar, type MonthGridMarker } from './components/MonthGrid';
 export { UserPicker, type PickerUser } from './components/UserPicker';
 export { MultiSelect, type SelectOption } from './components/MultiSelect';
+export { SearchableSelect, type SearchableOption } from './components/SearchableSelect';
+export { FilterField } from './components/FilterField';
 export { PhotoUploadModal, PhotoAvatar, type PhotoUploadGate } from './components/PhotoUpload';
+// Browser-native dictation (Web Speech API) for notes/reason/comment fields.
+export { SpeechInputButton } from './components/SpeechInputButton';
 
 // Create/Edit user form fields. Shared because admin-web "Team" and lms-web
 // "Users" are the same screen twice — they drifted apart while each app owned
@@ -24,16 +28,20 @@ export {
   OrgAssignmentsField,
   ManagerSelect,
   useRoleCatalog,
+  useCampaignTypeCatalog,
   useUserAssignments,
   useWeightStatus,
+  weightStatusKey,
   rolesForDepartment,
   ALL_DEPARTMENTS,
   NO_DEPARTMENT,
   type BranchOption,
+  type CampaignTypeOption,
   type DepartmentOption,
   type ManagerCandidate,
   type OrgAssignment,
   type RoleOption,
+  type WeightEntry,
   type WeightStatus,
 } from './components/UserForm';
 export { ErrorState, AppErrorBoundary, type ErrorStateProps, type AppErrorBoundaryProps } from './components/ErrorState';
@@ -56,11 +64,19 @@ export {
 export { useIsMobile } from './hooks/useIsMobile';
 export { useDismissible, useDropdown } from './hooks/useDropdown';
 export { useAnchoredPanel, type AnchoredPanelRect } from './hooks/useAnchoredPanel';
+export {
+  useSpeechToText,
+  appendDictation,
+  type DictationLang,
+  type UseSpeechToTextOptions,
+  type UseSpeechToTextReturn,
+} from './hooks/useSpeechToText';
 
 export { createApiClient, type ApiRequestError } from './api/http';
+export { appBasePath, withBasePath } from './api/base-path';
 // `auth` is exported for myOrgs() — the covered-branches list that drives the
 // Leads History branch picker, and the same source BranchSwitcher uses.
-export { orgs, users, auth } from './api/resources';
+export { orgs, users, auth, push } from './api/resources';
 
 export {
   exportRows,
@@ -72,13 +88,32 @@ export {
 } from './export/export';
 
 export { NotificationProvider, useNotifications, type AppNotification } from './providers/NotificationProvider';
+export { UserAdminScopeProvider, useUserAdminScope, type UserAdminScope } from './providers/UserAdminScope';
+
+// PWA — installability + service worker registration shared by all six root
+// layouts. See docs/Architecture.md → Web push & PWA.
+export { ServiceWorkerRegistrar } from './pwa/ServiceWorkerRegistrar';
+export { InstallPrompt } from './pwa/InstallPrompt';
+export { NotificationOptIn } from './pwa/NotificationOptIn';
+export {
+  usePushSubscription,
+  type PushStatus,
+  type UsePushSubscriptionReturn,
+} from './pwa/usePushSubscription';
+export {
+  viewport as pwaViewport,
+  appleWebApp as pwaAppleWebApp,
+  icons as pwaIcons,
+  manifest as pwaManifest,
+  appleCapableMeta as pwaAppleCapableMeta,
+} from './pwa/metadata';
 
 // SSO origin helpers — client-safe (no jose, no next/headers). Server Components
 // call productOrigins()/authOrigin() and pass results down to client chrome.
-export { authOrigin, adminWebOrigin, buildLoginUrl, buildChangePasswordUrl, productOrigins, allowedRedirectOrigins } from './auth/sso';
+export { authOrigin, adminOrigin, adminWebOrigin, buildLoginUrl, buildChangePasswordUrl, productOrigins, allowedRedirectOrigins } from './auth/sso';
 
 // Product entitlement resolution — tenant license INTERSECT user capability, plus
 // the landing target derived from it. Pure and env-free (no React, no jose), so
 // auth-web's redirect logic can import it from this barrel rather than ./shell,
 // which would drag in the chrome components.
-export { usableProducts, landingFor, PRODUCT_LANDING } from './shell/products';
+export { usableProducts, landingFor, productHref, PRODUCT_LANDING } from './shell/products';

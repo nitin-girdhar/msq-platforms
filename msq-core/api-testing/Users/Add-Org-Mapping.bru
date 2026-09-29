@@ -18,6 +18,15 @@ body:json {
   {
     "org_id": "{{orgId}}",
     "role_id": "{{userRoleId}}",
+    "campaign_type_id": "{{campaignTypeId}}",
     "lead_assignment_weight": 50
   }
+}
+
+docs {
+  Grants one branch membership plus its lead-assignment weight for ONE
+  campaign type (schema 1.49.0 — required as of Phase 07). campaign_type_id
+  must belong to the caller's own tenant, checked server-side. To weight a
+  user in more than one campaign type within the same branch, call this
+  once per type.
 }

@@ -10,8 +10,10 @@ export type { DatabaseUser, SessionUser };
  * because it reads the capability matrix; that read is served from the in-process
  * cache (@platform/db startCapabilityCache), so it is not a per-call round trip.
  */
-export async function sessionUserWithCapabilities(row: DatabaseUser): Promise<SessionUser> {
-  return toSessionUser(row, await capabilitiesFor(row.tenant_id, row.role_name));
+// `all_branches` mirrors the token's branch_scope claim — it lives on the
+// token, not the user row, so the caller that holds the token passes it in.
+export async function sessionUserWithCapabilities(row: DatabaseUser, all_branches = false): Promise<SessionUser> {
+  return { ...toSessionUser(row, await capabilitiesFor(row.tenant_id, row.role_name)), all_branches };
 }
 
 export function toSessionUser(row: DatabaseUser, capabilities: string[] = []): SessionUser {

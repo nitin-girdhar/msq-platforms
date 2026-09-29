@@ -1,4 +1,5 @@
 import { can, holdsUsableNode, type CapabilityHolder, type CapabilityKey } from '@platform/rbac';
+import type { NavIconName } from './NavIcon';
 
 // holdsUsableNode moved down into @platform/rbac so the product PAGE GUARDS can
 // ask the same question the sidebar asks without depending on a React package —
@@ -13,6 +14,13 @@ export interface NavItem {
   id: string;
   label: string;
   href: string;
+  /**
+   * Symbol drawn beside the label, and alone in the collapsed rail. Optional:
+   * an entry without one falls back to its initials ("Leads History" → "LH"),
+   * so a new menu never renders blank. Purely visual — visibility is still
+   * decided by `capability` below.
+   */
+  icon?: NavIconName;
   /**
    * The capability that makes this item visible — normally the page node the link
    * leads to, so the sidebar and the page guard behind it read the same key.

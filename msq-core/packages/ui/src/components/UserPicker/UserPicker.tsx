@@ -110,14 +110,7 @@ export default function UserPicker({
       ? createPortal(
           <div
             ref={panelRef}
-            style={{
-              position: "fixed",
-              top: rect.top,
-              left: rect.left,
-              width: rect.width,
-              maxHeight: rect.maxHeight,
-              zIndex: 1000,
-            }}
+            style={rect.style}
             className="flex flex-col overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg"
           >
             {showSearch && (

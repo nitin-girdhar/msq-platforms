@@ -241,6 +241,11 @@ CREATE INDEX IF NOT EXISTS idx_organizations_tenant_id
 -- iam.users
 CREATE INDEX IF NOT EXISTS idx_users_org_role
   ON iam.users (org_id, role_id) WHERE NOT is_deleted;
+-- Plain-value, not lower(email): every stored address is ALREADY lowercase,
+-- guaranteed by chk_users_email_lowercase (02_tables_core.sql) and produced by
+-- normalizeEmail() in @platform/validation, which the login lookup calls before
+-- comparing. An equality lookup can therefore use this index directly -- a
+-- functional lower(email) index would be redundant. Keep the three in sync.
 CREATE INDEX IF NOT EXISTS idx_users_org_email
   ON iam.users (org_id, email) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_users_email_trgm
@@ -557,5 +562,121 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_marketing_platforms_global_name
   ON marketing.marketing_platforms (name) WHERE tenant_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uix_campaign_statuses_global_name
   ON marketing.campaign_statuses (name) WHERE tenant_id IS NULL;
+
+-- ── notify.push_subscriptions ─────────────────────────────────────
+-- The sender's only lookup: "every device registered by this user in this org".
+-- endpoint's own UNIQUE constraint already backs the upsert path, so no second
+-- index is needed for it.
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_org
+  ON notify.push_subscriptions (user_id, org_id);
+
+-- ── marketing.campaign_types / ext.meta_campaigns (1.49.0) ────────
+-- ONE DEFAULT PER TENANT, enforced here rather than in the application. The
+-- default type is what the backfill, the intake fallback and the admin UI all
+-- resolve to when nothing else matches, so two of them is not a cosmetic
+-- problem -- it is a silently non-deterministic routing rule. Partial, so a
+-- soft-deleted former default does not block naming a new one.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_campaign_types_one_default
+  ON marketing.campaign_types (tenant_id)
+  WHERE is_default AND NOT is_deleted;
+
+-- The tenant's own list, and the FK from every table that points at a type.
+CREATE INDEX IF NOT EXISTS idx_campaign_types_tenant
+  ON marketing.campaign_types (tenant_id) WHERE NOT is_deleted;
+
+-- The three admin grids in a later phase are literally
+-- `WHERE tenant_id = $1 AND mapping_status = $2`.
+CREATE INDEX IF NOT EXISTS idx_meta_campaigns_tenant_status
+  ON ext.meta_campaigns (tenant_id, mapping_status);
+
+-- The FK, for the RESTRICT check when a type is deleted and for the admin grid
+-- joining a type onto each row.
+CREATE INDEX IF NOT EXISTS idx_meta_campaigns_campaign_type
+  ON ext.meta_campaigns (campaign_type_id) WHERE campaign_type_id IS NOT NULL;
+
+-- Lead lists filtered by pool: "every hiring lead in this branch".
+CREATE INDEX IF NOT EXISTS idx_marketing_leads_org_campaign_type
+  ON lms.marketing_leads (org_id, campaign_type_id, created_at DESC)
+  WHERE campaign_type_id IS NOT NULL AND NOT is_deleted;
+
+CREATE INDEX IF NOT EXISTS idx_ad_campaigns_campaign_type
+  ON marketing.ad_campaigns (campaign_type_id)
+  WHERE campaign_type_id IS NOT NULL AND NOT is_deleted;
+
+-- The composite PK on lms.lead_assignment_weights leads on
+-- user_org_mapping_id, so "who is in this type's pool" -- the auto-assignment
+-- picker's own query -- has no usable index without this one.
+CREATE INDEX IF NOT EXISTS idx_lead_assignment_weights_type
+  ON lms.lead_assignment_weights (campaign_type_id);
+
+-- ── scratch.meta_pull_* (1.50.0) ──────────────────────────────────
+-- The 409 guard ("is a run already live for this tenant?") and the wholesale
+-- DELETE that clears a tenant's previous run, both of which run on every
+-- POST /runs.
+CREATE INDEX IF NOT EXISTS idx_meta_pull_runs_tenant_status
+  ON scratch.meta_pull_runs (tenant_id, status);
+
+-- The poller's claims: a pull (`WHERE status = 'queued' ORDER BY created_at`)
+-- and, since 1.50.1, an Apply (`WHERE status = 'apply_queued'`), each
+-- FOR UPDATE SKIP LOCKED LIMIT 1. Partial, because the queue is empty almost
+-- all of the time and a full-table index would be mostly finished runs.
+--
+-- Replaces idx_meta_pull_runs_queued (pulls only). CREATE INDEX IF NOT EXISTS
+-- cannot change an existing index's predicate -- it would silently keep the old
+-- one -- hence a new name and an explicit DROP of the old.
+DROP INDEX IF EXISTS scratch.idx_meta_pull_runs_queued;
+CREATE INDEX IF NOT EXISTS idx_meta_pull_runs_claimable
+  ON scratch.meta_pull_runs (status, created_at)
+  WHERE status IN ('queued', 'apply_queued');
+
+-- The reaper: runs whose heartbeat has gone stale while claimed. Same
+-- reasoning for the partial -- only in-flight runs can ever be reaped.
+CREATE INDEX IF NOT EXISTS idx_meta_pull_runs_heartbeat
+  ON scratch.meta_pull_runs (heartbeat_at)
+  WHERE status IN ('running', 'applying');
+
+-- The delta summary (GROUP BY verdict) and the drill-down behind each of its
+-- numbers (`?verdict=`), which are the two reads the screen makes.
+CREATE INDEX IF NOT EXISTS idx_meta_pull_leads_run_verdict
+  ON scratch.meta_pull_leads (run_id, verdict);
+
+-- The apply loop's worklist, and the re-read that reports what it did.
+CREATE INDEX IF NOT EXISTS idx_meta_pull_leads_run_applied
+  ON scratch.meta_pull_leads (run_id, applied_status);
+
+-- ── 1.51.0: ordered rules, campaign discovery, lead inbox ─────────────────
+-- One live rule per position per tenant: the matcher's ORDER BY rule_order must
+-- never tie. Partial, so a soft-deleted rule does not hold its old slot.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_campaign_type_rules_order
+  ON marketing.campaign_type_rules (tenant_id, rule_order)
+  WHERE NOT is_deleted;
+
+-- The FK, for the RESTRICT check when a type is deleted and for "which rules
+-- point at this type" in the admin screen.
+CREATE INDEX IF NOT EXISTS idx_campaign_type_rules_type
+  ON marketing.campaign_type_rules (campaign_type_id) WHERE NOT is_deleted;
+
+-- The grid's Page filter: `WHERE page_ids && $pages`.
+CREATE INDEX IF NOT EXISTS idx_meta_campaigns_page_ids
+  ON ext.meta_campaigns USING gin (page_ids);
+
+CREATE INDEX IF NOT EXISTS idx_meta_adsets_campaign ON ext.meta_adsets (meta_campaign_id);
+CREATE INDEX IF NOT EXISTS idx_meta_adsets_tenant   ON ext.meta_adsets (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_meta_ads_campaign    ON ext.meta_ads    (meta_campaign_id);
+CREATE INDEX IF NOT EXISTS idx_meta_ads_tenant      ON ext.meta_ads    (tenant_id);
+
+-- The inbox screen reads open rows, newest first, optionally by tenant.
+CREATE INDEX IF NOT EXISTS idx_meta_lead_inbox_status
+  ON ext.meta_lead_inbox (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_meta_lead_inbox_tenant
+  ON ext.meta_lead_inbox (tenant_id) WHERE tenant_id IS NOT NULL;
+-- "Resolve every open row for this page" after an admin maps the page.
+CREATE INDEX IF NOT EXISTS idx_meta_lead_inbox_page
+  ON ext.meta_lead_inbox (page_id) WHERE status = 'open';
+
+-- Unassigned leads by reason, for the rerun screen's breakdown.
+CREATE INDEX IF NOT EXISTS idx_marketing_leads_auto_assign_reason
+  ON lms.marketing_leads (org_id, auto_assign_reason)
+  WHERE auto_assign_reason IS NOT NULL AND NOT is_deleted;
 
 COMMIT;

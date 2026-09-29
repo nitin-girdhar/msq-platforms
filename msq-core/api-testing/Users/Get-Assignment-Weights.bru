@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/users/assignment-weights
+  url: {{baseUrl}}/users/assignment-weights?campaign_type_id={{campaignTypeId}}
   body: none
   auth: none
 }
@@ -17,8 +17,14 @@ headers {
 docs {
   Lists users eligible for auto lead assignment in the caller's org —
   active iam.user_org_mapping rows with role rank strictly between
-  read_only (0) and org_admin (80) — along with their current
-  lead_assignment_weight (0-100).
+  read_only (0) and org_admin (80) — along with their current per-
+  campaign-type weight (0-100). One row per (user, campaign type) as of
+  schema 1.49.0 — the response also carries campaign_type_id/
+  campaign_type/campaign_type_label per row.
+
+  campaign_type_id is optional; omit it (and the query string entirely)
+  to see every pool this org has. A stale/foreign campaign_type_id is
+  rejected with 400 rather than silently returning nothing.
 
   Use this to review current weights before calling
   Update-Assignment-Weights.bru.

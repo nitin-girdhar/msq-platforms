@@ -1,8 +1,9 @@
 # CRM Monorepo — Database Model
 
 > **Database:** PostgreSQL 14+  
-> **Schema version:** 1.45.0  
-> **Primary keys:** UUIDv7 (time-ordered) for operational tables; SMALLINT/INTEGER identity for geographic lookups  
+> **Schema version:** 1.54.0 (see `db_scripts/09_schema_version.sql`)  
+> **Primary keys:** UUIDv7 (time-ordered) everywhere, including `geo.*`; SMALLINT identity only on `ext.meta_capi_event_types`  
+> **Source of truth:** the `CREATE TABLE` statements in `db_scripts/02_tables_core.sql` and `03_tables_product.sql`. The column tables below mirror them; the diagrams are generated from them by `docs/tools/gen_db_diagram.py`  
 > **Multi-tenancy:** Row Level Security (RLS) on every operational table  
 > **Extensions:** pgcrypto, pg_trgm, btree_gin, vector (optional)
 
@@ -10,123 +11,814 @@
 
 ## Schema Diagram (Entity-Relationship)
 
+<!-- BEGIN GENERATED: gen_db_diagram.py -->
+
+_Generated from the `CREATE TABLE` statements in `db_scripts/` (schema 1.54.0) by `python docs/tools/gen_db_diagram.py` — do not edit by hand, re-run the script after changing `02_tables_core.sql` / `03_tables_product.sql`._
+
+**Interactive version:** open [`docs/db-schema-atlas.html`](db-schema-atlas.html) in a browser — every column of every table, all foreign keys drawn between them, search, and a per-table panel listing what it references and what references it.
+
+### How the schemas connect
+
+Arrows point from the schema holding the foreign key to the schema it references; the label is the number of FK columns. `entity` (tenants, organizations) and `iam` (users, roles) are the foundation every product builds on.
+
+```mermaid
+flowchart BT
+  entity["<b>entity</b><br/>9 tables"]
+  iam["<b>iam</b><br/>10 tables"]
+  geo["<b>geo</b><br/>3 tables"]
+  lms["<b>lms</b><br/>13 tables"]
+  marketing["<b>marketing</b><br/>5 tables"]
+  ext["<b>ext</b><br/>16 tables"]
+  hr["<b>hr</b><br/>23 tables"]
+  task["<b>task</b><br/>6 tables"]
+  audit["<b>audit</b><br/>3 tables"]
+  comms["<b>comms</b><br/>1 table"]
+  notify["<b>notify</b><br/>1 table"]
+  scratch["<b>scratch</b><br/>2 tables"]
+  public["<b>public</b><br/>1 table"]
+  entity -- 3 --> geo
+  iam -- 11 --> entity
+  geo -- 3 --> entity
+  lms -- 14 --> entity
+  lms -- 12 --> iam
+  lms -- 3 --> geo
+  lms -- 3 --> marketing
+  marketing -- 5 --> entity
+  marketing -- 1 --> iam
+  ext -- 16 --> entity
+  ext -- 2 --> iam
+  ext -- 4 --> lms
+  ext -- 4 --> marketing
+  hr -- 27 --> entity
+  hr -- 13 --> iam
+  task -- 6 --> entity
+  task -- 4 --> iam
+  audit -- 1 --> entity
+  audit -- 2 --> iam
+  audit -- 1 --> lms
+  comms -- 2 --> entity
+  notify -- 1 --> entity
+  notify -- 1 --> iam
+  scratch -- 3 --> entity
+  scratch -- 2 --> iam
+  scratch -- 2 --> lms
+  scratch -- 1 --> marketing
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    SCHEMA: geo                                              │
-│                                                                                             │
-│  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐                                 │
-│  │  countries    │◄────│   states     │◄────│   cities     │                                 │
-│  │  (SMALLINT)   │ 1:N │  (SMALLINT)  │ 1:N │  (INTEGER)   │                                │
-│  └──────────────┘     └──────────────┘     └──────────────┘                                 │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                  SCHEMA: entity                                             │
-│                                                                                             │
-│  ┌────────────────┐  ┌──────────────────┐  ┌───────────────┐                                │
-│  │ tenant_domains │  │ tenant_plan_types│  │  org_types    │                                 │
-│  └───────┬────────┘  └────────┬─────────┘  └──────┬────────┘                                │
-│          │                    │                    │                                         │
-│          ▼                    ▼                    ▼                                         │
-│  ┌──────────────────────────────────────────────────────────┐     ┌──────────────┐           │
-│  │                    tenants                               │◄────│ organizations│──┐        │
-│  │  (id, name, domain_id, plan_type_id, is_active, ...)    │ 1:N │              │  │        │
-└──┴──────────────────────────────────────────────────────────┴─────┴──────┬───────┴──┘        │
-                                                                           │                    │
-                    ┌──────────────────────────────────────────────────────┘                    │
-                    │ (org_id FK on nearly all operational tables)                             │
-                    ▼                                                                          │
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    SCHEMA: iam                                              │
-│                                                                                             │
-│  ┌──────────────┐     ┌──────────────────────────────┐     ┌──────────────────────┐         │
-│  │  user_roles  │◄────│            users             │────►│  user_org_mapping    │         │
-│  └──────────────┘     │  (self-ref: manager_id)      │     │  (PK: user_id+org_id)│         │
-│                       └──────────────────────────────┘     └──────────────────────┘         │
-│                                                                                             │
-│  ┌──────────────────────┐                                                                   │
-│  │  token_blocklist     │  (JWT revocation: jti, user, org, tenant scope)                   │
-│  └──────────────────────┘                                                                   │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
+### Per-schema diagrams
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    SCHEMA: lms                                              │
-│                                                                                             │
-│  ┌──────────────┐  ┌───────────────────┐  ┌──────────────────┐  ┌────────────────────┐      │
-│  │  lead_stage  │──│ lead_stage_outcome│  │ interaction_types│  │ follow_up_statuses │      │
-│  └──────┬───────┘  └────────┬──────────┘  └────────┬─────────┘  └─────────┬──────────┘      │
-│         │                   │                      │                      │                  │
-│         ▼                   ▼                      │                      │                  │
-│  ┌──────────────────────────────────────┐          │                      │                  │
-│  │          marketing_leads            │          │                      │                  │
-│  │  (core lead entity, soft-delete)    │          │                      │                  │
-│  │  FK → org, stage, outcome, campaign,│          │                      │                  │
-│  │       source, assigned_user         │          │                      │                  │
-│  │  is_active, superseded_by (self-ref)│          │                      │                  │
-│  └────┬────────────────┬───────────┬───┘          │                      │                  │
-│       │                │           │               │                      │                  │
-│       │ 1:N            │ 1:N       │ 1:N           │                      │                  │
-│       ▼                ▼           ▼               ▼                      ▼                  │
-│  ┌────────────┐ ┌─────────────┐ ┌─────────────────────┐  ┌──────────────────────┐           │
-│  │lead_status │ │ lead_assign │ │ lead_interactions   │  │  lead_follow_ups    │            │
-│  │  _log      │ │ ment_log    │ │                     │  │                     │            │
-│  └────────────┘ └─────────────┘ └─────────────────────┘  └─────────────────────┘            │
-│                                                                                             │
-│  ┌──────────────┐  ┌──────────────────────────────────────────────────────────┐             │
-│  │ lead_sources │  │ lead_links  (merge: same-org dedup / transfer: cross-org) │             │
-│  │              │  │  source_lead_id → marketing_leads                         │             │
-│  └──────────────┘  │  dest_lead_id   → marketing_leads                         │             │
-│                    │  link_type: 'merge' | 'transfer'                           │             │
-│                    └──────────────────────────────────────────────────────────┘             │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
+One diagram per schema, **key columns only** (PK, FK, unique, referenced). The full column lists are in *Table Details* below. Tables from other schemas appear as plain boxes. Conventions:
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                  SCHEMA: marketing                                          │
-│                                                                                             │
-│  ┌──────────────────────┐  ┌──────────────────┐                                             │
-│  │ marketing_platforms  │  │ campaign_statuses│                                             │
-│  └──────────┬───────────┘  └────────┬─────────┘                                             │
-│             │                       │                                                       │
-│             ▼                       ▼                                                       │
-│  ┌──────────────────────────────────────────────┐                                           │
-│  │              ad_campaigns                    │                                           │
-│  │  FK → org, platform, status                  │                                           │
-│  └──────────────────────────────────────────────┘                                           │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
+- `}o--||` many rows reference exactly one row (NOT NULL FK); `}o--o|` the FK is nullable; `|o--||` a 1:1 extension (the FK is also the PK or unique).
+- **`org_id` / `tenant_id` links to `entity.organizations` / `entity.tenants` are left out** outside the `entity` schema — nearly every table has them. They still show as FK columns.
+- Composite `(tenant_id, x)` FKs are drawn on `x`.
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                   SCHEMA: audit                                             │
-│                                                                                             │
-│  ┌──────────────────────────┐  ┌──────────────────┐  ┌──────────────┐                       │
-│  │ marketing_leads_history  │  │    audit_log     │  │  activities  │                       │
-│  │ (field-level diff for    │  │ (generic for all │  │ (fire-and-   │                       │
-│  │  lms.marketing_leads)    │  │  other tables)   │  │  forget log) │                       │
-│  └──────────────────────────┘  └──────────────────┘  └──────────────┘                       │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
+#### `entity`
 
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    SCHEMA: ext                                              │
-│                                                                                             │
-│  ┌──────────────────┐  ┌───────────────────────┐  ┌──────────────────┐  ┌──────────────────────┐│
-│  │ meta_tenant_     │  │ meta_page_form_       │  │   meta_leads     │◄─│ meta_lead_custom_    ││
-│  │ config (per-     │  │ org_map (Page+Form    │  │ (raw Meta data)  │1N│ fields               ││
-│  │ tenant creds +   │  │ -> org attribution)   │  └────────┬─────────┘  └──────────────────────┘│
-│  │ field_mappings)  │  └───────────────────────┘           │                                    │
-│  └──────────────────┘                                      │                                    │
-│                    ┌────────────────┼────────────────┐                                      │
-│                    ▼                ▼                ▼                                      │
-│         ┌────────────────┐ ┌──────────────────┐ ┌──────────────────────┐                    │
-│         │ meta_lead_      │ │ meta_lead_       │ │ meta_lead_           │                    │
-│         │ addresses (1:1) │ │ professional(1:1)│ │ demographics (1:1)   │                    │
-│         └────────────────┘ └──────────────────┘ └──────────────────────┘                    │
-│                                    │                                                        │
-│                                    ▼                                                        │
-│                           ┌────────────────────────┐                                        │
-│                           │ meta_capi_outbound_logs│                                        │
-│                           │ (CAPI event audit)     │                                        │
-│                           └────────────────────────┘                                        │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+erDiagram
+  org_types {
+    UUID id PK
+    TEXT name UK
+  }
+  tenant_domains {
+    UUID id PK
+    TEXT name UK
+  }
+  tenant_plan_types {
+    UUID id PK
+    TEXT name UK
+  }
+  tenants {
+    UUID id PK
+    TEXT name UK
+    UUID domain_id FK
+    UUID plan_type_id FK
+  }
+  organizations {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_type_id FK
+    UUID city_id FK
+    UUID state_id FK
+    UUID country_id FK
+  }
+  tenant_modules {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  catalog_defaults {
+    UUID id PK
+    TEXT catalog_key FK
+  }
+  catalog_versions {
+    TEXT catalog_key PK
+  }
+  tenant_catalog_versions {
+    UUID id PK
+    UUID tenant_id FK
+    TEXT catalog_key FK
+  }
+  tenants }o--o| tenant_domains : "domain_id"
+  tenants }o--o| tenant_plan_types : "plan_type_id"
+  organizations }o--|| tenants : "tenant_id"
+  organizations }o--o| org_types : "org_type_id"
+  organizations }o--o| cities : "city_id"
+  organizations }o--o| states : "state_id"
+  organizations }o--o| countries : "country_id"
+  tenant_modules }o--|| tenants : "tenant_id"
+  tenant_catalog_versions }o--|| tenants : "tenant_id"
+  catalog_defaults }o..|| catalog_versions : "catalog_key"
+  tenant_catalog_versions }o..|| catalog_versions : "catalog_key"
 ```
+
+#### `iam`
+
+```mermaid
+erDiagram
+  departments {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+  }
+  user_roles {
+    UUID id PK
+    UUID tenant_id FK
+    UUID department_id FK
+  }
+  capabilities {
+    UUID id PK
+    TEXT key UK
+    TEXT parent_key FK
+  }
+  role_capabilities {
+    UUID id PK
+    UUID tenant_id FK
+    UUID role_id FK
+    UUID capability_id FK
+  }
+  users {
+    UUID id PK
+    UUID org_id FK
+    TEXT email UK
+    UUID role_id FK
+    UUID manager_id FK
+  }
+  user_org_mapping {
+    UUID id UK
+    UUID user_id PK,FK
+    UUID org_id PK,FK
+    UUID role_id FK
+    UUID granted_by FK
+  }
+  reporting_lines {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID user_id FK
+    UUID manager_id FK
+  }
+  api_clients {
+    UUID id PK
+    UUID tenant_id FK
+    TEXT key_hash UK
+    UUID created_by FK
+  }
+  api_client_orgs {
+    UUID api_client_id PK,FK
+    UUID org_id PK,FK
+  }
+  token_blocklist {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID revoked_by FK
+  }
+  user_roles }o--o| departments : "department_id"
+  capabilities }o--o| capabilities : "parent_key"
+  role_capabilities }o--|| user_roles : "role_id"
+  role_capabilities }o--|| capabilities : "capability_id"
+  users }o--|| user_roles : "role_id"
+  users }o--o| users : "manager_id"
+  user_org_mapping }o--|| users : "user_id"
+  user_org_mapping }o--|| user_roles : "role_id"
+  user_org_mapping }o--o| users : "granted_by"
+  reporting_lines }o--|| users : "user_id"
+  reporting_lines }o--|| users : "manager_id"
+  api_clients }o--o| users : "created_by"
+  api_client_orgs }o--|| api_clients : "api_client_id"
+  token_blocklist }o--o| users : "user_id"
+  token_blocklist }o--o| users : "revoked_by"
+```
+
+#### `geo`
+
+```mermaid
+erDiagram
+  countries {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  states {
+    UUID id PK
+    UUID tenant_id FK
+    UUID country_id FK
+  }
+  cities {
+    UUID id PK
+    UUID tenant_id FK
+    UUID state_id FK
+  }
+  states }o--|| countries : "country_id"
+  cities }o--|| states : "state_id"
+```
+
+#### `lms`
+
+```mermaid
+erDiagram
+  lead_stage {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  lead_stage_outcome {
+    UUID id PK
+    UUID tenant_id FK
+    UUID stage_id FK
+  }
+  interaction_types {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  follow_up_statuses {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  lead_sources {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  lead_assignment_weights {
+    UUID user_org_mapping_id PK,FK
+    UUID campaign_type_id PK,FK
+    UUID updated_by FK
+  }
+  marketing_leads {
+    UUID id PK
+    UUID org_id FK
+    UUID city_id FK
+    UUID state_id FK
+    UUID country_id FK
+    UUID stage_id FK
+    UUID outcome_id FK
+    UUID campaign_id FK
+    UUID campaign_type_id FK
+    UUID source_id FK
+    UUID assigned_user_id FK
+    UUID superseded_by FK
+  }
+  lead_links {
+    UUID id PK
+    UUID source_lead_id FK
+    UUID source_org_id FK
+    UUID dest_lead_id FK
+    UUID dest_org_id FK
+    UUID created_by FK
+  }
+  lead_report_snapshot {
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID assigned_user_id FK
+    UUID source_id FK
+  }
+  lead_interactions {
+    UUID id PK
+    UUID org_id FK
+    UUID lead_id FK
+    UUID user_id FK
+    UUID interaction_type_id FK
+  }
+  lead_follow_ups {
+    UUID id PK
+    UUID org_id FK
+    UUID lead_id FK
+    UUID assigned_user_id FK
+    UUID status_id FK
+    UUID stage_id FK
+    UUID outcome_id FK
+  }
+  lead_assignment_log {
+    UUID id PK
+    UUID org_id FK
+    UUID lead_id FK
+    UUID assigned_by_id FK
+    UUID assigned_to_id FK
+    UUID previous_assignee_id FK
+  }
+  lead_status_log {
+    UUID id PK
+    UUID org_id FK
+    UUID lead_id FK
+    UUID changed_by_id FK
+    UUID old_stage_id FK
+    UUID new_stage_id FK
+    UUID old_outcome_id FK
+    UUID new_outcome_id FK
+    UUID assigned_user_id FK
+  }
+  lead_stage_outcome }o--|| lead_stage : "stage_id"
+  lead_assignment_weights }o--|| user_org_mapping : "user_org_mapping_id"
+  lead_assignment_weights }o--|| campaign_types : "campaign_type_id"
+  lead_assignment_weights }o--o| users : "updated_by"
+  marketing_leads }o--o| cities : "city_id"
+  marketing_leads }o--o| states : "state_id"
+  marketing_leads }o--o| countries : "country_id"
+  marketing_leads }o--o| lead_stage : "stage_id"
+  marketing_leads }o--o| lead_stage_outcome : "outcome_id"
+  marketing_leads }o--o| ad_campaigns : "campaign_id"
+  marketing_leads }o--o| campaign_types : "campaign_type_id"
+  marketing_leads }o--o| lead_sources : "source_id"
+  marketing_leads }o--o| users : "assigned_user_id"
+  marketing_leads }o--o| marketing_leads : "superseded_by"
+  lead_links }o--|| marketing_leads : "source_lead_id"
+  lead_links }o--o| marketing_leads : "dest_lead_id"
+  lead_links }o--o| users : "created_by"
+  lead_report_snapshot }o--o| users : "assigned_user_id"
+  lead_report_snapshot }o--o| lead_sources : "source_id"
+  lead_interactions }o--|| marketing_leads : "lead_id"
+  lead_interactions }o--|| users : "user_id"
+  lead_interactions }o--o| interaction_types : "interaction_type_id"
+  lead_follow_ups }o--|| marketing_leads : "lead_id"
+  lead_follow_ups }o--|| users : "assigned_user_id"
+  lead_follow_ups }o--|| follow_up_statuses : "status_id"
+  lead_follow_ups }o--o| lead_stage : "stage_id"
+  lead_follow_ups }o--o| lead_stage_outcome : "outcome_id"
+  lead_assignment_log }o--|| marketing_leads : "lead_id"
+  lead_assignment_log }o--o| users : "assigned_by_id"
+  lead_assignment_log }o--o| users : "assigned_to_id"
+  lead_assignment_log }o--o| users : "previous_assignee_id"
+  lead_status_log }o--|| marketing_leads : "lead_id"
+  lead_status_log }o--o| users : "changed_by_id"
+  lead_status_log }o--o| lead_stage : "old_stage_id"
+  lead_status_log }o--|| lead_stage : "new_stage_id"
+  lead_status_log }o--o| lead_stage_outcome : "old_outcome_id"
+  lead_status_log }o--o| lead_stage_outcome : "new_outcome_id"
+  lead_status_log }o--o| users : "assigned_user_id"
+```
+
+#### `marketing`
+
+```mermaid
+erDiagram
+  marketing_platforms {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  campaign_statuses {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  campaign_types {
+    UUID id PK
+    UUID tenant_id FK
+    UUID department_id FK
+  }
+  campaign_type_rules {
+    UUID id PK
+    UUID tenant_id FK
+    UUID campaign_type_id FK
+  }
+  ad_campaigns {
+    UUID id PK
+    UUID org_id FK
+    UUID platform_id FK
+    UUID status_id FK
+    UUID campaign_type_id FK
+  }
+  campaign_types }o--o| departments : "department_id"
+  campaign_type_rules }o--|| campaign_types : "campaign_type_id"
+  ad_campaigns }o--|| marketing_platforms : "platform_id"
+  ad_campaigns }o--|| campaign_statuses : "status_id"
+  ad_campaigns }o--o| campaign_types : "campaign_type_id"
+```
+
+#### `ext`
+
+```mermaid
+erDiagram
+  meta_tenant_config {
+    UUID id PK
+    UUID tenant_id FK,UK
+  }
+  meta_page_form_org_map {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID default_campaign_type_id FK
+  }
+  meta_forms {
+    UUID id PK
+    UUID tenant_id FK
+    BIGINT form_id UK
+  }
+  meta_campaigns {
+    UUID id PK
+    UUID tenant_id FK
+    TEXT ad_account_id FK
+    BIGINT meta_campaign_id UK
+    UUID campaign_type_id FK
+    UUID suggested_campaign_type_id FK
+    UUID matched_rule_id FK
+    UUID confirmed_by FK
+  }
+  meta_ad_accounts {
+    UUID id PK
+    TEXT ad_account_id UK
+  }
+  meta_adsets {
+    UUID id PK
+    UUID tenant_id FK
+    BIGINT meta_adset_id UK
+    BIGINT meta_campaign_id FK
+  }
+  meta_ads {
+    UUID id PK
+    UUID tenant_id FK
+    BIGINT meta_ad_id UK
+    BIGINT meta_adset_id FK
+    BIGINT meta_campaign_id FK
+  }
+  meta_lead_inbox {
+    UUID id PK
+    BIGINT meta_lead_id UK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID integration_id FK
+    UUID resolved_lead_id FK
+    UUID resolved_by FK
+  }
+  meta_leads {
+    UUID id PK
+    UUID org_id FK
+    UUID marketing_lead_id FK
+    BIGINT meta_lead_id UK
+  }
+  meta_lead_custom_fields {
+    UUID id PK
+    UUID meta_lead_id FK
+    UUID org_id FK
+  }
+  meta_capi_outbound_logs {
+    UUID id PK
+    UUID org_id FK
+    UUID marketing_lead_id FK
+    UUID meta_lead_id FK
+  }
+  meta_capi_event_types {
+    SMALLINT id PK
+    VARCHAR code UK
+  }
+  lead_stage_capi_event_map {
+    UUID id PK
+    UUID tenant_id FK
+    UUID stage_id FK,UK
+    SMALLINT capi_event_type_id FK
+  }
+  meta_lead_addresses {
+    UUID meta_lead_id PK,FK
+    UUID org_id FK
+  }
+  meta_lead_professional {
+    UUID meta_lead_id PK,FK
+    UUID org_id FK
+  }
+  meta_lead_demographics {
+    UUID meta_lead_id PK,FK
+    UUID org_id FK
+  }
+  meta_page_form_org_map }o--o| campaign_types : "default_campaign_type_id"
+  meta_campaigns }o--o| campaign_types : "campaign_type_id"
+  meta_campaigns }o--o| campaign_types : "suggested_campaign_type_id"
+  meta_campaigns }o--o| campaign_type_rules : "matched_rule_id"
+  meta_campaigns }o--o| users : "confirmed_by"
+  meta_lead_inbox }o--o| meta_tenant_config : "integration_id"
+  meta_lead_inbox }o--o| marketing_leads : "resolved_lead_id"
+  meta_lead_inbox }o--o| users : "resolved_by"
+  meta_leads }o--o| marketing_leads : "marketing_lead_id"
+  meta_lead_custom_fields }o--|| meta_leads : "meta_lead_id"
+  meta_capi_outbound_logs }o--|| marketing_leads : "marketing_lead_id"
+  meta_capi_outbound_logs }o--o| meta_leads : "meta_lead_id"
+  lead_stage_capi_event_map }o--|| meta_capi_event_types : "capi_event_type_id"
+  lead_stage_capi_event_map |o--|| lead_stage : "stage_id"
+  meta_lead_addresses |o--|| meta_leads : "meta_lead_id"
+  meta_lead_professional |o--|| meta_leads : "meta_lead_id"
+  meta_lead_demographics |o--|| meta_leads : "meta_lead_id"
+  meta_campaigns }o..o| meta_ad_accounts : "ad_account_id"
+  meta_adsets }o..o| meta_campaigns : "meta_campaign_id"
+  meta_ads }o..o| meta_adsets : "meta_adset_id"
+  meta_ads }o..o| meta_campaigns : "meta_campaign_id"
+```
+
+#### `hr`
+
+```mermaid
+erDiagram
+  employment_types {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  leave_types {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  leave_request_statuses {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  attendance_statuses {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  designations {
+    UUID id PK
+    UUID org_id FK
+  }
+  employee_profiles {
+    UUID user_id PK,FK
+    UUID org_id FK
+    UUID tenant_id FK
+    UUID employment_type_id FK
+    UUID department_id FK
+    UUID designation_id FK
+  }
+  holiday_calendars {
+    UUID id PK
+    UUID org_id FK
+  }
+  holidays {
+    UUID id PK
+    UUID calendar_id FK
+    UUID org_id FK
+  }
+  leave_policies {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID leave_type_id FK
+  }
+  hr_settings {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+  }
+  leave_requests {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID leave_type_id FK
+    UUID status_id FK
+  }
+  leave_request_status_log {
+    UUID id PK
+    UUID org_id FK
+    UUID request_id FK
+    UUID changed_by_id FK
+    UUID old_status_id FK
+    UUID new_status_id FK
+  }
+  leave_ledger {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID leave_type_id FK
+    UUID leave_request_id FK
+  }
+  leave_request_approvals {
+    UUID id PK
+    UUID leave_request_id FK
+    UUID org_id FK
+    UUID approver_id FK
+  }
+  attendance_rules {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+  }
+  shifts {
+    UUID id PK
+    UUID org_id FK
+  }
+  shift_segments {
+    UUID id PK
+    UUID shift_id FK
+    UUID org_id FK
+  }
+  shift_assignments {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID shift_id FK
+  }
+  attendance_geo_exceptions {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+  }
+  attendance_events {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+  }
+  attendance_days {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID status_id FK
+    UUID leave_request_id FK
+  }
+  attendance_regularizations {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID requested_status_id FK
+    UUID approver_id FK
+  }
+  attendance_regularization_approvals {
+    UUID id PK
+    UUID regularization_id FK
+    UUID org_id FK
+    UUID approver_id FK
+  }
+  employee_profiles |o--|| users : "user_id"
+  employee_profiles }o--o| employment_types : "employment_type_id"
+  employee_profiles }o--o| departments : "department_id"
+  employee_profiles }o--o| designations : "designation_id"
+  holidays }o--|| holiday_calendars : "calendar_id"
+  leave_policies }o--|| leave_types : "leave_type_id"
+  leave_requests }o--|| users : "user_id"
+  leave_requests }o--|| leave_types : "leave_type_id"
+  leave_requests }o--|| leave_request_statuses : "status_id"
+  leave_request_status_log }o--|| leave_requests : "request_id"
+  leave_request_status_log }o--o| users : "changed_by_id"
+  leave_request_status_log }o--o| leave_request_statuses : "old_status_id"
+  leave_request_status_log }o--|| leave_request_statuses : "new_status_id"
+  leave_ledger }o--|| users : "user_id"
+  leave_ledger }o--|| leave_types : "leave_type_id"
+  leave_ledger }o--o| leave_requests : "leave_request_id"
+  leave_request_approvals }o--|| leave_requests : "leave_request_id"
+  leave_request_approvals }o--|| users : "approver_id"
+  shift_segments }o--|| shifts : "shift_id"
+  shift_assignments }o--|| users : "user_id"
+  shift_assignments }o--|| shifts : "shift_id"
+  attendance_geo_exceptions }o--|| users : "user_id"
+  attendance_events }o--|| users : "user_id"
+  attendance_days }o--|| users : "user_id"
+  attendance_days }o--|| attendance_statuses : "status_id"
+  attendance_days }o--o| leave_requests : "leave_request_id"
+  attendance_regularizations }o--|| users : "user_id"
+  attendance_regularizations }o--o| attendance_statuses : "requested_status_id"
+  attendance_regularizations }o--o| users : "approver_id"
+  attendance_regularization_approvals }o--|| attendance_regularizations : "regularization_id"
+  attendance_regularization_approvals }o--|| users : "approver_id"
+```
+
+#### `task`
+
+```mermaid
+erDiagram
+  task_statuses {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  task_priorities {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  task_lists {
+    UUID id PK
+    UUID org_id FK
+    UUID owner_id FK
+  }
+  tasks {
+    UUID id PK
+    UUID org_id FK
+    UUID list_id FK
+    UUID assignee_id FK
+    UUID priority_id FK
+    UUID status_id FK
+    UUID parent_task_id FK
+  }
+  task_status_log {
+    UUID id PK
+    UUID org_id FK
+    UUID task_id FK
+    UUID changed_by_id FK
+    UUID old_status_id FK
+    UUID new_status_id FK
+  }
+  task_comments {
+    UUID id PK
+    UUID org_id FK
+    UUID task_id FK
+    UUID user_id FK
+  }
+  task_lists }o--|| users : "owner_id"
+  tasks }o--o| task_lists : "list_id"
+  tasks }o--o| users : "assignee_id"
+  tasks }o--o| task_priorities : "priority_id"
+  tasks }o--|| task_statuses : "status_id"
+  tasks }o--o| tasks : "parent_task_id"
+  task_status_log }o--|| tasks : "task_id"
+  task_status_log }o--o| users : "changed_by_id"
+  task_status_log }o--o| task_statuses : "old_status_id"
+  task_status_log }o--|| task_statuses : "new_status_id"
+  task_comments }o--|| tasks : "task_id"
+  task_comments }o--|| users : "user_id"
+```
+
+#### `audit`
+
+```mermaid
+erDiagram
+  activities {
+    UUID id PK
+    UUID performed_by FK
+    UUID org_id FK
+  }
+  marketing_leads_history {
+    UUID id PK
+    UUID lead_id FK
+    UUID changed_by_user_id FK
+  }
+  audit_log {
+    UUID id PK
+  }
+  activities }o--o| users : "performed_by"
+  marketing_leads_history }o--|| marketing_leads : "lead_id"
+  marketing_leads_history }o--o| users : "changed_by_user_id"
+```
+
+#### `comms`
+
+```mermaid
+erDiagram
+  message_templates {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+  }
+```
+
+#### `notify`
+
+```mermaid
+erDiagram
+  push_subscriptions {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    TEXT endpoint UK
+  }
+  push_subscriptions }o--|| users : "user_id"
+```
+
+#### `scratch`
+
+```mermaid
+erDiagram
+  meta_pull_runs {
+    UUID id PK
+    UUID tenant_id FK
+    UUID created_by FK
+    UUID applied_by FK
+  }
+  meta_pull_leads {
+    UUID id PK
+    UUID run_id FK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID existing_lead_id FK
+    UUID suggested_campaign_type_id FK
+    UUID applied_lead_id FK
+  }
+  meta_pull_runs }o--o| users : "created_by"
+  meta_pull_runs }o--o| users : "applied_by"
+  meta_pull_leads }o--|| meta_pull_runs : "run_id"
+  meta_pull_leads }o--o| marketing_leads : "existing_lead_id"
+  meta_pull_leads }o--o| campaign_types : "suggested_campaign_type_id"
+  meta_pull_leads }o--o| marketing_leads : "applied_lead_id"
+```
+
+#### `public`
+
+```mermaid
+erDiagram
+  schema_versions {
+    TEXT version PK
+  }
+```
+
+<!-- END GENERATED: gen_db_diagram.py -->
 
 ---
 
@@ -135,7 +827,7 @@
 | Schema      | Purpose                                         |
 | ----------- | ----------------------------------------------- |
 | `public`    | UUIDv7 generator, utility trigger functions      |
-| `geo`       | Geographic lookup tables (countries/states/cities) |
+| `geo`       | Tenant-scoped geographic catalogs (countries/states/cities): platform template rows + per-tenant copies |
 | `entity`    | Tenant, organization, and related lookups          |
 | `iam`       | Users, roles, org mappings, token blocklist       |
 | `lms`       | Leads, interactions, follow-ups, stage pipeline   |
@@ -145,6 +837,8 @@
 | `hr`        | Employee profiles, leave, attendance |
 | `task`      | To-do lists, tasks, comments                     |
 | `comms`     | Cross-product WhatsApp/email message templates (org > tenant > global resolution) |
+| `notify`    | Cross-product Web Push subscriptions (one row per installed PWA/device) |
+| `scratch`   | **Staging.** Rows that exist to be reviewed and then thrown away — today the Meta lead-pull runs. DELETEd wholesale, no soft delete, nothing may FK into them |
 
 ---
 
@@ -174,41 +868,49 @@
 
 ### geo.countries
 
-Geographic country lookup. Integer identity PK.
+Tenant-scoped geographic catalog, like `lms.lead_stage`. `tenant_id IS NULL` = platform template row (seeded by `reference_data/01_geo.sql`, hidden from every app role by RLS, cloned into a tenant by `entity.seed_tenant_geo()`); `tenant_id` set = a row the tenant owns and can edit. UUIDv7 PKs; the old SMALLINT/INTEGER identity keys could not survive rows authored independently per tenant. Deletes are soft (`is_active = FALSE`) because `entity.organizations` and `lms.marketing_leads` reference these rows ON DELETE RESTRICT.
 
-| Column      | Type      | Constraints          |
-| ----------- | --------- | -------------------- |
-| id          | SMALLINT  | PK, GENERATED ALWAYS |
-| name        | TEXT      | NOT NULL, UNIQUE     |
-| iso_code    | CHAR(2)   | NOT NULL, UNIQUE     |
-| description | TEXT      |                      |
+`UNIQUE (tenant_id, id)` exists on all three geo tables so child FKs can be **composite** — `(tenant_id, state_id) → geo.states(tenant_id, id)` — which is what stops one tenant's city hanging off another tenant's state (RLS alone would not). Name/ISO uniqueness is a pair of partial unique indexes per table in `06_indexes.sql` (one for template rows, one per tenant).
+
+| Column      | Type    | Constraints                                                                       |
+| ----------- | ------- | --------------------------------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                                       |
+| tenant_id   | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row  |
+| name        | TEXT    | NOT NULL, unique per tenant / among global rows (partial indexes, 06_indexes.sql) |
+| iso_code    | CHAR(2) | NOT NULL, unique per tenant / among global rows (partial indexes, 06_indexes.sql) |
+| description | TEXT    |                                                                                   |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                                            |
 
 ---
 
 ### geo.states
 
-| Column      | Type      | Constraints                            |
-| ----------- | --------- | -------------------------------------- |
-| id          | SMALLINT  | PK, GENERATED ALWAYS                   |
-| country_id  | SMALLINT  | NOT NULL, FK → geo.countries(id)       |
-| name        | TEXT      | NOT NULL                               |
-| code        | TEXT      |                                        |
-| description | TEXT      |                                        |
+| Column      | Type    | Constraints                                                                            |
+| ----------- | ------- | -------------------------------------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                                            |
+| tenant_id   | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row       |
+| country_id  | UUID    | NOT NULL, FK (tenant_id, country_id) → geo.countries(tenant_id, id) ON DELETE RESTRICT |
+| name        | TEXT    | NOT NULL                                                                               |
+| code        | TEXT    |                                                                                        |
+| description | TEXT    |                                                                                        |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                                                 |
 
-**Unique:** `(country_id, name)`
+**Unique:** name per parent, as partial index pairs (template rows / per tenant) in `06_indexes.sql`
 
 ---
 
 ### geo.cities
 
-| Column      | Type      | Constraints                       |
-| ----------- | --------- | --------------------------------- |
-| id          | INTEGER   | PK, GENERATED ALWAYS              |
-| state_id    | SMALLINT  | NOT NULL, FK → geo.states(id)     |
-| name        | TEXT      | NOT NULL                          |
-| description | TEXT      |                                   |
+| Column      | Type    | Constraints                                                                       |
+| ----------- | ------- | --------------------------------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                                       |
+| tenant_id   | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row  |
+| state_id    | UUID    | NOT NULL, FK (tenant_id, state_id) → geo.states(tenant_id, id) ON DELETE RESTRICT |
+| name        | TEXT    | NOT NULL                                                                          |
+| description | TEXT    |                                                                                   |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                                            |
 
-**Unique:** `(state_id, name)`
+**Unique:** name per parent, as partial index pairs (template rows / per tenant) in `06_indexes.sql`
 
 ---
 
@@ -216,13 +918,13 @@ Geographic country lookup. Integer identity PK.
 
 Classifies tenants by industry vertical.
 
-| Column      | Type    | Constraints             |
-| ----------- | ------- | ------------------------ |
-| id          | UUID    | PK (UUIDv7)              |
-| name        | TEXT    | NOT NULL, UNIQUE         |
-| label       | TEXT    | NOT NULL                 |
-| description | TEXT    |                          |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE   |
+| Column      | Type    | Constraints            |
+| ----------- | ------- | ---------------------- |
+| id          | UUID    | PK (UUIDv7)            |
+| name        | TEXT    | NOT NULL, UNIQUE       |
+| label       | TEXT    | NOT NULL               |
+| description | TEXT    |                        |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE |
 
 **Seed values:** fitness, retail, healthcare, education, hospitality, medical, real_estate, automotive, logistics
 
@@ -232,13 +934,13 @@ Classifies tenants by industry vertical.
 
 Subscription tiers.
 
-| Column      | Type    | Constraints             |
-| ----------- | ------- | ------------------------ |
-| id          | UUID    | PK (UUIDv7)              |
-| name        | TEXT    | NOT NULL, UNIQUE         |
-| label       | TEXT    | NOT NULL                 |
-| description | TEXT    |                          |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE   |
+| Column      | Type    | Constraints            |
+| ----------- | ------- | ---------------------- |
+| id          | UUID    | PK (UUIDv7)            |
+| name        | TEXT    | NOT NULL, UNIQUE       |
+| label       | TEXT    | NOT NULL               |
+| description | TEXT    |                        |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE |
 
 **Seed values:** free_trial, starter, growth, enterprise
 
@@ -248,13 +950,13 @@ Subscription tiers.
 
 Classification of organization locations.
 
-| Column      | Type    | Constraints             |
-| ----------- | ------- | ------------------------ |
-| id          | UUID    | PK (UUIDv7)              |
-| name        | TEXT    | NOT NULL, UNIQUE         |
-| label       | TEXT    | NOT NULL                 |
-| description | TEXT    |                          |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE   |
+| Column      | Type    | Constraints            |
+| ----------- | ------- | ---------------------- |
+| id          | UUID    | PK (UUIDv7)            |
+| name        | TEXT    | NOT NULL, UNIQUE       |
+| label       | TEXT    | NOT NULL               |
+| description | TEXT    |                        |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE |
 
 **Seed values:** gym_location, boutique, branch, headquarters, franchise, clinic, warehouse, showroom, head_office
 
@@ -264,19 +966,19 @@ Classification of organization locations.
 
 Top-level tenant entity (SaaS customer).
 
-| Column       | Type        | Constraints                              |
-| ------------ | ----------- | ---------------------------------------- |
-| id           | UUID        | PK (UUIDv7)                              |
-| name         | TEXT        | NOT NULL, UNIQUE                         |
-| domain_id    | UUID        | FK → entity.tenant_domains(id)           |
-| plan_type_id | UUID        | FK → entity.tenant_plan_types(id)        |
-| is_active    | BOOLEAN     | NOT NULL, DEFAULT TRUE                   |
-| is_deleted   | BOOLEAN     | NOT NULL, DEFAULT FALSE                  |
-| deleted_at   | TIMESTAMPTZ |                                          |
-| deleted_by   | UUID        |                                          |
-| metadata     | JSONB       | NOT NULL, DEFAULT '{}'                   |
-| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
-| updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
+| Column       | Type        | Constraints                         |
+| ------------ | ----------- | ----------------------------------- |
+| id           | UUID        | PK (UUIDv7)                         |
+| name         | TEXT        | NOT NULL, UNIQUE                    |
+| domain_id    | UUID        | FK → entity.tenant_domains(id)      |
+| plan_type_id | UUID        | FK → entity.tenant_plan_types(id)   |
+| is_active    | BOOLEAN     | NOT NULL, DEFAULT TRUE              |
+| is_deleted   | BOOLEAN     | NOT NULL, DEFAULT FALSE             |
+| deleted_at   | TIMESTAMPTZ |                                     |
+| deleted_by   | UUID        |                                     |
+| metadata     | JSONB       | NOT NULL, DEFAULT '{}'              |
+| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
+| updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
 
 **Check:** `NOT (is_active AND is_deleted)`  
 **RLS:** tenant sees only own row via `app.current_tenant_id`  
@@ -288,30 +990,32 @@ Top-level tenant entity (SaaS customer).
 
 Business unit / location within a tenant.
 
-| Column            | Type        | Constraints                                |
-| ----------------- | ----------- | ------------------------------------------ |
-| id                | UUID        | PK (UUIDv7)                                |
-| tenant_id         | UUID        | NOT NULL, FK → entity.tenants(id)          |
-| name              | TEXT        | NOT NULL                                   |
-| legal_entity_name | TEXT        |                                            |
-| brand_name        | TEXT        |                                            |
-| org_type_id       | UUID        | FK → entity.org_types(id)                  |
-| address_line1     | TEXT        |                                            |
-| address_line2     | TEXT        |                                            |
-| landmark          | TEXT        |                                            |
-| pincode           | TEXT        |                                            |
-| city              | TEXT        | Free-text city                             |
-| city_id           | INTEGER     | FK → geo.cities(id)                        |
-| state_id          | SMALLINT    | FK → geo.states(id)                        |
-| country_id        | SMALLINT    | FK → geo.countries(id)                     |
-| timezone          | TEXT        | NOT NULL, DEFAULT 'Asia/Kolkata'           |
-| is_active         | BOOLEAN     | NOT NULL, DEFAULT TRUE                     |
-| is_deleted        | BOOLEAN     | NOT NULL, DEFAULT FALSE                    |
-| deleted_at        | TIMESTAMPTZ |                                            |
-| deleted_by        | UUID        |                                            |
-| metadata          | JSONB       | NOT NULL, DEFAULT '{}'                     |
-| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()        |
-| updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()        |
+| Column            | Type         | Constraints                                                                  |
+| ----------------- | ------------ | ---------------------------------------------------------------------------- |
+| id                | UUID         | PK (UUIDv7)                                                                  |
+| tenant_id         | UUID         | NOT NULL, FK → entity.tenants(id)                                            |
+| name              | TEXT         | NOT NULL                                                                     |
+| legal_entity_name | TEXT         |                                                                              |
+| brand_name        | TEXT         |                                                                              |
+| org_type_id       | UUID         | FK → entity.org_types(id)                                                    |
+| address_line1     | TEXT         |                                                                              |
+| address_line2     | TEXT         |                                                                              |
+| landmark          | TEXT         |                                                                              |
+| pincode           | TEXT         |                                                                              |
+| city              | TEXT         | Free-text city                                                               |
+| city_id           | UUID         | FK (tenant_id, city_id) → geo.cities(tenant_id, id) ON DELETE RESTRICT       |
+| state_id          | UUID         | FK (tenant_id, state_id) → geo.states(tenant_id, id) ON DELETE RESTRICT      |
+| country_id        | UUID         | FK (tenant_id, country_id) → geo.countries(tenant_id, id) ON DELETE RESTRICT |
+| timezone          | TEXT         | NOT NULL, DEFAULT 'Asia/Kolkata'                                             |
+| geo_lat           | NUMERIC(9,6) |                                                                              |
+| geo_lng           | NUMERIC(9,6) |                                                                              |
+| is_active         | BOOLEAN      | NOT NULL, DEFAULT TRUE                                                       |
+| is_deleted        | BOOLEAN      | NOT NULL, DEFAULT FALSE                                                      |
+| deleted_at        | TIMESTAMPTZ  |                                                                              |
+| deleted_by        | UUID         |                                                                              |
+| metadata          | JSONB        | NOT NULL, DEFAULT '{}'                                                       |
+| created_at        | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                          |
+| updated_at        | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                          |
 
 **Unique:** `(tenant_id, name)`  
 **Check:** `NOT (is_active AND is_deleted)`  
@@ -324,15 +1028,15 @@ Business unit / location within a tenant.
 
 Per-tenant **product/module entitlements** (D6). Gates which products a tenant has licensed. Created in `10_init-hr-task-schemas.sql`; the `lms`→`lms` key rename + `lms` backfill land in `15_tenant-modules-lms-rename.sql`.
 
-| Column     | Type        | Constraints                                            |
-| ---------- | ----------- | ------------------------------------------------------ |
-| id         | UUID        | PK (UUIDv7)                                            |
-| tenant_id  | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE    |
+| Column     | Type        | Constraints                                                |
+| ---------- | ----------- | ---------------------------------------------------------- |
+| id         | UUID        | PK (UUIDv7)                                                |
+| tenant_id  | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE        |
 | module     | TEXT        | NOT NULL, CHECK IN (`lms`, `leave`, `attendance`, `tasks`) |
-| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                 |
-| enabled_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                    |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                    |
-| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                    |
+| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                     |
+| enabled_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
 
 **Unique:** `(tenant_id, module)`  
 **`module` values:** `lms` is the lead product's entitlement key (renamed from legacy `lms`; the `lms` *schema* rename is deferred to Phase 1). `leave`/`attendance` are the HR sub-modules; `tasks` is the to-do product.  
@@ -346,16 +1050,16 @@ Per-tenant **product/module entitlements** (D6). Gates which products a tenant h
 
 Role definitions with rank-based hierarchy. **Current shape (schema 1.45.0):** this single ladder is now authoritative platform-wide. The per-product ladders it was once slated to be replaced by (`lms.roles`, `hr.roles`, `task.roles`) plus their grant tables (`<product>.member_roles`) were **dropped at schema 1.40.0** (`db_scripts/one_time/drop_per_product_role_tables.sql`) — the rollback direction won, not the migration described below. Role/rank resolution now runs solely through `iam.fn_user_org_role`/`iam.fn_role_capability_matrix` against this table. See "Retired: per-product role tables" further down for what existed in between and why it was rolled back.
 
-| Column         | Type    | Constraints                                              |
-| -------------- | ------- | --------------------------------------------------------- |
-| id             | UUID    | PK (UUIDv7)                                                |
-| tenant_id      | UUID    | FK → entity.tenants(id) ON DELETE CASCADE; NULL = global platform-anchor role, non-NULL = a tenant's own copy/custom role |
-| department_id  | UUID    | FK → iam.departments(id) ON DELETE RESTRICT                |
-| name           | TEXT    | NOT NULL, UNIQUE                                           |
-| label          | TEXT    | NOT NULL                                                   |
-| description    | TEXT    |                                                             |
-| rank           | INT     | NOT NULL, DEFAULT 0 (range **0-1000**, widened from 0-100 to leave headroom for tenant-custom roles between the anchors) |
-| is_active      | BOOLEAN | NOT NULL, DEFAULT TRUE                                     |
+| Column        | Type    | Constraints                                                                                                               |
+| ------------- | ------- | ------------------------------------------------------------------------------------------------------------------------- |
+| id            | UUID    | PK (UUIDv7)                                                                                                               |
+| tenant_id     | UUID    | FK → entity.tenants(id) ON DELETE CASCADE; NULL = global platform-anchor role, non-NULL = a tenant's own copy/custom role |
+| department_id | UUID    | FK → iam.departments(id) ON DELETE RESTRICT                                                                               |
+| name          | TEXT    | NOT NULL, unique per tenant / among global rows (partial indexes, 06_indexes.sql)                                         |
+| label         | TEXT    | NOT NULL                                                                                                                  |
+| description   | TEXT    |                                                                                                                           |
+| rank          | INT     | NOT NULL, DEFAULT 0 (range **0-1000**, widened from 0-100 to leave headroom for tenant-custom roles between the anchors)  |
+| is_active     | BOOLEAN | NOT NULL, DEFAULT TRUE                                                                                                    |
 
 **Seed values (anchor roles, by rank):**
 
@@ -374,18 +1078,18 @@ Tenant-defined and tenant-copied roles (e.g. `sales_representative`, `senior_sal
 
 The global, platform-shipped capability catalog (Tier C3) — a self-referential tree: `tool → page → tab → operation → scope`. Generated into `@platform/rbac`'s `CAPABILITY` map (keys only, no label/kind/parent — a UI reads this table directly for that metadata, see `admin-service`'s `GET /capabilities`). A tenant cannot invent a capability; what a tenant *can* change is the grant (see `iam.role_capabilities` below). Read-only from the app — writes are seed/migration only.
 
-| Column      | Type        | Constraints                                       |
-| ----------- | ----------- | -------------------------------------------------- |
-| id          | UUID        | PK (UUIDv7)                                        |
-| key         | TEXT        | NOT NULL, UNIQUE                                   |
-| kind        | TEXT        | NOT NULL, CHECK IN (`tool`,`page`,`tab`,`operation`,`scope`) |
+| Column      | Type        | Constraints                                                    |
+| ----------- | ----------- | -------------------------------------------------------------- |
+| id          | UUID        | PK (UUIDv7)                                                    |
+| key         | TEXT        | NOT NULL, UNIQUE                                               |
+| kind        | TEXT        | NOT NULL, CHECK IN (`tool`,`page`,`tab`,`operation`,`scope`)   |
 | parent_key  | TEXT        | FK → iam.capabilities(key) ON DELETE CASCADE, self-referential |
-| label       | TEXT        | NOT NULL                                           |
-| description | TEXT        |                                                     |
+| label       | TEXT        | NOT NULL                                                       |
+| description | TEXT        |                                                                |
 | sort_order  | INT         | NOT NULL, DEFAULT 0 (also breadth ordering for `kind='scope'`) |
-| is_active   | BOOLEAN     | NOT NULL, DEFAULT TRUE                             |
-| created_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                |
-| updated_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                |
+| is_active   | BOOLEAN     | NOT NULL, DEFAULT TRUE                                         |
+| created_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                            |
+| updated_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                            |
 
 **Check:** `(kind = 'tool') = (parent_key IS NULL)` — only a tool may be a root.
 **RLS:** SELECT for `app_user`/`tenant_admin`; nobody may write from the app.
@@ -397,16 +1101,16 @@ The global, platform-shipped capability catalog (Tier C3) — a self-referential
 
 Role → capability grants (Tier C3), resolved per tenant by `iam.fn_role_capability_matrix(tenant_id)`. `tenant_id NULL` = the platform default grant, shared by every tenant; `tenant_id` set = that tenant's override of the same `(role, capability)` pair, which wins. `is_granted = FALSE` is how a tenant revokes a default without deleting the platform row. Resolution order: tenant override → platform default → deny (default-deny: a key present in code but never seeded a grant denies everyone).
 
-| Column        | Type        | Constraints                                        |
-| ------------- | ----------- | --------------------------------------------------- |
-| id            | UUID        | PK (UUIDv7)                                         |
-| tenant_id     | UUID        | FK → entity.tenants(id) ON DELETE CASCADE, nullable  |
-| role_id       | UUID        | NOT NULL, FK → iam.user_roles(id) ON DELETE CASCADE  |
+| Column        | Type        | Constraints                                           |
+| ------------- | ----------- | ----------------------------------------------------- |
+| id            | UUID        | PK (UUIDv7)                                           |
+| tenant_id     | UUID        | FK → entity.tenants(id) ON DELETE CASCADE, nullable   |
+| role_id       | UUID        | NOT NULL, FK → iam.user_roles(id) ON DELETE CASCADE   |
 | capability_id | UUID        | NOT NULL, FK → iam.capabilities(id) ON DELETE CASCADE |
-| is_granted    | BOOLEAN     | NOT NULL, DEFAULT TRUE                              |
-| created_by    | UUID        |                                                      |
-| created_at    | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                 |
-| updated_at    | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                 |
+| is_granted    | BOOLEAN     | NOT NULL, DEFAULT TRUE                                |
+| created_by    | UUID        |                                                       |
+| created_at    | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                   |
+| updated_at    | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                   |
 
 **Unique:** `(role_id, capability_id) WHERE tenant_id IS NULL`; `(tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL` (partial indexes — a plain UNIQUE would let NULL `tenant_id` duplicate freely).
 **RLS:** SELECT sees platform defaults + the actor's own-tenant overrides (`app_user` via current org's tenant, `tenant_admin` via `app.current_tenant_id`). Writes (`admin_tenant_config_policy`, `FOR ALL TO app_user`) are override-only: `WITH CHECK` pins `tenant_id` to the row derived from **`app.current_org_id`** (via `entity.organizations.tenant_id`) — **not** `app.current_tenant_id` directly, unlike the newer N-6 tenant-scoped-lookup policies. A write on behalf of a super_admin managing an arbitrary tenant must first resolve an org under that tenant and pin `app.current_org_id` to it (see `admin-service`'s `capabilities.repository.ts`).
@@ -428,34 +1132,77 @@ Role → capability grants (Tier C3), resolved per tenant by `iam.fn_role_capabi
 
 User accounts. `full_name` is a GENERATED STORED column.
 
-| Column                | Type        | Constraints                                |
-| --------------------- | ----------- | ------------------------------------------ |
-| id                    | UUID        | PK (UUIDv7)                                |
-| org_id                | UUID        | NOT NULL, FK → entity.organizations(id)    |
-| first_name            | TEXT        | NOT NULL                                   |
-| middle_name           | TEXT        |                                            |
-| last_name             | TEXT        | NOT NULL, DEFAULT ''                       |
-| full_name             | TEXT        | GENERATED ALWAYS AS STORED (computed)      |
-| email                 | TEXT        | NOT NULL, UNIQUE                           |
-| mobile                | TEXT        |                                            |
-| password_hash         | TEXT        | NOT NULL                                   |
-| role_id               | UUID        | NOT NULL, FK → iam.user_roles(id)          |
+| Column                | Type        | Constraints                                                                                                                                                                                                       |
+| --------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| id                    | UUID        | PK (UUIDv7)                                                                                                                                                                                                       |
+| org_id                | UUID        | NOT NULL, FK → entity.organizations(id)                                                                                                                                                                           |
+| first_name            | TEXT        | NOT NULL                                                                                                                                                                                                          |
+| middle_name           | TEXT        |                                                                                                                                                                                                                   |
+| last_name             | TEXT        | NOT NULL, DEFAULT ''                                                                                                                                                                                              |
+| full_name             | TEXT        | GENERATED ALWAYS AS STORED (computed)                                                                                                                                                                             |
+| email                 | TEXT        | NOT NULL, UNIQUE, CHECK `email = lower(email)`. The login credential. Always stored **trimmed + lowercase** — see *Canonical email* below                                                                         |
+| mobile                | TEXT        |                                                                                                                                                                                                                   |
+| password_hash         | TEXT        | NOT NULL                                                                                                                                                                                                          |
+| role_id               | UUID        | NOT NULL, FK → iam.user_roles(id)                                                                                                                                                                                 |
+| manager_id            | UUID        | DEPRECATED display mirror of iam.reporting_lines — never an authority source, FK → iam.users(id) ON DELETE SET NULL                                                                                               |
+| is_active             | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                                                                                                                                            |
+| is_deleted            | BOOLEAN     | NOT NULL, DEFAULT FALSE                                                                                                                                                                                           |
+| deleted_at            | TIMESTAMPTZ |                                                                                                                                                                                                                   |
+| deleted_by            | UUID        |                                                                                                                                                                                                                   |
+| created_by            | UUID        |                                                                                                                                                                                                                   |
+| force_password_change | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                                                                                                                                            |
+| password_changed_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                                                                                                               |
+| last_login_at         | TIMESTAMPTZ |                                                                                                                                                                                                                   |
+| failed_login_attempts | INT         | NOT NULL, DEFAULT 0                                                                                                                                                                                               |
+| locked_until          | TIMESTAMPTZ |                                                                                                                                                                                                                   |
+| last_failed_login_at  | TIMESTAMPTZ |                                                                                                                                                                                                                   |
+| created_at            | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                                                                                                               |
+| updated_at            | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                                                                                                               |
 | platform_role         | TEXT        | CHECK IN (`super_admin`,`tenant_admin`,`org_admin`,`member`); nullable until Phase E (P1.1). Coarse cross-product role that survives in the shrunk JWT; drives PG-role selection + platform-wide capability only. |
-| manager_id            | UUID        | DEPRECATED display mirror of iam.reporting_lines — never an authority source |
-| is_active             | BOOLEAN     | NOT NULL, DEFAULT TRUE                     |
-| is_deleted            | BOOLEAN     | NOT NULL, DEFAULT FALSE                    |
-| deleted_at            | TIMESTAMPTZ |                                            |
-| deleted_by            | UUID        |                                            |
-| created_by            | UUID        |                                            |
-| force_password_change | BOOLEAN     | NOT NULL, DEFAULT TRUE                     |
-| password_changed_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()        |
-| last_login_at         | TIMESTAMPTZ |                                            |
-| created_at            | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()        |
-| updated_at            | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()        |
+| photo_key             | TEXT        |                                                                                                                                                                                                                   |
+| photo_content_type    | TEXT        |                                                                                                                                                                                                                   |
+| photo_uploaded_at     | TIMESTAMPTZ |                                                                                                                                                                                                                   |
+| photo_uploaded_by     | UUID        |                                                                                                                                                                                                                   |
+| photo_consent_at      | TIMESTAMPTZ |                                                                                                                                                                                                                   |
 
-**Checks:** `id <> manager_id`, `NOT (is_active AND is_deleted)`  
+**Checks:** `id <> manager_id`, `NOT (is_active AND is_deleted)`, `email = lower(email)` (`chk_users_email_lowercase`)  
 **RLS:** app_user sees users with active mapping to current org; tenant_admin sees all within tenant  
 **Triggers:** `set_updated_at`, `soft_delete_row`, `set_org_id`, `set_created_by`, `check_user_hierarchy_no_cycle`, `audit_row_changes`
+
+> **Canonical email (schema 1.48.0, `db_scripts/one_time/apply_email_lowercase.sql`).**
+> `email` is the primary login credential and the `UNIQUE` above is
+> case-**sensitive**, so the column is only meaningful if every writer stores the
+> same spelling. Two defects came from it not doing so: a user created as
+> `John.Doe@x.com` could not sign in as `john.doe@x.com` (`getUserByEmail` is an
+> equality test, `u.email = $1`, so a different casing matched no row), and both
+> spellings could be created as **separate accounts** — the `UNIQUE` did not
+> collide, so no 409 fired and one person got two identities.
+>
+> `normalizeEmail()` / `emailInputSchema` in `@platform/validation`
+> (`packages/platform-validation/src/email.ts`) is the single normalizer, applied
+> by `createUserSchema`/`updateUserSchema` on the write path and by
+> `resolveLoginUser` before the login lookup — the same shape `mobile` has via
+> `normalizeMobile()`. One transform covers every writer because there is only
+> one: api-gateway proxies all `/users` writes to identity-service,
+> `/api/v1/public/users` is GET-only, and there is no self-service signup,
+> invite-accept, forgot-password or email-verification flow.
+>
+> `chk_users_email_lowercase` is the database half — a CHECK rather than `citext`
+> (not enabled in this database) or a `UNIQUE INDEX ON lower(email)` (redundant
+> once every value is lowercase, and it would break the `ON CONFLICT (email)`
+> upserts in `dummy_data/`). It makes an un-normalized writer — an operator
+> script, a psql session — fail loudly instead of silently forking an identity.
+> `idx_users_org_email` therefore stays a plain-value index and is directly
+> usable by the login lookup.
+>
+> Normalization is case + whitespace **only**: no dot-stripping or plus-tag
+> removal, which are Gmail-specific and would merge genuinely distinct addresses.
+> The identifier recorded in `audit.audit_log` on a failed login stays **raw** —
+> it is the record of what was actually typed, and
+> `audit.fn_detect_password_spray` groups on it.
+>
+> **Still open:** `lms.marketing_leads.email` and `ext.meta_leads.email` carry the
+> identical case-sensitive dedup bug and were deliberately left out of this change.
 
 ---
 
@@ -471,16 +1218,16 @@ Multi-org access control. Source of truth for which orgs a user can access.
 > users on the roster*); reading `org_id` instead is what made multi-branch users
 > disappear from the Admin → Team branch filter.
 
-| Column     | Type        | Constraints                              |
-| ---------- | ----------- | ---------------------------------------- |
+| Column     | Type        | Constraints                                                                                                                                                        |
+| ---------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | id         | UUID        | NOT NULL, DEFAULT gen_uuidv7(), UNIQUE (`uq_user_org_mapping_id`). Surrogate identity for the membership, for product extension tables to key off — **not** the PK |
-| user_id    | UUID        | NOT NULL, FK → iam.users(id), PK (composite) |
-| org_id     | UUID        | NOT NULL, FK → entity.organizations(id), PK (composite) |
-| role_id    | UUID        | NOT NULL, FK → iam.user_roles(id)        |
-| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                   |
-| granted_by | UUID        | FK → iam.users(id)                       |
-| granted_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
-| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
+| user_id    | UUID        | NOT NULL, FK → iam.users(id), PK (composite)                                                                                                                       |
+| org_id     | UUID        | NOT NULL, FK → entity.organizations(id), PK (composite)                                                                                                            |
+| role_id    | UUID        | NOT NULL, FK → iam.user_roles(id)                                                                                                                                  |
+| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                                                                                             |
+| granted_by | UUID        | FK → iam.users(id)                                                                                                                                                 |
+| granted_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                                                                |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                                                                |
 
 **PK:** `(user_id, org_id)`  
 **RLS:** Users can read own rows; org admins (rank >= 80) manage within their org; any user rank >= 40 (SSE, matches `minRankToAssignLeads`) can read other rows within their own org (`assignable_read_policy`, needed for the lead "Assigned To" picker); tenant_admin manages across tenant  
@@ -519,37 +1266,80 @@ here.** Instead:
 
 ### lms.lead_assignment_weights
 
-% share of new leads a user auto-receives within one branch. The first table
-built on the extension pattern above.
+% share of new leads a user auto-receives within one branch, **for one campaign
+type**. The first table built on the extension pattern above.
 
-| Column              | Type        | Constraints                              |
-| ------------------- | ----------- | ---------------------------------------- |
-| user_org_mapping_id | UUID        | PK, FK → iam.user_org_mapping(id) ON DELETE CASCADE |
-| weight              | SMALLINT    | NOT NULL, DEFAULT 0, CHECK 0-100         |
-| updated_by          | UUID        | FK → iam.users(id) ON DELETE SET NULL    |
-| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
-| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()      |
+| Column              | Type        | Constraints                                                              |
+| ------------------- | ----------- | ------------------------------------------------------------------------ |
+| user_org_mapping_id | UUID        | PK part 1, FK → iam.user_org_mapping(id) ON DELETE CASCADE               |
+| campaign_type_id    | UUID        | PK part 2, NOT NULL, FK → marketing.campaign_types(id) ON DELETE CASCADE |
+| weight              | SMALLINT    | NOT NULL, DEFAULT 0, CHECK 0-100                                         |
+| updated_by          | UUID        | FK → iam.users(id) ON DELETE SET NULL                                    |
+| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                      |
+| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                      |
 
-**No row means weight 0** — the picker filters `weight > 0`, so absence and an
-explicit zero mean the same thing and only non-zero weights are stored. An
-existing row *can* hold 0: deactivating a user zeroes it rather than deleting it
-(DELETE is revoked from `app_user`/`tenant_admin`, mirroring
-`iam.user_org_mapping`).
+**The primary key is `(user_org_mapping_id, campaign_type_id)` as of 1.49.0.**
+Pool membership is **per type**: the same person can sit in their branch's sales
+rotation at 40% and its hiring rotation at 0%, and a hiring lead must never be
+offered to the sales pool. Every query that keyed on `user_org_mapping_id` alone
+now needs a type too, or it reads and writes the wrong pool. The 1.49.0 backfill
+rebuilt every pre-existing row under its tenant's `sales` type with the same
+weight, so the picker's behaviour was unchanged by the migration. Note the
+ordering that migration had to follow — populate the column, *then* NOT NULL,
+*then* swap the key; doing the key first fails on the first existing row.
+
+**No row means "not in that pool"** — the picker filters `weight > 0`, and a
+membership with no row for a type is simply not in that type's rotation at all.
+As of Phase 07 (admin screens), this is now distinguishable from an *explicit*
+weight of 0: `writeAssignmentWeight`/`updateAssignmentWeights` in
+identity-service's `users.repository.ts` always upsert a real row, including
+for weight 0 — so the UI can show "branch has a hiring pool, everyone at 0%"
+separately from "branch has no hiring pool row at all". `deleteAssignmentWeight`
+is the only true removal, and — DELETE being revoked from
+`app_user`/`tenant_admin`, mirroring `iam.user_org_mapping` — only
+`reconcileOrgAssignments` (running on the service role) ever calls it, when an
+edit removes a user from a type's pool entirely. Deactivating a user or moving
+them off a branch still zeroes (never deletes) every weight row for that
+membership.
 
 The sum across a branch must be 100 (or all 0 to disable auto-assignment), and
-that is enforced **only** in identity-service's `PUT /users/assignment-weights`.
-`createUser`, `addOrgMapping`, `reconcileOrgAssignments` and every `one_time/`
-onboarding script bypass it — a pre-existing gap the move preserved rather than
-changed.
+that is enforced **only** in identity-service's `PUT /users/assignment-weights`
+— per campaign type present in the payload, not per whole batch. `createUser`,
+`addOrgMapping`, `reconcileOrgAssignments` and every `one_time/` onboarding
+script bypass it — a pre-existing gap the move preserved rather than changed.
 
-**Written by** identity-service (the user create/edit payload carries weights
-alongside branch/role assignments, so the API field name is still
-`lead_assignment_weight`). **Read by** leads-service's `resolveAutoAssignedUser`.
+**Written by** identity-service (the user create/edit payload carries a
+`weights[]` array per branch, one entry per `{campaign_type_id, weight}` —
+**not** the scalar `lead_assignment_weight` field name this doc previously
+described; that shape predates the 1.49.0 composite-key migration). **Read by**
+leads-service's `resolveAutoAssignedUser(tx, orgId, campaignTypeId)`, which
+joins this table on BOTH the mapping and the campaign type — and scopes its
+open-workload count to that same type. Scoping only the eligibility join and
+not the count is the easy mistake: it is invisible on a small dataset and, in
+production, lets a rep's large sales backlog suppress their hiring deficit
+until they are starved of hiring leads entirely.
 **RLS:** `org_admin_read/insert/update_policy` + `tenant_isolation_policy`, all
 via `iam.fn_mapping_org`.  
-**Triggers:** `set_updated_at`  
+**Triggers:** `set_updated_at`; `trg_lead_assignment_weights_tenant_match` (1.50.1) —
+`lms.fn_assert_weight_type_tenant()` raises `check_violation` when the row's
+campaign type belongs to a different tenant than the membership's branch. Nothing
+else ties the two tenants together (both FKs are satisfied by any tenant's type),
+and a pool keyed on a foreign type silently routes nothing. Existing rows are not
+re-validated by a trigger — `one_time/audit_cross_tenant_weights_dryrun.sql`
+lists any on a server. Since **1.50.2** the same trigger also enforces the
+**department rule** on NEW rows: the type's `department_id` must equal the
+department of the membership's role, and a role with no department cannot be
+weighted (the rule `lms.fn_user_sees_campaign_type` applies to visibility, so no
+one is weighted for leads they cannot see). An upsert of an already-held
+(membership, type) row is let through: pre-existing rows that break the rule are
+**kept** by decision, skipped by the picker (reason `no_department_match`), and
+listed by `one_time/report_weight_department_mismatch_dryrun.sql`.  
 **View:** `lms.vw_lead_assignment_weights` restores the flat
-`(user_id, org_id, weight)` shape for reporting and operator SQL.
+`(user_id, org_id, weight)` shape for reporting and operator SQL, now with the
+type columns. It is **no longer one row per (user, branch)** — it is one row per
+(user, branch, type), plus a NULL-type row for a membership in no rotation at
+all. Any caller assuming uniqueness on `user_org_mapping_id` must add a type
+filter.
 
 ---
 
@@ -572,17 +1362,22 @@ authority question is answerable for any past date:
 `iam.fn_subtree_members(manager, as_of)`, `iam.fn_manager_chain(user, as_of)`.
 `iam.vw_user_team_members` / `iam.vw_user_org_chart` are `as_of = CURRENT_DATE` wrappers over them.
 
-| Column         | Type        | Constraints                                                    |
+| Column         | Type        | Constraints                                                     |
 | -------------- | ----------- | --------------------------------------------------------------- |
 | id             | UUID        | PK (UUIDv7)                                                     |
-| tenant_id      | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE              |
-| org_id         | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE        |
-| user_id        | UUID        | NOT NULL, FK → iam.users(id) ON DELETE CASCADE                   |
-| manager_id     | UUID        | NOT NULL, FK → iam.users(id) ON DELETE RESTRICT                  |
-| effective_from | DATE        | NOT NULL, DEFAULT CURRENT_DATE                                   |
-| effective_to   | DATE        | NULL = currently-open line; CHECK effective_to > effective_from  |
-| is_active      | BOOLEAN     | NOT NULL, DEFAULT TRUE                                           |
-| is_deleted     | BOOLEAN     | NOT NULL, DEFAULT FALSE                                          |
+| tenant_id      | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE             |
+| org_id         | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE       |
+| user_id        | UUID        | NOT NULL, FK → iam.users(id) ON DELETE CASCADE                  |
+| manager_id     | UUID        | NOT NULL, FK → iam.users(id) ON DELETE RESTRICT                 |
+| effective_from | DATE        | NOT NULL, DEFAULT CURRENT_DATE                                  |
+| effective_to   | DATE        | NULL = currently-open line; CHECK effective_to > effective_from |
+| is_active      | BOOLEAN     | NOT NULL, DEFAULT TRUE                                          |
+| is_deleted     | BOOLEAN     | NOT NULL, DEFAULT FALSE                                         |
+| deleted_at     | TIMESTAMPTZ |                                                                 |
+| deleted_by     | UUID        |                                                                 |
+| created_by     | UUID        |                                                                 |
+| created_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                             |
+| updated_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                             |
 
 **Constraints:** `user_id <> manager_id`; `EXCLUDE USING gist (org_id WITH =, user_id WITH =, daterange(effective_from, effective_to, '[)') WITH &&) WHERE (NOT is_deleted)` — at most one active line per user per org at any instant.  
 **RLS:** `app_user` reads (SELECT-only) rows in `app.current_org_id` and writes at rank ≥ 980 (mirrors `org_admin_manage_policy` on `iam.user_org_mapping`); `tenant_admin` reads/writes (no delete) within `app.current_tenant_id`; `hr_svc` reads/writes under RLS; `root_service` full access.  
@@ -644,22 +1439,44 @@ Versioned default-catalog registry + provisioning seeder that gives a brand-new 
 
 **`entity.catalog_defaults`** — immutable, versioned default rows for every catalog (append-only: a new default = a new `version`, never an UPDATE of a shipped version).
 
-| Column                        | Type    | Notes                                                    |
-| ----------------------------- | ------- | -------------------------------------------------------- |
-| id                            | UUID    | PK (UUIDv7)                                              |
-| catalog_key                   | TEXT    | schema-qualified target, e.g. `task.task_statuses`       |
-| product                       | TEXT    | owning product (`lms`/`leave`/`attendance`/`tasks`)      |
-| version                       | INT     | catalog version this row belongs to                      |
-| name / label / description    | TEXT    | copied verbatim into the tenant's row                    |
-| sort_order                    | INT     | NOT NULL DEFAULT 0                                        |
-| is_active                     | BOOLEAN | NOT NULL DEFAULT TRUE                                     |
-| is_terminal / is_paid / rank  |         | NULLABLE per-catalog extras (task statuses / leave types / roles) |
+| Column      | Type        | Notes                                                             |
+| ----------- | ----------- | ----------------------------------------------------------------- |
+| id          | UUID        | PK (UUIDv7)                                                       |
+| catalog_key | TEXT        | schema-qualified target, e.g. `task.task_statuses`                |
+| product     | TEXT        | owning product (`lms`/`leave`/`attendance`/`tasks`)               |
+| version     | INT         | catalog version this row belongs to                               |
+| name        | TEXT        | copied verbatim into the tenant's row                             |
+| label       | TEXT        | copied verbatim into the tenant's row                             |
+| description | TEXT        | copied verbatim into the tenant's row                             |
+| sort_order  | INT         | NOT NULL DEFAULT 0                                                |
+| is_active   | BOOLEAN     | NOT NULL DEFAULT TRUE                                             |
+| is_terminal | BOOLEAN     | NULLABLE per-catalog extras (task statuses / leave types / roles) |
+| is_paid     | BOOLEAN     | NULLABLE per-catalog extras (task statuses / leave types / roles) |
+| rank        | INT         | NULLABLE per-catalog extras (task statuses / leave types / roles) |
+| created_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                               |
 
 `UNIQUE (catalog_key, version, name)`.
 
 **`entity.catalog_versions`** — one row per catalog: `current_version` (which version a NEW tenant gets) + `modules TEXT[]` (seed only if the tenant has ANY of these active `entity.tenant_modules`). Editing a catalog for future tenants = insert v N+1 rows into `catalog_defaults` and bump `current_version`. The **six** registered catalogs and their gating modules: `task.task_statuses`/`task.task_priorities`→`{tasks}`; `hr.leave_types`/`hr.leave_request_statuses`→`{leave}`; `hr.attendance_statuses`→`{attendance}`; `hr.employment_types`→`{leave,attendance}` (HR-wide). The former `lms.roles`/`hr.roles`/`task.roles` catalogs were removed at schema_version 1.19.0 along with the tables they seeded — role/rank resolution runs on the single `iam.user_roles` ladder now (see `reference_data/07_catalog_registry.sql:86-90`).
 
+| Column          | Type        | Constraints                         |
+| --------------- | ----------- | ----------------------------------- |
+| catalog_key     | TEXT        | PK                                  |
+| product         | TEXT        | NOT NULL                            |
+| modules         | TEXT[]      | NOT NULL                            |
+| current_version | INT         | NOT NULL                            |
+| updated_at      | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
+
 **`entity.tenant_catalog_versions`** — per-tenant record of the seeded/reset version per catalog. `UNIQUE (tenant_id, catalog_key)`; `tenant_id` FK → `entity.tenants` ON DELETE CASCADE. Drives seeder idempotency (a catalog already recorded is never re-seeded). **RLS:** SELECT-only, mirroring `entity.tenant_modules` (app_user via current org, tenant_admin own tenant); only `root_service` writes.
+
+| Column      | Type        | Constraints                                         |
+| ----------- | ----------- | --------------------------------------------------- |
+| id          | UUID        | PK (UUIDv7)                                         |
+| tenant_id   | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
+| catalog_key | TEXT        | NOT NULL                                            |
+| version     | INT         | NOT NULL                                            |
+| seeded_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                 |
+| reset_at    | TIMESTAMPTZ |                                                     |
 
 **Functions** (all `REVOKE`d from PUBLIC, `EXECUTE` to `root_service` only — they cross tenant boundaries and run under `withServiceTx`):
 
@@ -695,7 +1512,7 @@ Only one Meta table is catalog-shaped, which is why the rest correctly never app
 
 - `ext.lead_stage_capi_event_map` — **tenant-scoped catalog**, cloned per tenant by mechanism 2. Untracked and unversioned.
 - `ext.meta_capi_event_types` — deliberately **global** vocabulary, no `tenant_id`. Not per-tenant, so nothing to drift.
-- `ext.meta_tenant_config`, `ext.meta_page_form_org_map`, `ext.meta_forms` — per-tenant **credentials and page→org routing config**, not defaults cloned from a platform template. Each tenant's values are unique by nature; there is no version to compare against.
+- `ext.meta_tenant_config`, `ext.meta_page_form_org_map`, `ext.meta_forms`, `ext.meta_campaigns` — per-tenant **credentials, page→org routing config and campaign→type mapping**, not defaults cloned from a platform template. Each tenant's values are unique by nature; there is no version to compare against.
 
 ---
 
@@ -718,17 +1535,17 @@ Only one Meta table is catalog-shaped, which is why the rest correctly never app
 
 DB-backed JWT revocation supporting multiple scope levels.
 
-| Column     | Type        | Constraints                                  |
-| ---------- | ----------- | -------------------------------------------- |
-| id         | UUID        | PK (UUIDv7)                                  |
-| jti        | TEXT        | Unique (partial, WHERE NOT NULL)             |
-| user_id    | UUID        | FK → iam.users(id)                           |
-| org_id     | UUID        | FK → entity.organizations(id)               |
-| tenant_id  | UUID        |                                              |
-| revoked_at | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                      |
-| revoked_by | UUID        | FK → iam.users(id)                           |
-| reason     | TEXT        |                                              |
-| expires_at | TIMESTAMPTZ | NOT NULL                                     |
+| Column     | Type        | Constraints                      |
+| ---------- | ----------- | -------------------------------- |
+| id         | UUID        | PK (UUIDv7)                      |
+| jti        | TEXT        | Unique (partial, WHERE NOT NULL) |
+| user_id    | UUID        | FK → iam.users(id)               |
+| org_id     | UUID        | FK → entity.organizations(id)    |
+| tenant_id  | UUID        |                                  |
+| revoked_at | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()          |
+| revoked_by | UUID        | FK → iam.users(id)               |
+| reason     | TEXT        |                                  |
+| expires_at | TIMESTAMPTZ | NOT NULL                         |
 
 **Check:** At least one of jti, user_id, org_id, tenant_id must be non-null
 
@@ -738,21 +1555,21 @@ DB-backed JWT revocation supporting multiple scope levels.
 
 Org-level department catalog. Required parent of `iam.user_roles.department_id`, and referenced by `hr.employee_profiles.department_id`.
 
-| Column      | Type        | Constraints                                     |
-| ----------- | ----------- | ------------------------------------------------ |
-| id          | UUID        | PK (UUIDv7)                                       |
+| Column      | Type        | Constraints                                         |
+| ----------- | ----------- | --------------------------------------------------- |
+| id          | UUID        | PK (UUIDv7)                                         |
 | tenant_id   | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
-| org_id      | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT  |
-| name        | TEXT        | NOT NULL                                          |
-| label       | TEXT        | NOT NULL                                          |
-| description | TEXT        |                                                    |
-| is_active   | BOOLEAN     | NOT NULL, DEFAULT TRUE                            |
-| is_deleted  | BOOLEAN     | NOT NULL, DEFAULT FALSE                           |
-| deleted_at  | TIMESTAMPTZ |                                                    |
-| deleted_by  | UUID        |                                                    |
-| created_by  | UUID        |                                                    |
-| created_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()               |
-| updated_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()               |
+| org_id      | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT    |
+| name        | TEXT        | NOT NULL                                            |
+| label       | TEXT        | NOT NULL                                            |
+| description | TEXT        |                                                     |
+| is_active   | BOOLEAN     | NOT NULL, DEFAULT TRUE                              |
+| is_deleted  | BOOLEAN     | NOT NULL, DEFAULT FALSE                             |
+| deleted_at  | TIMESTAMPTZ |                                                     |
+| deleted_by  | UUID        |                                                     |
+| created_by  | UUID        |                                                     |
+| created_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                 |
+| updated_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                 |
 
 **Check:** `NOT (is_active AND is_deleted)`. Writable from the app since schema **1.39.0** (was list-only before). Read via `GET /departments?tenant_id=` (admin-service, super_admin only); written by hr-service.
 
@@ -762,23 +1579,23 @@ Org-level department catalog. Required parent of `iam.user_roles.department_id`,
 
 Machine-to-machine API credentials for the Public API (tenant-issued keys, not user sessions).
 
-| Column              | Type        | Constraints                                              |
-| ------------------- | ----------- | ---------------------------------------------------------- |
-| id                  | UUID        | PK, DEFAULT gen_uuidv7()                                    |
-| tenant_id           | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE          |
-| name                | VARCHAR(120)| NOT NULL                                                     |
-| key_prefix          | TEXT        | NOT NULL — display-only, e.g. `crmk_live_Ab12Cd`             |
-| key_hash            | TEXT        | NOT NULL, UNIQUE — HMAC-SHA256(pepper, raw key); the raw key is never stored |
-| scopes              | TEXT[]      | NOT NULL, DEFAULT '{}'                                       |
-| rate_limit_per_min  | INTEGER     | NOT NULL, DEFAULT 60                                         |
-| scope_all_orgs      | BOOLEAN     | NOT NULL, DEFAULT FALSE — TRUE = tenant-wide, ignores `iam.api_client_orgs` |
-| is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                                       |
-| expires_at          | TIMESTAMPTZ |                                                               |
-| last_used_at        | TIMESTAMPTZ |                                                               |
-| revoked_at          | TIMESTAMPTZ |                                                               |
-| created_by          | UUID        | FK → iam.users(id) ON DELETE SET NULL                        |
-| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                       |
-| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                       |
+| Column             | Type         | Constraints                                                                  |
+| ------------------ | ------------ | ---------------------------------------------------------------------------- |
+| id                 | UUID         | PK, DEFAULT gen_uuidv7()                                                     |
+| tenant_id          | UUID         | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE                          |
+| name               | VARCHAR(120) | NOT NULL                                                                     |
+| key_prefix         | TEXT         | NOT NULL — display-only, e.g. `crmk_live_Ab12Cd`                             |
+| key_hash           | TEXT         | NOT NULL, UNIQUE — HMAC-SHA256(pepper, raw key); the raw key is never stored |
+| scopes             | TEXT[]       | NOT NULL, DEFAULT '{}'                                                       |
+| rate_limit_per_min | INTEGER      | NOT NULL, DEFAULT 60                                                         |
+| scope_all_orgs     | BOOLEAN      | NOT NULL, DEFAULT FALSE — TRUE = tenant-wide, ignores `iam.api_client_orgs`  |
+| is_active          | BOOLEAN      | NOT NULL, DEFAULT TRUE                                                       |
+| expires_at         | TIMESTAMPTZ  |                                                                              |
+| last_used_at       | TIMESTAMPTZ  |                                                                              |
+| revoked_at         | TIMESTAMPTZ  |                                                                              |
+| created_by         | UUID         | FK → iam.users(id) ON DELETE SET NULL                                        |
+| created_at         | TIMESTAMPTZ  | NOT NULL, DEFAULT NOW()                                                      |
+| updated_at         | TIMESTAMPTZ  | NOT NULL, DEFAULT NOW()                                                      |
 
 Managed from `admin-web`'s API tokens screen (`app/dashboard/api-tokens`).
 
@@ -788,9 +1605,9 @@ Managed from `admin-web`'s API tokens screen (`app/dashboard/api-tokens`).
 
 Per-org scoping for an API client that is not tenant-wide.
 
-| Column        | Type | Constraints                                                          |
-| ------------- | ---- | ---------------------------------------------------------------------- |
-| api_client_id | UUID | NOT NULL, FK → iam.api_clients(id) ON DELETE CASCADE, PK (composite)   |
+| Column        | Type | Constraints                                                               |
+| ------------- | ---- | ------------------------------------------------------------------------- |
+| api_client_id | UUID | NOT NULL, FK → iam.api_clients(id) ON DELETE CASCADE, PK (composite)      |
 | org_id        | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE, PK (composite) |
 
 Zero rows for a client means tenant-wide — but that shape is only valid when the client's `scope_all_orgs = TRUE`; a non-tenant-wide client with zero rows here has access to nothing.
@@ -803,18 +1620,18 @@ Pipeline stages for leads.
 
 > **Tenant-scoped (`26_tenant-scope-lms-lookups.sql`, N-6 Half B):** this and the other 6 LMS marketing lookups (`lead_stage_outcome`, `interaction_types`, `follow_up_statuses`, `lead_sources`, `marketing.marketing_platforms`, `marketing.campaign_statuses`) were originally **global** reference data. Script 26 added `tenant_id NOT NULL` + RLS, replaced the global `UNIQUE(name)` with `UNIQUE(tenant_id, name)`, migrated each global row into one copy per tenant, and repointed every dependent FK (`marketing_leads`, `lead_follow_ups`, `lead_status_log`, `lead_interactions`, `ad_campaigns`, `ext.lead_stage_capi_event_map`, self-ref `lead_stage_outcome.stage_id`) at the correct tenant's copy. The follow-up-status default/sync triggers, which resolved statuses by name globally, were rewritten to scope by the follow-up's own tenant. Runtime RLS is SELECT-only for `app_user`/`tenant_admin`; super_admin management CRUD moved to **leads-service** under the tenant-pinned admin write policy (see `lms.roles` note and Architecture.md → "Tenant-scoped lookup tables"). Seed values below are the per-tenant defaults each existing tenant was backfilled with.
 
-| Column            | Type    | Constraints      |
-| ----------------- | ------- | ---------------- |
-| id                | UUID    | PK (UUIDv7)      |
-| tenant_id         | UUID    | NOT NULL, FK → entity.tenants(id) |
-| name              | TEXT    | NOT NULL; UNIQUE per (tenant_id, name) |
-| label             | TEXT    | NOT NULL         |
-| description       | TEXT    |                  |
-| sort_order        | INT     | NOT NULL, DEFAULT 0 |
-| followup_required | BOOLEAN | NOT NULL, DEFAULT FALSE |
-| is_rejected       | BOOLEAN | NOT NULL, DEFAULT FALSE |
-| is_terminated     | BOOLEAN | NOT NULL, DEFAULT FALSE |
-| is_active         | BOOLEAN | NOT NULL, DEFAULT TRUE  |
+| Column            | Type    | Constraints                                                                                             |
+| ----------------- | ------- | ------------------------------------------------------------------------------------------------------- |
+| id                | UUID    | PK (UUIDv7)                                                                                             |
+| tenant_id         | UUID    | NOT NULL, FK → entity.tenants(id)                                                                       |
+| name              | TEXT    | NOT NULL; unique per tenant / among global rows (partial indexes, 06_indexes.sql) per (tenant_id, name) |
+| label             | TEXT    | NOT NULL                                                                                                |
+| description       | TEXT    |                                                                                                         |
+| sort_order        | INT     | NOT NULL, DEFAULT 0                                                                                     |
+| followup_required | BOOLEAN | NOT NULL, DEFAULT FALSE                                                                                 |
+| is_rejected       | BOOLEAN | NOT NULL, DEFAULT FALSE                                                                                 |
+| is_terminated     | BOOLEAN | NOT NULL, DEFAULT FALSE                                                                                 |
+| is_active         | BOOLEAN | NOT NULL, DEFAULT TRUE                                                                                  |
 
 **Seed values:**
 
@@ -836,16 +1653,17 @@ Pipeline stages for leads.
 
 Outcome options per stage.
 
-| Column           | Type    | Constraints                               |
-| ---------------- | ------- | ----------------------------------------- |
-| id               | UUID    | PK (UUIDv7)                               |
-| stage_id         | UUID    | NOT NULL, FK → lms.lead_stage(id)         |
-| name             | TEXT    | NOT NULL                                  |
-| label            | TEXT    | NOT NULL                                  |
-| description      | TEXT    |                                           |
-| requires_comment | BOOLEAN | NOT NULL, DEFAULT FALSE                   |
-| sort_order       | INT     | NOT NULL, DEFAULT 0                       |
-| is_active        | BOOLEAN | NOT NULL, DEFAULT TRUE                    |
+| Column           | Type    | Constraints                                                                      |
+| ---------------- | ------- | -------------------------------------------------------------------------------- |
+| id               | UUID    | PK (UUIDv7)                                                                      |
+| tenant_id        | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row |
+| stage_id         | UUID    | NOT NULL, FK → lms.lead_stage(id)                                                |
+| name             | TEXT    | NOT NULL                                                                         |
+| label            | TEXT    | NOT NULL                                                                         |
+| description      | TEXT    |                                                                                  |
+| requires_comment | BOOLEAN | NOT NULL, DEFAULT FALSE                                                          |
+| sort_order       | INT     | NOT NULL, DEFAULT 0                                                              |
+| is_active        | BOOLEAN | NOT NULL, DEFAULT TRUE                                                           |
 
 **Unique:** `(stage_id, name)`
 
@@ -860,13 +1678,14 @@ Outcome options per stage.
 
 ### lms.interaction_types
 
-| Column      | Type    | Constraints             |
-| ----------- | ------- | ------------------------ |
-| id          | UUID    | PK (UUIDv7)              |
-| name        | TEXT    | NOT NULL, UNIQUE         |
-| label       | TEXT    | NOT NULL                 |
-| description | TEXT    |                          |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE   |
+| Column      | Type    | Constraints                                                                       |
+| ----------- | ------- | --------------------------------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                                       |
+| tenant_id   | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row  |
+| name        | TEXT    | NOT NULL, unique per tenant / among global rows (partial indexes, 06_indexes.sql) |
+| label       | TEXT    | NOT NULL                                                                          |
+| description | TEXT    |                                                                                   |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                                            |
 
 **Seed values:** call, whatsapp, email, sms, in_person, video_call, chat, internal_note
 
@@ -874,13 +1693,14 @@ Outcome options per stage.
 
 ### lms.follow_up_statuses
 
-| Column      | Type    | Constraints             |
-| ----------- | ------- | ------------------------ |
-| id          | UUID    | PK (UUIDv7)              |
-| name        | TEXT    | NOT NULL, UNIQUE         |
-| label       | TEXT    | NOT NULL                 |
-| description | TEXT    |                          |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE   |
+| Column      | Type    | Constraints                                                                       |
+| ----------- | ------- | --------------------------------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                                       |
+| tenant_id   | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row  |
+| name        | TEXT    | NOT NULL, unique per tenant / among global rows (partial indexes, 06_indexes.sql) |
+| label       | TEXT    | NOT NULL                                                                          |
+| description | TEXT    |                                                                                   |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                                            |
 
 **Seed values:** pending, completed, missed, rescheduled
 
@@ -888,12 +1708,13 @@ Outcome options per stage.
 
 ### lms.lead_sources
 
-| Column      | Type    | Constraints             |
-| ----------- | ------- | ------------------------ |
-| id          | UUID    | PK (UUIDv7)              |
-| name        | TEXT    | NOT NULL, UNIQUE         |
-| label       | TEXT    | NOT NULL                 |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE   |
+| Column    | Type    | Constraints                                                                       |
+| --------- | ------- | --------------------------------------------------------------------------------- |
+| id        | UUID    | PK (UUIDv7)                                                                       |
+| tenant_id | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row  |
+| name      | TEXT    | NOT NULL, unique per tenant / among global rows (partial indexes, 06_indexes.sql) |
+| label     | TEXT    | NOT NULL                                                                          |
+| is_active | BOOLEAN | NOT NULL, DEFAULT TRUE                                                            |
 
 **Seed values:** facebook, google, instagram, whatsapp, website_form, referral, walk_in, cold_call, other
 
@@ -903,45 +1724,52 @@ Outcome options per stage.
 
 Core lead entity. `full_name` is GENERATED STORED.
 
-| Column            | Type        | Constraints                                  |
-| ----------------- | ----------- | -------------------------------------------- |
-| id                | UUID        | PK (UUIDv7)                                  |
-| org_id            | UUID        | NOT NULL, FK → entity.organizations(id)      |
-| first_name        | TEXT        | NOT NULL                                     |
-| middle_name       | TEXT        |                                              |
-| last_name         | TEXT        | NOT NULL, DEFAULT ''                         |
-| full_name         | TEXT        | GENERATED ALWAYS AS STORED                   |
-| phone             | TEXT        |                                              |
-| email             | TEXT        |                                              |
-| address_line1     | TEXT        |                                              |
-| address_line2     | TEXT        |                                              |
-| landmark          | TEXT        |                                              |
-| pincode           | TEXT        |                                              |
-| city              | TEXT        | Free-text city                               |
-| city_id           | INTEGER     | FK → geo.cities(id)                          |
-| state_id          | SMALLINT    | FK → geo.states(id)                          |
-| country_id        | SMALLINT    | FK → geo.countries(id)                       |
-| stage_id          | UUID        | FK → lms.lead_stage(id)                      |
-| outcome_id        | UUID        | FK → lms.lead_stage_outcome(id)              |
-| outcome_comment   | TEXT        |                                              |
-| campaign_id       | UUID        | FK → marketing.ad_campaigns(id)              |
-| source_id         | UUID        | FK → lms.lead_sources(id)                    |
-| assigned_user_id  | UUID        | FK → iam.users(id)                           |
-| is_active         | BOOLEAN     | NOT NULL, DEFAULT TRUE; FALSE when superseded or transferred out |
-| superseded_by     | UUID        | FK → lms.marketing_leads(id) self-ref; old row → newer active row |
-| raw_webhook_data  | JSONB       | NOT NULL, DEFAULT '{}'                       |
-| metadata          | JSONB       | NOT NULL, DEFAULT '{}'                       |
-| tags              | TEXT[]      | NOT NULL, DEFAULT '{}'                       |
-| is_deleted        | BOOLEAN     | NOT NULL, DEFAULT FALSE                      |
-| deleted_at        | TIMESTAMPTZ |                                              |
-| deleted_by        | UUID        |                                              |
-| created_by        | UUID        |                                              |
-| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()          |
-| updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()          |
+| Column             | Type        | Constraints                                                                                      |
+| ------------------ | ----------- | ------------------------------------------------------------------------------------------------ |
+| id                 | UUID        | PK (UUIDv7)                                                                                      |
+| org_id             | UUID        | NOT NULL, FK → entity.organizations(id)                                                          |
+| first_name         | TEXT        | NOT NULL                                                                                         |
+| middle_name        | TEXT        |                                                                                                  |
+| last_name          | TEXT        | NOT NULL, DEFAULT ''                                                                             |
+| full_name          | TEXT        | GENERATED ALWAYS AS STORED                                                                       |
+| phone              | TEXT        |                                                                                                  |
+| email              | TEXT        |                                                                                                  |
+| address_line1      | TEXT        |                                                                                                  |
+| address_line2      | TEXT        |                                                                                                  |
+| landmark           | TEXT        |                                                                                                  |
+| pincode            | TEXT        |                                                                                                  |
+| city               | TEXT        | Free-text city                                                                                   |
+| city_id            | UUID        | FK → geo.cities(id)                                                                              |
+| state_id           | UUID        | FK → geo.states(id)                                                                              |
+| country_id         | UUID        | FK → geo.countries(id)                                                                           |
+| stage_id           | UUID        | FK → lms.lead_stage(id)                                                                          |
+| outcome_id         | UUID        | FK → lms.lead_stage_outcome(id)                                                                  |
+| outcome_comment    | TEXT        |                                                                                                  |
+| scheduled_at       | TIMESTAMPTZ |                                                                                                  |
+| campaign_id        | UUID        | FK → marketing.ad_campaigns(id)                                                                  |
+| campaign_type_id   | UUID        | FK → marketing.campaign_types(id) ON DELETE RESTRICT; denormalised, and **the column RLS reads** |
+| source_id          | UUID        | FK → lms.lead_sources(id)                                                                        |
+| assigned_user_id   | UUID        | FK → iam.users(id)                                                                               |
+| auto_assign_reason | TEXT        | Why auto-assign left the lead unowned; NULL once owned (1.51.0, see below)                       |
+| is_active          | BOOLEAN     | NOT NULL, DEFAULT TRUE; FALSE when superseded or transferred out                                 |
+| superseded_by      | UUID        | FK → lms.marketing_leads(id) self-ref; old row → newer active row                                |
+| raw_webhook_data   | JSONB       | NOT NULL, DEFAULT '{}'                                                                           |
+| metadata           | JSONB       | NOT NULL, DEFAULT '{}'                                                                           |
+| tags               | TEXT[]      | NOT NULL, DEFAULT '{}'                                                                           |
+| is_deleted         | BOOLEAN     | NOT NULL, DEFAULT FALSE                                                                          |
+| deleted_at         | TIMESTAMPTZ |                                                                                                  |
+| deleted_by         | UUID        |                                                                                                  |
+| created_by         | UUID        |                                                                                                  |
+| created_at         | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                              |
+| updated_at         | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                              |
+
+`campaign_type_id` is written explicitly on every intake path rather than left to `sync_lead_campaign_type()`: that trigger only fills a NULL **from the campaign**, so a lead carrying a type but no campaign row — a walk-in, or a Meta campaign whose catalog row could not be created — would otherwise be born untyped and unroutable.
 
 **Unique indexes (partial):** `(org_id, phone) WHERE phone IS NOT NULL AND NOT is_deleted AND is_active = true`, `(org_id, email) WHERE email IS NOT NULL AND NOT is_deleted AND is_active = true` — uniqueness enforced only among active leads; superseded rows may share the same phone/email  
 **RLS:** org-scoped for app_user; tenant-scoped for tenant_admin  
-**Triggers:** `set_updated_at`, `soft_delete_row`, `set_org_id`, `set_created_by`, `check_lead_stage_outcome`, `check_lead_fk_org_scope`, `log_lead_assignment`, `log_lead_stage_change`, `audit_marketing_leads_changes`
+**Triggers:** `set_updated_at`, `soft_delete_row`, `set_org_id`, `set_created_by`, `check_lead_stage_outcome`, `check_lead_fk_org_scope`, `log_lead_assignment`, `log_lead_stage_change`, `audit_marketing_leads_changes`, `sync_lead_campaign_type`
+
+`campaign_type_id` is **denormalised on purpose**: a lead can carry a type with no campaign at all (a walk-in, or a Meta lead whose campaign id never arrived — the fallback there is `ext.meta_page_form_org_map.default_campaign_type_id`), and the RLS predicate reads it on every row, where a nullable join would be slower and harder to reason about. `lms.sync_lead_campaign_type()` (BEFORE INSERT OR UPDATE OF `campaign_id`) copies the campaign's type down when none was supplied, so attaching a campaign late — from the edit screen or a batch script — cannot leave the two disagreeing. It never overwrites a type set explicitly in the same statement, which is what lets a manager reclassify one lead without the next campaign edit undoing it.
 
 ---
 
@@ -949,20 +1777,20 @@ Core lead entity. `full_name` is GENERATED STORED.
 
 Audit trail for all lead-to-lead relationships. `link_type = 'merge'` covers same-org re-submission dedup and walk-in dedup (replaces the old `duplicate_lead_id`). `link_type = 'transfer'` covers executive cross-org transfers. Both orgs involved in a record can read it via RLS.
 
-| Column         | Type        | Notes                                                  |
-|----------------|-------------|--------------------------------------------------------|
-| id             | UUID        | PK, gen_uuidv7()                                       |
-| source_lead_id | UUID        | NOT NULL, FK → lms.marketing_leads(id)                 |
-| source_org_id  | UUID        | NOT NULL, FK → entity.organizations(id)                |
-| dest_lead_id   | UUID        | FK → lms.marketing_leads(id); nullable until dest created |
-| dest_org_id    | UUID        | NOT NULL, FK → entity.organizations(id)                |
-| link_type      | TEXT        | NOT NULL; `'merge'` or `'transfer'`                    |
-| created_by     | UUID        | FK → iam.users(id)                                     |
-| reason         | TEXT        |                                                        |
-| notes          | TEXT        |                                                        |
+| Column         | Type        | Notes                                                                     |
+| -------------- | ----------- | ------------------------------------------------------------------------- |
+| id             | UUID        | PK, gen_uuidv7()                                                          |
+| source_lead_id | UUID        | NOT NULL, FK → lms.marketing_leads(id)                                    |
+| source_org_id  | UUID        | NOT NULL, FK → entity.organizations(id)                                   |
+| dest_lead_id   | UUID        | FK → lms.marketing_leads(id); nullable until dest created                 |
+| dest_org_id    | UUID        | NOT NULL, FK → entity.organizations(id)                                   |
+| link_type      | TEXT        | NOT NULL; `'merge'` or `'transfer'`                                       |
+| created_by     | UUID        | FK → iam.users(id)                                                        |
+| reason         | TEXT        |                                                                           |
+| notes          | TEXT        |                                                                           |
 | status         | TEXT        | NOT NULL, DEFAULT `'completed'`; `'pending'`, `'completed'`, `'rejected'` |
-| created_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                    |
-| updated_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                    |
+| created_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                       |
+| updated_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                       |
 
 **RLS:** both `source_org_id` and `dest_org_id` can SELECT — allows cross-org transfer visibility without exposing the other org's lead data.
 
@@ -972,21 +1800,21 @@ Audit trail for all lead-to-lead relationships. `link_type = 'merge'` covers sam
 
 Append-only interaction log (no updated_at).
 
-| Column              | Type        | Constraints                                  |
-| ------------------- | ----------- | -------------------------------------------- |
-| id                  | UUID        | PK (UUIDv7)                                  |
-| org_id              | UUID        | NOT NULL, FK → entity.organizations(id)      |
-| lead_id             | UUID        | NOT NULL, FK → lms.marketing_leads(id)       |
-| user_id             | UUID        | NOT NULL, FK → iam.users(id)                 |
-| interaction_type_id | UUID        | FK → lms.interaction_types(id)               |
-| notes               | TEXT        |                                              |
-| duration_seconds    | INT         |                                              |
-| occurred_at         | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()          |
-| is_deleted          | BOOLEAN     | NOT NULL, DEFAULT FALSE                      |
-| deleted_at          | TIMESTAMPTZ |                                              |
-| deleted_by          | UUID        |                                              |
-| created_by          | UUID        |                                              |
-| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()          |
+| Column              | Type        | Constraints                             |
+| ------------------- | ----------- | --------------------------------------- |
+| id                  | UUID        | PK (UUIDv7)                             |
+| org_id              | UUID        | NOT NULL, FK → entity.organizations(id) |
+| lead_id             | UUID        | NOT NULL, FK → lms.marketing_leads(id)  |
+| user_id             | UUID        | NOT NULL, FK → iam.users(id)            |
+| interaction_type_id | UUID        | FK → lms.interaction_types(id)          |
+| notes               | TEXT        |                                         |
+| duration_seconds    | INT         |                                         |
+| occurred_at         | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()     |
+| is_deleted          | BOOLEAN     | NOT NULL, DEFAULT FALSE                 |
+| deleted_at          | TIMESTAMPTZ |                                         |
+| deleted_by          | UUID        |                                         |
+| created_by          | UUID        |                                         |
+| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()     |
 
 **RLS:** org + tenant isolation  
 **Triggers:** `soft_delete_row`, `set_org_id`, `set_created_by`, `check_interaction_fk_org_scope`, `audit_row_changes`
@@ -997,22 +1825,24 @@ Append-only interaction log (no updated_at).
 
 Scheduled follow-up tasks.
 
-| Column           | Type        | Constraints                                  |
-| ---------------- | ----------- | -------------------------------------------- |
-| id               | UUID        | PK (UUIDv7)                                  |
-| org_id           | UUID        | NOT NULL, FK → entity.organizations(id)      |
-| lead_id          | UUID        | NOT NULL, FK → lms.marketing_leads(id)       |
-| assigned_user_id | UUID        | NOT NULL, FK → iam.users(id)                 |
-| status_id        | UUID        | NOT NULL, FK → lms.follow_up_statuses(id)    |
-| scheduled_at     | TIMESTAMPTZ | NOT NULL                                     |
-| completed_at     | TIMESTAMPTZ |                                              |
-| notes            | TEXT        |                                              |
-| is_deleted       | BOOLEAN     | NOT NULL, DEFAULT FALSE                      |
-| deleted_at       | TIMESTAMPTZ |                                              |
-| deleted_by       | UUID        |                                              |
-| created_by       | UUID        |                                              |
-| created_at       | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()          |
-| updated_at       | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()          |
+| Column           | Type        | Constraints                                        |
+| ---------------- | ----------- | -------------------------------------------------- |
+| id               | UUID        | PK (UUIDv7)                                        |
+| org_id           | UUID        | NOT NULL, FK → entity.organizations(id)            |
+| lead_id          | UUID        | NOT NULL, FK → lms.marketing_leads(id)             |
+| assigned_user_id | UUID        | NOT NULL, FK → iam.users(id)                       |
+| status_id        | UUID        | NOT NULL, FK → lms.follow_up_statuses(id)          |
+| stage_id         | UUID        | FK → lms.lead_stage(id) ON DELETE RESTRICT         |
+| outcome_id       | UUID        | FK → lms.lead_stage_outcome(id) ON DELETE RESTRICT |
+| scheduled_at     | TIMESTAMPTZ | NOT NULL                                           |
+| completed_at     | TIMESTAMPTZ |                                                    |
+| notes            | TEXT        |                                                    |
+| is_deleted       | BOOLEAN     | NOT NULL, DEFAULT FALSE                            |
+| deleted_at       | TIMESTAMPTZ |                                                    |
+| deleted_by       | UUID        |                                                    |
+| created_by       | UUID        |                                                    |
+| created_at       | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                |
+| updated_at       | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                |
 
 **RLS:** org + tenant isolation  
 **Triggers:** `set_updated_at`, `soft_delete_row`, `set_org_id`, `set_created_by`, `check_follow_up_completion`, `check_follow_up_fk_org_scope`, `set_default_follow_up_status`, `sync_follow_up_status`, `audit_row_changes`
@@ -1033,20 +1863,22 @@ once; a follow-up note with no matching log entry is always shown.
 
 Immutable log of lead assignment changes. Auto-populated by trigger.
 
-| Column               | Type        | Constraints                                 |
-| -------------------- | ----------- | ------------------------------------------- |
-| id                   | UUID        | PK (UUIDv7)                                 |
-| org_id               | UUID        | NOT NULL, FK → entity.organizations(id)     |
-| lead_id              | UUID        | NOT NULL, FK → lms.marketing_leads(id)      |
-| assigned_by_id       | UUID        | FK → iam.users(id)                          |
-| assigned_to_id       | UUID        | FK → iam.users(id)                          |
-| previous_assignee_id | UUID        | FK → iam.users(id)                          |
-| action               | TEXT        | NOT NULL, DEFAULT 'reassigned'              |
-| note                 | TEXT        |                                             |
-| assigned_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()         |
+| Column               | Type        | Constraints                             |
+| -------------------- | ----------- | --------------------------------------- |
+| id                   | UUID        | PK (UUIDv7)                             |
+| org_id               | UUID        | NOT NULL, FK → entity.organizations(id) |
+| lead_id              | UUID        | NOT NULL, FK → lms.marketing_leads(id)  |
+| assigned_by_id       | UUID        | FK → iam.users(id)                      |
+| assigned_to_id       | UUID        | FK → iam.users(id)                      |
+| previous_assignee_id | UUID        | FK → iam.users(id)                      |
+| action               | TEXT        | NOT NULL, DEFAULT 'reassigned'          |
+| note                 | TEXT        |                                         |
+| assigned_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()     |
 
-**Action values:** initial, reassigned, unassigned, self_assigned, bulk_assigned  
+**Action values:** initial, reassigned, unassigned, self_assigned, bulk_assigned, reclassified  
 **RLS:** org + tenant isolation (SELECT only for non-service roles)
+
+**`reclassified` (1.49.0)** is an assignment that moved because the lead's *campaign type* moved — it left one (branch × type) pool for another — rather than a person handing it to a colleague. `lms.log_lead_assignment()` writes it whenever `campaign_type_id` changed in the same statement as `assigned_user_id`, and appends the pool to the note (`From the Hiring pool.`) for `initial` and `reclassified` rows. Deciding this in the trigger rather than in service code means a reclassification done in raw SQL, or by the Python sync, is logged identically.
 
 **Bulk moves are labelled.** The branch-transfer and deactivation flows both reach this table
 through `POST /internal/leads/reassign-org`, which sets `app.lead_transition_note` before the
@@ -1063,19 +1895,19 @@ so an older caller degrades to a cause-neutral note rather than failing.
 
 Immutable stage/outcome transition log. Written by trigger.
 
-| Column           | Type        | Constraints                                  |
-| ---------------- | ----------- | -------------------------------------------- |
-| id               | UUID        | PK (UUIDv7)                                  |
-| org_id           | UUID        | NOT NULL, FK → entity.organizations(id)      |
-| lead_id          | UUID        | NOT NULL, FK → lms.marketing_leads(id)       |
-| changed_by_id    | UUID        | FK → iam.users(id)                           |
-| old_stage_id     | UUID        | FK → lms.lead_stage(id)                      |
-| new_stage_id     | UUID        | NOT NULL, FK → lms.lead_stage(id)            |
-| old_outcome_id   | UUID        | FK → lms.lead_stage_outcome(id)              |
-| new_outcome_id   | UUID        | FK → lms.lead_stage_outcome(id)              |
-| assigned_user_id | UUID        | FK → iam.users(id)                           |
-| transition_note  | TEXT        |                                              |
-| changed_at       | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()          |
+| Column           | Type        | Constraints                             |
+| ---------------- | ----------- | --------------------------------------- |
+| id               | UUID        | PK (UUIDv7)                             |
+| org_id           | UUID        | NOT NULL, FK → entity.organizations(id) |
+| lead_id          | UUID        | NOT NULL, FK → lms.marketing_leads(id)  |
+| changed_by_id    | UUID        | FK → iam.users(id)                      |
+| old_stage_id     | UUID        | FK → lms.lead_stage(id)                 |
+| new_stage_id     | UUID        | NOT NULL, FK → lms.lead_stage(id)       |
+| old_outcome_id   | UUID        | FK → lms.lead_stage_outcome(id)         |
+| new_outcome_id   | UUID        | FK → lms.lead_stage_outcome(id)         |
+| assigned_user_id | UUID        | FK → iam.users(id)                      |
+| transition_note  | TEXT        |                                         |
+| changed_at       | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()     |
 
 **RLS:** SELECT-only for app_user + tenant_admin
 
@@ -1088,19 +1920,19 @@ Day-over-day comparison history for the daily lead report. One row per
 leads-service report job (`upsertReportSnapshot`, idempotent via `ON CONFLICT`)
 and read back by the report page's `?compare=YYYY-MM-DD` mode.
 
-| Column               | Type        | Constraints                                                      |
-| -------------------- | ----------- | ---------------------------------------------------------------- |
-| tenant_id            | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE               |
-| org_id               | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE         |
-| org_name             | TEXT        | NOT NULL                                                          |
-| assigned_user_id     | UUID        | FK → iam.users(id) ON DELETE SET NULL; NULL = Unassigned bucket    |
-| assignee             | TEXT        | NOT NULL                                                          |
-| is_unassigned        | BOOLEAN     | NOT NULL, DEFAULT FALSE                                           |
-| source_id            | UUID        | FK → lms.lead_sources(id) ON DELETE SET NULL; NULL = "Unknown"     |
-| source_label         | TEXT        | NOT NULL, DEFAULT 'Unknown' — kept even if the source is renamed  |
-| report_date          | DATE        | NOT NULL — branch-local calendar date                             |
-| *(29 metric columns)* | INT        | NOT NULL DEFAULT 0 — see below                                    |
-| captured_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                               |
+| Column                | Type        | Constraints                                                      |
+| --------------------- | ----------- | ---------------------------------------------------------------- |
+| tenant_id             | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE              |
+| org_id                | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE        |
+| org_name              | TEXT        | NOT NULL                                                         |
+| assigned_user_id      | UUID        | FK → iam.users(id) ON DELETE SET NULL; NULL = Unassigned bucket  |
+| assignee              | TEXT        | NOT NULL                                                         |
+| is_unassigned         | BOOLEAN     | NOT NULL, DEFAULT FALSE                                          |
+| source_id             | UUID        | FK → lms.lead_sources(id) ON DELETE SET NULL; NULL = "Unknown"   |
+| source_label          | TEXT        | NOT NULL, DEFAULT 'Unknown' — kept even if the source is renamed |
+| report_date           | DATE        | NOT NULL — branch-local calendar date                            |
+| *(29 metric columns)* | INT         | NOT NULL DEFAULT 0 — see below                                   |
+| captured_at           | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                              |
 
 UNIQUE NULLS NOT DISTINCT (tenant_id, org_id, assigned_user_id, source_id, report_date)
 
@@ -1149,13 +1981,14 @@ backfillable, since stage/outcome are current state and have since moved.
 
 ### marketing.marketing_platforms
 
-| Column      | Type    | Constraints             |
-| ----------- | ------- | ------------------------ |
-| id          | UUID    | PK (UUIDv7)              |
-| name        | TEXT    | NOT NULL, UNIQUE         |
-| label       | TEXT    | NOT NULL                 |
-| description | TEXT    |                          |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE   |
+| Column      | Type    | Constraints                                                                       |
+| ----------- | ------- | --------------------------------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                                       |
+| tenant_id   | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row  |
+| name        | TEXT    | NOT NULL, unique per tenant / among global rows (partial indexes, 06_indexes.sql) |
+| label       | TEXT    | NOT NULL                                                                          |
+| description | TEXT    |                                                                                   |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                                            |
 
 **Seed values:** facebook, google, instagram, youtube, whatsapp, linkedin, tiktok, organic, referral, whatsapp_ads
 
@@ -1163,36 +1996,143 @@ backfillable, since stage/outcome are current state and have since moved.
 
 ### marketing.campaign_statuses
 
-| Column      | Type    | Constraints             |
-| ----------- | ------- | ------------------------ |
-| id          | UUID    | PK (UUIDv7)              |
-| name        | TEXT    | NOT NULL, UNIQUE         |
-| label       | TEXT    | NOT NULL                 |
-| description | TEXT    |                          |
-| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE   |
+| Column      | Type    | Constraints                                                                       |
+| ----------- | ------- | --------------------------------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                                       |
+| tenant_id   | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row  |
+| name        | TEXT    | NOT NULL, unique per tenant / among global rows (partial indexes, 06_indexes.sql) |
+| label       | TEXT    | NOT NULL                                                                          |
+| description | TEXT    |                                                                                   |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                                            |
 
 **Seed values:** draft, active, paused, completed, archived
 
 ---
 
+### marketing.campaign_types
+
+*Schema 1.49.0.* What KIND of campaign this is — `sales`, `hiring`, and whatever
+a tenant adds next — and therefore **which team its leads route to**. The
+routing key for auto-assignment (pool = branch × type) and one half of the
+sales/HR visibility boundary described below.
+
+| Column         | Type        | Constraints                                                                                         |
+| -------------- | ----------- | --------------------------------------------------------------------------------------------------- |
+| id             | UUID        | PK (UUIDv7)                                                                                         |
+| tenant_id      | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE                                                 |
+| name           | TEXT        | NOT NULL; unique per tenant / among global rows (partial indexes, 06_indexes.sql) (tenant_id, name) |
+| label          | TEXT        | NOT NULL                                                                                            |
+| description    | TEXT        |                                                                                                     |
+| department_id  | UUID        | FK → iam.departments(id) ON DELETE RESTRICT; **NULL = visible to all**                              |
+| match_keywords | TEXT[]      | NOT NULL, DEFAULT '{}'                                                                              |
+| is_default     | BOOLEAN     | NOT NULL, DEFAULT FALSE; at most one live row per tenant                                            |
+| match_priority | INT         | NOT NULL, DEFAULT 100; **lower wins**                                                               |
+| sort_order     | INT         | NOT NULL, DEFAULT 0                                                                                 |
+| is_active      | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                              |
+| is_deleted     | BOOLEAN     | NOT NULL, DEFAULT FALSE                                                                             |
+| deleted_at     | TIMESTAMPTZ | standard audit columns                                                                              |
+| deleted_by     | UUID        | standard audit columns                                                                              |
+| created_by     | UUID        | standard audit columns                                                                              |
+| metadata       | JSONB       | NOT NULL, DEFAULT '{}'                                                                              |
+| created_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                 |
+| updated_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                 |
+
+**Unique index (partial):** `uix_campaign_types_one_default` on `(tenant_id) WHERE is_default AND NOT is_deleted` — two defaults would be a silently non-deterministic routing rule, since the default is what the backfill, the intake fallback and the admin UI all resolve to.
+**RLS:** `org_isolation_policy` (SELECT, tenant derived from the session's current org), `tenant_isolation_policy`, `admin_tenant_config_policy` (the N-6 super-admin write path).
+**Triggers:** `set_updated_at`, `soft_delete_row`
+**Seeded per tenant** by `entity.seed_tenant_rbac()` — `sales` (department `sales`, `is_default`, no keywords) and `hiring` (department `hr`, keywords `{hiring,hire,recruit,recruitment,hr,job,vacancy,trainer}`, `match_priority` 50). Written as literals, not cloned from `tenant_id IS NULL` templates like the other catalogs: a template row could not carry a tenant-scoped `department_id`.
+
+#### Keyword matching — `marketing.fn_match_campaign_type(tenant, name)`
+
+`STABLE`, returns the matching type id or NULL. Case-insensitive, matched **on
+word boundaries** against `match_keywords`; lowest `match_priority` wins, then
+`sort_order`, then `name`.
+
+It lives in SQL, not in a service, because two independent intake paths read Meta
+campaign names — leads-service (TypeScript) and `msq-lms/meta-sync-scripts`
+(Python) — and a rule implemented twice drifts. **Call it; do not port it.**
+
+It deliberately does not use Postgres' `\m`/`\M` word-boundary escapes: those
+treat `_` as a word character, and Meta campaign names are overwhelmingly
+underscore-separated (`HIR_Gurugram_Trainer_Sep26`), so `\mtrainer\M` would
+never fire. The predicate requires a non-alphanumeric character or the string end
+on both sides instead — which is also what stops `hr` matching `Threadbare` and
+`job` matching `Jobbers`.
+
+#### The sales / HR visibility boundary — `lms.fn_user_sees_campaign_type`
+
+**This is enforced in RLS, not in application code.** Both
+`lms.marketing_leads` policies carry
+`lms.fn_user_sees_campaign_type(current_user_id, org_id, campaign_type_id)` on
+`USING`. A rep with a `psql` prompt and a valid session gets the same answer as a
+rep with the app, which is the only version of this that is actually a boundary.
+A repository filtering on `campaign_type_id` is filtering, not securing.
+
+It is on `USING` **only, never `WITH CHECK`** — writes must stay unrestricted so
+a manager can create and reassign leads across types, which is what
+reclassification is.
+
+The function returns TRUE when **any** of:
+
+1. the lead carries no type (`campaign_type_id IS NULL`);
+2. the type is the tenant's **default** — the catch-all pool where unmatched
+   campaigns, walk-ins and manually created leads land — **and the caller's role
+   has no department** (or sits in the default's own department, which clause 6
+   covers anyway). This clause is what made the 1.49.0 backfill a true no-op: it
+   stamped `sales` on the whole existing pipeline, and without it a `read_only`
+   auditor (no department, no `all_types`) would have lost the entire branch the
+   moment it committed. Until **1.51.1** the default was visible to everyone; it
+   is now hidden from a role in a *different* department (an HR role no longer
+   sees the Sales pool) unless clause 4 or 5 applies. Run
+   `db_scripts/one_time/report_default_type_fence_dryrun.sql` before deploying;
+3. the type has no `department_id`;
+4. the caller is `super_admin` / `tenant_admin` / `org_admin`;
+5. the caller's role in that branch holds `lms.leads.view.all_types`;
+6. the caller's role sits in the type's department.
+
+`SECURITY DEFINER`, because it is called from inside a policy and reads
+RLS-protected `iam.*` and `marketing.*`. Invoker rights would be filtered by
+those policies and return NULL rather than raise — turning the predicate silently
+FALSE and hiding **every** typed lead from **everyone**.
+
+`lms.leads.view.all_types` is granted to `org_manager`, `org_sr_manager`,
+`org_admin` and `tenant_admin`, and deliberately **not** to
+`sales_representative`, `senior_sales_executive` or `read_only`. It is declared
+`kind = 'operation'`, not `'scope'`, despite its key: for scope nodes
+`sort_order` *is* the breadth ordering, so a fifth rung on the
+own/team/org/tenant ladder would outrank "whole branch" and silently replace a
+manager's row scope. Campaign-type visibility is an orthogonal axis. Verify it
+with `iam.fn_role_capability_matrix`, never by reading `iam.role_capabilities`.
+
+Clause 6 is why `iam.user_roles.department_id` is populated as of 1.49.0:
+`entity.seed_tenant_rbac()` passed a literal NULL there from the day Tier C
+shipped, so it was unset on every role in every tenant. It now resolves by name
+(`sales_representative` / `senior_sales_executive` / `org_manager` /
+`org_sr_manager` → `sales`, `hr_admin` → `hr`; the four anchors stay
+department-less, being cross-department by definition).
+
+---
+
 ### marketing.ad_campaigns
 
-| Column     | Type         | Constraints                                     |
-| ---------- | ------------ | ----------------------------------------------- |
-| id         | UUID         | PK (UUIDv7)                                     |
-| org_id     | UUID         | NOT NULL, FK → entity.organizations(id)         |
-| name       | TEXT         | NOT NULL                                        |
-| platform_id| UUID         | NOT NULL, FK → marketing.marketing_platforms(id) |
-| status_id  | UUID         | NOT NULL, FK → marketing.campaign_statuses(id)   |
-| budget     | NUMERIC(12,2)|                                                  |
-| started_at | TIMESTAMPTZ  |                                                  |
-| ended_at   | TIMESTAMPTZ  |                                                  |
-| is_deleted | BOOLEAN      | NOT NULL, DEFAULT FALSE                          |
-| deleted_at | TIMESTAMPTZ  |                                                  |
-| deleted_by | UUID         |                                                  |
-| created_by | UUID         |                                                  |
-| created_at | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()              |
-| updated_at | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()              |
+| Column           | Type          | Constraints                                                                                                            |
+| ---------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| id               | UUID          | PK (UUIDv7)                                                                                                            |
+| org_id           | UUID          | NOT NULL, FK → entity.organizations(id)                                                                                |
+| name             | TEXT          | NOT NULL                                                                                                               |
+| platform_id      | UUID          | NOT NULL, FK → marketing.marketing_platforms(id)                                                                       |
+| status_id        | UUID          | NOT NULL, FK → marketing.campaign_statuses(id)                                                                         |
+| budget           | NUMERIC(12,2) |                                                                                                                        |
+| started_at       | TIMESTAMPTZ   |                                                                                                                        |
+| ended_at         | TIMESTAMPTZ   |                                                                                                                        |
+| is_deleted       | BOOLEAN       | NOT NULL, DEFAULT FALSE                                                                                                |
+| deleted_at       | TIMESTAMPTZ   |                                                                                                                        |
+| deleted_by       | UUID          |                                                                                                                        |
+| created_by       | UUID          |                                                                                                                        |
+| created_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                    |
+| updated_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                    |
+| meta_campaign_id | BIGINT        |                                                                                                                        |
+| campaign_type_id | UUID          | FK → marketing.campaign_types(id) ON DELETE RESTRICT; the per-branch projection of the type `ext.meta_campaigns` holds |
 
 **Check:** `ended_at IS NULL OR started_at IS NULL OR started_at < ended_at`  
 **RLS:** org + tenant isolation  
@@ -1204,14 +2144,14 @@ backfillable, since stage/outcome are current state and have since moved.
 
 Field-level diff audit for `lms.marketing_leads`. Written by trigger.
 
-| Column             | Type        | Constraints                               |
-| ------------------ | ----------- | ----------------------------------------- |
-| id                 | UUID        | PK (UUIDv7)                               |
-| lead_id            | UUID        | NOT NULL, FK → lms.marketing_leads(id)    |
-| changed_by_user_id | UUID        | FK → iam.users(id)                        |
-| operation          | CHAR(1)     | NOT NULL, CHECK IN ('I','U','D')          |
+| Column             | Type        | Constraints                                    |
+| ------------------ | ----------- | ---------------------------------------------- |
+| id                 | UUID        | PK (UUIDv7)                                    |
+| lead_id            | UUID        | NOT NULL, FK → lms.marketing_leads(id)         |
+| changed_by_user_id | UUID        | FK → iam.users(id)                             |
+| operation          | CHAR(1)     | NOT NULL, CHECK IN ('I','U','D')               |
 | changed_fields     | JSONB       | diff format: `{"field": {"old": v, "new": v}}` |
-| changed_at         | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()       |
+| changed_at         | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()            |
 
 **RLS:** SELECT-only, org + tenant isolation via join to `lms.marketing_leads`
 
@@ -1221,18 +2161,18 @@ Field-level diff audit for `lms.marketing_leads`. Written by trigger.
 
 Generic audit for all operational tables except `lms.marketing_leads`.
 
-| Column         | Type        | Constraints                               |
-| -------------- | ----------- | ----------------------------------------- |
-| id             | UUID        | PK (UUIDv7)                               |
-| table_name     | TEXT        | NOT NULL                                  |
-| operation      | CHAR(1)     | NOT NULL, CHECK IN ('U','D')              |
-| record_id      | UUID        |                                           |
-| changed_by     | UUID        |                                           |
-| changed_fields | JSONB       |                                           |
-| old_data       | JSONB       |                                           |
-| new_data       | JSONB       |                                           |
-| org_id         | UUID        |                                           |
-| changed_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()       |
+| Column         | Type        | Constraints                         |
+| -------------- | ----------- | ----------------------------------- |
+| id             | UUID        | PK (UUIDv7)                         |
+| table_name     | TEXT        | NOT NULL                            |
+| operation      | CHAR(1)     | NOT NULL, CHECK IN ('U','D')        |
+| record_id      | UUID        |                                     |
+| changed_by     | UUID        |                                     |
+| changed_fields | JSONB       |                                     |
+| old_data       | JSONB       |                                     |
+| new_data       | JSONB       |                                     |
+| org_id         | UUID        |                                     |
+| changed_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
 
 **RLS:** SELECT-only, org + tenant isolation
 
@@ -1242,18 +2182,24 @@ Generic audit for all operational tables except `lms.marketing_leads`.
 
 Fire-and-forget activity log.
 
-| Column       | Type        | Constraints                            |
-| ------------ | ----------- | -------------------------------------- |
-| id           | UUID        | PK (UUIDv7)                            |
-| action_type  | TEXT        | NOT NULL                               |
-| performed_by | UUID        | FK → iam.users(id)                     |
-| target_id    | UUID        |                                        |
-| target_type  | TEXT        |                                        |
-| org_id       | UUID        | FK → entity.organizations(id)          |
-| meta         | JSONB       |                                        |
-| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()    |
+| Column       | Type        | Constraints                         |
+| ------------ | ----------- | ----------------------------------- |
+| id           | UUID        | PK (UUIDv7)                         |
+| action_type  | TEXT        | NOT NULL                            |
+| performed_by | UUID        | FK → iam.users(id)                  |
+| target_id    | UUID        |                                     |
+| target_type  | TEXT        |                                     |
+| org_id       | UUID        | FK → entity.organizations(id)       |
+| meta         | JSONB       |                                     |
+| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
 
 **RLS:** SELECT-only, org + tenant isolation
+
+`org_id` is always the **acting user's own** org (the row's tenant is the actor's tenant). For
+`org_switch_denied`, the org the user asked for is kept in `meta.new_value.requested_org_id`,
+never in `org_id` (1.54.0; `one_time/apply_rehome_org_switch_denied.sql` moved older rows).
+**Grants:** SELECT to `app_user`, `tenant_admin` and `lms_svc` (leads-service serves `GET /activities`);
+writes only via `root_service` (`logActivity`).
 
 ---
 
@@ -1264,20 +2210,21 @@ Meta App is registered per tenant (not per org) — individual orgs/branches
 are attributed via `ext.meta_page_form_org_map` below, since many orgs' Pages
 and Forms can sit behind a single tenant-level app.
 
-| Column              | Type        | Constraints                               |
-| ------------------- | ----------- | ----------------------------------------- |
-| id                  | UUID        | PK (UUIDv7)                               |
-| tenant_id           | UUID        | NOT NULL, FK → entity.tenants(id)         |
-| app_secret          | TEXT        | NOT NULL                                  |
-| verify_token        | TEXT        | NOT NULL                                  |
-| pixel_id            | TEXT        | NOT NULL                                  |
-| access_token        | TEXT        | NOT NULL                                  |
-| graph_api_version   | TEXT        | NOT NULL, DEFAULT 'v21.0'                 |
-| is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                    |
-| capi_trigger_stages | UUID[]      | NOT NULL, DEFAULT '{}'                    |
-| field_mappings      | JSONB       | nullable — per-tenant override of Meta form field keys; falls back to `DEFAULT_FIELD_MAPPINGS` in `meta.config.ts` when NULL |
-| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                   |
-| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                   |
+| Column              | Type        | Constraints                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| id                  | UUID        | PK (UUIDv7)                                                                                                                                                                                                                                                                                                                                                                                                     |
+| tenant_id           | UUID        | NOT NULL, FK → entity.tenants(id)                                                                                                                                                                                                                                                                                                                                                                               |
+| app_secret          | TEXT        | NOT NULL                                                                                                                                                                                                                                                                                                                                                                                                        |
+| verify_token        | TEXT        | NOT NULL                                                                                                                                                                                                                                                                                                                                                                                                        |
+| pixel_id            | TEXT        | NOT NULL                                                                                                                                                                                                                                                                                                                                                                                                        |
+| access_token        | TEXT        | NOT NULL                                                                                                                                                                                                                                                                                                                                                                                                        |
+| graph_api_version   | TEXT        | NOT NULL, DEFAULT 'v21.0'                                                                                                                                                                                                                                                                                                                                                                                       |
+| is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                                                                                                                                                                                                                                                                                                                                          |
+| capi_trigger_stages | UUID[]      | NOT NULL, DEFAULT '{}'                                                                                                                                                                                                                                                                                                                                                                                          |
+| ad_account_ids      | TEXT[]      | NOT NULL, DEFAULT '{}'; the `act_<digits>` accounts a "Fetch campaigns" run iterates to populate `ext.meta_campaigns`. A column rather than an `ext.meta_ad_accounts` table because an ad account carries nothing but its id here — Pages are already handled the same way (a bare `page_id`, no `ext.meta_pages`) — and the only per-campaign sync state there is lives on `ext.meta_campaigns.last_synced_at` |
+| field_mappings      | JSONB       | nullable — per-tenant override of Meta form field keys; falls back to `DEFAULT_FIELD_MAPPINGS` in `meta.config.ts` when NULL                                                                                                                                                                                                                                                                                    |
+| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                                                                                                                                                                                                                                                                                                                                         |
+| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                                                                                                                                                                                                                                                                                                                                         |
 
 **Unique:** `(tenant_id)`  
 **RLS:** tenant_admin only (no app_user policy — an individual org never owns the shared app config)
@@ -1290,25 +2237,71 @@ Routes an incoming Meta lead (identified by Page + Form) to the owning org.
 `form_id` is the authoritative routing key — a Meta lead form always belongs
 to exactly one Page and `form_id` is globally unique in Meta's system, so it
 safely disambiguates even a shared/corporate Page running forms for several
-orgs. `page_id` is retained for reference/validation and as a fallback
-default so a brand-new form created on an already-mapped Page can be
-auto-attributed without requiring a manual mapping entry first. An org can
-own many rows here (multiple Pages and/or multiple Forms across campaigns).
+orgs. A **NULL `form_id` is the page-level catch-all**: every leadgen form on that
+Page routes to the row's org unless a more specific `form_id` row exists for
+that same Page. An org can own many rows here (multiple Pages and/or multiple
+Forms across campaigns).
 
-| Column     | Type        | Constraints                              |
-| ---------- | ----------- | ----------------------------------------- |
-| id         | UUID        | PK (UUIDv7)                              |
-| tenant_id  | UUID        | NOT NULL, FK → entity.tenants(id)        |
-| org_id     | UUID        | NOT NULL, FK → entity.organizations(id)  |
-| page_id    | BIGINT      | NOT NULL                                 |
-| form_id    | BIGINT      | NOT NULL                                 |
-| platform   | TEXT        | NOT NULL, CHECK IN ('fb', 'ig')          |
-| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                   |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                  |
-| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                  |
+Precedence is exact `form_id` → page-level row → unmapped, and both
+implementations must agree on it: `page-org-map.service.ts::resolveOrgId` and
+the Python `common/mappings.py::resolve()`. The TypeScript fallback used to take
+the most recently created active row for the Page *whatever its `form_id`*, so
+an unknown form could land in whichever branch was mapped last rather than in
+the catch-all; it is restricted to `form_id IS NULL` as of 1.48.1, matching the
+Python. A form with no exact row on a Page that has no page-level row is
+**unmapped** — logged and skipped — rather than silently attributed.
 
-**Unique:** `(page_id, form_id)`  
-**RLS:** org + tenant isolation
+| Column                   | Type        | Constraints                                                                                                                                                                                                     |
+| ------------------------ | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| id                       | UUID        | PK (UUIDv7)                                                                                                                                                                                                     |
+| tenant_id                | UUID        | NOT NULL, FK → entity.tenants(id)                                                                                                                                                                               |
+| org_id                   | UUID        | NOT NULL, FK → entity.organizations(id)                                                                                                                                                                         |
+| page_id                  | BIGINT      | NOT NULL                                                                                                                                                                                                        |
+| form_id                  | BIGINT      | **NULLABLE** — NULL = page-level catch-all                                                                                                                                                                      |
+| platform                 | TEXT        | NOT NULL, CHECK IN ('fb', 'ig', 'wa')                                                                                                                                                                           |
+| default_campaign_type_id | UUID        | FK → marketing.campaign_types(id) ON DELETE SET NULL; the type a lead through this page/form gets when the campaign name matches no keyword — and the **only** signal for a lead carrying no campaign id at all |
+| is_active                | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                                                                                                                                          |
+| last_synced_at           | TIMESTAMPTZ | Stamped by sync_leads.py; observability only                                                                                                                                                                    |
+| created_at               | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                                                                                                                                         |
+| updated_at               | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                                                                                                                                         |
+
+**Unique:** `uq_meta_page_form_org_map (page_id, form_id)` — globally, not per
+tenant. Postgres treats NULLs as distinct in a UNIQUE constraint, so that alone
+would permit many page-level rows for one Page; the partial index
+`uq_meta_page_form_org_map_page_level ON (page_id) WHERE form_id IS NULL AND
+is_active` caps it at **one active page-level row per Page**. The two produce
+different 409s in the API, because the remedies differ.
+
+**RLS:** three policies.
+- `org_isolation_policy` (`FOR ALL TO app_user`) — keyed on
+  `app.current_org_id`; the ordinary end-user path.
+- `tenant_isolation_policy` (`FOR ALL TO tenant_admin`) — keyed on an
+  `entity.organizations` subquery.
+- `admin_tenant_config_policy` (`FOR ALL TO app_user`, added 1.48.1) — the N-6
+  admin path: a platform super_admin administering a **selected** tenant through
+  `withTenantConfigTx`. Keyed on the table's **own `tenant_id` column**, which is
+  deliberately a different shape from `tenant_isolation_policy`'s subquery and is
+  not to be harmonised with it. Neither of the other two can serve that caller,
+  and both fail *silently*: `app.current_org_id` is never set by
+  `withTenantConfigTx`, and the caller's PG role is `app_user`/`lms_svc`, not
+  `tenant_admin`.
+
+  Its `WITH CHECK` also requires
+  `entity.fn_org_tenant(org_id) = app.current_tenant_id`. That half is a security
+  control: `tenant_id` and `org_id` are independent columns with no trigger tying
+  them together, so without it a super_admin could pin `tenant_id` to tenant A
+  and point `org_id` at tenant B's branch. It calls the SECURITY DEFINER helper
+  rather than an inline subquery because `entity.organizations`' own `app_user`
+  policy is membership-keyed and returns nothing for a super_admin holding no
+  membership in the administered tenant — the check would have been silently
+  FALSE and every admin INSERT refused.
+
+Grants matter here as much as the policy: `app_user` holds SELECT/INSERT/**UPDATE
+/DELETE** (it held only SELECT/INSERT until 1.48.1, so the PATCH and DELETE the
+policy permits were dead), and `lms_svc` — what meta-conversion-api actually
+connects as — is granted the table **explicitly**, since
+`ALTER DEFAULT PRIVILEGES IN SCHEMA ext` covers only tables created after
+`07_grants.sql` runs and this one is created in `02`.
 
 ---
 
@@ -1316,21 +2309,74 @@ own many rows here (multiple Pages and/or multiple Forms across campaigns).
 
 Synced catalog of a tenant's Meta lead forms (from the Graph API), independent of the org-attribution mapping above — this is what the form lives *on*, not who it's routed *to*.
 
-| Column            | Type        | Constraints                          |
-| ----------------- | ----------- | -------------------------------------- |
-| id                | UUID        | PK (UUIDv7)                            |
-| tenant_id         | UUID        | NOT NULL, FK → entity.tenants(id)      |
-| page_id           | BIGINT      | NOT NULL                               |
-| form_id           | BIGINT      | NOT NULL, UNIQUE                       |
-| name              | TEXT        |                                        |
-| status            | TEXT        |                                        |
-| leads_count       | INT         |                                        |
-| meta_created_time | TIMESTAMPTZ |                                        |
-| last_synced_at    | TIMESTAMPTZ |                                        |
-| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                |
-| updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                |
+| Column            | Type        | Constraints                       |
+| ----------------- | ----------- | --------------------------------- |
+| id                | UUID        | PK (UUIDv7)                       |
+| tenant_id         | UUID        | NOT NULL, FK → entity.tenants(id) |
+| page_id           | BIGINT      | NOT NULL                          |
+| form_id           | BIGINT      | NOT NULL, UNIQUE                  |
+| name              | TEXT        |                                   |
+| status            | TEXT        |                                   |
+| leads_count       | INT         |                                   |
+| meta_created_time | TIMESTAMPTZ |                                   |
+| last_synced_at    | TIMESTAMPTZ |                                   |
+| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()           |
+| updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()           |
 
 **View:** `ext.vw_meta_forms`
+
+---
+
+### ext.meta_campaigns
+
+*Schema 1.49.0.* Discovery cache of Meta ad campaigns, and **the source of truth
+for campaign → campaign type**. Deliberately shaped like `ext.meta_forms` above —
+tenant-scoped, no `org_id`, the natural Meta id carrying the UNIQUE.
+
+| Column                     | Type        | Constraints                                                                 |
+| -------------------------- | ----------- | --------------------------------------------------------------------------- |
+| id                         | UUID        | PK (UUIDv7)                                                                 |
+| tenant_id                  | UUID        | NOT NULL, FK → entity.tenants(id)                                           |
+| ad_account_id              | TEXT        | `act_<digits>`; NULL when discovered from a lead                            |
+| meta_campaign_id           | BIGINT      | NOT NULL, **UNIQUE (global, not per-tenant)**                               |
+| name                       | TEXT        |                                                                             |
+| objective                  | TEXT        |                                                                             |
+| effective_status           | TEXT        |                                                                             |
+| meta_created_time          | TIMESTAMPTZ |                                                                             |
+| campaign_type_id           | UUID        | FK → marketing.campaign_types(id) ON DELETE RESTRICT                        |
+| mapping_status             | TEXT        | NOT NULL, DEFAULT 'unmapped'; CHECK IN ('unmapped','suggested','confirmed') |
+| matched_keyword            | TEXT        | which keyword fired; shown in the admin grid                                |
+| suggested_campaign_type_id | UUID        | FK → marketing.campaign_types(id) ON DELETE SET NULL                        |
+| matched_rule_id            | UUID        | FK → marketing.campaign_type_rules(id) ON DELETE SET NULL                   |
+| page_ids                   | BIGINT[]    | NOT NULL, DEFAULT '{}'                                                      |
+| conflict_reason            | TEXT        |                                                                             |
+| confirmed_by               | UUID        | FK → iam.users(id) ON DELETE SET NULL                                       |
+| confirmed_at               | TIMESTAMPTZ |                                                                             |
+| first_seen_source          | TEXT        | CHECK IN ('fetch','lead')                                                   |
+| last_synced_at             | TIMESTAMPTZ |                                                                             |
+| created_at                 | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                     |
+| updated_at                 | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                     |
+
+**Why the mapping lives in `ext` and not on `marketing.ad_campaigns`:**
+`ad_campaigns.org_id` is NOT NULL, so a CRM campaign row is per **branch**. A
+Meta campaign is not branch-scoped — only its leads are — and a proactive fetch
+from an ad account has no branch to attribute to at all. One row here means an
+admin confirms a campaign's type **once**, not once per branch, and
+`ad_campaigns` stays a plain per-branch projection that inherits the type.
+
+**`UNIQUE (meta_campaign_id)` is global on purpose**, exactly as `ext.meta_forms`
+treats `form_id`: Meta ids are globally unique and one row must serve every
+branch. Do not "fix" it to `(tenant_id, meta_campaign_id)`.
+
+**`mapping_status`** drives three admin grids: `suggested` (a keyword matched —
+`matched_keyword` says which — needs confirming), `unmapped` (nothing matched,
+needs a manual pick), `confirmed` (done). An inferred type is **provisional**; an
+admin's decision is not. **Every writer must exclude `mapping_status =
+'confirmed'`** or the next fetch or sync silently undoes it.
+
+**Index:** `idx_meta_campaigns_tenant_status` on `(tenant_id, mapping_status)`
+**RLS:** `org_isolation_policy` (SELECT), `tenant_isolation_policy`, `admin_tenant_config_policy`
+**Triggers:** `set_updated_at` (no soft delete — like every `ext.meta_*` cache it has no `is_deleted`; a row here is a cached fact about Meta, not a record of ours to retire)
 
 ---
 
@@ -1338,27 +2384,27 @@ Synced catalog of a tenant's Meta lead forms (from the Graph API), independent o
 
 Raw Meta lead data linked to CRM marketing leads.
 
-| Column            | Type        | Constraints                                |
-| ----------------- | ----------- | ------------------------------------------ |
-| id                | UUID        | PK (UUIDv7)                                |
-| org_id            | UUID        | NOT NULL, FK → entity.organizations(id)    |
-| marketing_lead_id | UUID        | FK → lms.marketing_leads(id)               |
-| meta_lead_id      | BIGINT      | NOT NULL, UNIQUE                           |
-| page_id           | BIGINT      |                                             |
-| form_id           | BIGINT      | NOT NULL                                   |
-| campaign_id       | BIGINT      |                                            |
-| adset_id          | BIGINT      |                                            |
-| ad_id             | BIGINT      |                                            |
-| platform          | TEXT        | CHECK IN ('fb', 'ig')                      |
-| lead_created_at   | TIMESTAMPTZ | NOT NULL                                   |
-| full_name         | TEXT        |                                            |
-| first_name        | TEXT        |                                            |
-| last_name         | TEXT        |                                            |
-| email             | TEXT        |                                            |
-| phone             | TEXT        |                                            |
-| whatsapp_number   | TEXT        |                                            |
-| raw_field_data    | JSONB       |                                            |
-| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                    |
+| Column            | Type        | Constraints                             |
+| ----------------- | ----------- | --------------------------------------- |
+| id                | UUID        | PK (UUIDv7)                             |
+| org_id            | UUID        | NOT NULL, FK → entity.organizations(id) |
+| marketing_lead_id | UUID        | FK → lms.marketing_leads(id)            |
+| meta_lead_id      | BIGINT      | NOT NULL, UNIQUE                        |
+| page_id           | BIGINT      |                                         |
+| form_id           | BIGINT      | NOT NULL                                |
+| campaign_id       | BIGINT      |                                         |
+| adset_id          | BIGINT      |                                         |
+| ad_id             | BIGINT      |                                         |
+| platform          | TEXT        | CHECK IN ('fb', 'ig')                   |
+| lead_created_at   | TIMESTAMPTZ | NOT NULL                                |
+| full_name         | TEXT        |                                         |
+| first_name        | TEXT        |                                         |
+| last_name         | TEXT        |                                         |
+| email             | TEXT        |                                         |
+| phone             | TEXT        |                                         |
+| whatsapp_number   | TEXT        |                                         |
+| raw_field_data    | JSONB       |                                         |
+| created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                 |
 
 **RLS:** org + tenant isolation
 
@@ -1368,13 +2414,13 @@ Raw Meta lead data linked to CRM marketing leads.
 
 Unmapped form fields from Meta lead forms (1:many from `ext.meta_leads`).
 
-| Column         | Type | Constraints                              |
-| -------------- | ---- | ---------------------------------------- |
-| id             | UUID | PK (UUIDv7)                              |
-| meta_lead_id   | UUID | NOT NULL, FK → ext.meta_leads(id)        |
-| org_id         | UUID | NOT NULL, FK → entity.organizations(id)  |
-| question_key   | TEXT | NOT NULL                                 |
-| question_value | TEXT |                                          |
+| Column         | Type | Constraints                             |
+| -------------- | ---- | --------------------------------------- |
+| id             | UUID | PK (UUIDv7)                             |
+| meta_lead_id   | UUID | NOT NULL, FK → ext.meta_leads(id)       |
+| org_id         | UUID | NOT NULL, FK → entity.organizations(id) |
+| question_key   | TEXT | NOT NULL                                |
+| question_value | TEXT |                                         |
 
 **Unique:** `(meta_lead_id, question_key)`  
 **RLS:** org + tenant isolation
@@ -1385,17 +2431,17 @@ Unmapped form fields from Meta lead forms (1:many from `ext.meta_leads`).
 
 Address fields from Meta lead forms (1:1 from `ext.meta_leads`).
 
-| Column         | Type        | Constraints                                  |
+| Column         | Type        | Constraints                                   |
 | -------------- | ----------- | --------------------------------------------- |
 | meta_lead_id   | UUID        | PK, FK → ext.meta_leads(id) ON DELETE CASCADE |
 | org_id         | UUID        | NOT NULL, FK → entity.organizations(id)       |
-| street_address | TEXT        |                                                |
-| city           | TEXT        |                                                |
-| state          | TEXT        |                                                |
-| province       | TEXT        |                                                |
-| country        | TEXT        |                                                |
-| postal_code    | TEXT        |                                                |
-| zip_code       | TEXT        |                                                |
+| street_address | TEXT        |                                               |
+| city           | TEXT        |                                               |
+| state          | TEXT        |                                               |
+| province       | TEXT        |                                               |
+| country        | TEXT        |                                               |
+| postal_code    | TEXT        |                                               |
+| zip_code       | TEXT        |                                               |
 | created_at     | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                       |
 
 **RLS:** org + tenant isolation
@@ -1406,14 +2452,14 @@ Address fields from Meta lead forms (1:1 from `ext.meta_leads`).
 
 Job/company fields from Meta lead forms (1:1 from `ext.meta_leads`).
 
-| Column            | Type        | Constraints                                  |
+| Column            | Type        | Constraints                                   |
 | ----------------- | ----------- | --------------------------------------------- |
 | meta_lead_id      | UUID        | PK, FK → ext.meta_leads(id) ON DELETE CASCADE |
 | org_id            | UUID        | NOT NULL, FK → entity.organizations(id)       |
-| job_title         | TEXT        |                                                |
-| company_name      | TEXT        |                                                |
-| work_email        | TEXT        |                                                |
-| work_phone_number | TEXT        |                                                |
+| job_title         | TEXT        |                                               |
+| company_name      | TEXT        |                                               |
+| work_email        | TEXT        |                                               |
+| work_phone_number | TEXT        |                                               |
 | created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                       |
 
 **RLS:** org + tenant isolation
@@ -1424,15 +2470,15 @@ Job/company fields from Meta lead forms (1:1 from `ext.meta_leads`).
 
 Demographic fields from Meta lead forms (1:1 from `ext.meta_leads`).
 
-| Column              | Type        | Constraints                                  |
+| Column              | Type        | Constraints                                   |
 | ------------------- | ----------- | --------------------------------------------- |
 | meta_lead_id        | UUID        | PK, FK → ext.meta_leads(id) ON DELETE CASCADE |
 | org_id              | UUID        | NOT NULL, FK → entity.organizations(id)       |
-| date_of_birth       | DATE        |                                                |
-| gender              | TEXT        |                                                |
-| marital_status      | TEXT        |                                                |
-| relationship_status | TEXT        |                                                |
-| military_status     | TEXT        |                                                |
+| date_of_birth       | DATE        |                                               |
+| gender              | TEXT        |                                               |
+| marital_status      | TEXT        |                                               |
+| relationship_status | TEXT        |                                               |
+| military_status     | TEXT        |                                               |
 | created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                       |
 
 **RLS:** org + tenant isolation
@@ -1443,21 +2489,21 @@ Demographic fields from Meta lead forms (1:1 from `ext.meta_leads`).
 
 Outbound Meta Conversion API event audit trail.
 
-| Column               | Type        | Constraints                                   |
-| -------------------- | ----------- | --------------------------------------------- |
-| id                   | UUID        | PK (UUIDv7)                                   |
-| org_id               | UUID        | NOT NULL, FK → entity.organizations(id)       |
-| marketing_lead_id    | UUID        | NOT NULL, FK → lms.marketing_leads(id)        |
-| meta_lead_id         | UUID        | FK → ext.meta_leads(id)                       |
-| event_name           | TEXT        | NOT NULL                                      |
-| event_id             | TEXT        | NOT NULL                                      |
+| Column               | Type        | Constraints                                       |
+| -------------------- | ----------- | ------------------------------------------------- |
+| id                   | UUID        | PK (UUIDv7)                                       |
+| org_id               | UUID        | NOT NULL, FK → entity.organizations(id)           |
+| marketing_lead_id    | UUID        | NOT NULL, FK → lms.marketing_leads(id)            |
+| meta_lead_id         | UUID        | FK → ext.meta_leads(id)                           |
+| event_name           | TEXT        | NOT NULL                                          |
+| event_id             | TEXT        | NOT NULL                                          |
 | delivery_status      | TEXT        | NOT NULL, CHECK IN ('SUCCESS','FAILED','PENDING') |
-| fb_trace_id          | TEXT        |                                               |
-| request_payload      | JSONB       | NOT NULL                                      |
-| response_payload     | JSONB       |                                               |
+| fb_trace_id          | TEXT        |                                                   |
+| request_payload      | JSONB       | NOT NULL                                          |
+| response_payload     | JSONB       |                                                   |
 | triggered_by         | TEXT        | NOT NULL, CHECK IN ('auto_stage_change','manual') |
-| triggered_by_user_id | UUID        |                                               |
-| sent_at              | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                       |
+| triggered_by_user_id | UUID        |                                                   |
+| sent_at              | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                           |
 
 **Unique (partial):** `(marketing_lead_id, event_name) WHERE delivery_status = 'SUCCESS'`  
 **RLS:** org + tenant isolation
@@ -1468,16 +2514,16 @@ Outbound Meta Conversion API event audit trail.
 
 Lookup of supported Meta CAPI event names.
 
-| Column      | Type         | Constraints              |
-| ----------- | ------------ | ------------------------- |
-| id          | SMALLINT     | PK (identity)              |
-| code        | VARCHAR(50)  | NOT NULL, UNIQUE           |
-| label       | VARCHAR(100) | NOT NULL                   |
-| description | TEXT         |                            |
-| is_active   | BOOLEAN      | NOT NULL, DEFAULT TRUE     |
-| sort_order  | SMALLINT     | NOT NULL, DEFAULT 0        |
-| created_at  | TIMESTAMPTZ  | NOT NULL, DEFAULT NOW()    |
-| updated_at  | TIMESTAMPTZ  | NOT NULL, DEFAULT NOW()    |
+| Column      | Type         | Constraints             |
+| ----------- | ------------ | ----------------------- |
+| id          | SMALLINT     | PK (identity)           |
+| code        | VARCHAR(50)  | NOT NULL, UNIQUE        |
+| label       | VARCHAR(100) | NOT NULL                |
+| description | TEXT         |                         |
+| is_active   | BOOLEAN      | NOT NULL, DEFAULT TRUE  |
+| sort_order  | SMALLINT     | NOT NULL, DEFAULT 0     |
+| created_at  | TIMESTAMPTZ  | NOT NULL, DEFAULT NOW() |
+| updated_at  | TIMESTAMPTZ  | NOT NULL, DEFAULT NOW() |
 
 **View:** `ext.vw_meta_capi_event_types` (active rows only)
 **RLS:** none (global lookup, like lms.lead_stage)
@@ -1488,13 +2534,14 @@ Lookup of supported Meta CAPI event names.
 
 Maps a CRM lead stage (`lms.lead_stage`) to the Meta CAPI event fired when a lead transitions into it. Global mapping — no `org_id` — mirroring `lms.lead_stage` itself being a shared lookup table. Resolved by `stage_id` (UUID), never by stage name text. A stage with no row here does not fire a CAPI event.
 
-| Column             | Type        | Constraints                                        |
-| ------------------ | ----------- | --------------------------------------------------- |
-| id                 | UUID        | PK (UUIDv7)                                          |
-| stage_id           | UUID        | NOT NULL, UNIQUE, FK → lms.lead_stage(id) ON DELETE CASCADE |
-| capi_event_type_id | SMALLINT    | NOT NULL, FK → ext.meta_capi_event_types(id) ON DELETE RESTRICT |
-| created_at         | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                              |
-| updated_at         | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                              |
+| Column             | Type        | Constraints                                                                                  |
+| ------------------ | ----------- | -------------------------------------------------------------------------------------------- |
+| id                 | UUID        | PK (UUIDv7)                                                                                  |
+| tenant_id          | UUID        | FK → entity.tenants(id) ON DELETE CASCADE                                                    |
+| stage_id           | UUID        | NOT NULL, UNIQUE, FK (tenant_id, stage_id) → lms.lead_stage(tenant_id, id) ON DELETE CASCADE |
+| capi_event_type_id | SMALLINT    | NOT NULL, FK → ext.meta_capi_event_types(id) ON DELETE RESTRICT                              |
+| created_at         | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                      |
+| updated_at         | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                      |
 
 **View:** `ext.vw_lead_stage_capi_event_map` (resolves `stage_code`/`stage_label` and `capi_event_code`/`capi_event_label`)
 **RLS:** none (global lookup)
@@ -1516,35 +2563,66 @@ Seeded mapping (`db_scripts/01_init-lookup-data.sql`):
 
 Cross-product WhatsApp/email message templates, shared by every product service that sends notifications. Resolved by `(module, channel, name)` with most-specific audience winning: **org > tenant > global**.
 
-| Column                  | Type        | Constraints                                              |
-| ----------------------- | ----------- | ----------------------------------------------------------- |
-| id                      | UUID        | PK (UUIDv7)                                                  |
-| tenant_id               | UUID        | FK → entity.tenants(id) ON DELETE CASCADE; NULL = global template |
-| org_id                  | UUID        | FK → entity.organizations(id) ON DELETE CASCADE; NULL = tenant-wide |
-| module                  | TEXT        | NOT NULL — owning product (`lms`/`hr`/`task`/...)            |
-| channel                 | TEXT        | NOT NULL, CHECK IN (`whatsapp`,`email`)                       |
-| name                    | TEXT        | NOT NULL                                                      |
-| label                   | TEXT        | NOT NULL                                                      |
-| description             | TEXT        |                                                                |
-| provider_template_name  | TEXT        | WhatsApp only — the name registered with the messaging provider |
-| language_code           | TEXT        | NOT NULL, DEFAULT 'en'                                        |
-| subject                 | TEXT        | Email only                                                    |
-| body_template           | TEXT        | Email only                                                    |
-| preview_text            | TEXT        |                                                                |
-| header_fields           | TEXT[]      | NOT NULL, DEFAULT '{}'                                        |
-| body_fields             | TEXT[]      | NOT NULL, DEFAULT '{}'                                        |
-| sort_order              | INT         | NOT NULL, DEFAULT 0                                           |
-| is_active               | BOOLEAN     | NOT NULL, DEFAULT TRUE                                        |
-| is_deleted              | BOOLEAN     | NOT NULL, DEFAULT FALSE                                       |
-| deleted_at              | TIMESTAMPTZ |                                                                |
-| deleted_by              | UUID        |                                                                |
-| created_by              | UUID        |                                                                |
-| created_at              | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                           |
-| updated_at              | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                           |
+| Column                 | Type        | Constraints                                                         |
+| ---------------------- | ----------- | ------------------------------------------------------------------- |
+| id                     | UUID        | PK (UUIDv7)                                                         |
+| tenant_id              | UUID        | FK → entity.tenants(id) ON DELETE CASCADE; NULL = global template   |
+| org_id                 | UUID        | FK → entity.organizations(id) ON DELETE CASCADE; NULL = tenant-wide |
+| module                 | TEXT        | NOT NULL — owning product (`lms`/`hr`/`task`/...)                   |
+| channel                | TEXT        | NOT NULL, CHECK IN (`whatsapp`,`email`)                             |
+| name                   | TEXT        | NOT NULL                                                            |
+| label                  | TEXT        | NOT NULL                                                            |
+| description            | TEXT        |                                                                     |
+| provider_template_name | TEXT        | WhatsApp only — the name registered with the messaging provider     |
+| language_code          | TEXT        | NOT NULL, DEFAULT 'en'                                              |
+| subject                | TEXT        | Email only                                                          |
+| body_template          | TEXT        | Email only                                                          |
+| preview_text           | TEXT        |                                                                     |
+| header_fields          | TEXT[]      | NOT NULL, DEFAULT '{}'                                              |
+| body_fields            | TEXT[]      | NOT NULL, DEFAULT '{}'                                              |
+| sort_order             | INT         | NOT NULL, DEFAULT 0                                                 |
+| is_active              | BOOLEAN     | NOT NULL, DEFAULT TRUE                                              |
+| is_deleted             | BOOLEAN     | NOT NULL, DEFAULT FALSE                                             |
+| deleted_at             | TIMESTAMPTZ |                                                                     |
+| deleted_by             | UUID        |                                                                     |
+| created_by             | UUID        |                                                                     |
+| created_at             | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                 |
+| updated_at             | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                 |
 
 **Checks:** `org_id IS NULL OR tenant_id IS NOT NULL` (an org-scoped row must also be tenant-scoped); per-channel shape checks — a `whatsapp` row requires `provider_template_name` and forbids `subject`/`body_template`; an `email` row requires `subject`+`body_template` and forbids `provider_template_name`.
 **Read by:** communication-service, the stateless send relay described in Architecture.md's "Meta Conversion API"/permissions notes — it resolves the most specific matching row for a given `(module, channel, name)` and the caller's org/tenant.
 **Seed data:** `reference_data/05_comms_templates.sql`.
+
+---
+
+### notify.push_subscriptions
+
+Web Push subscriptions — one row per installed PWA + browser + device that has granted the Notification permission. Platform-wide, not LMS-owned: notifications-service is the first consumer (follow-up due), with hr-service (leave approved/rejected) and tasks-service (task assigned) expected to follow.
+
+| Column       | Type        | Constraints                                                                                                               |
+| ------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+| id           | UUID        | PK (UUIDv7)                                                                                                               |
+| user_id      | UUID        | NOT NULL, FK → iam.users(id) ON DELETE CASCADE                                                                            |
+| org_id       | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE CASCADE                                                                 |
+| tenant_id    | UUID        | NOT NULL — no FK, denormalized at subscribe time for the tenant_admin RLS predicate (same shape as `iam.token_blocklist`) |
+| endpoint     | TEXT        | NOT NULL, **UNIQUE** — push service URL, the natural key                                                                  |
+| p256dh       | TEXT        | NOT NULL — client public key (`PushSubscription.keys.p256dh`)                                                             |
+| auth         | TEXT        | NOT NULL — client auth secret (`PushSubscription.keys.auth`)                                                              |
+| user_agent   | TEXT        | Debugging aid for "why did my phone stop getting these"                                                                   |
+| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                       |
+| last_used_at | TIMESTAMPTZ | Stamped on each successful send                                                                                           |
+
+**Index:** `idx_push_subscriptions_user_org (user_id, org_id)` — the sender's lookup on every notification. `endpoint`'s own UNIQUE index backs the upsert.
+
+**Upsert, never accumulate.** The client re-registers on every launch (deleting the Home Screen icon destroys the subscription and a fresh install issues a new endpoint), so the subscribe path must be `INSERT ... ON CONFLICT (endpoint) DO UPDATE`.
+
+**Hard delete, not soft.** Rows are removed on unsubscribe and when the push service answers 404/410 Gone. A dead device registration has nothing to audit, so the `is_deleted`/`soft_delete_row` recipe used by the domain tables is deliberately not applied.
+
+**RLS.** ENABLE + FORCE, with a deliberate departure from the org-only pattern used elsewhere: the `app_user` policy constrains **`user_id` as well as `org_id`**. A push subscription is personal, not org-shared — with org isolation alone any colleague in the branch could read the endpoint/p256dh/auth triple (everything needed to push to that person's locked phone) or delete the row and silently stop their alerts. `tenant_admin` stays tenant-scoped so admins can prune dead registrations across branches.
+
+**Written by:** notifications-service via `root_service` (`DATABASE_URL_SERVICE` / `withServiceTx`), which bypasses RLS — a send fans out to every device of the target user with no app session to scope it. The policies guard incidental access from authenticated app sessions, the same reasoning as `lms.lead_report_snapshot`.
+
+**Existing databases:** `db_scripts/one_time/apply_notify_push_subscriptions.sql` (preview with the `_dryrun`). Schema 1.47.0 originally shipped without one, so every server seeded before it had no table at all and every `POST /notifications/push/subscribe` answered 500 with `42P01 relation "notify.push_subscriptions" does not exist` — no device could register and no notification was ever delivered. Run the dryrun on any environment whose push has never worked.
 
 ---
 
@@ -1579,18 +2657,26 @@ Tenant-scoped lookups (see "Tenant-scoped lookups" above for the admin-CRUD/RLS 
 
 Extra columns: `hr.leave_types.is_paid` (BOOLEAN, NOT NULL DEFAULT TRUE), `hr.leave_types.sort_order` (INT).
 
+`hr.attendance_statuses` machine names (catalog v2, 1.52.0): `present`, `absent`, `half_day`, `on_leave`, `holiday`, `weekly_off`, `wfh`, `missed_punch`. hr-service keys on these names; a tenant may relabel but must not rename. Existing tenants received `missed_punch` via `one_time/apply_missed_punch_status.sql`.
+
 ---
 
 ### hr.designations
 
 Job-title catalog, org-scoped (not tenant-scoped — a designation is defined per branch).
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
-| name | TEXT | NOT NULL |
-| *(+ standard soft-delete columns)* | | |
+| Column     | Type        | Constraints                                                |
+| ---------- | ----------- | ---------------------------------------------------------- |
+| id         | UUID        | PK                                                         |
+| org_id     | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| name       | TEXT        | NOT NULL                                                   |
+| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                     |
+| is_deleted | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
+| deleted_at | TIMESTAMPTZ |                                                            |
+| deleted_by | UUID        |                                                            |
+| created_by | UUID        |                                                            |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
 
 ---
 
@@ -1598,25 +2684,31 @@ Job-title catalog, org-scoped (not tenant-scoped — a designation is defined pe
 
 1:1 HR extension of `iam.users` — everything HR needs that identity doesn't carry.
 
-| Column               | Type         | Constraints                                                        |
-| -------------------- | ------------ | --------------------------------------------------------------------- |
-| user_id               | UUID         | PK, FK → iam.users(id) ON DELETE RESTRICT                             |
-| org_id                | UUID         | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT             |
-| tenant_id             | UUID         | NOT NULL, FK → entity.tenants(id) ON DELETE RESTRICT — **set by trigger** from `org_id`; used to enforce `employee_code` uniqueness per tenant |
-| employee_code         | TEXT         |                                                                        |
-| date_of_joining       | DATE         | NOT NULL                                                               |
-| date_of_exit          | DATE         | CHECK `date_of_exit >= date_of_joining`                                |
-| employment_type_id    | UUID         | FK → hr.employment_types(id) ON DELETE RESTRICT                        |
-| department_id         | UUID         | FK → iam.departments(id) ON DELETE RESTRICT                            |
-| designation_id        | UUID         | FK → hr.designations(id) ON DELETE RESTRICT                            |
-| probation_end_date    | DATE         |                                                                        |
-| weekly_off_pattern    | SMALLINT[]   | NOT NULL, DEFAULT '{0,6}' — 0=Sunday..6=Saturday                       |
-| metadata              | JSONB        | NOT NULL, DEFAULT '{}'                                                 |
-| reference_photo_url   | TEXT         | Face verification — **dormant**, superseded by the shared avatar (`iam.users.photo_key`); see Architecture.md → "Face verification" |
-| face_subject_id       | TEXT         | dormant, same note                                                     |
-| face_enrolled_at      | TIMESTAMPTZ  | dormant, same note                                                     |
-| face_consent_at       | TIMESTAMPTZ  | dormant, same note                                                     |
-| *(+ standard soft-delete columns)* |  |                                                                        |
+| Column              | Type        | Constraints                                                                                                                                    |
+| ------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| user_id             | UUID        | PK, FK → iam.users(id) ON DELETE RESTRICT                                                                                                      |
+| org_id              | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT                                                                                     |
+| tenant_id           | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE RESTRICT — **set by trigger** from `org_id`; used to enforce `employee_code` uniqueness per tenant |
+| employee_code       | TEXT        |                                                                                                                                                |
+| date_of_joining     | DATE        | NOT NULL                                                                                                                                       |
+| date_of_exit        | DATE        | CHECK `date_of_exit >= date_of_joining`                                                                                                        |
+| employment_type_id  | UUID        | FK → hr.employment_types(id) ON DELETE RESTRICT                                                                                                |
+| department_id       | UUID        | FK → iam.departments(id) ON DELETE RESTRICT                                                                                                    |
+| designation_id      | UUID        | FK → hr.designations(id) ON DELETE RESTRICT                                                                                                    |
+| probation_end_date  | DATE        |                                                                                                                                                |
+| weekly_off_pattern  | SMALLINT[]  | NOT NULL, DEFAULT '{0,6}' — 0=Sunday..6=Saturday                                                                                               |
+| metadata            | JSONB       | NOT NULL, DEFAULT '{}'                                                                                                                         |
+| reference_photo_url | TEXT        | Face verification — **dormant**, superseded by the shared avatar (`iam.users.photo_key`); see Architecture.md → "Face verification"            |
+| face_subject_id     | TEXT        | dormant, same note                                                                                                                             |
+| face_enrolled_at    | TIMESTAMPTZ | dormant, same note                                                                                                                             |
+| face_consent_at     | TIMESTAMPTZ | dormant, same note                                                                                                                             |
+| is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                                                                         |
+| is_deleted          | BOOLEAN     | NOT NULL, DEFAULT FALSE                                                                                                                        |
+| deleted_at          | TIMESTAMPTZ |                                                                                                                                                |
+| deleted_by          | UUID        |                                                                                                                                                |
+| created_by          | UUID        |                                                                                                                                                |
+| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                                            |
+| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                                            |
 
 **Triggers:** `hr.set_employee_profile_tenant_id()` (derives `tenant_id` from `org_id`), `hr.soft_delete_employee_profile()`.
 
@@ -1624,27 +2716,39 @@ Job-title catalog, org-scoped (not tenant-scoped — a designation is defined pe
 
 ### hr.holiday_calendars
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
-| name | TEXT | NOT NULL |
-| year | INT | NOT NULL |
-| *(+ standard soft-delete columns)* | | |
+| Column     | Type        | Constraints                                                |
+| ---------- | ----------- | ---------------------------------------------------------- |
+| id         | UUID        | PK                                                         |
+| org_id     | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| name       | TEXT        | NOT NULL                                                   |
+| year       | INT         | NOT NULL                                                   |
+| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                     |
+| is_deleted | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
+| deleted_at | TIMESTAMPTZ |                                                            |
+| deleted_by | UUID        |                                                            |
+| created_by | UUID        |                                                            |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
 
 ---
 
 ### hr.holidays
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| calendar_id | UUID | FK → hr.holiday_calendars(id) ON DELETE CASCADE |
-| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
-| holiday_date | DATE | NOT NULL |
-| name | TEXT | NOT NULL |
-| is_optional | BOOLEAN | NOT NULL, DEFAULT FALSE |
-| *(+ standard soft-delete columns)* | | |
+| Column       | Type        | Constraints                                                |
+| ------------ | ----------- | ---------------------------------------------------------- |
+| id           | UUID        | PK                                                         |
+| calendar_id  | UUID        | FK → hr.holiday_calendars(id) ON DELETE CASCADE            |
+| org_id       | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| holiday_date | DATE        | NOT NULL                                                   |
+| name         | TEXT        | NOT NULL                                                   |
+| is_optional  | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
+| is_active    | BOOLEAN     | NOT NULL, DEFAULT TRUE                                     |
+| is_deleted   | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
+| deleted_at   | TIMESTAMPTZ |                                                            |
+| deleted_by   | UUID        |                                                            |
+| created_by   | UUID        |                                                            |
+| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+| updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
 
 **Unique:** `(calendar_id, holiday_date)`
 
@@ -1654,24 +2758,30 @@ Job-title catalog, org-scoped (not tenant-scoped — a designation is defined pe
 
 Accrual/entitlement rules per leave type, tenant-wide or org-specific.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| tenant_id | UUID | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE CASCADE; NULL = tenant-wide default |
-| leave_type_id | UUID | FK → hr.leave_types(id) ON DELETE RESTRICT |
-| accrual_frequency | TEXT | CHECK IN (`monthly`,`quarterly`,`yearly`,`none`), DEFAULT `none` |
-| accrual_amount | NUMERIC(5,2) | DEFAULT 0 |
-| max_balance | NUMERIC(5,2) | |
-| carry_forward | BOOLEAN | NOT NULL, DEFAULT FALSE |
-| max_carry_forward | NUMERIC(5,2) | |
-| max_consecutive_days | SMALLINT | |
-| min_notice_days | SMALLINT | DEFAULT 0 |
-| allow_half_day | BOOLEAN | NOT NULL, DEFAULT TRUE |
-| requires_document_after_days | SMALLINT | |
-| approval_levels | SMALLINT | NOT NULL, DEFAULT 1, CHECK >= 1 |
-| applicable_from | DATE | NOT NULL |
-| *(+ standard soft-delete columns)* | | |
+| Column                       | Type         | Constraints                                                                 |
+| ---------------------------- | ------------ | --------------------------------------------------------------------------- |
+| id                           | UUID         | PK                                                                          |
+| tenant_id                    | UUID         | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE                         |
+| org_id                       | UUID         | FK → entity.organizations(id) ON DELETE CASCADE; NULL = tenant-wide default |
+| leave_type_id                | UUID         | FK → hr.leave_types(id) ON DELETE RESTRICT                                  |
+| accrual_frequency            | TEXT         | CHECK IN (`monthly`,`quarterly`,`yearly`,`none`), DEFAULT `none`            |
+| accrual_amount               | NUMERIC(5,2) | DEFAULT 0                                                                   |
+| max_balance                  | NUMERIC(5,2) |                                                                             |
+| carry_forward                | BOOLEAN      | NOT NULL, DEFAULT FALSE                                                     |
+| max_carry_forward            | NUMERIC(5,2) |                                                                             |
+| max_consecutive_days         | SMALLINT     |                                                                             |
+| min_notice_days              | SMALLINT     | DEFAULT 0                                                                   |
+| allow_half_day               | BOOLEAN      | NOT NULL, DEFAULT TRUE                                                      |
+| requires_document_after_days | SMALLINT     |                                                                             |
+| approval_levels              | SMALLINT     | NOT NULL, DEFAULT 1, CHECK >= 1                                             |
+| applicable_from              | DATE         | NOT NULL                                                                    |
+| is_active                    | BOOLEAN      | NOT NULL, DEFAULT TRUE                                                      |
+| is_deleted                   | BOOLEAN      | NOT NULL, DEFAULT FALSE                                                     |
+| deleted_at                   | TIMESTAMPTZ  |                                                                             |
+| deleted_by                   | UUID         |                                                                             |
+| created_by                   | UUID         |                                                                             |
+| created_at                   | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                         |
+| updated_at                   | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                         |
 
 **Known follow-up (shared with `hr.hr_settings` and the per-product role catalogs before they were dropped):** tenant provisioning does not auto-seed these rows for a brand-new tenant yet.
 
@@ -1681,13 +2791,14 @@ Accrual/entitlement rules per leave type, tenant-wide or org-specific.
 
 Per-tenant/org HR configuration (currently just the leave-cycle anchor month).
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| tenant_id | UUID | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE CASCADE; NULL = tenant-wide |
-| leave_cycle_start_month | SMALLINT | NOT NULL, DEFAULT 4, CHECK 1-12 |
-| created_at / updated_at | TIMESTAMPTZ | |
+| Column                  | Type        | Constraints                                                         |
+| ----------------------- | ----------- | ------------------------------------------------------------------- |
+| id                      | UUID        | PK                                                                  |
+| tenant_id               | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE                 |
+| org_id                  | UUID        | FK → entity.organizations(id) ON DELETE CASCADE; NULL = tenant-wide |
+| leave_cycle_start_month | SMALLINT    | NOT NULL, DEFAULT 4, CHECK 1-12                                     |
+| created_at              | TIMESTAMPTZ |                                                                     |
+| updated_at              | TIMESTAMPTZ |                                                                     |
 
 ---
 
@@ -1695,20 +2806,28 @@ Per-tenant/org HR configuration (currently just the leave-cycle anchor month).
 
 Core leave-request entity.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| leave_type_id | UUID | FK → hr.leave_types(id) ON DELETE RESTRICT |
-| start_date / end_date | DATE | NOT NULL, CHECK `end_date >= start_date` |
-| start_half / end_half | TEXT | CHECK IN (`full`,`first_half`,`second_half`), DEFAULT `full` |
-| days_count | NUMERIC(5,2) | CHECK > 0 |
-| reason | TEXT | |
-| status_id | UUID | FK → hr.leave_request_statuses(id) ON DELETE RESTRICT |
-| document_url | TEXT | |
-| is_open | BOOLEAN | NOT NULL, DEFAULT TRUE — **trigger-maintained** from `status_id` |
-| *(+ standard soft-delete columns)* | | |
+| Column        | Type         | Constraints                                                      |
+| ------------- | ------------ | ---------------------------------------------------------------- |
+| id            | UUID         | PK                                                               |
+| user_id       | UUID         | FK → iam.users(id) ON DELETE RESTRICT                            |
+| org_id        | UUID         | FK → entity.organizations(id) ON DELETE RESTRICT                 |
+| leave_type_id | UUID         | FK → hr.leave_types(id) ON DELETE RESTRICT                       |
+| start_date    | DATE         | NOT NULL, CHECK `end_date >= start_date`                         |
+| end_date      | DATE         | NOT NULL, CHECK `end_date >= start_date`                         |
+| start_half    | TEXT         | CHECK IN (`full`,`first_half`,`second_half`), DEFAULT `full`     |
+| end_half      | TEXT         | CHECK IN (`full`,`first_half`,`second_half`), DEFAULT `full`     |
+| days_count    | NUMERIC(5,2) | CHECK > 0                                                        |
+| reason        | TEXT         |                                                                  |
+| status_id     | UUID         | FK → hr.leave_request_statuses(id) ON DELETE RESTRICT            |
+| document_url  | TEXT         |                                                                  |
+| is_open       | BOOLEAN      | NOT NULL, DEFAULT TRUE — **trigger-maintained** from `status_id` |
+| is_active     | BOOLEAN      | NOT NULL, DEFAULT TRUE                                           |
+| is_deleted    | BOOLEAN      | NOT NULL, DEFAULT FALSE                                          |
+| deleted_at    | TIMESTAMPTZ  |                                                                  |
+| deleted_by    | UUID         |                                                                  |
+| created_by    | UUID         |                                                                  |
+| created_at    | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                              |
+| updated_at    | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                              |
 
 **Constraint (exclusion):** no two open, non-deleted requests for the same user with overlapping `[start_date, end_date]` ranges (GiST).
 **Trigger:** `hr.set_leave_request_is_open()`.
@@ -1719,16 +2838,16 @@ Core leave-request entity.
 
 Append-only transition log, mirrors `lms.lead_status_log`.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| request_id | UUID | FK → hr.leave_requests(id) ON DELETE CASCADE |
-| changed_by_id | UUID | FK → iam.users(id) ON DELETE SET NULL |
-| old_status_id | UUID | FK → hr.leave_request_statuses(id) |
-| new_status_id | UUID | NOT NULL, FK → hr.leave_request_statuses(id) |
-| note | TEXT | |
-| changed_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
+| Column        | Type        | Constraints                                      |
+| ------------- | ----------- | ------------------------------------------------ |
+| id            | UUID        | PK                                               |
+| org_id        | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT |
+| request_id    | UUID        | FK → hr.leave_requests(id) ON DELETE CASCADE     |
+| changed_by_id | UUID        | FK → iam.users(id) ON DELETE SET NULL            |
+| old_status_id | UUID        | FK → hr.leave_request_statuses(id)               |
+| new_status_id | UUID        | NOT NULL, FK → hr.leave_request_statuses(id)     |
+| note          | TEXT        |                                                  |
+| changed_at    | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()              |
 
 **Trigger:** `hr.log_leave_status_change()`.
 
@@ -1738,19 +2857,20 @@ Append-only transition log, mirrors `lms.lead_status_log`.
 
 Append-only source of truth for leave balances — the only way a balance changes.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| leave_type_id | UUID | FK → hr.leave_types(id) ON DELETE RESTRICT |
-| entry_type | TEXT | CHECK IN (`accrual`,`consumption`,`adjustment`,`carry_forward`,`encashment`,`lapse`) |
-| amount | NUMERIC(6,2) | CHECK <> 0 |
-| leave_request_id | UUID | FK → hr.leave_requests(id) ON DELETE SET NULL |
-| period | TEXT | |
-| effective_date | DATE | NOT NULL |
-| note | TEXT | |
-| created_by / created_at | | |
+| Column           | Type         | Constraints                                                                          |
+| ---------------- | ------------ | ------------------------------------------------------------------------------------ |
+| id               | UUID         | PK                                                                                   |
+| user_id          | UUID         | FK → iam.users(id) ON DELETE RESTRICT                                                |
+| org_id           | UUID         | FK → entity.organizations(id) ON DELETE RESTRICT                                     |
+| leave_type_id    | UUID         | FK → hr.leave_types(id) ON DELETE RESTRICT                                           |
+| entry_type       | TEXT         | CHECK IN (`accrual`,`consumption`,`adjustment`,`carry_forward`,`encashment`,`lapse`) |
+| amount           | NUMERIC(6,2) | CHECK <> 0                                                                           |
+| leave_request_id | UUID         | FK → hr.leave_requests(id) ON DELETE SET NULL                                        |
+| period           | TEXT         |                                                                                      |
+| effective_date   | DATE         | NOT NULL                                                                             |
+| note             | TEXT         |                                                                                      |
+| created_by       | UUID         |                                                                                      |
+| created_at       | TIMESTAMPTZ  |                                                                                      |
 
 **View:** `hr.vw_leave_balances` sums this table per user/leave-type into a current balance.
 
@@ -1760,17 +2880,17 @@ Append-only source of truth for leave balances — the only way a balance change
 
 One row per approval level in a request's chain, materialized at apply time from `iam.reporting_lines` (see Architecture.md → "The single reporting hierarchy" — this is what keeps an in-flight request stable across a re-org).
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| leave_request_id | UUID | FK → hr.leave_requests(id) ON DELETE CASCADE |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| level | SMALLINT | NOT NULL |
-| approver_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| action | TEXT | CHECK IN (`pending`,`approved`,`rejected`), DEFAULT `pending` |
-| acted_at | TIMESTAMPTZ | |
-| comment | TEXT | |
-| created_at | TIMESTAMPTZ | |
+| Column           | Type        | Constraints                                                   |
+| ---------------- | ----------- | ------------------------------------------------------------- |
+| id               | UUID        | PK                                                            |
+| leave_request_id | UUID        | FK → hr.leave_requests(id) ON DELETE CASCADE                  |
+| org_id           | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT              |
+| level            | SMALLINT    | NOT NULL                                                      |
+| approver_id      | UUID        | FK → iam.users(id) ON DELETE RESTRICT                         |
+| action           | TEXT        | CHECK IN (`pending`,`approved`,`rejected`), DEFAULT `pending` |
+| acted_at         | TIMESTAMPTZ |                                                               |
+| comment          | TEXT        |                                                               |
+| created_at       | TIMESTAMPTZ |                                                               |
 
 **Unique:** `(leave_request_id, level)`
 **Function:** `hr.can_approve_leave(...)` resolves whether an actor may act on a given level; `resolveApprovers`/`buildApproverChain` (hr-service) build the chain from `iam.fn_manager_chain`.
@@ -1781,26 +2901,32 @@ One row per approval level in a request's chain, materialized at apply time from
 
 Per-org (or tenant-default) attendance policy — geofencing, photo requirements, face-match config, half/full-day thresholds. This is the table Architecture.md's "Face verification" section documents behaviorally; it had no Table Details entry until now.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| tenant_id | UUID | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT; NULL = tenant default |
-| geofence_enabled | BOOLEAN | NOT NULL, DEFAULT TRUE |
-| geofence_radius_meters | INT | DEFAULT 200, CHECK > 0 |
-| require_photo | BOOLEAN | NOT NULL, DEFAULT TRUE |
-| require_geo | BOOLEAN | NOT NULL, DEFAULT TRUE |
-| allow_wfh_checkin | BOOLEAN | NOT NULL, DEFAULT FALSE |
-| require_face_match | BOOLEAN | NOT NULL, DEFAULT FALSE — off by default |
-| face_match_threshold | NUMERIC(5,2) | DEFAULT 85, CHECK 50-100 |
-| face_match_action | TEXT | CHECK IN (`flag`,`block`), DEFAULT `flag` |
-| photo_change_cooldown_days | INT | DEFAULT 30, CHECK >= 0 |
-| image_retention_days | INT | DEFAULT 90, CHECK >= 1 |
-| min_half_day_minutes | SMALLINT | DEFAULT 240, CHECK 0-1440 |
-| min_full_day_minutes | SMALLINT | DEFAULT 480, CHECK 0-1440; CHECK `min_half_day_minutes <= min_full_day_minutes` |
-| regularization_approval_levels | SMALLINT | DEFAULT 1, CHECK >= 1 |
-| regularization_max_backdate_days | SMALLINT | DEFAULT 30, CHECK 0-365 |
-| *(+ standard soft-delete columns)* | | |
+| Column                           | Type         | Constraints                                                                     |
+| -------------------------------- | ------------ | ------------------------------------------------------------------------------- |
+| id                               | UUID         | PK                                                                              |
+| tenant_id                        | UUID         | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE                             |
+| org_id                           | UUID         | FK → entity.organizations(id) ON DELETE RESTRICT; NULL = tenant default         |
+| geofence_enabled                 | BOOLEAN      | NOT NULL, DEFAULT TRUE                                                          |
+| geofence_radius_meters           | INT          | DEFAULT 200, CHECK > 0                                                          |
+| require_photo                    | BOOLEAN      | NOT NULL, DEFAULT TRUE                                                          |
+| require_geo                      | BOOLEAN      | NOT NULL, DEFAULT TRUE                                                          |
+| allow_wfh_checkin                | BOOLEAN      | NOT NULL, DEFAULT FALSE                                                         |
+| require_face_match               | BOOLEAN      | NOT NULL, DEFAULT FALSE — off by default                                        |
+| face_match_threshold             | NUMERIC(5,2) | DEFAULT 85, CHECK 50-100                                                        |
+| face_match_action                | TEXT         | CHECK IN (`flag`,`block`), DEFAULT `flag`                                       |
+| photo_change_cooldown_days       | INT          | DEFAULT 30, CHECK >= 0                                                          |
+| image_retention_days             | INT          | DEFAULT 90, CHECK >= 1                                                          |
+| min_half_day_minutes             | SMALLINT     | DEFAULT 240, CHECK 0-1440                                                       |
+| min_full_day_minutes             | SMALLINT     | DEFAULT 480, CHECK 0-1440; CHECK `min_half_day_minutes <= min_full_day_minutes` |
+| regularization_approval_levels   | SMALLINT     | DEFAULT 1, CHECK >= 1                                                           |
+| regularization_max_backdate_days | SMALLINT     | DEFAULT 30, CHECK 0-365                                                         |
+| is_active                        | BOOLEAN      | NOT NULL, DEFAULT TRUE                                                          |
+| is_deleted                       | BOOLEAN      | NOT NULL, DEFAULT FALSE                                                         |
+| deleted_at                       | TIMESTAMPTZ  |                                                                                 |
+| deleted_by                       | UUID         |                                                                                 |
+| created_by                       | UUID         |                                                                                 |
+| created_at                       | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                             |
+| updated_at                       | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                             |
 
 **Trigger:** `hr.set_attendance_rules_tenant_id()`.
 
@@ -1810,40 +2936,61 @@ Per-org (or tenant-default) attendance policy — geofencing, photo requirements
 
 **hr.shifts** — one row per named shift definition, org-scoped.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
-| name | TEXT | NOT NULL |
-| start_time / end_time | TIME | NOT NULL |
-| grace_minutes | SMALLINT | DEFAULT 10 |
-| min_half_day_minutes / min_full_day_minutes | SMALLINT | DEFAULT 240 / 480 |
-| is_night_shift | BOOLEAN | NOT NULL, DEFAULT FALSE |
-| is_split | BOOLEAN | NOT NULL, DEFAULT FALSE |
-| *(+ standard soft-delete columns)* | | |
+| Column               | Type        | Constraints                                                |
+| -------------------- | ----------- | ---------------------------------------------------------- |
+| id                   | UUID        | PK                                                         |
+| org_id               | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| name                 | TEXT        | NOT NULL                                                   |
+| start_time           | TIME        | NOT NULL                                                   |
+| end_time             | TIME        | NOT NULL                                                   |
+| grace_minutes        | SMALLINT    | DEFAULT 10                                                 |
+| min_half_day_minutes | SMALLINT    | DEFAULT 240 / 480                                          |
+| min_full_day_minutes | SMALLINT    | DEFAULT 240 / 480                                          |
+| is_night_shift       | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
+| is_split             | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
+| is_active            | BOOLEAN     | NOT NULL, DEFAULT TRUE                                     |
+| is_deleted           | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
+| deleted_at           | TIMESTAMPTZ |                                                            |
+| deleted_by           | UUID        |                                                            |
+| created_by           | UUID        |                                                            |
+| created_at           | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+| updated_at           | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
 
 **hr.shift_segments** — for split shifts, the individual on/off windows within one shift.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| shift_id | UUID | FK → hr.shifts(id) ON DELETE CASCADE |
-| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
-| seq | SMALLINT | NOT NULL, CHECK >= 1 |
-| start_time / end_time | TIME | NOT NULL |
-| *(+ standard soft-delete columns)* | | |
+| Column     | Type        | Constraints                                                |
+| ---------- | ----------- | ---------------------------------------------------------- |
+| id         | UUID        | PK                                                         |
+| shift_id   | UUID        | FK → hr.shifts(id) ON DELETE CASCADE                       |
+| org_id     | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| seq        | SMALLINT    | NOT NULL, CHECK >= 1                                       |
+| start_time | TIME        | NOT NULL                                                   |
+| end_time   | TIME        | NOT NULL                                                   |
+| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                     |
+| is_deleted | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
+| deleted_at | TIMESTAMPTZ |                                                            |
+| deleted_by | UUID        |                                                            |
+| created_by | UUID        |                                                            |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
 
 **hr.shift_assignments** — which user works which shift, effective-dated.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| shift_id | UUID | FK → hr.shifts(id) ON DELETE RESTRICT |
-| effective_from | DATE | NOT NULL |
-| effective_to | DATE | CHECK >= effective_from |
-| *(+ standard soft-delete columns)* | | |
+| Column         | Type        | Constraints                                      |
+| -------------- | ----------- | ------------------------------------------------ |
+| id             | UUID        | PK                                               |
+| user_id        | UUID        | FK → iam.users(id) ON DELETE RESTRICT            |
+| org_id         | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT |
+| shift_id       | UUID        | FK → hr.shifts(id) ON DELETE RESTRICT            |
+| effective_from | DATE        | NOT NULL                                         |
+| effective_to   | DATE        | CHECK >= effective_from                          |
+| is_active      | BOOLEAN     | NOT NULL, DEFAULT TRUE                           |
+| is_deleted     | BOOLEAN     | NOT NULL, DEFAULT FALSE                          |
+| deleted_at     | TIMESTAMPTZ |                                                  |
+| deleted_by     | UUID        |                                                  |
+| created_by     | UUID        |                                                  |
+| created_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()              |
+| updated_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()              |
 
 **Constraint (exclusion):** no overlapping non-deleted assignments per user (GiST) — mirrors `iam.reporting_lines`' one-open-line pattern.
 
@@ -1853,16 +3000,22 @@ Per-org (or tenant-default) attendance policy — geofencing, photo requirements
 
 Per-user carve-out from geofencing (remote role or approved WFH), effective-dated.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| exception_type | TEXT | CHECK IN (`remote_role`,`wfh`) |
-| effective_from | DATE | NOT NULL |
-| effective_to | DATE | |
-| reason | TEXT | NOT NULL, CHECK length >= 3 |
-| *(+ standard soft-delete columns)* | | |
+| Column         | Type        | Constraints                                      |
+| -------------- | ----------- | ------------------------------------------------ |
+| id             | UUID        | PK                                               |
+| user_id        | UUID        | FK → iam.users(id) ON DELETE RESTRICT            |
+| org_id         | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT |
+| exception_type | TEXT        | CHECK IN (`remote_role`,`wfh`)                   |
+| effective_from | DATE        | NOT NULL                                         |
+| effective_to   | DATE        |                                                  |
+| reason         | TEXT        | NOT NULL, CHECK length >= 3                      |
+| is_active      | BOOLEAN     | NOT NULL, DEFAULT TRUE                           |
+| is_deleted     | BOOLEAN     | NOT NULL, DEFAULT FALSE                          |
+| deleted_at     | TIMESTAMPTZ |                                                  |
+| deleted_by     | UUID        |                                                  |
+| created_by     | UUID        |                                                  |
+| created_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()              |
+| updated_at     | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()              |
 
 **Constraint (exclusion):** no overlap per `(user_id, org_id, exception_type)` (GiST).
 
@@ -1872,27 +3025,28 @@ Per-user carve-out from geofencing (remote role or approved WFH), effective-date
 
 Append-only raw punch log — the source `hr.attendance_days` resolves from. See Architecture.md → "Punch integration" for the face-verification write path.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| event_type | TEXT | CHECK IN (`check_in`,`check_out`) |
-| occurred_at | TIMESTAMPTZ | DEFAULT CLOCK_TIMESTAMP() |
-| source | TEXT | CHECK IN (`web`,`mobile`,`biometric`,`api`) |
-| geo_lat / geo_lng | NUMERIC(9,6) | |
-| distance_from_org_m | NUMERIC(10,2) | |
-| is_within_geofence | BOOLEAN | |
-| is_wfh | BOOLEAN | DEFAULT FALSE |
-| geo_exception_type | TEXT | CHECK IN (`remote_role`,`wfh`) |
-| photo_url | TEXT | |
-| face_match_score | NUMERIC(5,2) | dormant — see Face verification |
-| face_match_passed | BOOLEAN | dormant |
-| face_review_status | TEXT | CHECK IN (`pending`,`cleared`,`rejected`), dormant |
-| is_off_segment | BOOLEAN | |
-| ip | TEXT | |
-| device_info | JSONB | |
-| created_at | TIMESTAMPTZ | |
+| Column              | Type          | Constraints                                        |
+| ------------------- | ------------- | -------------------------------------------------- |
+| id                  | UUID          | PK                                                 |
+| user_id             | UUID          | FK → iam.users(id) ON DELETE RESTRICT              |
+| org_id              | UUID          | FK → entity.organizations(id) ON DELETE RESTRICT   |
+| event_type          | TEXT          | CHECK IN (`check_in`,`check_out`)                  |
+| occurred_at         | TIMESTAMPTZ   | DEFAULT CLOCK_TIMESTAMP()                          |
+| source              | TEXT          | CHECK IN (`web`,`mobile`,`biometric`,`api`)        |
+| geo_lat             | NUMERIC(9,6)  |                                                    |
+| geo_lng             | NUMERIC(9,6)  |                                                    |
+| distance_from_org_m | NUMERIC(10,2) |                                                    |
+| is_within_geofence  | BOOLEAN       |                                                    |
+| is_wfh              | BOOLEAN       | DEFAULT FALSE                                      |
+| geo_exception_type  | TEXT          | CHECK IN (`remote_role`,`wfh`)                     |
+| photo_url           | TEXT          |                                                    |
+| face_match_score    | NUMERIC(5,2)  | dormant — see Face verification                    |
+| face_match_passed   | BOOLEAN       | dormant                                            |
+| face_review_status  | TEXT          | CHECK IN (`pending`,`cleared`,`rejected`), dormant |
+| is_off_segment      | BOOLEAN       |                                                    |
+| ip                  | TEXT          |                                                    |
+| device_info         | JSONB         |                                                    |
+| created_at          | TIMESTAMPTZ   |                                                    |
 
 ---
 
@@ -1900,24 +3054,30 @@ Append-only raw punch log — the source `hr.attendance_days` resolves from. See
 
 One resolved row per `(user, work_date)` — the daily rollup screens read from.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| work_date | DATE | NOT NULL |
-| first_in / last_out | TIMESTAMPTZ | |
-| worked_minutes | INT | |
-| status_id | UUID | FK → hr.attendance_statuses(id) ON DELETE RESTRICT |
-| is_late / is_early_exit | BOOLEAN | DEFAULT FALSE |
-| has_off_window_punch / has_open_session / has_pending_face_review | BOOLEAN | DEFAULT FALSE |
-| leave_request_id | UUID | FK → hr.leave_requests(id) ON DELETE SET NULL |
-| resolved_at | TIMESTAMPTZ | |
-| resolution_source | TEXT | CHECK IN (`events`,`leave`,`holiday`,`weekly_off`,`regularization`,`job`) |
-| created_at / updated_at | TIMESTAMPTZ | |
+| Column                  | Type        | Constraints                                                               |
+| ----------------------- | ----------- | ------------------------------------------------------------------------- |
+| id                      | UUID        | PK                                                                        |
+| user_id                 | UUID        | FK → iam.users(id) ON DELETE RESTRICT                                     |
+| org_id                  | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT                          |
+| work_date               | DATE        | NOT NULL                                                                  |
+| first_in                | TIMESTAMPTZ |                                                                           |
+| last_out                | TIMESTAMPTZ |                                                                           |
+| worked_minutes          | INT         |                                                                           |
+| status_id               | UUID        | FK → hr.attendance_statuses(id) ON DELETE RESTRICT                        |
+| is_late                 | BOOLEAN     | DEFAULT FALSE                                                             |
+| is_early_exit           | BOOLEAN     | DEFAULT FALSE                                                             |
+| has_off_window_punch    | BOOLEAN     | DEFAULT FALSE                                                             |
+| has_open_session        | BOOLEAN     | DEFAULT FALSE                                                             |
+| has_pending_face_review | BOOLEAN     | DEFAULT FALSE                                                             |
+| leave_request_id        | UUID        | FK → hr.leave_requests(id) ON DELETE SET NULL                             |
+| resolved_at             | TIMESTAMPTZ |                                                                           |
+| resolution_source       | TEXT        | CHECK IN (`events`,`leave`,`holiday`,`weekly_off`,`regularization`,`job`) |
+| created_at              | TIMESTAMPTZ |                                                                           |
+| updated_at              | TIMESTAMPTZ |                                                                           |
 
 **Unique:** `(user_id, work_date)`
 **Computed by:** the shared `computeDayResolution` (`lib/attendance/day-resolution.ts`), called both from the nightly job and from the face-review clear/reject actions — see Architecture.md → "Review queue".
+**Missed punch (1.52.0):** a row with `has_open_session` whose work day is over resolves to status `missed_punch` (not present, not paid until regularized) — the live punch writes a tentative `present`, the nightly job's finalize pass flips it. `worked_minutes` keeps the closed sessions' minutes. See docs/ATTENDANCE_DAY_CLASSIFICATION.md §1.
 
 ---
 
@@ -1925,34 +3085,41 @@ One resolved row per `(user, work_date)` — the daily rollup screens read from.
 
 **hr.attendance_regularizations** — a user's request to correct a resolved day.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| work_date | DATE | NOT NULL |
-| requested_status_id | UUID | FK → hr.attendance_statuses(id) ON DELETE RESTRICT |
-| requested_in / requested_out | TIMESTAMPTZ | |
-| reason | TEXT | NOT NULL |
-| status | TEXT | CHECK IN (`pending`,`approved`,`rejected`,`cancelled`), DEFAULT `pending` |
-| approver_id | UUID | FK → iam.users(id) ON DELETE SET NULL |
-| acted_at | TIMESTAMPTZ | |
-| approver_comment | TEXT | |
-| *(+ standard soft-delete columns)* | | |
+| Column              | Type        | Constraints                                                               |
+| ------------------- | ----------- | ------------------------------------------------------------------------- |
+| id                  | UUID        | PK                                                                        |
+| user_id             | UUID        | FK → iam.users(id) ON DELETE RESTRICT                                     |
+| org_id              | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT                          |
+| work_date           | DATE        | NOT NULL                                                                  |
+| requested_status_id | UUID        | FK → hr.attendance_statuses(id) ON DELETE RESTRICT                        |
+| requested_in        | TIMESTAMPTZ |                                                                           |
+| requested_out       | TIMESTAMPTZ |                                                                           |
+| reason              | TEXT        | NOT NULL                                                                  |
+| status              | TEXT        | CHECK IN (`pending`,`approved`,`rejected`,`cancelled`), DEFAULT `pending` |
+| approver_id         | UUID        | FK → iam.users(id) ON DELETE SET NULL                                     |
+| acted_at            | TIMESTAMPTZ |                                                                           |
+| approver_comment    | TEXT        |                                                                           |
+| is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                    |
+| is_deleted          | BOOLEAN     | NOT NULL, DEFAULT FALSE                                                   |
+| deleted_at          | TIMESTAMPTZ |                                                                           |
+| deleted_by          | UUID        |                                                                           |
+| created_by          | UUID        |                                                                           |
+| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                       |
+| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                       |
 
 **hr.attendance_regularization_approvals** — per-level approval chain, same shape as `hr.leave_request_approvals`. **Not yet reflected in Drizzle** (`msq-core/packages/db/src/schema/tables/*.ts` has an `attendance-regularizations.table.ts` but no corresponding `-approvals` file — a follow-up for the ORM layer, not just this doc).
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| regularization_id | UUID | FK → hr.attendance_regularizations(id) ON DELETE CASCADE |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| level | SMALLINT | NOT NULL |
-| approver_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| action | TEXT | CHECK IN (`pending`,`approved`,`rejected`), DEFAULT `pending` |
-| acted_at | TIMESTAMPTZ | |
-| comment | TEXT | |
-| created_at | TIMESTAMPTZ | |
+| Column            | Type        | Constraints                                                   |
+| ----------------- | ----------- | ------------------------------------------------------------- |
+| id                | UUID        | PK                                                            |
+| regularization_id | UUID        | FK → hr.attendance_regularizations(id) ON DELETE CASCADE      |
+| org_id            | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT              |
+| level             | SMALLINT    | NOT NULL                                                      |
+| approver_id       | UUID        | FK → iam.users(id) ON DELETE RESTRICT                         |
+| action            | TEXT        | CHECK IN (`pending`,`approved`,`rejected`), DEFAULT `pending` |
+| acted_at          | TIMESTAMPTZ |                                                               |
+| comment           | TEXT        |                                                               |
+| created_at        | TIMESTAMPTZ |                                                               |
 
 **Unique:** `(regularization_id, level)`
 **Function:** `hr.can_approve(...)` — approver-scope check shared with the review queue (same authority as leave: manager subtree, `hr_admin`, `org_admin`).
@@ -1981,15 +3148,21 @@ Tenant-scoped lookups (same shape/RLS/admin-CRUD pattern as `hr.*`'s tenant-scop
 
 ### task.task_lists
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
-| name | TEXT | NOT NULL |
-| description | TEXT | |
-| owner_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| visibility | TEXT | CHECK IN (`private`,`team`,`org`), DEFAULT `private` |
-| *(+ standard soft-delete columns)* | | |
+| Column      | Type        | Constraints                                                |
+| ----------- | ----------- | ---------------------------------------------------------- |
+| id          | UUID        | PK                                                         |
+| org_id      | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
+| name        | TEXT        | NOT NULL                                                   |
+| description | TEXT        |                                                            |
+| owner_id    | UUID        | FK → iam.users(id) ON DELETE RESTRICT                      |
+| visibility  | TEXT        | CHECK IN (`private`,`team`,`org`), DEFAULT `private`       |
+| is_active   | BOOLEAN     | NOT NULL, DEFAULT TRUE                                     |
+| is_deleted  | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
+| deleted_at  | TIMESTAMPTZ |                                                            |
+| deleted_by  | UUID        |                                                            |
+| created_by  | UUID        |                                                            |
+| created_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+| updated_at  | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
 
 ---
 
@@ -1997,23 +3170,30 @@ Tenant-scoped lookups (same shape/RLS/admin-CRUD pattern as `hr.*`'s tenant-scop
 
 Core task entity. Supports subtasks (self-FK) and a polymorphic soft link to another product's record (e.g. a task tied to a lead or a leave request).
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| org_id | UUID | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT |
-| list_id | UUID | FK → task.task_lists(id) ON DELETE SET NULL |
-| title | TEXT | NOT NULL |
-| description | TEXT | |
-| assignee_id | UUID | FK → iam.users(id) ON DELETE SET NULL |
-| due_at | TIMESTAMPTZ | |
-| priority_id | UUID | FK → task.task_priorities(id) ON DELETE RESTRICT |
-| status_id | UUID | NOT NULL, FK → task.task_statuses(id) ON DELETE RESTRICT |
-| parent_task_id | UUID | self-FK ON DELETE SET NULL, CHECK <> id |
-| related_entity_type / related_entity_id | TEXT / UUID | polymorphic soft link — CHECK both-or-neither present |
-| tags | TEXT[] | NOT NULL, DEFAULT '{}' |
-| completed_at | TIMESTAMPTZ | |
-| recurrence_rule | TEXT | RFC 5545 recurrence string — **stored but not yet expanded**; no job materializes recurring instances today |
-| *(+ standard soft-delete columns)* | | |
+| Column              | Type        | Constraints                                                                                                 |
+| ------------------- | ----------- | ----------------------------------------------------------------------------------------------------------- |
+| id                  | UUID        | PK                                                                                                          |
+| org_id              | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT                                                  |
+| list_id             | UUID        | FK → task.task_lists(id) ON DELETE SET NULL                                                                 |
+| title               | TEXT        | NOT NULL                                                                                                    |
+| description         | TEXT        |                                                                                                             |
+| assignee_id         | UUID        | FK → iam.users(id) ON DELETE SET NULL                                                                       |
+| due_at              | TIMESTAMPTZ |                                                                                                             |
+| priority_id         | UUID        | FK → task.task_priorities(id) ON DELETE RESTRICT                                                            |
+| status_id           | UUID        | NOT NULL, FK → task.task_statuses(id) ON DELETE RESTRICT                                                    |
+| parent_task_id      | UUID        | self-FK ON DELETE SET NULL, CHECK <> id, FK → task.tasks(id) ON DELETE SET NULL                             |
+| related_entity_type | TEXT        | polymorphic soft link — CHECK both-or-neither present                                                       |
+| related_entity_id   | UUID        | polymorphic soft link — CHECK both-or-neither present                                                       |
+| tags                | TEXT[]      | NOT NULL, DEFAULT '{}'                                                                                      |
+| completed_at        | TIMESTAMPTZ |                                                                                                             |
+| recurrence_rule     | TEXT        | RFC 5545 recurrence string — **stored but not yet expanded**; no job materializes recurring instances today |
+| is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                                      |
+| is_deleted          | BOOLEAN     | NOT NULL, DEFAULT FALSE                                                                                     |
+| deleted_at          | TIMESTAMPTZ |                                                                                                             |
+| deleted_by          | UUID        |                                                                                                             |
+| created_by          | UUID        |                                                                                                             |
+| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                         |
+| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                         |
 
 **Trigger:** `task.set_task_completion()` (syncs `completed_at` ↔ a terminal `status_id`, mirroring `lms.lead_follow_ups`' completion sync).
 
@@ -2023,16 +3203,16 @@ Core task entity. Supports subtasks (self-FK) and a polymorphic soft link to ano
 
 Append-only transition log.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| task_id | UUID | FK → task.tasks(id) ON DELETE CASCADE |
-| changed_by_id | UUID | FK → iam.users(id) ON DELETE SET NULL |
-| old_status_id | UUID | FK → task.task_statuses(id) |
-| new_status_id | UUID | NOT NULL, FK → task.task_statuses(id) |
-| note | TEXT | |
-| changed_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
+| Column        | Type        | Constraints                                      |
+| ------------- | ----------- | ------------------------------------------------ |
+| id            | UUID        | PK                                               |
+| org_id        | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT |
+| task_id       | UUID        | FK → task.tasks(id) ON DELETE CASCADE            |
+| changed_by_id | UUID        | FK → iam.users(id) ON DELETE SET NULL            |
+| old_status_id | UUID        | FK → task.task_statuses(id)                      |
+| new_status_id | UUID        | NOT NULL, FK → task.task_statuses(id)            |
+| note          | TEXT        |                                                  |
+| changed_at    | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()              |
 
 **Trigger:** `task.log_task_status_change()`.
 
@@ -2042,14 +3222,14 @@ Append-only transition log.
 
 Append-only.
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| id | UUID | PK |
-| org_id | UUID | FK → entity.organizations(id) ON DELETE RESTRICT |
-| task_id | UUID | FK → task.tasks(id) ON DELETE CASCADE |
-| user_id | UUID | FK → iam.users(id) ON DELETE RESTRICT |
-| body | TEXT | NOT NULL |
-| created_at | TIMESTAMPTZ | |
+| Column     | Type        | Constraints                                      |
+| ---------- | ----------- | ------------------------------------------------ |
+| id         | UUID        | PK                                               |
+| org_id     | UUID        | FK → entity.organizations(id) ON DELETE RESTRICT |
+| task_id    | UUID        | FK → task.tasks(id) ON DELETE CASCADE            |
+| user_id    | UUID        | FK → iam.users(id) ON DELETE RESTRICT            |
+| body       | TEXT        | NOT NULL                                         |
+| created_at | TIMESTAMPTZ |                                                  |
 
 ---
 
@@ -2081,7 +3261,7 @@ Append-only.
 | `hr.vw_leave_balances`                       | hr        | yes              | Current leave balance per (user, leave_type), summed from `hr.leave_ledger` |
 | `hr.vw_leave_requests_enriched`              | hr        | yes              | Leave requests with resolved user/leave-type/status display fields |
 | `hr.vw_team_leave_calendar`                  | hr        | yes              | Team leave calendar for a manager's subtree                 |
-| `hr.vw_attendance_monthly_summary`           | hr        | yes              | Per-user monthly attendance rollup                          |
+| `hr.vw_attendance_monthly_summary`           | hr        | yes              | Per-user monthly attendance rollup (status counts; `missed_punch_count` appended last in 1.52.0; `wfh_count` = days with a counted WFH punch or status wfh) |
 | `hr.vw_org_attendance_today`                 | hr        | yes              | Today's resolved attendance for an org                      |
 | `task.vw_tasks_enriched`                     | task      | yes              | Tasks with resolved assignee/status/priority/list display fields |
 
@@ -2131,6 +3311,7 @@ Append-only.
 | `iam.fn_user_org_rank(UUID,UUID)`        | iam    | Returns user's role rank in a specific org              |
 | `iam.purge_expired_token_blocklist()`    | iam    | Cleanup: removes expired token blocklist entries        |
 | `iam.fn_mapping_org(UUID)`               | iam    | Resolves a `user_org_mapping_id` to its `org_id` — the required indirection for RLS on per-product membership-extension tables (see "Per-product settings on a membership" above); a direct subquery into `iam.user_org_mapping` is re-filtered by that table's own FORCE'd policies and silently returns NULL |
+| `entity.fn_org_tenant(UUID)`             | entity | SECURITY DEFINER — resolves an `org_id` to its owning `tenant_id`. The indirection an RLS policy needs to prove a caller-supplied `org_id` sits inside the session's pinned tenant (`ext.meta_page_form_org_map.admin_tenant_config_policy`); an inline subquery on `entity.organizations` is re-filtered by that table's membership-keyed `app_user` policy and silently returns nothing. Added 1.48.1 |
 | `iam.fn_user_can_manage_users(UUID,UUID)`| iam    | SECURITY DEFINER — may this actor create/manage users in *that* org; added 1.43.0, drives the 5 write policies under "User management is a capability, per branch" |
 | `iam.fn_user_org_role(UUID,UUID)`        | iam    | Resolves a user's effective `iam.user_roles` row for a given org (tenant-copy-wins resolution) |
 | `iam.fn_role_capability_matrix(UUID)`    | iam    | Resolves the full effective (tenant override → platform default → deny) capability grant matrix for a tenant, walking `iam.capabilities`' tree with ancestor-denial cascade — see "A denied parent silently kills its whole subtree" in Architecture.md |
@@ -2157,6 +3338,297 @@ Append-only.
 | `entity.seed_tenant_geo(...)`            | entity | Mechanism-2 cloning for geo defaults |
 
 > `<product>.fn_member_rank(UUID,UUID)` / `<product>.fn_member_role(UUID,UUID)` (previously listed here) were **dropped at schema 1.40.0** along with the per-product role/grant tables — see "Retired: per-product role tables" above. Role/rank resolution now goes through `iam.fn_user_org_role` instead.
+
+---
+
+## Meta lead routing additions (schema 1.51.0)
+
+Why: see `docs/Architecture.md` → *Meta lead routing (1.51.0)* and the 1.51.0 row in
+`db_scripts/09_schema_version.sql`. Existing servers: `db_scripts/one_time/apply_meta_routing_1_51.sql`
+(+ `_dryrun.sql`), then `apply_schema.ps1` (04–08, 10).
+
+### marketing.campaign_type_rules (new)
+
+The ORDERED rule list that types a Meta lead. **First match wins**, lowest `rule_order` first.
+Replaces `campaign_types.match_keywords` (kept, unread, for one version).
+
+| Column | Type | Notes |
+|---|---|---|
+| id | UUID PK | `gen_uuidv7()` |
+| tenant_id | UUID NOT NULL → entity.tenants | CASCADE |
+| rule_order | INT NOT NULL | unique per tenant among live rules (`uix_campaign_type_rules_order`) |
+| match_field | TEXT | `campaign_name` \| `form_name` \| `adset_name` \| `ad_name` |
+| pattern | TEXT NOT NULL | word/phrase, matched on word boundaries, case-insensitive |
+| campaign_type_id | UUID NOT NULL → marketing.campaign_types | RESTRICT; must be the rule's own tenant (`trg_campaign_type_rules_tenant_match`) |
+| is_active, is_deleted, deleted_at, deleted_by, created_by, metadata, created_at, updated_at | | standard; soft delete via `trg_campaign_type_rules_soft_delete` |
+
+RLS: same policy set as `marketing.campaign_types` (org read, tenant_admin, N-6 admin write).
+Matcher: `marketing.fn_match_campaign_type_rules(tenant, campaign, form, adset, ad)` →
+`(campaign_type_id, rule_id, match_field, pattern)`; rules on inactive/deleted types are skipped.
+`marketing.fn_match_campaign_type(tenant, name)` is now a campaign-name-only wrapper over it.
+Seeded per tenant by `entity.seed_tenant_rbac()`: `hiring, hire, recruit, recruitment, vacancy` → Hiring
+(`hr`, `job`, `trainer` deliberately dropped — they match fitness sales campaign names).
+
+### ext.meta_campaigns (changed)
+
+`campaign_type_id` is now written **only by an admin confirm**. New columns:
+`suggested_campaign_type_id` (rule guess, → campaign_types, SET NULL), `matched_rule_id`
+(→ campaign_type_rules, SET NULL), `page_ids BIGINT[]` (pages the ad sets promote; GIN-indexed),
+`conflict_reason TEXT` (pages map to more than one tenant). Backfill moved every `suggested` row's type into
+`suggested_campaign_type_id` and cleared the fallback type from `unmapped` rows.
+
+### ext.meta_ad_accounts (new, platform-level)
+
+Meta ad accounts (`ad_account_id` = `act_<digits>`); `is_enabled` is what "Fetch campaigns" walks.
+**No tenant_id** — one account carries many tenants' campaigns. RLS enabled + forced with **no policy**:
+`root_service` only, from super_admin routes. Seeded (enabled) from the deprecated
+`ext.meta_tenant_config.ad_account_ids`. `ext.meta_campaigns.ad_account_id` points here by value (no FK).
+
+| Column         | Type        | Constraints             |
+| -------------- | ----------- | ----------------------- |
+| id             | UUID        | PK (UUIDv7)             |
+| ad_account_id  | TEXT        | NOT NULL, UNIQUE        |
+| name           | TEXT        |                         |
+| business_name  | TEXT        |                         |
+| account_status | INT         |                         |
+| is_enabled     | BOOLEAN     | NOT NULL, DEFAULT FALSE |
+| last_synced_at | TIMESTAMPTZ |                         |
+| last_seen_at   | TIMESTAMPTZ |                         |
+| created_at     | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() |
+| updated_at     | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() |
+
+### ext.meta_adsets / ext.meta_ads (new)
+
+Name caches for the per-lead rules. The Meta ids link them by value, not by FK:
+`meta_ads.meta_adset_id` → `meta_adsets.meta_adset_id`, and both carry `meta_campaign_id` →
+`ext.meta_campaigns.meta_campaign_id`. RLS like `ext.meta_campaigns` (org read, tenant_admin read, N-6 admin write).
+
+**ext.meta_adsets**
+
+| Column           | Type        | Constraints                       |
+| ---------------- | ----------- | --------------------------------- |
+| id               | UUID        | PK (UUIDv7)                       |
+| tenant_id        | UUID        | NOT NULL, FK → entity.tenants(id) |
+| meta_adset_id    | BIGINT      | NOT NULL, UNIQUE                  |
+| meta_campaign_id | BIGINT      |                                   |
+| name             | TEXT        |                                   |
+| promoted_page_id | BIGINT      |                                   |
+| effective_status | TEXT        |                                   |
+| last_synced_at   | TIMESTAMPTZ |                                   |
+| created_at       | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()           |
+| updated_at       | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()           |
+
+**ext.meta_ads**
+
+| Column           | Type        | Constraints                       |
+| ---------------- | ----------- | --------------------------------- |
+| id               | UUID        | PK (UUIDv7)                       |
+| tenant_id        | UUID        | NOT NULL, FK → entity.tenants(id) |
+| meta_ad_id       | BIGINT      | NOT NULL, UNIQUE                  |
+| meta_adset_id    | BIGINT      |                                   |
+| meta_campaign_id | BIGINT      |                                   |
+| name             | TEXT        |                                   |
+| effective_status | TEXT        |                                   |
+| last_synced_at   | TIMESTAMPTZ |                                   |
+| created_at       | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()           |
+| updated_at       | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()           |
+
+### ext.meta_lead_inbox (new)
+
+Webhook leads that did not become an LMS lead. `tenant_id`/`org_id` are **nullable** (unmapped page); `raw_field_data` holds the lead's PII so Retry can replay it. `reason` is `unmapped` \| `missing_contact` \| `sync_failed`; `status` is `open` \| `resolved` \| `ignored`. RLS: N-6 admin policy for tenant rows (with the `fn_org_tenant` org check); tenant-less rows match no policy (super-admin service path).
+
+| Column           | Type        | Constraints                                        |
+| ---------------- | ----------- | -------------------------------------------------- |
+| id               | UUID        | PK (UUIDv7)                                        |
+| meta_lead_id     | BIGINT      | NOT NULL, UNIQUE                                   |
+| tenant_id        | UUID        | FK → entity.tenants(id) ON DELETE CASCADE          |
+| org_id           | UUID        | FK → entity.organizations(id) ON DELETE SET NULL   |
+| integration_id   | UUID        | FK → ext.meta_tenant_config(id) ON DELETE SET NULL |
+| page_id          | BIGINT      |                                                    |
+| form_id          | BIGINT      |                                                    |
+| campaign_id      | BIGINT      |                                                    |
+| adset_id         | BIGINT      |                                                    |
+| ad_id            | BIGINT      |                                                    |
+| platform         | TEXT        |                                                    |
+| lead_created_at  | TIMESTAMPTZ |                                                    |
+| raw_field_data   | JSONB       |                                                    |
+| reason           | TEXT        | NOT NULL                                           |
+| error_text       | TEXT        |                                                    |
+| status           | TEXT        | NOT NULL, DEFAULT 'open'                           |
+| attempts         | INT         | NOT NULL, DEFAULT 1                                |
+| resolved_lead_id | UUID        | FK → lms.marketing_leads(id) ON DELETE SET NULL    |
+| resolved_by      | UUID        | FK → iam.users(id) ON DELETE SET NULL              |
+| resolved_at      | TIMESTAMPTZ |                                                    |
+| created_at       | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                            |
+| updated_at       | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                            |
+
+### ext.meta_forms (changed)
+
+Gains the N-6 `admin_tenant_config_policy` and app_user/lms_svc write grants: the console form picker now
+writes it (it used to be written only by the Python sync).
+
+### lms.marketing_leads (changed)
+
+`auto_assign_reason TEXT` — `no_campaign_type` \| `no_weighted_users` \| `no_department_match` \|
+`no_capable_users`; NULL once owned (cleared by `trg_marketing_leads_clear_auto_assign_reason`).
+New `trg_lead_assignment_log_insert` writes an `initial` `lms.lead_assignment_log` row for a lead inserted with
+an owner; the backfill wrote the missing `initial` rows for existing intake-assigned leads.
+
+### scratch.meta_pull_runs (changed)
+
+`trigger_kind TEXT` (`manual` \| `scheduled`) — a tenant keeps one run of each kind; `created_by` is now
+nullable (a scheduled run has no person behind it). `filters.mode` (`pages` \| `campaign`) records the pull
+mode. `scratch.meta_pull_leads.suggested_campaign_type_id` now holds the **predicted** type (full ladder), not
+only the form-name hint.
+
+## The `scratch` schema — Meta lead-pull staging
+
+*Schema 1.50.0.* The platform's first **staging** area. A schema of its own
+rather than more `ext.*` tables because the lifecycle is the opposite of
+everything in `ext`: these rows are `DELETE`d wholesale rather than
+soft-deleted, carry none of the standard domain columns (`is_active`,
+`is_deleted`, `deleted_at`, `metadata`) and no `soft_delete_row` trigger, and
+**nothing downstream may foreign-key into them**. Putting them under a name that
+says `scratch` is what makes "this table is disposable" readable without
+hunting for a comment.
+
+It backs the Meta lead **pull**: a super-admin backfill for leads the live
+webhook missed — an integration that was down, a page mapped late, a form nobody
+knew about. It replaces the three-stage Python CLI in
+`msq-lms/meta-sync-scripts` (download → check → import) that a developer had to
+run from a laptop.
+
+### scratch.meta_pull_runs
+
+**The run row IS the queue.** There is no job/queue infrastructure in this repo
+— no bullmq, pg-boss, agenda, node-cron, Redis or worker process — and the only
+background pattern is notifications-service's `setInterval` poller. So
+`POST /meta/lead-pull/runs` inserts `queued` and returns `run_id` in one fast
+transaction (nothing rides on the gateway timeout), and a poller in
+meta-conversion-api claims work with `FOR UPDATE SKIP LOCKED`.
+
+| Column       | Type        | Constraints                                                                                         |
+| ------------ | ----------- | --------------------------------------------------------------------------------------------------- |
+| id           | UUID        | PK (UUIDv7)                                                                                         |
+| tenant_id    | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE                                                 |
+| created_by   | UUID        | NOT NULL, FK → iam.users(id) ON DELETE CASCADE                                                      |
+| status       | TEXT        | NOT NULL, DEFAULT 'queued'; CHECK IN ('queued','running','completed','failed','applying','applied') |
+| filters      | JSONB       | NOT NULL, DEFAULT '{}' — the request verbatim (org_ids, page_ids, campaign_ids, since, until)       |
+| trigger_kind | TEXT        | NOT NULL, DEFAULT 'manual'                                                                          |
+| counts       | JSONB       | NOT NULL, DEFAULT '{}' — per-verdict tallies, pages/forms walked, page-token errors, `truncated`    |
+| heartbeat_at | TIMESTAMPTZ | written per page completed; what the reaper reads                                                   |
+| started_at   | TIMESTAMPTZ |                                                                                                     |
+| finished_at  | TIMESTAMPTZ |                                                                                                     |
+| applied_at   | TIMESTAMPTZ |                                                                                                     |
+| applied_by   | UUID        | FK → iam.users(id) ON DELETE SET NULL                                                               |
+| error_text   | TEXT        |                                                                                                     |
+| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                             |
+| updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                             |
+
+**Two guards, and both are needed.** The poller's in-process `running` boolean
+stops a tick starting on top of a slow one — a pull that outlasts the interval
+would multiply Graph load exactly when load is already the reason it is slow.
+`FOR UPDATE SKIP LOCKED` is the one that survives a **second replica**, which a
+boolean in one process's memory cannot. Compose runs a single instance today, so
+SKIP LOCKED buys nothing right now; it buys that scaling this service later does
+not silently double-run every pull.
+
+**The reaper is not optional.** `POST /runs` refuses with **409** while a run is
+`queued`/`running`/`applying`, so a deploy landing mid-pull would strand the run
+in `running` forever and that tenant could **never** start another one. A run
+whose `heartbeat_at` is older than `META_LEAD_PULL_STALE_MINUTES` is marked
+`failed` on the next tick. This is the whole reason for a claimed queue rather
+than a floating promise.
+
+### scratch.meta_pull_leads
+
+One row per lead Meta returned, classified against LMS.
+
+| Column                     | Type        | Constraints                                                                                                         |
+| -------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------- |
+| id                         | UUID        | PK (UUIDv7)                                                                                                         |
+| run_id                     | UUID        | NOT NULL, FK → scratch.meta_pull_runs(id) ON DELETE CASCADE                                                         |
+| tenant_id                  | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE                                                                 |
+| org_id                     | UUID        | **NULLABLE** — FK → entity.organizations(id) ON DELETE CASCADE                                                      |
+| page_id                    | BIGINT      |                                                                                                                     |
+| form_id                    | BIGINT      | NOT NULL                                                                                                            |
+| form_name                  | TEXT        | staged for the hiring signal and the review grid                                                                    |
+| meta_lead_id               | BIGINT      | NOT NULL                                                                                                            |
+| campaign_id                | BIGINT      |                                                                                                                     |
+| adset_id                   | BIGINT      |                                                                                                                     |
+| ad_id                      | BIGINT      |                                                                                                                     |
+| platform                   | TEXT        | CHECK IN ('fb','ig','wa')                                                                                           |
+| lead_created_at            | TIMESTAMPTZ |                                                                                                                     |
+| raw_field_data             | JSONB       | Meta's `field_data` verbatim                                                                                        |
+| verdict                    | TEXT        | CHECK IN ('already_synced','test_lead','unmapped_form','missing_contact','phone_duplicate','email_duplicate','new') |
+| existing_lead_id           | UUID        | FK → lms.marketing_leads(id) ON DELETE SET NULL                                                                     |
+| reason                     | TEXT        |                                                                                                                     |
+| is_hiring_form             | BOOLEAN     | NOT NULL, DEFAULT false                                                                                             |
+| suggested_campaign_type_id | UUID        | FK → marketing.campaign_types(id) ON DELETE SET NULL                                                                |
+| applied_status             | TEXT        | NOT NULL, DEFAULT 'pending'; CHECK IN ('pending','applied','skipped','failed')                                      |
+| applied_lead_id            | UUID        | FK → lms.marketing_leads(id) ON DELETE SET NULL                                                                     |
+| applied_error              | TEXT        |                                                                                                                     |
+| created_at                 | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                                             |
+
+**`org_id` is nullable on purpose**, unlike `ext.meta_page_form_org_map` where
+it is NOT NULL. That is not an inconsistency to fix: a staged row with **no org
+IS the `unmapped_form` verdict** — a lead Meta returned for a form nobody has
+mapped. It is recorded so the admin can see it and go fix the mapping, and Apply
+skips it with that reason; it can never be applied. Guessing a branch is exactly
+what the mapping table exists to prevent — one Page here is shared by eight
+branch orgs, so "the page's org" is not a well-defined thing.
+
+The raw-lead columns are shaped to map **1:1 onto `syncLeadToDatabase`'s
+`RawMetaLead` parameter**, because Apply calls that canonical write path rather
+than writing leads itself. That is what makes campaign typing, pool routing and
+dedup apply automatically, and what makes re-running Apply safe.
+
+**The verdict ladder**, ported verdict-for-verdict and in order from
+`meta-sync-scripts/common/reconcile.py::classify`: `already_synced` →
+`test_lead` → `unmapped_form` → `missing_contact` → `phone_duplicate` (last
+**ten** significant digits) → `email_duplicate` → `new`. The two duplicate
+verdicts are **importable on purpose**: the write path supersedes on phone and
+returns the existing lead on email, and either way an `ext.meta_leads` row is
+written — which is what stops the lead being re-fetched forever. Dropping them
+would make every future pull re-surface the same leads.
+
+**One deliberate behaviour change from the Python.** `hiring_form` was a *skip*
+verdict there, because a job applicant had nowhere to go. Since campaign types
+(1.49.0) it does, so it stopped being a verdict and became `is_hiring_form` +
+`suggested_campaign_type_id` (matched by `marketing.fn_match_campaign_type` on
+the form name). **Leads on hiring forms that the Python discarded are now
+imported**, and the admin is pointed at the real fix —
+`ext.meta_page_form_org_map.default_campaign_type_id`.
+
+### RLS and grants on `scratch`
+
+**One policy per table**, `admin_tenant_config_policy FOR ALL TO app_user` keyed
+on `app.current_tenant_id` — the N-6 admin shape, because this is a platform
+super_admin administering a *selected* tenant through `withTenantConfigTx`,
+which pins `app.current_tenant_id` and `app.current_user_id` and sets
+`app.current_org_id` **not at all**. An org-keyed policy would evaluate
+`org_id = NULL` → false and read **zero rows with no error**. There is
+deliberately no `org_isolation_policy` and no `tenant_isolation_policy`, and
+`tenant_admin` holds no DML either — a grant with no policy buys nothing but the
+impression of access.
+
+`scratch.meta_pull_leads`' `WITH CHECK` additionally requires
+`org_id IS NULL OR entity.fn_org_tenant(org_id) = <pinned tenant>`. That is a
+security control, not decoration: **Apply writes real leads into whatever org
+the staged row names**, so without it a row could name tenant A while pointing
+`org_id` at tenant B's branch. `fn_org_tenant` rather than an inline
+`entity.organizations` subquery, because such a subquery is re-filtered by that
+table's own membership-keyed policy and returns nothing for a super_admin
+holding no membership in the administered tenant (see 1.48.1).
+
+**`DELETE` is granted here, breaking `07_grants.sql`'s no-DELETE convention on
+purpose.** Every other service grant is SELECT/INSERT/UPDATE because a domain
+row is soft-deleted and a real DELETE is a bug. These tables have no
+`is_deleted`, and `POST /runs` *begins* by deleting the tenant's previous run.
+Granted to `lms_svc` (what meta-conversion-api actually connects as),
+`meta_svc`, `app_user` and `root_service` — `TO app_user` alone reaches no
+NOINHERIT service login, and GRANTs have no equivalent of `08_rls.sql`'s
+policy-widening block.
 
 ---
 

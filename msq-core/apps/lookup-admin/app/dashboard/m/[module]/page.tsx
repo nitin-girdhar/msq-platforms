@@ -29,6 +29,50 @@ const EXTRA_CARDS: Partial<Record<ModuleKey, { slug: string; title: string; desc
       href: '/dashboard/catalogs',
     },
   ],
+  lms: [
+    {
+      slug: 'campaign-types',
+      title: 'Campaign Types & Rules',
+      description: 'Which department each campaign type routes to, and the ordered rules that type a lead from its campaign, form, ad set or ad name.',
+      href: '/dashboard/campaign-types',
+    },
+    {
+      slug: 'meta-ad-accounts',
+      title: 'Meta Ad Accounts',
+      description: 'Ad accounts under the shared Meta integration — enable the ones "Fetch campaigns" walks.',
+      href: '/dashboard/meta-ad-accounts',
+    },
+    {
+      slug: 'meta-lead-inbox',
+      title: 'Meta Lead Inbox',
+      description: 'Webhook leads that could not be created (unmapped page, missing phone, errors) — fix the cause, then retry.',
+      href: '/dashboard/meta-lead-inbox',
+    },
+    {
+      slug: 'meta-mappings',
+      title: 'Meta Page Mapping',
+      description: 'Which branch each Meta Page (and optionally each lead form) routes inbound leads to.',
+      href: '/dashboard/meta-mappings',
+    },
+    {
+      slug: 'meta-campaigns',
+      title: 'Meta Campaign Mapping',
+      description: 'Confirm or correct which type each Meta campaign is, and preview the lead impact before committing.',
+      href: '/dashboard/meta-campaigns',
+    },
+    {
+      slug: 'lead-pull',
+      title: 'Meta Lead Pull',
+      description: 'Backfill leads the live webhook missed — review what is genuinely missing from LMS, then apply only that.',
+      href: '/dashboard/lead-pull',
+    },
+    {
+      slug: 'lead-assignment-rerun',
+      title: 'Re-run Auto-Assignment',
+      description: 'Assign leads that arrived unassigned — after fixing lead weights or a role’s department.',
+      href: '/dashboard/lead-assignment-rerun',
+    },
+  ],
   capabilities: [
     {
       slug: 'capability-matrix',

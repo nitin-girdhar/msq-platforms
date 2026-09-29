@@ -9,6 +9,22 @@ import type { ProductKey } from '@platform/authz';
 // the broader '/hr/' rule. A route with no entry is ungated (users, orgs,
 // api-clients, lookups, meta, communications, auth, notifications — platform/
 // shared surface). See docs/Architecture.md for the product↔module mapping.
+//
+// `/notifications/*` is ungated ON PURPOSE, and that now covers the Web Push
+// registration routes (`/notifications/push/subscribe`,
+// `/notifications/push/public-key`) as well as `/notifications/stream`.
+// `.claude/CLAUDE.md` requires new code to go through capabilities; this is the
+// documented exception, and it is not an oversight to be corrected.
+//
+// Registering your own device to receive your own notifications is self-service
+// — the same category as /users/me/photo. The routes are authenticated:
+// identity comes from the verified JWT (authPreHandler → req.userCtx) and is
+// re-derived server-side inside notifications-service from the HMAC-signed
+// gateway headers, never from the request body. But there is no capability that
+// could meaningfully gate "may this user be told about their own work", and
+// adding one would only mean some users silently stop being alerted about leads
+// they already own. See docs/Architecture.md → Web push & PWA and the comment at
+// the top of msq-lms/services/notifications-service/src/routes/push.ts.
 
 // Prefixes under /hr that stay ungated exactly as before this change:
 //  - /hr/employees* : employee profiles were never module-gated

@@ -1,0 +1,20 @@
+meta {
+  name: List Org Mappings (SA, selected tenant)
+  type: http
+  seq: 16
+}
+
+docs {
+  Only the branches {{userId}} holds inside {{tenantId}}. 404 when the user does not belong to
+  that tenant (home branch or any mapping) — the same fence every by-id /users route applies.
+}
+
+get {
+  url: {{baseUrl}}/users/{{userId}}/org-mappings?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

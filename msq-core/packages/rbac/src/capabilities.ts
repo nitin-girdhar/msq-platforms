@@ -10,6 +10,8 @@
 // `resolveScope()` too — `can()` alone says the action is permitted, not whose
 // rows it may touch.
 
+import { isSuperAdmin } from './predicates.js';
+
 export const CAPABILITY = {
   // ── Tools (8) ──
   // `admin` is the TENANT admin console (admin-web). `superadmin` is the
@@ -32,6 +34,7 @@ export const CAPABILITY = {
   LMS_ANALYTICS:        'lms.analytics',
   LMS_ASSIGNMENTS:      'lms.assignments',
   LMS_CAMPAIGNS:        'lms.campaigns',
+  LMS_CAMPAIGN_TYPES:   'lms.campaign_types',
   LMS_DASHBOARD:        'lms.dashboard',
   LMS_FOLLOWUPS:        'lms.followups',
   LMS_HISTORY:          'lms.history',
@@ -107,7 +110,16 @@ export const CAPABILITY = {
   LMS_LEADS_TIMELINE_VIEW:                 'lms.leads.timeline.view',
   LMS_LEADS_TRANSFER:                      'lms.leads.transfer',
   LMS_LEADS_UNASSIGNED_VIEW:               'lms.leads.unassigned.view',
+  LMS_CAMPAIGN_TYPES_MANAGE:               'lms.campaign_types.manage',
+  LMS_CAMPAIGN_TYPES_VIEW:                 'lms.campaign_types.view',
   LMS_LEADS_VIEW:                          'lms.leads.view',
+  // An OPERATION, not a scope, despite the key. Scope nodes are ordered by
+  // sort_order and resolveScope() returns the widest one held; a fifth rung on
+  // the own/team/org/tenant ladder would outrank 'whole branch' and silently
+  // replace a manager's row scope. Campaign-type visibility is an orthogonal
+  // axis: a rep holding this AND .own still sees only their own leads, of every
+  // type. Ask it with can(), never with resolveScope().
+  LMS_LEADS_VIEW_ALL_TYPES:                'lms.leads.view.all_types',
   LMS_LEADS_WHATSAPP_SEND:                 'lms.leads.whatsapp.send',
   PLATFORM_WRITE:                          'platform.write',
   SUPERADMIN_LOOKUPS_MANAGE:               'superadmin.lookups.manage',
@@ -304,4 +316,37 @@ export function resolveScope(
     if (holds(actor, `${operationKey}.${name}`)) return name;
   }
   return null;
+}
+
+/**
+ * May this actor open the PLATFORM console (lookup-admin, the `/sa` app)?
+ *
+ * The shell-side twin of lookup-admin's own guard, for the cross-product "SA"
+ * pill. Both must ask the identical question or the pill appears for someone
+ * the console then refuses — the render-then-403 shape this package exists to
+ * remove — so `apps/lookup-admin/app/dashboard/layout.tsx` calls THIS function
+ * rather than repeating the pair below.
+ *
+ * BOTH conditions, deliberately, and not belt-and-braces:
+ *
+ *   * the capability, because the Capability Matrix screen can tick
+ *     `superadmin.lookups.manage` onto any role, and
+ *   * the rank floor, because admin-service re-checks `rank >= SUPER_ADMIN` on
+ *     every route behind the console independently of any capability.
+ *
+ * So the capability alone was never enough to make the console WORK — only
+ * enough to make it OPEN. Matching the server's floor here means a mis-tick
+ * grants nothing rather than a console where every data call 403s.
+ *
+ * To widen this console to a lower rank, relax admin-service's rank check
+ * first, then this one. Changing either alone just moves where the 403 lands.
+ *
+ * Takes rank alongside capabilities, unlike its `canOpenAdminConsole` sibling:
+ * the tenant console is capability-only by design, this one is not.
+ */
+export function canOpenLookupAdmin(
+  actor: (CapabilityHolder & { rank: number }) | null | undefined,
+): boolean {
+  if (!actor) return false;
+  return can(actor, CAPABILITY.SUPERADMIN_LOOKUPS_MANAGE) && isSuperAdmin(actor.rank);
 }

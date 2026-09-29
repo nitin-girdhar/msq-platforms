@@ -146,6 +146,100 @@ CREATE TRIGGER trg_lead_assignment_weights_updated_at
   BEFORE UPDATE ON lms.lead_assignment_weights
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+-- ── lms.fn_assert_weight_type_tenant (1.50.1) ─────────────────────────
+-- A weight row joins a MEMBERSHIP (whose branch belongs to one tenant) to a
+-- CAMPAIGN TYPE (which belongs to one tenant). Nothing tied the two tenants
+-- together: the composite PK and both FKs are satisfied by a type from any
+-- tenant on the platform. identity-service validated the type against the
+-- ACTOR's tenant, which for a platform super_admin granting into another
+-- tenant's branch is the wrong tenant -- and the row was written.
+--
+-- A pool keyed on a foreign type routes nothing (resolveAutoAssignedUser joins
+-- on the lead's own tenant's type id), so the damage is silent: a user who looks
+-- weighted for a pool is never picked. This makes it impossible rather than
+-- merely checked-for in one service.
+--
+-- Resolved directly rather than through entity.fn_org_tenant, which filters
+-- NOT is_deleted: a weight on a membership of a since-deleted branch must stay
+-- updatable (zeroing it is how it is taken out of rotation).
+--
+-- SECURITY DEFINER: fired by app_user/tenant_admin/lms_svc writes, whose own RLS
+-- on iam.user_org_mapping (FORCE RLS), entity.organizations and
+-- marketing.campaign_types would hide the rows this compares and turn a valid
+-- write into a false refusal. Leaks nothing: it raises or passes on ids the
+-- writer already supplied.
+--
+-- Does not re-validate rows already on disk; see
+-- one_time/audit_cross_tenant_weights_dryrun.sql.
+--
+-- 1.50.2 adds the DEPARTMENT rule: a weight is valid only when the campaign
+-- type's department equals the department of the membership's role (the same
+-- rule lms.fn_user_sees_campaign_type applies to visibility, so a user can never
+-- be weighted for leads RLS then hides from them), and a role with no department
+-- cannot be weighted at all. It applies to NEW rows only. Rows that already
+-- break it are deliberately KEPT (product decision): the picker skips them, and
+-- one_time/report_weight_department_mismatch_dryrun.sql lists them. A BEFORE
+-- INSERT trigger fires even for INSERT ... ON CONFLICT DO UPDATE, so an upsert
+-- that merely rewrites an EXISTING row's weight is let through — otherwise
+-- re-saving a user who carries such a row would fail outright.
+CREATE OR REPLACE FUNCTION lms.fn_assert_weight_type_tenant()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_org_tenant  UUID;
+  v_type_tenant UUID;
+  v_type_dept   UUID;
+  v_role_dept   UUID;
+  v_role_label  TEXT;
+BEGIN
+  SELECT o.tenant_id, ur.department_id, ur.label
+    INTO v_org_tenant, v_role_dept, v_role_label
+  FROM iam.user_org_mapping uom
+  JOIN entity.organizations o ON o.id = uom.org_id
+  LEFT JOIN iam.user_roles ur ON ur.id = uom.role_id
+  WHERE uom.id = NEW.user_org_mapping_id;
+
+  SELECT ct.tenant_id, ct.department_id INTO v_type_tenant, v_type_dept
+  FROM marketing.campaign_types ct
+  WHERE ct.id = NEW.campaign_type_id;
+
+  IF v_org_tenant IS NULL OR v_type_tenant IS DISTINCT FROM v_org_tenant THEN
+    RAISE EXCEPTION
+      'campaign type % belongs to tenant %, but membership % is in a branch of tenant %',
+      NEW.campaign_type_id, v_type_tenant, NEW.user_org_mapping_id, v_org_tenant
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- Existing (membership, type) row being upserted: its department fit is a
+  -- known, reported state, not a new write.
+  IF TG_OP = 'INSERT' AND EXISTS (
+       SELECT 1 FROM lms.lead_assignment_weights w
+       WHERE w.user_org_mapping_id = NEW.user_org_mapping_id
+         AND w.campaign_type_id    = NEW.campaign_type_id) THEN
+    RETURN NEW;
+  END IF;
+
+  IF v_role_dept IS NULL THEN
+    RAISE EXCEPTION
+      'role "%" has no department; assign it one before giving membership % a lead weight',
+      COALESCE(v_role_label, '?'), NEW.user_org_mapping_id
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF v_type_dept IS DISTINCT FROM v_role_dept THEN
+    RAISE EXCEPTION
+      'campaign type % belongs to department %, but role "%" is in department %',
+      NEW.campaign_type_id, v_type_dept, v_role_label, v_role_dept
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_lead_assignment_weights_tenant_match ON lms.lead_assignment_weights;
+CREATE TRIGGER trg_lead_assignment_weights_tenant_match
+  BEFORE INSERT OR UPDATE OF user_org_mapping_id, campaign_type_id ON lms.lead_assignment_weights
+  FOR EACH ROW EXECUTE FUNCTION lms.fn_assert_weight_type_tenant();
+
 -- ── RLS HELPER FUNCTIONS (SECURITY DEFINER) ───────────────────────
 -- These bypass RLS on iam.user_org_mapping so they can be used safely
 -- inside RLS policies on OTHER tables without recursive infinite loops.
@@ -181,6 +275,32 @@ DROP FUNCTION IF EXISTS iam.fn_mapping_org(UUID) CASCADE;
 CREATE FUNCTION iam.fn_mapping_org(p_mapping_id UUID)
 RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
   SELECT org_id FROM iam.user_org_mapping WHERE id = p_mapping_id
+$$;
+
+-- Resolves the tenant a branch belongs to, for RLS policies that must prove an
+-- org_id the caller supplied actually sits inside the tenant the session is
+-- pinned to (ext.meta_page_form_org_map's admin_tenant_config_policy today).
+--
+-- SECURITY DEFINER for the same reason as iam.fn_mapping_org above, and the
+-- failure it prevents is the one that matters most here: entity.organizations'
+-- own org_isolation_policy is `id = ANY(iam.fn_user_active_orgs(...))`, so an
+-- inline `org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = ...)`
+-- inside a `TO app_user` policy returns ZERO rows for a platform super_admin
+-- administering a tenant they hold no membership in -- which is every caller of
+-- @platform/db's withTenantConfigTx. The WITH CHECK would then be silently
+-- FALSE and every admin INSERT would be refused with a bare "new row violates
+-- row-level security policy", rather than the containment check it was written
+-- to be. (The `TO tenant_admin` policies elsewhere in 08_rls.sql use the inline
+-- subquery safely: entity.organizations HAS a tenant_admin policy keyed on
+-- app.current_tenant_id, so the subquery resolves for that pool.)
+--
+-- Leaks nothing on its own: it maps an org id the caller already supplied to the
+-- tenant that owns it, and the policy then requires that tenant to equal the
+-- session's pinned tenant.
+DROP FUNCTION IF EXISTS entity.fn_org_tenant(UUID) CASCADE;
+CREATE FUNCTION entity.fn_org_tenant(p_org_id UUID)
+RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT tenant_id FROM entity.organizations WHERE id = p_org_id AND NOT is_deleted
 $$;
 
 -- The EFFECTIVE role a user acts with in one org — the single place the
@@ -967,8 +1087,24 @@ DECLARE
   v_actor  UUID;
   v_action TEXT;
   v_note   TEXT;
+  v_type   TEXT;
+  v_old_assignee UUID;
+  v_old_type     UUID;
 BEGIN
-  IF NEW.assigned_user_id IS NOT DISTINCT FROM OLD.assigned_user_id THEN RETURN NEW; END IF;
+  -- INSERT (1.51.0): a lead auto-assigned AT INTAKE used to leave no log row at
+  -- all, because this trigger fired on UPDATE only. Campaign reclassification
+  -- keys "was this auto-assigned?" on the 'initial' row, so every intake-assigned
+  -- lead was invisible to it and kept its old owner after a re-type. An INSERT
+  -- with an owner now logs 'initial' exactly as a NULL -> user UPDATE does.
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.assigned_user_id IS NULL THEN RETURN NEW; END IF;
+    v_old_assignee := NULL;
+    v_old_type     := NEW.campaign_type_id;
+  ELSE
+    IF NEW.assigned_user_id IS NOT DISTINCT FROM OLD.assigned_user_id THEN RETURN NEW; END IF;
+    v_old_assignee := OLD.assigned_user_id;
+    v_old_type     := OLD.campaign_type_id;
+  END IF;
   BEGIN
     v_actor := NULLIF(current_setting('app.current_user_id', true), '')::uuid;
   EXCEPTION WHEN OTHERS THEN v_actor := NULL; END;
@@ -981,15 +1117,36 @@ BEGIN
     v_note := NULLIF(current_setting('app.lead_transition_note', true), '');
   EXCEPTION WHEN OTHERS THEN v_note := NULL; END;
   v_action := CASE
-    WHEN OLD.assigned_user_id IS NULL AND NEW.assigned_user_id IS NOT NULL THEN 'initial'
-    WHEN OLD.assigned_user_id IS NOT NULL AND NEW.assigned_user_id IS NULL  THEN 'unassigned'
-    WHEN v_actor = NEW.assigned_user_id                                      THEN 'self_assigned'
+    WHEN v_old_assignee IS NULL AND NEW.assigned_user_id IS NOT NULL THEN 'initial'
+    WHEN v_old_assignee IS NOT NULL AND NEW.assigned_user_id IS NULL  THEN 'unassigned'
+    WHEN v_actor = NEW.assigned_user_id                                THEN 'self_assigned'
     ELSE 'reassigned'
   END;
+  -- A lead whose TYPE moved in the same statement was re-POOLED, not merely
+  -- reassigned, and the two read very differently in the timeline: "reassigned
+  -- to Priya" is a manager's decision, "reclassified" is the lead leaving the
+  -- sales rotation for the hiring one and landing with whoever that pool picked.
+  -- Written here rather than by the later phase's service code so a
+  -- reclassification done in SQL, or by the Python sync, is logged identically.
+  IF v_action = 'reassigned'
+     AND NEW.campaign_type_id IS DISTINCT FROM v_old_type THEN
+    v_action := 'reclassified';
+  END IF;
+
+  -- The pool the assignee came from, appended to the note so the log line reads
+  -- on its own. NULL type (every lead predating 1.49.0) leaves the note exactly
+  -- as it was.
+  SELECT ct.label INTO v_type
+  FROM marketing.campaign_types ct
+  WHERE ct.id = NEW.campaign_type_id;
+
+  IF v_type IS NOT NULL AND v_action IN ('initial','reclassified') THEN
+    v_note := COALESCE(NULLIF(v_note, '') || ' ', '') || format('From the %s pool.', v_type);
+  END IF;
   INSERT INTO lms.lead_assignment_log
     (org_id, lead_id, assigned_by_id, assigned_to_id, action, previous_assignee_id, note)
   VALUES
-    (NEW.org_id, NEW.id, v_actor, NEW.assigned_user_id, v_action, OLD.assigned_user_id, v_note);
+    (NEW.org_id, NEW.id, v_actor, NEW.assigned_user_id, v_action, v_old_assignee, v_note);
   RETURN NEW;
 END; $$;
 
@@ -997,6 +1154,33 @@ DROP TRIGGER IF EXISTS trg_lead_assignment_log ON lms.marketing_leads;
 CREATE TRIGGER trg_lead_assignment_log
   AFTER UPDATE OF assigned_user_id ON lms.marketing_leads
   FOR EACH ROW EXECUTE FUNCTION lms.log_lead_assignment();
+-- 1.51.0: auto_assign_reason says why the auto-assigner left a lead unowned, so
+-- it is meaningless the moment anyone owns it. Cleared HERE rather than by each
+-- writer, because a lead gains an owner on half a dozen paths (manual assign,
+-- bulk assign, transfer, rerun, reclassify, self-assign) and a stale reason on an
+-- owned lead would send an admin chasing a problem that is already solved.
+CREATE OR REPLACE FUNCTION lms.clear_auto_assign_reason()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.assigned_user_id IS NOT NULL THEN
+    NEW.auto_assign_reason := NULL;
+  END IF;
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_marketing_leads_clear_auto_assign_reason ON lms.marketing_leads;
+CREATE TRIGGER trg_marketing_leads_clear_auto_assign_reason
+  BEFORE INSERT OR UPDATE OF assigned_user_id, auto_assign_reason ON lms.marketing_leads
+  FOR EACH ROW EXECUTE FUNCTION lms.clear_auto_assign_reason();
+
+-- 1.51.0: a separate INSERT trigger rather than `AFTER INSERT OR UPDATE OF`, so
+-- the UPDATE side keeps its column filter and the INSERT side can skip the
+-- (common) unassigned insert without entering the function.
+DROP TRIGGER IF EXISTS trg_lead_assignment_log_insert ON lms.marketing_leads;
+CREATE TRIGGER trg_lead_assignment_log_insert
+  AFTER INSERT ON lms.marketing_leads
+  FOR EACH ROW WHEN (NEW.assigned_user_id IS NOT NULL)
+  EXECUTE FUNCTION lms.log_lead_assignment();
 
 -- ── iam.can_assign_to ─────────────────────────────────────────────────
 -- Looks up role via iam.user_org_mapping instead of iam.users.org_id so that
@@ -2314,5 +2498,355 @@ BEGIN
 
   RETURN v_rows;
 END; $$;
+
+-- ── marketing.campaign_types / ext.meta_campaigns triggers ────────────
+DROP TRIGGER IF EXISTS trg_campaign_types_updated_at  ON marketing.campaign_types;
+CREATE TRIGGER trg_campaign_types_updated_at
+  BEFORE UPDATE ON marketing.campaign_types FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_campaign_types_soft_delete ON marketing.campaign_types;
+CREATE TRIGGER trg_campaign_types_soft_delete
+  BEFORE DELETE ON marketing.campaign_types FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+-- No soft-delete trigger on ext.meta_campaigns, deliberately: like every other
+-- ext.meta_* discovery cache it carries no is_deleted column. A row here is a
+-- cached fact about Meta, not a record of ours to retire.
+DROP TRIGGER IF EXISTS trg_meta_campaigns_updated_at ON ext.meta_campaigns;
+CREATE TRIGGER trg_meta_campaigns_updated_at
+  BEFORE UPDATE ON ext.meta_campaigns FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ── marketing.fn_match_campaign_type ──────────────────────────────────
+-- Which campaign type does this Meta campaign NAME imply? NULL when nothing
+-- matches -- which is a real answer, not a failure: the caller then falls back
+-- to ext.meta_page_form_org_map.default_campaign_type_id, and finally to the
+-- tenant's is_default type.
+--
+-- IT LIVES IN SQL ON PURPOSE. Two independent intake paths read Meta campaign
+-- names -- leads-service (TypeScript) and msq-lms/meta-sync-scripts (Python) --
+-- and a rule implemented twice is a rule that drifts. sync_campaigns.py already
+-- carries a comment about exactly that hazard. One definition here means a
+-- keyword added in the admin UI changes both paths at once, and a lead cannot
+-- be classified one way on the webhook and another way on the nightly sync.
+--
+-- WORD BOUNDARIES, not a substring test: 'hr' must not match "Gurugram" and
+-- 'job' must not match "Jobbers". Postgres' own \m/\M escapes are not usable
+-- here because they treat _ as a word character, and Meta campaign names are
+-- overwhelmingly underscore- or hyphen-separated ('HIR_Gurugram_Trainer_Sep26')
+-- -- \mtrainer\M would never fire on that string. The predicate below instead
+-- requires a NON-ALPHANUMERIC character (or the string end) on both sides, which
+-- treats _ and - as the separators they actually are.
+--
+-- STABLE, not IMMUTABLE: it reads a table. SECURITY DEFINER is deliberately NOT
+-- used -- every caller is either a service login that already holds SELECT on
+-- marketing.campaign_types, or root_service. Making it definer-rights would let
+-- an app_user session probe another tenant's keywords by passing a foreign
+-- tenant id.
+-- ── marketing.fn_match_campaign_type_rules (1.51.0) ───────────────────
+-- THE matcher. Walks the tenant's marketing.campaign_type_rules in rule_order
+-- and returns the FIRST rule whose pattern appears, on word boundaries, in the
+-- Meta name its match_field names. Every argument after the tenant is optional:
+-- a caller that only knows the campaign name (the campaign grid, the fetch)
+-- passes NULL for the rest, and a rule on a name that is NULL simply cannot
+-- match. The live lead path passes all four, which is how a form-name or
+-- ad-name rule can type a lead whose campaign name says nothing.
+--
+-- Rules pointing at an inactive or deleted type are skipped, not errors: the
+-- next rule gets its chance.
+--
+-- The word-boundary predicate is unchanged from the old keyword matcher (see
+-- fn_match_campaign_type below for why \m/\M are not usable).
+--
+-- STABLE, not SECURITY DEFINER, for the same reason the old matcher was not:
+-- it reads the rules as the CALLER, so a session cannot probe another tenant's
+-- rules by passing a foreign tenant id.
+CREATE OR REPLACE FUNCTION marketing.fn_match_campaign_type_rules(
+  p_tenant_id     UUID,
+  p_campaign_name TEXT,
+  p_form_name     TEXT DEFAULT NULL,
+  p_adset_name    TEXT DEFAULT NULL,
+  p_ad_name       TEXT DEFAULT NULL
+) RETURNS TABLE (campaign_type_id UUID, rule_id UUID, match_field TEXT, pattern TEXT)
+LANGUAGE sql STABLE AS $$
+  SELECT r.campaign_type_id, r.id, r.match_field, r.pattern
+  FROM marketing.campaign_type_rules r
+  JOIN marketing.campaign_types ct
+    ON ct.id = r.campaign_type_id AND ct.is_active AND NOT ct.is_deleted
+  CROSS JOIN LATERAL (
+    SELECT CASE r.match_field
+             WHEN 'campaign_name' THEN p_campaign_name
+             WHEN 'form_name'     THEN p_form_name
+             WHEN 'adset_name'    THEN p_adset_name
+             WHEN 'ad_name'       THEN p_ad_name
+           END AS subject
+  ) s
+  WHERE r.tenant_id = p_tenant_id
+    AND r.is_active
+    AND NOT r.is_deleted
+    AND s.subject IS NOT NULL
+    -- regexp_replace backslash-escapes any non-alphanumeric in the pattern
+    -- so a stored '.' or '+' is matched literally rather than as a metachar.
+    AND s.subject ~* ('(^|[^[:alnum:]])'
+                      || regexp_replace(btrim(r.pattern), '([^[:alnum:]])', '\\\1', 'g')
+                      || '([^[:alnum:]]|$)')
+  ORDER BY r.rule_order ASC, r.id ASC
+  LIMIT 1;
+$$;
+
+-- 1.51.0: now a thin wrapper over the ordered rules, campaign name only. Kept
+-- because reconcile's form-name hint and older callers use the scalar shape;
+-- campaign_types.match_keywords is no longer read by anything.
+CREATE OR REPLACE FUNCTION marketing.fn_match_campaign_type(
+  p_tenant_id     UUID,
+  p_campaign_name TEXT
+) RETURNS UUID LANGUAGE sql STABLE AS $$
+  SELECT m.campaign_type_id
+  FROM marketing.fn_match_campaign_type_rules(p_tenant_id, p_campaign_name) m;
+$$;
+
+-- ── marketing.fn_assert_rule_type_tenant (1.51.0) ─────────────────────
+-- A rule may only point at a campaign type of its OWN tenant. The FK alone is
+-- satisfied by any tenant's type, and a foreign type would route a lead into a
+-- pool that belongs to someone else -- the same hole 1.50.1 closed on
+-- lms.lead_assignment_weights. SECURITY DEFINER so the check sees the type row
+-- whatever the writer's RLS shows it.
+CREATE OR REPLACE FUNCTION marketing.fn_assert_rule_type_tenant()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE
+  v_type_tenant UUID;
+BEGIN
+  SELECT tenant_id INTO v_type_tenant
+  FROM marketing.campaign_types WHERE id = NEW.campaign_type_id;
+  IF v_type_tenant IS DISTINCT FROM NEW.tenant_id THEN
+    RAISE EXCEPTION 'campaign type % does not belong to tenant %', NEW.campaign_type_id, NEW.tenant_id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_campaign_type_rules_tenant_match ON marketing.campaign_type_rules;
+CREATE TRIGGER trg_campaign_type_rules_tenant_match
+  BEFORE INSERT OR UPDATE OF tenant_id, campaign_type_id ON marketing.campaign_type_rules
+  FOR EACH ROW EXECUTE FUNCTION marketing.fn_assert_rule_type_tenant();
+
+DROP TRIGGER IF EXISTS trg_campaign_type_rules_updated_at ON marketing.campaign_type_rules;
+CREATE TRIGGER trg_campaign_type_rules_updated_at
+  BEFORE UPDATE ON marketing.campaign_type_rules
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_campaign_type_rules_soft_delete ON marketing.campaign_type_rules;
+CREATE TRIGGER trg_campaign_type_rules_soft_delete
+  BEFORE DELETE ON marketing.campaign_type_rules
+  FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+-- updated_at on the 1.51.0 ext.* discovery caches and the lead inbox. No soft
+-- delete, same as ext.meta_campaigns: cached facts about Meta, not our records.
+DROP TRIGGER IF EXISTS trg_meta_ad_accounts_updated_at ON ext.meta_ad_accounts;
+CREATE TRIGGER trg_meta_ad_accounts_updated_at
+  BEFORE UPDATE ON ext.meta_ad_accounts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_meta_adsets_updated_at ON ext.meta_adsets;
+CREATE TRIGGER trg_meta_adsets_updated_at
+  BEFORE UPDATE ON ext.meta_adsets FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_meta_ads_updated_at ON ext.meta_ads;
+CREATE TRIGGER trg_meta_ads_updated_at
+  BEFORE UPDATE ON ext.meta_ads FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_meta_lead_inbox_updated_at ON ext.meta_lead_inbox;
+CREATE TRIGGER trg_meta_lead_inbox_updated_at
+  BEFORE UPDATE ON ext.meta_lead_inbox FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ── marketing.fn_campaign_type_usage (1.50.1) ─────────────────────────
+-- What still ROUTES through a campaign type from the Meta side: mapping rows in
+-- ext.meta_campaigns and active page/form defaults in ext.meta_page_form_org_map.
+-- leads-service's deactivate/delete guard needs both counts, and leads-service
+-- deliberately never reads ext.* (meta-conversion-api owns that schema), so the
+-- counts are served by this function instead of a cross-service grant.
+--
+-- Why the guard matters: a campaign mapped to a type that is then deactivated
+-- used to fail intake for every new lead on that campaign. The live path now
+-- falls back rather than failing, but a retired pool that is still the mapping
+-- target is silently mis-routing, so retiring one must be a deliberate act.
+--
+-- SECURITY DEFINER because the callers (lms_svc/lead_svc on withServiceTx, or an
+-- app_user session) hold no reach into ext.*. Leaks nothing across tenants: a
+-- campaign type id belongs to exactly one tenant and every row counted
+-- references that id by FK, and the caller has already confirmed the type is
+-- its own tenant's before asking.
+CREATE OR REPLACE FUNCTION marketing.fn_campaign_type_usage(p_campaign_type_id UUID)
+RETURNS TABLE (meta_campaign_count BIGINT, form_default_count BIGINT)
+LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT
+    (SELECT COUNT(*) FROM ext.meta_campaigns mc
+      WHERE mc.campaign_type_id = p_campaign_type_id),
+    (SELECT COUNT(*) FROM ext.meta_page_form_org_map m
+      WHERE m.default_campaign_type_id = p_campaign_type_id AND m.is_active)
+$$;
+
+-- ── lms.fn_user_sees_campaign_type ────────────────────────────────────
+-- MAY p_user_id SEE A LEAD OF THIS TYPE IN THIS BRANCH? The sales/HR boundary,
+-- called from lms.marketing_leads' RLS USING clause -- so this function, not
+-- any service, is what actually keeps hiring leads off a sales rep's screen.
+--
+-- TRUE when ANY of:
+--   * the lead carries NO type (p_campaign_type_id IS NULL) -- every lead
+--     predating 1.49.0 and every manually created one, which is why adding this
+--     predicate to the policy changes nothing until the backfill runs;
+--   * the type is not tied to a department (department_id IS NULL) -- the
+--     documented meaning of that NULL is "visible to all";
+--   * the type is the tenant's DEFAULT and the user's role has NO department,
+--     or sits in the default type's own department -- see below;
+--   * the user's role in that branch is an anchor (super_admin, tenant_admin,
+--     org_admin) or holds `lms.leads.view.all_types`;
+--   * the user's role sits in the type's department.
+--
+-- THE DEFAULT TYPE IS FENCED FROM OTHER DEPARTMENTS ONLY (1.51.1). The default
+-- is the catch-all: every unmatched campaign, every walk-in and every manually
+-- created lead lands there, and it is what the 1.49.0 backfill stamped on the
+-- entire existing pipeline. Until 1.51.1 it was unconditionally visible, so an
+-- HR-department role saw the whole Sales pool -- the opposite half of the
+-- "Sales sees sales, HR sees hiring" separation. It is now hidden from a role
+-- that sits in a DIFFERENT department (unless it holds all_types), but still
+-- shown to a role with NO department at all. That second half is load-bearing:
+-- read_only auditors and the anchors are department-less by design, and a
+-- ladder role whose department was never wired up must not lose the branch
+-- overnight. Consequence worth knowing: moving is_default onto another type
+-- makes THAT type visible to its own department plus every department-less
+-- role. A tenant can only have one default (uix_campaign_types_one_default).
+--
+-- ORDER MATTERS FOR COST: this runs once per row inside RLS, and nearly every
+-- row is default-typed. The role's department (one indexed mapping lookup)
+-- settles the default for every Sales and every department-less user before the
+-- far more expensive iam.fn_role_capability_matrix is ever reached.
+--
+-- Modelled on iam.fn_user_can_manage_users above, and for the same reasons:
+-- iam.fn_user_org_role is the one authority on which role applies in a branch,
+-- and iam.fn_role_capability_matrix -- not a raw iam.role_capabilities read --
+-- is the one authority on a grant, because it alone implements BOTH resolution
+-- rules (tenant override > platform default > deny, AND an ancestor resolving
+-- FALSE pruning its subtree). A raw lookup would let this function and the
+-- application's capability cache disagree about the same grant.
+--
+-- SECURITY DEFINER: it is called from inside a policy and reads iam.* and
+-- marketing.campaign_types, all of which carry their own RLS. Invoker rights
+-- would have it filtered by those policies and return NULL rather than raise --
+-- turning the predicate silently FALSE and hiding EVERY typed lead from
+-- everyone. Leaks nothing: it answers one yes/no about a (user, org, type) the
+-- caller has already been handed by the row being tested.
+CREATE OR REPLACE FUNCTION lms.fn_user_sees_campaign_type(
+  p_user_id          UUID,
+  p_org_id           UUID,
+  p_campaign_type_id UUID
+) RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
+DECLARE
+  v_type_dept UUID;
+  v_is_default BOOLEAN;
+  v_tenant    UUID;
+  v_role      TEXT;
+  v_role_dept UUID;
+  v_granted   BOOLEAN;
+BEGIN
+  -- An untyped lead is visible to anyone who can already see the row: this is
+  -- what makes adding the predicate to the policy a no-op until types exist.
+  IF p_campaign_type_id IS NULL THEN RETURN TRUE; END IF;
+  IF p_user_id IS NULL OR p_org_id IS NULL THEN RETURN FALSE; END IF;
+
+  SELECT ct.department_id, ct.is_default INTO v_type_dept, v_is_default
+  FROM marketing.campaign_types ct
+  WHERE ct.id = p_campaign_type_id;
+
+  -- A type nobody has assigned a department to is everybody's. Also the answer
+  -- for a dangling id, which fails open on purpose: this predicate narrows an
+  -- ALREADY org-scoped result set, so failing closed here would hide rows from
+  -- their own branch over a data error, while failing open leaks nothing across
+  -- a tenant or a branch boundary.
+  IF v_type_dept IS NULL THEN RETURN TRUE; END IF;
+
+  -- The user's own role's department. Resolved through the MAPPING, not
+  -- iam.users.role_id, so someone mapped into three branches is judged by the
+  -- role they hold in THIS one.
+  SELECT ur.department_id INTO v_role_dept
+  FROM iam.user_org_mapping uom
+  JOIN iam.user_roles ur ON ur.id = uom.role_id
+  WHERE uom.user_id = p_user_id
+    AND uom.org_id  = p_org_id
+    AND uom.is_active
+  LIMIT 1;
+
+  IF v_role_dept IS NULL THEN
+    -- Fall back to the global role row, matching iam.fn_effective_role_id's
+    -- second path (a legacy user with no mapping in their own home org).
+    SELECT ur.department_id INTO v_role_dept
+    FROM iam.users u
+    JOIN iam.user_roles ur ON ur.id = u.role_id
+    WHERE u.id = p_user_id AND u.is_active AND NOT u.is_deleted;
+  END IF;
+
+  -- Same department: visible, default or not.
+  IF v_role_dept = v_type_dept THEN RETURN TRUE; END IF;
+
+  -- The catch-all pool, for a role that belongs to no department (read_only,
+  -- the anchors, an unwired ladder role). A role IN another department falls
+  -- through: it sees the default only via the anchor/all_types checks below.
+  IF COALESCE(v_is_default, FALSE) AND v_role_dept IS NULL THEN RETURN TRUE; END IF;
+
+  SELECT r.role INTO v_role FROM iam.fn_user_org_role(p_user_id, p_org_id) r;
+  IF v_role IS NULL THEN RETURN FALSE; END IF;
+
+  -- The three anchor roles see every type, without needing the capability. They
+  -- already hold unrestricted reach over the branch by rank, and making them
+  -- depend on a grant row would mean a tenant could tick away a platform
+  -- admin's visibility.
+  IF v_role IN ('super_admin','tenant_admin','org_admin') THEN RETURN TRUE; END IF;
+
+  SELECT tenant_id INTO v_tenant FROM entity.organizations WHERE id = p_org_id;
+  IF v_tenant IS NULL THEN RETURN FALSE; END IF;
+
+  SELECT bool_or(m.granted) INTO v_granted
+  FROM iam.fn_role_capability_matrix(v_tenant) m
+  WHERE m.role_name = v_role
+    AND m.capability_key = 'lms.leads.view.all_types';
+
+  RETURN COALESCE(v_granted, FALSE);
+END; $$;
+
+-- ── lms.sync_lead_campaign_type ───────────────────────────────────────
+-- Keeps lms.marketing_leads.campaign_type_id honest against the campaign it
+-- hangs off. BEFORE INSERT OR UPDATE OF campaign_id: when a campaign is present
+-- and no type was supplied explicitly, the campaign's type is copied down.
+--
+-- This exists because campaign_id is attached LATE on more than one path -- the
+-- lead edit screen, and the batch scripts that back-link a Meta lead to its
+-- marketing.ad_campaigns row once that row appears. Without the trigger those
+-- leads would keep the type they were born with (usually none) while their
+-- campaign says otherwise, and the RLS predicate reads the column, not the join.
+--
+-- Never OVERWRITES a type that was set deliberately: an explicit
+-- campaign_type_id on the statement wins, which is what lets a manager
+-- reclassify one lead without the next campaign edit undoing it.
+CREATE OR REPLACE FUNCTION lms.sync_lead_campaign_type()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+  v_type UUID;
+BEGIN
+  IF NEW.campaign_id IS NULL THEN RETURN NEW; END IF;
+
+  -- On INSERT: only fill a NULL. On UPDATE: only fill when the caller left the
+  -- type alone, so an explicit reclassification in the same statement stands.
+  IF TG_OP = 'UPDATE'
+     AND NEW.campaign_type_id IS DISTINCT FROM OLD.campaign_type_id THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.campaign_type_id IS NOT NULL THEN RETURN NEW; END IF;
+
+  SELECT ac.campaign_type_id INTO v_type
+  FROM marketing.ad_campaigns ac
+  WHERE ac.id = NEW.campaign_id;
+
+  NEW.campaign_type_id := v_type;
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_marketing_leads_sync_campaign_type ON lms.marketing_leads;
+CREATE TRIGGER trg_marketing_leads_sync_campaign_type
+  BEFORE INSERT OR UPDATE OF campaign_id ON lms.marketing_leads
+  FOR EACH ROW EXECUTE FUNCTION lms.sync_lead_campaign_type();
 
 COMMIT;

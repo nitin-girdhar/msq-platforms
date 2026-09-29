@@ -52,6 +52,19 @@ export function createLoggerOptions(input: LoggerOptionsInput): Record<string, u
       req: requestSerializer,
       res: responseSerializer,
     },
+    // `pino-pretty` is a RUNTIME dependency, not a devDependency, and must stay
+    // one. Production images are built with `pnpm deploy --prod`, which drops
+    // devDependencies — but the image's `NODE_ENV=production` is overridden back
+    // to `development` by compose's `env_file: .env`, so this branch is taken
+    // inside the container and pino resolves the target at startup. As a
+    // devDependency that resolution failed with `unable to determine transport
+    // target for "pino-pretty"`, crash-looping api-gateway, identity-service,
+    // admin-service and communication-service on every `docker compose up`.
+    //
+    // Do NOT "fix" that by forcing NODE_ENV=production in compose instead: it
+    // trips the PUBLIC_API_KEY_PEPPER strong-secret gate in api-gateway's
+    // config.ts and starts emitting HSTS on app.localhost, which Chrome treats
+    // as a secure context — so the header sticks and poisons the host.
     ...(isProduction
       ? {}
       : {

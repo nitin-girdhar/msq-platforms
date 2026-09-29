@@ -82,6 +82,19 @@ directory and starting over.
 sudo nano /opt/msq/.env
 ```
 
+Faster: start from the environment template instead of the bundled
+`.env.example`, which carries the local `app.localhost` single-origin values.
+`msq-deploy/.env-dev`, `.env-uat` and `.env-prd` are kept in step with
+`.env.example` and already hold the right host, cookie scope, proxy-hop count
+and VAPID pair for that environment:
+
+```bash
+sudo cp msq-deploy/.env-uat /opt/msq/.env    # or .env-prd
+```
+
+They still carry placeholder DB and JWT secrets, so the table below applies
+either way.
+
 Must change:
 
 | Key | Why |
@@ -90,6 +103,8 @@ Must change:
 | `POSTGRES_PASSWORD` | Superuser password — baked into the DB on first boot. |
 | `DB_SERVICE_PASSWORD` and the other `DB_*_SVC_PASSWORD` values | See the warning below — these are **hardcoded in the SQL** and must be changed in both places. |
 | JWT / session / cookie secrets | Never ship the example values. |
+| `AUTH_COOKIE_NAME` | Must be **distinct per environment** whenever more than one shares a parent domain (`apps.fitclass.in` + `apps-uat.fitclass.in` under `fitclass.in`). The templates set `fc_session` (prd), `fc_session_uat`, `fc_session_dev`. A shared name means one environment's cookie is *read* by the other's api-gateway and rejected as `Invalid token` — every client-side API call 401s while SSR still works. **Every** container in an environment must carry that environment's value: identity-service (sets it), api-gateway (reads it), and all six web apps (`middleware.ts` + server session helpers via `@platform/ui-kit`). Changing it logs that environment's users out once — expected, announce it (prod keeps `fc_session`, so prod sessions are unaffected). |
+| `COOKIE_DOMAIN` | Leave at the environment's **existing** value — the per-env cookie name above is what isolates environments, not the scope. In particular prod stays `.fitclass.in` (confirm against the running prod `/opt/msq/.env`) so a re-login overwrites the cookie in place and no prod session is dropped. A bare host is still a domain cookie offered to sub-hosts; only an unset value is host-only. |
 | `NEXT_PUBLIC_*` URLs | These are **browser-facing**. If anyone reaches the app from another machine, `localhost` will not work — use the host's IP or DNS name. |
 
 > **Service-role passwords live in two places and must agree.** The DB login
@@ -220,6 +235,18 @@ and then re-run the post-schema sequence:
 sudo INSTALL_DIR=/opt/msq bash /opt/msq/bootstrap-db.sh --no-seed
 ```
 
+### Release checklist for PWA deployments
+
+If the push notification or PWA implementation has changed (manifest, service worker, icons, or web-push backend):
+
+- **Bump `SW_VERSION` in `msq-core/apps/auth-web/public/sw.js`.** This is the most critical step. Browsers cache `sw.js` aggressively by path alone; without a byte change in the file or a version bump as a comment, clients keep running the old service worker and serving stale app-shell assets from cache. Every PWA deploy that goes silent is usually a stale worker — so always increment this counter and commit it alongside any service-worker change.
+- **`VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` env vars** (required for Web Push, already in `.env.example`) are long-lived secrets. **Never regenerate them casually.** Rotating them invalidates every existing subscription on every device — every user must re-grant notification permission and re-subscribe. If you must rotate them (e.g., after a suspected compromise), be prepared for every installed user to lose notifications until they re-install or manually re-subscribe.
+  - Generate fresh keys with: `npx web-push generate-vapid-keys`
+  - `VAPID_SUBJECT` is a contact URL (mailto: or https:) for push providers to reach you if your push server is misbehaving.
+- **`basePath` is compiled into each web app image.** Changing a product's path prefix (e.g., `/lms` → `/crm`) requires rebuilding that app's Docker image — it is not an env flip. Pick prefixes once and leave them stable.
+- **A schema change needs a `one_time/apply_*.sql`, or existing servers never get it.** `db_scripts/00`–`10` are applied by Postgres' init hook, which runs **only on a database's first boot** (§4). A `CREATE TABLE` added later therefore reaches a fresh `db_deploy` and *nothing else* — every already-running server keeps the old catalog and the version row it was seeded with, which is why `schema_versions` cannot be trusted to answer "does this object exist". This is exactly how `notify.push_subscriptions` (1.47.0) came to be missing on UAT and production while the code that writes it shipped: Web Push was 500ing on every device, with `relation "notify.push_subscriptions" does not exist` in the notifications-service log. Before deploying anything that touched `db_scripts/`, confirm there is a matching `db_scripts/one_time/apply_*.sql` and run its `_dryrun` on every environment.
+- **HTTPS is mandatory.** Service workers and Web Push do not register over plain HTTP (except `localhost` in development). Production must use a valid TLS certificate. Caddy in the stack handles this automatically with ACME if DNS is configured; `http://` schemes will silently fail to register the service worker, making the app uninstallable and push unreachable.
+
 ---
 
 ## 7. Removing the demo data
@@ -269,6 +296,33 @@ whole script — every step is idempotent.
 Expected. The stock `postgres:18.4` image has no pgvector;
 `00_extensions_schemas_roles.sql` catches it and raises a warning rather than
 failing. AI embedding features stay disabled.
+
+**A service crash-loops with `unable to determine transport target for "pino-pretty"`.**
+Every `/api/*` call then fails in a way that looks like a routing or gateway bug
+and is not — check the container logs first:
+```bash
+cd /opt/msq && docker compose ps -a && docker compose logs api-gateway --tail 20
+```
+The images set `NODE_ENV=production` and are built with `pnpm deploy --prod`, but
+compose's `env_file: .env` overrides `NODE_ENV` back to `development`, so
+`@platform/logger` attaches its `pino-pretty` transport inside the container.
+`pino-pretty` is therefore a **runtime dependency** of `msq-core/packages/logger`
+and must stay one. If this reappears, confirm it is still under `dependencies`
+(not `devDependencies`) and that `pnpm-lock.yaml` agrees.
+
+Do **not** "fix" it by forcing `NODE_ENV=production` in the compose service
+blocks: that trips api-gateway's `PUBLIC_API_KEY_PEPPER` strong-secret gate and
+starts emitting HSTS on `app.localhost`, which Chrome treats as a secure context
+— so the header sticks and poisons the host for later plain-HTTP dev.
+
+**A path prefix 404s without its trailing slash** (`/lms` fails, `/lms/` works).
+`infra/Caddyfile` must match each prefix with a named matcher listing both forms
+(`@lms path /lms /lms/*`), because `/lms/*` alone does not match a bare `/lms`.
+Note `handle` accepts only one matcher token, so `handle /lms /lms/*` is a config
+error that makes Caddy fail to load **any** config — every route on the host then
+404s, which looks identical to a routing mistake. Always run
+`docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
+--adapter caddyfile` after editing it.
 
 **Blank Status / Outcome / Source / Follow-up in the LMS UI.**
 The user's tenant has no catalog rows — it was never provisioned. See the

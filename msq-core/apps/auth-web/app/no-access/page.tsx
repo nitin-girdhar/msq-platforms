@@ -38,11 +38,14 @@ export default async function NoAccessPage() {
       <div className="w-full max-w-md">
         <div className="mb-8 flex justify-center">
           <div className="rounded-2xl bg-[#0b1f3a] px-6 py-4">
+            {/* Emblem, not the full lockup: the square fitclass-logo-white.webp
+                (emblem + FITCLASS wordmark + tagline) collapses to an illegible
+                smudge when squeezed to h-9 — see auth-web/app/login/page.tsx. */}
             <Image
-              src="/fitclass-logo-white.webp"
+              src="/fitclass-emblem.png"
               alt="FitClass"
-              width={180}
-              height={42}
+              width={160}
+              height={160}
               priority
               className="h-9 w-auto object-contain"
             />

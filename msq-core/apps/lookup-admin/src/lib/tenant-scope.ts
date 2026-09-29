@@ -39,7 +39,20 @@ export async function fetchTenants(cookieHeader: string): Promise<TenantOption[]
 // empty list — and it scopes rows to the CALLER's own tenant, so a super_admin
 // scoped to another tenant would get that tenant's orgs missing entirely.
 // /lookups/organizations is the same super-admin-gated, cross-tenant route the
-// Organizations grid already reads, and it carries tenantId.
+// Organizations grid already reads, and it carries tenant_id.
+//
+// SNAKE_CASE, and it matters. This read `o.tenantId` / `o.isActive`, but the
+// route answers `tenant_id` / `is_active` (verified against the running
+// gateway) — the platform-wide JSON contract, which is snake_case everywhere.
+// Neither name exists on the response, so every org mapped to the STRING
+// "undefined", OrgScopeSwitcher's `o.tenant_id === selectedTenantId` matched
+// nothing, and the Org dropdown rendered empty for every tenant. TypeScript
+// could not catch it: the response is cast, not parsed, so the annotation was
+// asserting a shape the server never sent.
+//
+// `is_active` was the mirror image and silently harmless — `undefined !== false`
+// is true, so the filter passed everything through and deactivated branches
+// would have been offered as scopes the moment the tenant_id bug was fixed.
 export async function fetchOrgs(cookieHeader: string): Promise<OrgOption[]> {
   const res = await fetch(`${GATEWAY_URL}/lookups/organizations`, {
     headers: { cookie: cookieHeader },
@@ -47,11 +60,11 @@ export async function fetchOrgs(cookieHeader: string): Promise<OrgOption[]> {
   });
   if (!res.ok) return [];
   const body = (await res.json()) as {
-    data: Array<{ id: string; name: string; tenantId: string; isActive?: boolean }>;
+    data: Array<{ id: string; name: string; tenant_id: string; is_active?: boolean }>;
   };
   // Deactivated branches stay listable on their own admin grid but must never
   // be offered as an active scope.
   return body.data
-    .filter((o) => o.isActive !== false)
-    .map((o) => ({ id: String(o.id), name: o.name, tenant_id: String(o.tenantId) }));
+    .filter((o) => o.is_active !== false)
+    .map((o) => ({ id: String(o.id), name: o.name, tenant_id: String(o.tenant_id) }));
 }

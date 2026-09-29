@@ -1,6 +1,7 @@
 import type { ProductKey } from "@platform/types";
 import type { CapabilityHolder } from "@platform/rbac";
-import { PRODUCT_LANDING, usableProducts } from "./products";
+import { withBasePath } from "../api/base-path";
+import { productHref, usableProducts } from "./products";
 
 const PRODUCT_LABELS: Record<ProductKey, string> = {
   lms: "LMS",
@@ -35,7 +36,7 @@ interface Props {
   // non-product shells (e.g. admin-web) that render the switcher purely to
   // link back out — no chip is "current" there, so every product link is
   // cross-origin.
-  activeProduct?: ProductKey;
+  activeProduct?: ProductKey | undefined;
   // Non-product links (e.g. the rank-gated "Admin" link) rendered as trailing
   // pills in this same unified group, purely for visual consistency. They are
   // NOT products: they never factor into usableProducts/PRODUCT_LANDING, so
@@ -66,9 +67,11 @@ export default function ProductSwitcher({
   // product and there are no extra links (e.g. Admin) to show either.
   if (products.length <= 1 && extraLinks.length === 0) return null;
 
-  // Capped at 5 columns — the widest we expect PRODUCT_LABELS + Admin to grow
-  // to. Fewer items still get one column each (no empty cells) via the inline
-  // template, and the grid collapses to an inline row once sm: kicks in.
+  // Capped at 5 columns — exactly what the full set costs today: LMS + HRMS +
+  // Tasks + the Admin pill + the super-admin-only SA pill. Fewer items still get
+  // one column each (no empty cells) via the inline template, and the grid
+  // collapses to an inline row once sm: kicks in. Adding a sixth pill means
+  // raising this, or the extra one wraps under the first column on mobile.
   const columns = Math.min(products.length + extraLinks.length, 5);
 
   return (
@@ -79,13 +82,10 @@ export default function ProductSwitcher({
       >
         {products.map((p) => {
           const active = p === activeProduct;
-          const href = active
-            ? PRODUCT_LANDING[p]
-            : `${origins[p]}${PRODUCT_LANDING[p]}`;
           return (
             <a
               key={p}
-              href={href}
+              href={productHref(p, origins, active)}
               aria-current={active ? "page" : undefined}
               className={
                 active
@@ -98,9 +98,13 @@ export default function ProductSwitcher({
           );
         })}
         {extraLinks.map((link) => (
+          // Same basePath rule as productHref(): an ACTIVE extra link is this
+          // console's own homeHref, and a raw <a> gets no prefix from Next.
+          // Applied blindly because withBasePath() returns an absolute URL
+          // untouched, so the cross-origin Admin/SA links are unchanged.
           <a
             key={link.key}
-            href={link.href}
+            href={withBasePath(link.href)}
             aria-current={link.active ? "page" : undefined}
             className={
               link.active

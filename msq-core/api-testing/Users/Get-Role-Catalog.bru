@@ -1,0 +1,26 @@
+meta {
+  name: Get Role Catalog
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/users/role-catalog
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Roles the caller may grant (capped below their own rank, super_admin
+  never included), plus the tenant's departments. `?tenant_id=` is
+  honoured for super_admin only (lookup-admin's navbar scope).
+
+  Each role carries `works_leads`: true when the role holds lms.leads.
+  The user form uses it to hide the lead-assignment weight and the
+  "reassign their leads" hand-over for non-lead roles (e.g. Fitness
+  Trainer). It is a display hint, not an authorization gate.
+}

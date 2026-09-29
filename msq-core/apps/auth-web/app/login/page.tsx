@@ -51,11 +51,20 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         />
 
         <div className="relative">
+          {/*
+            The emblem alone, not the fitclass-logo-white.webp LOCKUP (emblem +
+            FITCLASS wordmark + tagline stacked in a square canvas). The old
+            width/height (220x50) declared a wide aspect ratio the real 1:1
+            file doesn't have; object-contain then shrank the actual square
+            content to fit the h-11 (44px) height, crushing the wordmark and
+            tagline into an illegible smudge. The emblem is a circle: it reads
+            fine at this height with no wordmark to lose.
+          */}
           <Image
-            src="/fitclass-logo-white.webp"
+            src="/fitclass-emblem.png"
             alt="FitClass"
-            width={220}
-            height={50}
+            width={160}
+            height={160}
             priority
             className="h-11 w-auto object-contain"
           />
@@ -81,11 +90,13 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <div className="w-full max-w-sm">
           <div className="mb-10 flex justify-center lg:hidden">
             <div className="rounded-2xl bg-[#0b1f3a] px-6 py-4">
+              {/* Emblem, not the full lockup — see the comment on the aside
+                  logo above; same crush happens here at h-9 (36px). */}
               <Image
-                src="/fitclass-logo-white.webp"
+                src="/fitclass-emblem.png"
                 alt="FitClass"
-                width={180}
-                height={42}
+                width={160}
+                height={160}
                 priority
                 className="h-9 w-auto object-contain"
               />

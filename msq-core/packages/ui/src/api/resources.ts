@@ -11,13 +11,37 @@ const { request } = createApiClient('/api');
 export const auth = {
   logout: () => request<{ success: true; data: null }>('/auth/logout', { method: 'POST' }),
 
+  // can_view_all: the server's answer to whether the switcher may offer
+  // "All branches" — decided there, never inferred from the client.
   myOrgs: () =>
-    request<{ success: true; data: { orgs: import('@platform/types').UserOrgOption[] } }>('/auth/my-orgs'),
+    request<{ success: true; data: { orgs: import('@platform/types').UserOrgOption[]; can_view_all?: boolean } }>('/auth/my-orgs'),
 
-  switchOrg: (org_id: string) =>
+  switchOrg: (target: { org_id: string } | { all_branches: true }) =>
     request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/switch-org', {
       method: 'POST',
-      body: JSON.stringify({ org_id }),
+      body: JSON.stringify(target),
+    }),
+};
+
+// Web Push device registration. Ungated, self-service platform surface — see
+// msq-lms/services/notifications-service/src/routes/push.ts for why identity is
+// always server-derived and never taken from the posted body.
+export const push = {
+  publicKey: () =>
+    request<{ success: true; data: { public_key: string } }>('/notifications/push/public-key'),
+
+  // Body is the raw browser PushSubscription JSON (`subscription.toJSON()`).
+  // Zod on the server strips anything that is not `endpoint` / `keys`.
+  subscribe: (subscription: PushSubscriptionJSON) =>
+    request<{ success: true; data: { registered: boolean } }>('/notifications/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify(subscription),
+    }),
+
+  unsubscribe: (endpoint: string) =>
+    request<void>('/notifications/push/subscribe', {
+      method: 'DELETE',
+      body: JSON.stringify({ endpoint }),
     }),
 };
 
@@ -42,6 +66,15 @@ export const orgs = {
     }),
 };
 
+// Appends lookup-admin's explicit tenant scope (see providers/UserAdminScope)
+// to a /users path. No scope, or an empty one, leaves the path untouched — the
+// server then scopes by the session, which is every host but lookup-admin.
+type AdminScope = { tenant_id?: string | undefined };
+function withAdminScope(path: string, scope?: AdminScope): string {
+  if (!scope?.tenant_id) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}tenant_id=${encodeURIComponent(scope.tenant_id)}`;
+}
+
 export const users = {
   list: (params?: { org_id?: string; page_size?: number }) => {
     const qs = new URLSearchParams(
@@ -54,20 +87,20 @@ export const users = {
 
   get: (id: string) => request<{ success: true; data: unknown }>(`/users/${id}`),
 
-  create: (data: Record<string, unknown>) =>
-    request<{ success: true; data: { id: string; email: string }; temporary_password: string }>('/users', {
+  create: (data: Record<string, unknown>, scope?: AdminScope) =>
+    request<{ success: true; data: { id: string; email: string; hr_profile_synced: boolean }; temporary_password: string }>(withAdminScope('/users', scope), {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  update: (id: string, data: Record<string, unknown>) =>
-    request<void>(`/users/${id}`, {
+  update: (id: string, data: Record<string, unknown>, scope?: AdminScope) =>
+    request<{ success: true; data: { hr_profile_synced: boolean } }>(withAdminScope(`/users/${id}`, scope), {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
-  delete: (id: string) =>
-    request<void>(`/users/${id}`, { method: 'DELETE' }),
+  delete: (id: string, scope?: AdminScope) =>
+    request<void>(withAdminScope(`/users/${id}`, scope), { method: 'DELETE' }),
 
   resetPassword: (
     id: string,
@@ -75,8 +108,9 @@ export const users = {
     override_policy?: boolean,
     force_password_change?: boolean,
     send_email_notification?: boolean,
+    scope?: AdminScope,
   ) =>
-    request<{ success: true; data: { temporary_password: string } }>(`/users/${id}/reset-password`, {
+    request<{ success: true; data: { temporary_password: string } }>(withAdminScope(`/users/${id}/reset-password`, scope), {
       method: 'POST',
       body: JSON.stringify({ new_password, override_policy, force_password_change, send_email_notification }),
     }),
@@ -92,9 +126,10 @@ export const users = {
   // in this branch": no ceiling relative to the actor, but still bounded to the
   // rank band above read_only / below org_admin and gated on the `lms.leads`
   // tool node (not the coarse `lms` product root).
-  assignable: (opts: { product: 'lms' | 'tasks'; orgId?: string; orgIds?: string[]; scope?: 'delegation' | 'collaboration'; maxRank?: number; purpose?: 'assign' | 'filter' }) => {
+  assignable: (opts: { product: 'lms' | 'tasks'; orgId?: string; orgIds?: string[]; scope?: 'delegation' | 'collaboration'; maxRank?: number; purpose?: 'assign' | 'filter'; tenantId?: string | undefined }) => {
     const params = new URLSearchParams();
     params.set('product', opts.product);
+    if (opts.tenantId) params.set('tenant_id', opts.tenantId);
     if (opts.orgId) params.set('org_id', opts.orgId);
     // `orgIds` is the multi-branch form, for a filter list spanning several orgs
     // at once; single-branch callers keep using `orgId`. Both are honored only
@@ -110,36 +145,63 @@ export const users = {
   // Roles this actor may actually grant, already capped at their own rank by the
   // server, plus the departments those roles belong to. `department_id` is null
   // for roles a tenant has not filed under one — a real bucket, not an error.
-  roleCatalog: () =>
+  roleCatalog: (scope?: AdminScope) =>
     request<{ success: true; data: {
-      roles: Array<{ id: string; name: string; label: string; rank: number; department_id: string | null; department_label: string | null }>;
+      roles: Array<{ id: string; name: string; label: string; rank: number; department_id: string | null; department_label: string | null; works_leads: boolean }>;
       departments: Array<{ id: string; label: string }>;
-    } }>('/users/role-catalog'),
+    } }>(withAdminScope('/users/role-catalog', scope)),
 
   // Who may manage a user in `orgId`: members of that branch, plus tenant_admin
   // and above. Must be asked per branch — the roster alone cannot answer it,
   // since it carries only each user's home org.
-  managerCandidates: (orgId: string) =>
+  managerCandidates: (orgId: string, scope?: AdminScope) =>
     request<{ success: true; data: Array<{
       id: string; full_name: string; email: string;
       role_name: string; role_label: string; rank: number; in_branch: boolean;
-    }> }>(`/users/manager-candidates?org_id=${encodeURIComponent(orgId)}`),
+    }> }>(withAdminScope(`/users/manager-candidates?org_id=${encodeURIComponent(orgId)}`, scope)),
 
-  // Current per-user lead weights in a branch. Omit orgId for the actor's own.
-  assignmentWeights: (orgId?: string) =>
-    request<{ success: true; data: Array<{ user_id: string; full_name: string; weight: number }> }>(
-      `/users/assignment-weights${orgId ? `?org_id=${encodeURIComponent(orgId)}` : ''}`,
-    ),
+  // Current per-user lead weights in a branch, optionally scoped to one
+  // campaign type (1.49.0 — weights are keyed per (org, campaign_type), so a
+  // caller that wants just one pool's total should filter server-side rather
+  // than summing the whole branch). Omit orgId for the actor's own branch.
+  assignmentWeights: (orgId?: string, campaignTypeId?: string, scope?: AdminScope) => {
+    const params = new URLSearchParams();
+    if (scope?.tenant_id) params.set('tenant_id', scope.tenant_id);
+    if (orgId) params.set('org_id', orgId);
+    if (campaignTypeId) params.set('campaign_type_id', campaignTypeId);
+    const qs = params.toString();
+    return request<{ success: true; data: Array<{
+      user_id: string; full_name: string; email: string;
+      campaign_type_id: string; campaign_type: string; campaign_type_label: string;
+      weight: number;
+    }> }>(`/users/assignment-weights${qs ? `?${qs}` : ''}`);
+  },
 
-  // Every branch a user holds, with the role and weight in each. The view
-  // behind it resolves org_name/role_label, so callers never look up raw ids.
-  orgMappings: (userId: string) =>
+  // Every branch a user holds, with the role and per-campaign-type weights in
+  // each. The view behind it resolves org_name/role_label, so callers never
+  // look up raw ids.
+  orgMappings: (userId: string, scope?: AdminScope) =>
     request<{ success: true; data: Array<{
       org_id: string; org_name: string; role_id: string; role_label: string;
-      lead_assignment_weight: number; is_active: boolean;
-    }> }>(`/users/${userId}/org-mappings`),
+      weights: Array<{ campaign_type_id: string; campaign_type: string; campaign_type_label: string; weight: number }>;
+      is_active: boolean;
+    }> }>(withAdminScope(`/users/${userId}/org-mappings`, scope)),
 
-  orgChart: () => request<{ success: true; data: unknown[] }>('/users/org-chart'),
+  // The tenant's full campaign-type catalog — read-through so OrgAssignmentsField
+  // can group weight inputs without needing leads-service's
+  // LMS_CAMPAIGN_TYPES_VIEW capability (gated on admin.team.manage instead; see
+  // users.controller.ts's getCampaignTypeCatalog).
+  campaignTypeCatalog: (scope?: AdminScope) =>
+    request<{ success: true; data: Array<{
+      id: string; name: string; label: string; department_id: string | null; is_default: boolean;
+    }> }>(withAdminScope('/users/campaign-type-catalog', scope)),
+
+  // `orgId` picks the branch — required by the server when a super_admin
+  // works another tenant (scope.tenant_id); everyone else gets their own.
+  orgChart: (scope?: AdminScope & { org_id?: string | undefined }) => {
+    const path = scope?.org_id ? `/users/org-chart?org_id=${encodeURIComponent(scope.org_id)}` : '/users/org-chart';
+    return request<{ success: true; data: unknown[] }>(withAdminScope(path, scope));
+  },
 
   team: () => request<{ success: true; data: unknown[] }>('/users/team'),
 

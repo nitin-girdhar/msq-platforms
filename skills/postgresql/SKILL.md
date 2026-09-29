@@ -21,13 +21,27 @@ scripts (no drizzle-kit migrations).
 
 ## 0. How the DB is built & deployed
 
-- Authored as **ordered, idempotent SQL scripts**: `db_scripts/NN_name.sql`
-  (`01_init-db.sql`, `01_init-lookup-data.sql`, `10_init-hr-task-schemas.sql`, …).
+- Authored as **ordered, idempotent SQL scripts split by OBJECT TYPE, not by version**:
+  `00_extensions_schemas_roles` → `01_functions_shared` → `02_tables_core` → `03_tables_product`
+  → `04_functions_triggers` → `05_views` → `06_indexes` → `07_grants` → `08_rls` →
+  `09_schema_version` → `10_tenant_provisioning`, plus `reference_data/`, `dummy_data/`,
+  `one_time/` and `tools/`.
 - Idempotent everywhere: `CREATE TABLE IF NOT EXISTS`, `CREATE OR REPLACE VIEW/FUNCTION`,
   `DROP TRIGGER IF EXISTS … ; CREATE TRIGGER …`, guarded `CREATE ROLE` blocks.
-- Applied by `db_scripts/db_deploy.ps1`; applied versions tracked in `public.schema_versions`.
-- **Never edit an already-applied script to change shipped structure** — add a new numbered
-  script. Editing is fine only for still-in-development scripts.
+- Applied by `db_scripts/db_deploy.ps1` (DROPs and recreates — **local development only**);
+  applied versions recorded in `public.schema_versions`, which is a **ledger, not a runner**:
+  nothing reads it to decide what to apply.
+- **There are no numbered migration files.** To change the schema, **edit the `CREATE`
+  statement in place** — it is the single source of truth — and record the change in
+  `09_schema_version.sql`, where the description is the only record of *why*. A `_migrations/`
+  folder was tried twice and retired both times because it drifted from the `CREATE`; the files
+  are archived under `db_backups/`. See `db_scripts/README.md`, which is authoritative here.
+- **Getting a change onto a server that has data:** `apply_schema.ps1 -DbHost <server> -Backup`
+  re-runs only `04`–`08` and `10` (all idempotent). It deliberately does **not** re-run `02`/`03`,
+  which are `CREATE TABLE IF NOT EXISTS` and would silently no-op. A new column, type change,
+  constraint or data backfill therefore needs a hand-written one-shot parked in
+  `db_scripts/one_time/` — by convention an `apply_<change>.sql` plus a read-only
+  `apply_<change>_dryrun.sql` twin, guarded, transactional and re-runnable.
 - After changing SQL, mirror the change in the Drizzle schema under
   `packages/db/src/schema/` and update `docs/DB_model.md`.
 
@@ -272,7 +286,10 @@ defines `public.gen_uuidv7()`, `public.set_updated_at()`, `public.soft_delete_ro
 - Use `code` for the machine key — the convention is `name` (unique) + `label`.
 - Hard-delete a domain row — soft delete via `is_deleted` (the `soft_delete_row` trigger handles it).
 - Read GUCs without the `NULLIF(current_setting(…, true), '')::uuid` guard.
-- Edit an already-applied `db_scripts` file to change shipped structure — add a new numbered script.
+- Add a numbered migration file, or leave a schema change out of `09_schema_version.sql` — the
+  `CREATE` is edited in place and the version row is the only record of why.
+- Ship a table/column/constraint change without the matching `db_scripts/one_time/` one-shot:
+  `apply_schema.ps1` never re-runs `02`/`03`, so it would never reach a populated server.
 - Forget to mirror a schema change into `@platform/db` and `docs/DB_model.md`.
 
 ---

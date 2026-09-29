@@ -4,15 +4,25 @@ import { resolveCallback, sessionDestination, NO_ACCESS_PATH } from '../callback
 
 // productOrigins()/allowedRedirectOrigins() read these at call time, so each test
 // sets the topology it needs rather than relying on the ambient environment.
-const ENV_KEYS = ['NEXT_PUBLIC_AUTH_URL', 'NEXT_PUBLIC_LMS_URL', 'NEXT_PUBLIC_HR_URL', 'NEXT_PUBLIC_TASK_URL', 'NEXT_PUBLIC_ADMIN_URL'];
+const ENV_KEYS = [
+  'NEXT_PUBLIC_AUTH_URL',
+  'NEXT_PUBLIC_LMS_URL',
+  'NEXT_PUBLIC_HR_URL',
+  'NEXT_PUBLIC_TASK_URL',
+  'NEXT_PUBLIC_ADMIN_URL',
+];
 const saved: Record<string, string | undefined> = {};
 
+// The single-origin topology: one host, one PWA scope, a path prefix per app.
+// Every value is a BASE URL carrying that prefix, not a bare origin.
+const HOST = 'https://apps.app.com';
+
 function splitTopology() {
-  process.env['NEXT_PUBLIC_AUTH_URL'] = 'https://auth.app.com';
-  process.env['NEXT_PUBLIC_LMS_URL'] = 'https://lms.app.com';
-  process.env['NEXT_PUBLIC_HR_URL'] = 'https://hr.app.com';
-  process.env['NEXT_PUBLIC_TASK_URL'] = 'https://todo.app.com';
-  process.env['NEXT_PUBLIC_ADMIN_URL'] = 'https://admin.app.com';
+  process.env['NEXT_PUBLIC_AUTH_URL'] = HOST;
+  process.env['NEXT_PUBLIC_LMS_URL'] = `${HOST}/lms`;
+  process.env['NEXT_PUBLIC_HR_URL'] = `${HOST}/hrms`;
+  process.env['NEXT_PUBLIC_TASK_URL'] = `${HOST}/todo`;
+  process.env['NEXT_PUBLIC_ADMIN_URL'] = `${HOST}/sa`;
 }
 
 function singleHostDev() {
@@ -40,7 +50,16 @@ describe('resolveCallback — open-redirect guard', () => {
   beforeEach(splitTopology);
 
   it('honors an absolute callback on one of our own origins', () => {
-    expect(resolveCallback('https://hr.app.com/attendance')).toBe('https://hr.app.com/attendance');
+    expect(resolveCallback(`${HOST}/hrms/attendance`)).toBe(`${HOST}/hrms/attendance`);
+  });
+
+  it('honors a deep path under a product prefix', () => {
+    // The allowlist entry is `${HOST}/lms`, so a literal comparison against
+    // url.origin would reject this. Normalizing each entry to its origin is
+    // what keeps the return target intact.
+    expect(resolveCallback(`${HOST}/lms/dashboard/leads?page=2`)).toBe(
+      `${HOST}/lms/dashboard/leads?page=2`,
+    );
   });
 
   it('rejects a foreign absolute origin', () => {
@@ -48,6 +67,23 @@ describe('resolveCallback — open-redirect guard', () => {
     // the caller derives a destination. What it must NEVER be is the raw input.
     expect(resolveCallback('https://evil.example')).toBeNull();
     expect(resolveCallback('https://evil.example/dashboard/leads')).toBeNull();
+  });
+
+  // THE property this guard exists for, and the one most at risk from widening
+  // the comparison to an origin match: matching on origin must not decay into
+  // matching a substring or a suffix of the host.
+  it('still rejects a foreign origin that resembles ours', () => {
+    // Suffixed host — apps.app.com.evil.example is not apps.app.com.
+    expect(resolveCallback('https://apps.app.com.evil.example/lms/dashboard')).toBeNull();
+    // Subdomain of an attacker's host.
+    expect(resolveCallback('https://evil.apps.app.com/lms/dashboard')).toBeNull();
+    // Our host embedded in the path, or in userinfo — the host is theirs.
+    expect(resolveCallback('https://evil.example/https://apps.app.com/lms')).toBeNull();
+    expect(resolveCallback('https://apps.app.com@evil.example/lms')).toBeNull();
+    // Right host, wrong scheme — a different origin, and not a secure context.
+    expect(resolveCallback('http://apps.app.com/lms/dashboard')).toBeNull();
+    // Right host, wrong port.
+    expect(resolveCallback('https://apps.app.com:8443/lms/dashboard')).toBeNull();
   });
 
   it('rejects a protocol-relative path', () => {
@@ -74,18 +110,16 @@ describe('sessionDestination', () => {
   beforeEach(splitTopology);
 
   it('lands an HRMS-only tenant on HR, not the CRM dashboard', () => {
-    expect(sessionDestination(['hr'], sessionWith(HR_ONLY))).toBe('https://hr.app.com/attendance');
+    expect(sessionDestination(['hr'], sessionWith(HR_ONLY))).toBe(`${HOST}/hrms/attendance`);
   });
 
   it('lands an HR-only user in an LMS+HR tenant on HR', () => {
-    expect(sessionDestination(['lms', 'hr'], sessionWith(HR_ONLY))).toBe(
-      'https://hr.app.com/attendance',
-    );
+    expect(sessionDestination(['lms', 'hr'], sessionWith(HR_ONLY))).toBe(`${HOST}/hrms/attendance`);
   });
 
   it('still prefers LMS when the user can use it', () => {
     expect(sessionDestination(['lms', 'hr'], sessionWith([...LMS_ONLY, ...HR_ONLY]))).toBe(
-      'https://lms.app.com/dashboard/leads',
+      `${HOST}/lms/dashboard/leads`,
     );
   });
 
@@ -107,21 +141,26 @@ describe('resolveCallback — lookup-admin origin', () => {
   beforeEach(splitTopology);
 
   it('honors a callback back to the admin console', () => {
-    expect(resolveCallback('https://admin.app.com/dashboard/users')).toBe(
-      'https://admin.app.com/dashboard/users',
-    );
+    expect(resolveCallback(`${HOST}/sa/dashboard/users`)).toBe(`${HOST}/sa/dashboard/users`);
   });
 
-  it('rejects the admin origin when NEXT_PUBLIC_ADMIN_URL is unset', () => {
+  it('still accepts the /sa path when NEXT_PUBLIC_ADMIN_URL is unset', () => {
+    // A deliberate consequence of the single-origin move, not a regression.
+    // lookup-admin shares auth-web's host, so dropping its base URL no longer
+    // makes /sa a foreign target — the auth entry already covers that origin.
+    // Nothing is weakened: /sa is our own app either way, and lookup-admin's
+    // own middleware plus the gateway's capability gates are the real boundary.
+    // What must NOT change is that a lookalike host stays rejected.
     delete process.env['NEXT_PUBLIC_ADMIN_URL'];
-    expect(resolveCallback('https://admin.app.com/dashboard')).toBeNull();
+    expect(resolveCallback(`${HOST}/sa/dashboard`)).toBe(`${HOST}/sa/dashboard`);
+    expect(resolveCallback('https://admin.evil.example/sa/dashboard')).toBeNull();
   });
 
   it('never lands a user on the admin console by default', () => {
     // sessionDestination reads productOrigins(), which deliberately excludes the
-    // admin origin — an LMS-capable user goes to LMS, never to admin.
+    // admin base URL — an LMS-capable user goes to LMS, never to admin.
     expect(sessionDestination(['lms'], sessionWith(LMS_ONLY))).toBe(
-      'https://lms.app.com/dashboard/leads',
+      `${HOST}/lms/dashboard/leads`,
     );
   });
 });

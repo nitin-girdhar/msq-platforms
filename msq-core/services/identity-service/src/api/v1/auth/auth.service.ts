@@ -2,15 +2,14 @@ import { UnauthorizedError, BadRequestError, ForbiddenError } from '../../../lib
 import type { JwtPayload, UserOrgOption, PlatformRole, ProductKey } from '@platform/types';
 import { getActiveTenantModulesByTenantId } from '@platform/db';
 import { modulesToProducts, isTenantWideRole } from '@platform/authz';
-import { normalizeMobile, isMobileLike } from '@platform/validation';
+import { normalizeEmail, normalizeMobile, isMobileLike } from '@platform/validation';
 import { comparePassword, hashPassword } from '../../../lib/password.js';
 import { signJwt, verifyJwt, revokeJti, isJtiRevoked, revokeAllUserSessions, decodeJwtUnchecked } from '../../../lib/jwt.js';
 import { logActivity } from '@platform/audit-log';
-import { AUTH_COOKIE_NAME } from '../../../lib/cookies.js';
 import * as repo from './auth.repository.js';
 import { toSessionUser, sessionUserWithCapabilities } from './auth.types.js';
 import type { DatabaseUser } from './auth.types.js';
-import type { LoginInput } from './auth.schema.js';
+import type { LoginInput, SwitchOrgInput } from './auth.schema.js';
 import { config } from '../../../config/index.js';
 
 export interface LoginResult {
@@ -39,6 +38,22 @@ function platformRoleOf(dbUser: { platform_role: string | null }): PlatformRole 
   return (dbUser.platform_role ?? 'member') as PlatformRole;
 }
 
+// May this actor pick "All branches" in the navbar switcher? The same question
+// getMyOrgs answers when it decides whether to list every branch of the tenant,
+// so the "All" row and the branch list it sits on top of cannot disagree.
+//
+// This grants nothing. branch_scope only tells branch-scoped screens not to
+// narrow to the session org; how far a read may actually reach is still decided
+// by each service from the actor's capability scope (e.g. lms.leads.view), and
+// RLS runs against the real org_id the token always carries.
+function canViewAllBranches(platform_role: PlatformRole): boolean {
+  return isTenantWideRole(platform_role);
+}
+
+function branchScopeClaim(platform_role: PlatformRole): { branch_scope?: 'all' } {
+  return canViewAllBranches(platform_role) ? { branch_scope: 'all' } : {};
+}
+
 /**
  * Resolves a login identifier that may be an email or a mobile number.
  *
@@ -57,7 +72,7 @@ async function resolveLoginUser(
       identifier_type: 'mobile',
     };
   }
-  return { user: await repo.getUserByEmail(identifier, org_id), identifier_type: 'email' };
+  return { user: await repo.getUserByEmail(normalizeEmail(identifier), org_id), identifier_type: 'email' };
 }
 
 export async function login(input: LoginInput): Promise<LoginResult> {
@@ -145,6 +160,9 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   // client needs the same list to pick a landing product.
   const licensed_products = await getLicensedProducts(db_user.tenant_id);
 
+  // Users who can see every branch land on "All branches" by default; they
+  // narrow to one from the navbar switcher.
+  const branch_scope = branchScopeClaim(platformRoleOf(db_user));
   const token = signJwt({
     sub: db_user.id,
     email: db_user.email,
@@ -154,13 +172,17 @@ export async function login(input: LoginInput): Promise<LoginResult> {
     licensed_products,
     pwd_iat,
     force_password_change: db_user.force_password_change,
+    ...branch_scope,
   });
 
   await logActivity({ action_type: 'login_success', performed_by: db_user.id, org_id: db_user.org_id });
 
   return {
     token,
-    user: await sessionUserWithCapabilities({ ...db_user, last_login_at: new Date() } as DatabaseUser),
+    user: await sessionUserWithCapabilities(
+      { ...db_user, last_login_at: new Date() } as DatabaseUser,
+      branch_scope.branch_scope === 'all',
+    ),
     licensed_products,
   };
 }
@@ -177,8 +199,6 @@ export async function logout(token: string | undefined): Promise<void> {
     void logActivity({ action_type: 'logout', performed_by: result.payload.sub, org_id: result.payload.org_id });
   }
 }
-
-export { AUTH_COOKIE_NAME };
 
 // Verifies the token (signature, revocation, password epoch) and loads the
 // user scoped to the org the token was minted for, so role/rank/org_name in
@@ -220,11 +240,17 @@ async function resolveSession(
 export async function getSession(
   token: string | undefined,
 ): Promise<ReturnType<typeof toSessionUser>> {
-  const { db_user } = await resolveSession(token);
-  return sessionUserWithCapabilities(db_user);
+  const { payload, db_user } = await resolveSession(token);
+  return sessionUserWithCapabilities(db_user, payload.branch_scope === 'all');
 }
 
-export async function getMyOrgs(token: string | undefined): Promise<UserOrgOption[]> {
+export interface MyOrgsResult {
+  orgs: UserOrgOption[];
+  /** Whether the switcher may offer "All branches" (see canViewAllBranches). */
+  can_view_all: boolean;
+}
+
+export async function getMyOrgs(token: string | undefined): Promise<MyOrgsResult> {
   const { payload, db_user } = await resolveSession(token);
   // Tenant-wide roles aren't individually mapped to every branch via
   // iam.user_org_mapping (that mapping is for actors scoped to specific
@@ -233,33 +259,61 @@ export async function getMyOrgs(token: string | undefined): Promise<UserOrgOptio
   const rows = isTenantWideRole(payload.platform_role)
     ? await repo.getTenantOrgs(db_user.tenant_id, db_user.home_org_id, db_user.role_name, db_user.role_label, db_user.rank)
     : await repo.getUserOrgs(payload.sub);
-  return rows.map((r) => ({
-    org_id: r.org_id,
-    org_name: r.org_name,
-    role: r.role_name as UserOrgOption['role'],
-    role_label: r.role_label,
-    rank: r.rank,
-    is_home: r.is_home,
-  }));
+  return {
+    orgs: rows.map((r) => ({
+      org_id: r.org_id,
+      org_name: r.org_name,
+      role: r.role_name as UserOrgOption['role'],
+      role_label: r.role_label,
+      rank: r.rank,
+      is_home: r.is_home,
+    })),
+    can_view_all: canViewAllBranches(payload.platform_role),
+  };
 }
 
 // Re-mints the session for another branch the user is mapped to. The acting
 // user always comes from the verified token; the client only picks WHICH of
 // their own branches to act in — access is validated against
 // iam.user_org_mapping server-side (via getUserById's org-scoped branch).
+//
+// `{ all_branches: true }` re-mints for "All branches" instead: only for users
+// whose branch list is the whole tenant (canViewAllBranches). The token still
+// carries a real org_id — the home org — because RLS and writes need one; the
+// branch_scope claim only stops branch-scoped screens narrowing to it.
 export async function switchOrg(
   token: string | undefined,
-  org_id: string,
+  target: SwitchOrgInput,
 ): Promise<LoginResult> {
   const { payload } = await resolveSession(token);
 
-  const db_user = await repo.getUserById(payload.sub, org_id, payload.platform_role);
-  if (!db_user) {
+  const all_branches = 'all_branches' in target;
+  if (all_branches && !canViewAllBranches(payload.platform_role)) {
     void logActivity({
       action_type: 'org_switch_denied',
       performed_by: payload.sub,
-      org_id,
-      new_value: { requested_org_id: org_id },
+      org_id: payload.org_id,
+      new_value: { all_branches: true },
+    });
+    throw new ForbiddenError('You do not have access to all branches');
+  }
+
+  // The acting user always comes from the verified token. For "All branches"
+  // no org is passed, so getUserById resolves the user's own home org.
+  const org_id = all_branches ? undefined : target.org_id;
+  const db_user = all_branches
+    ? await repo.getUserById(payload.sub)
+    : await repo.getUserById(payload.sub, target.org_id, payload.platform_role);
+  if (!db_user) {
+    // Always the caller's own, verified org — never the requested one. The
+    // requested org_id is client input and may belong to ANOTHER tenant: filing
+    // the row there leaked this user's id into that tenant's activity feed and
+    // let anyone write into any tenant's audit trail (openissues cycle 4, #1).
+    void logActivity({
+      action_type: 'org_switch_denied',
+      performed_by: payload.sub,
+      org_id: payload.org_id,
+      new_value: all_branches ? { all_branches: true } : { requested_org_id: org_id },
     });
     throw new ForbiddenError('You do not have access to the selected branch');
   }
@@ -279,6 +333,7 @@ export async function switchOrg(
     licensed_products,
     pwd_iat,
     force_password_change: db_user.force_password_change,
+    ...(all_branches ? { branch_scope: 'all' as const } : {}),
   });
 
   // Retire the old single-org token so only one active branch exists per session.
@@ -290,11 +345,16 @@ export async function switchOrg(
     });
   }
 
-  await logActivity({ action_type: 'org_switch', performed_by: db_user.id, org_id: db_user.org_id });
+  await logActivity({
+    action_type: 'org_switch',
+    performed_by: db_user.id,
+    org_id: db_user.org_id,
+    ...(all_branches ? { new_value: { all_branches: true } } : {}),
+  });
 
   return {
     token: new_token,
-    user: await sessionUserWithCapabilities(db_user),
+    user: await sessionUserWithCapabilities(db_user, all_branches),
     licensed_products,
   };
 }
@@ -341,6 +401,8 @@ export async function changePassword(
       licensed_products,
       pwd_iat,
       force_password_change: false,
+      // Re-minted on the home org, like a fresh login — so the same default.
+      ...branchScopeClaim(platformRoleOf(db_user)),
     });
   } catch (err) {
     console.error('[auth] signJwt failed after password change:', (err as Error).message, db_user.id);

@@ -1,5 +1,6 @@
 import type { ProductKey } from '@platform/types';
 import type { CapabilityHolder, CapabilityKey } from '@platform/rbac';
+import { withBasePath } from '../api/base-path';
 import { holdsUsableNode } from './nav';
 
 // ── Which products this USER can actually open ──────────────────────────────
@@ -74,4 +75,31 @@ export function landingFor(
 ): string | null {
   const target = PRODUCT_PRIORITY.find((p) => products.includes(p) && origins[p]);
   return target ? `${origins[target]}${PRODUCT_LANDING[target]}` : null;
+}
+
+/**
+ * Href for one product's chip in the switcher.
+ *
+ * The two arms are not symmetric, and the difference is the whole point:
+ *
+ * - INACTIVE is cross-origin. `origins[p]` already carries the product's path
+ *   prefix (`https://apps.app.com/hrms`), so plain concatenation is right — the
+ *   same rule `landingFor()` above follows.
+ * - ACTIVE is SAME-APP, and the switcher renders raw `<a>` elements because the
+ *   other chips are cross-origin. Next applies `basePath` to `<Link>`, router
+ *   navigation and `/_next/*` — never to a raw anchor — so a bare
+ *   `/attendance` resolves against the ORIGIN ROOT, which under the
+ *   single-origin topology is auth-web, and 404s. That was the reported bug:
+ *   clicking HRMS from HR sent the user to `https://<host>/attendance`.
+ *   withBasePath() is the fix and the same one BranchSwitcher already applies
+ *   to its post-switch `location.assign`.
+ */
+export function productHref(
+  product: ProductKey,
+  origins: Record<ProductKey, string>,
+  active: boolean,
+): string {
+  return active
+    ? withBasePath(PRODUCT_LANDING[product])
+    : `${origins[product]}${PRODUCT_LANDING[product]}`;
 }

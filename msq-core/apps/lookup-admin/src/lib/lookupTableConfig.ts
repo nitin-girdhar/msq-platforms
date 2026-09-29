@@ -1,5 +1,6 @@
 import { RESERVED_ROLE_RANK } from '@platform/rbac';
 import { RESERVED_LEAVE_REQUEST_STATUS_NAMES } from '@platform/authz';
+import type { NavIconName } from '@platform/ui-kit/shell';
 
 export type FieldType = 'text' | 'textarea' | 'number' | 'boolean' | 'fk' | 'date' | 'time';
 
@@ -74,15 +75,17 @@ export interface LookupTableDef {
 export interface ModuleDef {
   key: ModuleKey;
   label: string;
+  // Sidebar symbol for this module's nav entry (see src/config/navigation.ts).
+  icon: NavIconName;
   description: string;
 }
 
 export const MODULES: ModuleDef[] = [
-  { key: 'platform', label: 'Platform', description: 'Tenants, organizations, and platform-wide classifications.' },
-  { key: 'lms', label: 'LMS', description: 'Leads, marketing, and CRM pipeline lookups.' },
-  { key: 'hr', label: 'HRMS', description: 'Leave, employment, and attendance lookups.' },
-  { key: 'tasks', label: 'Tasks', description: 'Task workflow and priority lookups.' },
-  { key: 'capabilities', label: 'Capabilities', description: 'Roles, capability grants, and tenant/org role assignment.' },
+  { key: 'platform', label: 'Platform', icon: 'globe', description: 'Tenants, organizations, and platform-wide classifications.' },
+  { key: 'lms', label: 'LMS', icon: 'target', description: 'Leads, marketing, and CRM pipeline lookups.' },
+  { key: 'hr', label: 'HRMS', icon: 'id-card', description: 'Leave, employment, and attendance lookups.' },
+  { key: 'tasks', label: 'Tasks', icon: 'square-check-big', description: 'Task workflow and priority lookups.' },
+  { key: 'capabilities', label: 'Capabilities', icon: 'shield-check', description: 'Roles, capability grants, and tenant/org role assignment.' },
 ];
 
 const NAME_LABEL_FIELDS: LookupFieldConfig[] = [

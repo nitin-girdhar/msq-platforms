@@ -8,6 +8,7 @@ import { countriesTable } from './countries.table';
 import { leadStageTable } from './lead-stage.table';
 import { leadStageOutcomeTable } from './lead-stage-outcome.table';
 import { adCampaignsTable } from './ad-campaigns.table';
+import { campaignTypesTable } from './campaign-types.table';
 import { leadSourcesTable } from './lead-sources.table';
 import { usersTable } from './users.table';
 
@@ -39,9 +40,23 @@ export const marketingLeadsTable = lmsSchema.table('marketing_leads', {
   outcomeComment:  text('outcome_comment'),
   scheduledAt:     timestamp('scheduled_at', { withTimezone: true }),
   campaignId:      uuid('campaign_id').references(() => adCampaignsTable.id, { onDelete: 'set null' }),
+  // Denormalised from the campaign, and kept in step by
+  // lms.sync_lead_campaign_type() — a BEFORE trigger, so do not write it
+  // alongside campaignId expecting the two to be reconciled in application code.
+  //
+  // This is the column lms.marketing_leads' RLS policy reads to decide whether
+  // the acting user may SEE the row at all (sales vs hiring). A repository
+  // filtering on it is filtering, not securing; the boundary is the policy.
+  campaignTypeId:  uuid('campaign_type_id').references(() => campaignTypesTable.id, { onDelete: 'restrict' }),
   sourceId:        uuid('source_id').references(() => leadSourcesTable.id),
   assignedUserId:  uuid('assigned_user_id').references(() => usersTable.id, { onDelete: 'set null' }),
-  isActive:        boolean('is_active').notNull().default(true),
+  /**
+   * 1.51.0: why the auto-assigner left this lead unowned —
+   * 'no_campaign_type' | 'no_weighted_users' | 'no_department_match' | 'no_capable_users'.
+   * NULL once anyone owns it.
+   */
+  autoAssignReason: text('auto_assign_reason'),
+  isActive:      boolean('is_active').notNull().default(true),
   supersededBy:    uuid('superseded_by').references((): any => marketingLeadsTable.id, { onDelete: 'set null' }),
   rawWebhookData:  jsonb('raw_webhook_data').notNull().default({}),
   metadata:        jsonb('metadata').notNull().default({}),

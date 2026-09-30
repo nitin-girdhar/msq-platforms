@@ -426,16 +426,19 @@ enabling face matching; if it spikes, check CompreFace before assuming fraud.
 | Face match decision matrix (flag vs block, fail-open) | `msq-hrms/services/hr-service/src/lib/face/punch-verification.ts` |
 | API payload rules | `msq-hrms/packages/hr-validation/src/attendance.ts` |
 | Admin UI | `msq-hrms/packages/hr-web/src/components/attendance/admin/` |
+| Reports UI (summary + combined sheet) | `msq-hrms/packages/hr-web/src/components/reports/` |
+| Report shaping / xlsx | `msq-hrms/services/hr-service/src/lib/attendance/report-detail.ts`, `report-muster.ts`, `report-export.ts` |
 
 All three write paths — live punch, nightly job, face-review recompute — share
 `deriveFromEvents`, so they agree by construction rather than by convention.
 
 ## 7. Detailed attendance report
 
-Attendance Admin → Reports → **Download** (`GET /hr/attendance/reports/detail?month=YYYY-MM&format=xlsx|csv`),
-gated like the summary: `hr.attendance.admin.reports.view` on the route and
-`hr.attendance.admin` in the service. Scope is the caller's current branch
-(`org_id` from the verified session, never the query).
+HR → Reports → Monthly summary → **Download** (`GET /hr/attendance/reports/detail?month=YYYY-MM&format=xlsx|csv`),
+gated like the summary: `hr.reports.attendance.view` on the route and a
+`.org`/`.tenant` scope in the service (until 1.56.0: `hr.attendance.admin.reports.view`
+plus `hr.attendance.admin`, from the Attendance Admin → Reports tab). Scope is the
+caller's current branch (`org_id` from the verified session, never the query).
 
 | Sheet | One row per | Columns |
 |---|---|---|
@@ -453,3 +456,45 @@ has not reached them): holiday → weekly off → approved leave, else "Not Mark
 Present. Punches withheld by face review (pending/rejected) are listed on their
 own Punches row as "not counted" and are not paired, exactly as the classifier
 treats them.
+
+## 8. Combined attendance (muster) report
+
+HR → Reports → **Combined attendance** (`GET /hr/attendance/reports/muster?month=YYYY-MM&branch=current|all&org_id=&format=json|xlsx`).
+The payroll sheet HR teams keep by hand, one row per employee:
+
+`SL No | Name | Profile (designation) | Department | DOJ | Branch | 1 … 28-31 | Total Present Day | Weekoff Paid | Paid Leave | Holidays | Total Paid Days | Final Paid Days`
+
+Each day's status comes from `displayStatus` — the same precedence as the
+detailed report (§7) and the nightly job — and is then mapped to a cell
+(`lib/attendance/report-muster.ts`):
+
+| Status | Cell | Counts |
+|---|---|---|
+| present, wfh, in progress | `P` | 1 present |
+| half_day | `HD` | 0.5 present |
+| half_day on a half-day leave of a **paid** type | `HD/L` | 0.5 present + 0.5 paid leave |
+| half_day on a half-day leave of an unpaid type | `HD` | 0.5 present (the other half is loss of pay) |
+| on_leave, paid type (`hr.leave_types.is_paid`) | `L` | 1 paid leave |
+| on_leave, unpaid type (loss of pay) | `LOP` | 0 |
+| weekly_off | `WO` | 1 week-off — **every** weekly off inside employment is paid |
+| holiday (non-optional) | `H` | 1 holiday |
+| absent, missed_punch, a finished day never marked | `A` | 0 |
+| before DOJ / after exit / today not yet marked / after today | blank | 0 |
+
+Total Paid Days = Present + Weekoff Paid + Paid Leave + Holidays. **Final Paid
+Days** is exported blank: HR settles it by hand after review.
+
+**Branch reach** — `branch=current` reads the session branch; `branch=all` needs
+`hr.reports.attendance.view.tenant` and reads every active branch of the
+gateway-verified tenant, optionally narrowed by `org_id` (a branch outside that
+set is a 403, never an empty sheet). The page opens on All branches when the
+navbar switcher is on All branches and the actor holds the tenant scope.
+
+**Edges** — an employee is one row per branch, so someone who moved branch
+mid-month appears under each branch they have days in. "Today" is each branch's
+own date in its timezone. A finished day with punches but no resolved row reads
+as `A` (this report loads no punches); the nightly job resolves every finished
+day, so this only shows for a day the job has not reached yet.
+
+xlsx: title row (month + scope), yellow header, frozen at the Branch column,
+day cells coloured like the Daily Detail sheet, a Legend sheet.

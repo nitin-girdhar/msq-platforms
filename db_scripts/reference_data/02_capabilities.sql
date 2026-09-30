@@ -217,16 +217,14 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Read who is on which shift.', 1),
 ('hr.attendance.admin.assignments.manage', 'operation', 'hr.attendance.admin.assignments', 'Manage assignments',
  'Put people on shifts and move them.', 2),
-('hr.attendance.admin.reports', 'tab', 'hr.attendance.admin', 'Reports',
- 'Attendance summaries across the branch.', 4),
+-- sort 4 was hr.attendance.admin.reports — moved to its own `hr.reports` tool
+-- (schema 1.56.0) and deactivated by one_time/apply_hr_reports_capability.sql.
 ('hr.attendance.admin.geo_exceptions', 'tab', 'hr.attendance.admin', 'Geofence exceptions',
  'People allowed to check in from outside the office radius.', 5),
 ('hr.attendance.admin.geo_exceptions.view',   'operation', 'hr.attendance.admin.geo_exceptions', 'View exceptions',
  'Read who may check in remotely, and until when.', 1),
 ('hr.attendance.admin.geo_exceptions.manage', 'operation', 'hr.attendance.admin.geo_exceptions', 'Manage exceptions',
  'Let a named person check in from anywhere — a rotating field role, or an approved work-from-home stretch.', 2),
-('hr.attendance.admin.reports.view', 'operation', 'hr.attendance.admin.reports', 'View reports',
- 'Read branch-wide attendance summaries.', 1),
 
 -- ── LEAVE ───────────────────────────────────────────────────────────
 ('hr.leave', 'tool', NULL, 'Leave',
@@ -282,6 +280,23 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Create and edit employee profiles.', 2),
 ('hr.employees.taxonomy.manage', 'operation', 'hr.employees', 'Manage departments',
  'Create and edit departments and designations.', 3),
+
+-- ── HR REPORTS ──────────────────────────────────────────────────────
+-- Its own tool (the HRMS left-nav "Reports" entry), not a tab of Attendance
+-- admin: reading payroll reports is a different audience from configuring
+-- rules and shifts. Until 1.56.0 this was hr.attendance.admin.reports.
+-- The scope ladder decides branch reach: .org is the session branch only,
+-- .tenant lets "All branches" read every branch of the tenant.
+('hr.reports', 'tool', NULL, 'HR reports',
+ 'Attendance and payroll reports. Denying it hides the Reports screen.', 4),
+('hr.reports.attendance', 'page', 'hr.reports', 'Attendance reports',
+ 'Monthly summary and the combined day-by-day attendance sheet.', 1),
+('hr.reports.attendance.view', 'operation', 'hr.reports.attendance', 'View reports',
+ 'Read and download attendance reports. Needs a scope below.', 1),
+('hr.reports.attendance.view.org',    'scope', 'hr.reports.attendance.view', 'Whole branch',
+ 'Everyone in the branch they are working in.', 3),
+('hr.reports.attendance.view.tenant', 'scope', 'hr.reports.attendance.view', 'Every branch',
+ 'Everyone across every branch in the tenant, in one sheet.', 4),
 
 -- ── TASKS ───────────────────────────────────────────────────────────
 ('tasks', 'tool', NULL, 'Tasks',

@@ -224,7 +224,8 @@ FROM (VALUES
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
   'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
   'hr.attendance.admin.geo_exceptions.view','hr.attendance.admin.geo_exceptions.manage',
-  'hr.attendance.admin.reports.view',
+  'hr.reports','hr.reports.attendance.view',
+  'hr.reports.attendance.view.org','hr.reports.attendance.view.tenant',
   'hr.leave','hr.leave.view',
   'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org',
   'hr.leave.approve','hr.leave.reject',
@@ -275,7 +276,7 @@ FROM (VALUES
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
   'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
   'hr.attendance.admin.geo_exceptions.view','hr.attendance.admin.geo_exceptions.manage',
-  'hr.attendance.admin.reports.view',
+  'hr.reports','hr.reports.attendance.view','hr.reports.attendance.view.org',
   'hr.leave','hr.leave.view',
   'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org',
   'hr.leave.approve','hr.leave.reject',
@@ -334,7 +335,8 @@ FROM (VALUES
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
   'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
   'hr.attendance.admin.geo_exceptions.view','hr.attendance.admin.geo_exceptions.manage',
-  'hr.attendance.admin.reports.view',
+  'hr.reports','hr.reports.attendance.view',
+  'hr.reports.attendance.view.org','hr.reports.attendance.view.tenant',
   'hr.leave','hr.leave.view',
   'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org','hr.leave.view.tenant',
   'hr.leave.approve','hr.leave.reject',
@@ -752,5 +754,74 @@ WHERE src.key IN ('lms.campaigns', 'lms.campaigns.view', 'lms.campaigns.manage')
   AND rc.tenant_id IS NOT NULL
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO UPDATE SET is_granted = EXCLUDED.is_granted;
+
+
+-- ── Back-fill: hr.reports replaces hr.attendance.admin.reports (1.56.0) ──
+-- Reports left the Attendance admin page for their own HRMS left-nav entry and
+-- their own tool. Same per-tenant-copy trap as every back-fill above, so the new
+-- keys are pinned to the RETIRED one — hr.attendance.admin.reports.view — whose
+-- holders are exactly the audience, in every tenant, including a tenant's own
+-- custom roles — but only where that grant is EFFECTIVE, so a role a tenant
+-- had cut off from attendance (a denied ancestor) does not gain the new page.
+-- The retired node is deactivated (not deleted) by
+-- one_time/apply_hr_reports_capability.sql; once it is, the matrix no longer
+-- lists it and this block is a no-op. On a fresh install the lists above cover it.
+--
+-- Branch reach: every holder gets .org (what the old tab did). Only
+-- tenant_admin, hr_admin and super_admin get .tenant — the roles that already
+-- work across branches (hr_admin is often homed in a head-office branch with
+-- nobody in it).
+--
+-- DO NOTHING: a tenant that later unticks a report scope in the Capability
+-- Matrix writes is_granted = FALSE, and a re-seed must not flip it back on.
+WITH tgt(key, tenant_roles_only) AS (
+  VALUES ('hr.reports', FALSE), ('hr.reports.attendance.view', FALSE),
+         ('hr.reports.attendance.view.org', FALSE), ('hr.reports.attendance.view.tenant', TRUE)
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, c.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'hr.attendance.admin.reports.view'
+JOIN iam.user_roles r ON r.id = rc.role_id
+-- EFFECTIVE holders only: a grant row a denied ancestor prunes (e.g. a tenant
+-- that took hr.attendance away from org_admin) must not become a live Reports
+-- page. The matrix resolves the per-tenant copy of the role first, as login does.
+JOIN LATERAL (
+  SELECT 1 FROM iam.fn_role_capability_matrix(rc.tenant_id) m
+  WHERE m.role_name = r.name AND m.capability_key = 'hr.attendance.admin.reports.view' AND m.granted
+  LIMIT 1
+) eff ON TRUE
+CROSS JOIN tgt
+JOIN iam.capabilities c ON c.key = tgt.key
+WHERE rc.is_granted
+  AND rc.tenant_id IS NULL
+  AND (NOT tgt.tenant_roles_only OR r.name IN ('tenant_admin', 'hr_admin', 'super_admin'))
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO NOTHING;
+
+WITH tgt(key, tenant_roles_only) AS (
+  VALUES ('hr.reports', FALSE), ('hr.reports.attendance.view', FALSE),
+         ('hr.reports.attendance.view.org', FALSE), ('hr.reports.attendance.view.tenant', TRUE)
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, c.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'hr.attendance.admin.reports.view'
+JOIN iam.user_roles r ON r.id = rc.role_id
+-- EFFECTIVE holders only: a grant row a denied ancestor prunes (e.g. a tenant
+-- that took hr.attendance away from org_admin) must not become a live Reports
+-- page. The matrix resolves the per-tenant copy of the role first, as login does.
+JOIN LATERAL (
+  SELECT 1 FROM iam.fn_role_capability_matrix(rc.tenant_id) m
+  WHERE m.role_name = r.name AND m.capability_key = 'hr.attendance.admin.reports.view' AND m.granted
+  LIMIT 1
+) eff ON TRUE
+CROSS JOIN tgt
+JOIN iam.capabilities c ON c.key = tgt.key
+WHERE rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+  AND (NOT tgt.tenant_roles_only OR r.name IN ('tenant_admin', 'hr_admin', 'super_admin'))
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO NOTHING;
 
 COMMIT;

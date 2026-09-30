@@ -13,7 +13,7 @@
 import { isSuperAdmin } from './predicates.js';
 
 export const CAPABILITY = {
-  // ── Tools (8) ──
+  // ── Tools (9) ──
   // `admin` is the TENANT admin console (admin-web). `superadmin` is the
   // platform operator console (lookup-admin) and is never assignable to a
   // tenant role — see isSuperAdminCapability below.
@@ -21,16 +21,18 @@ export const CAPABILITY = {
   HR_ATTENDANCE:  'hr.attendance',
   HR_EMPLOYEES:   'hr.employees',
   HR_LEAVE:       'hr.leave',
+  HR_REPORTS:     'hr.reports',
   LMS:            'lms',
   PLATFORM:       'platform',
   SUPERADMIN:     'superadmin',
   TASKS:          'tasks',
 
-  // ── Pages (13) ──
+  // ── Pages (14) ──
   ADMIN_API_TOKENS:     'admin.api_tokens',
   ADMIN_TEAM:           'admin.team',
   HR_ATTENDANCE_ADMIN:  'hr.attendance.admin',
   HR_LEAVE_ADMIN:       'hr.leave.admin',
+  HR_REPORTS_ATTENDANCE: 'hr.reports.attendance',
   LMS_ANALYTICS:        'lms.analytics',
   LMS_ASSIGNMENTS:      'lms.assignments',
   LMS_CAMPAIGNS:        'lms.campaigns',
@@ -42,10 +44,9 @@ export const CAPABILITY = {
   SUPERADMIN_LOOKUPS:   'superadmin.lookups',
   TASKS_LISTS:          'tasks.lists',
 
-  // ── Tabs (9) ──
+  // ── Tabs (8) ──
   HR_ATTENDANCE_ADMIN_ASSIGNMENTS:     'hr.attendance.admin.assignments',
   HR_ATTENDANCE_ADMIN_GEO_EXCEPTIONS:  'hr.attendance.admin.geo_exceptions',
-  HR_ATTENDANCE_ADMIN_REPORTS:      'hr.attendance.admin.reports',
   HR_ATTENDANCE_ADMIN_RULES:        'hr.attendance.admin.rules',
   HR_ATTENDANCE_ADMIN_SHIFTS:       'hr.attendance.admin.shifts',
   HR_LEAVE_ADMIN_ADJUSTMENT:        'hr.leave.admin.adjustment',
@@ -63,7 +64,6 @@ export const CAPABILITY = {
   HR_ATTENDANCE_ADMIN_ASSIGNMENTS_VIEW:    'hr.attendance.admin.assignments.view',
   HR_ATTENDANCE_ADMIN_GEO_EXCEPTIONS_MANAGE: 'hr.attendance.admin.geo_exceptions.manage',
   HR_ATTENDANCE_ADMIN_GEO_EXCEPTIONS_VIEW:   'hr.attendance.admin.geo_exceptions.view',
-  HR_ATTENDANCE_ADMIN_REPORTS_VIEW:        'hr.attendance.admin.reports.view',
   HR_ATTENDANCE_ADMIN_RULES_UPDATE:        'hr.attendance.admin.rules.update',
   HR_ATTENDANCE_ADMIN_RULES_VIEW:          'hr.attendance.admin.rules.view',
   HR_ATTENDANCE_ADMIN_SHIFTS_MANAGE:       'hr.attendance.admin.shifts.manage',
@@ -88,6 +88,7 @@ export const CAPABILITY = {
   HR_LEAVE_REQUEST_CANCEL:                 'hr.leave.request.cancel',
   HR_LEAVE_REQUEST_CREATE:                 'hr.leave.request.create',
   HR_LEAVE_VIEW:                           'hr.leave.view',
+  HR_REPORTS_ATTENDANCE_VIEW:              'hr.reports.attendance.view',
   LMS_ANALYTICS_ORG_VIEW:                  'lms.analytics.org.view',
   LMS_ANALYTICS_VIEW:                      'lms.analytics.view',
   LMS_ASSIGNMENTS_DELETE:                  'lms.assignments.delete',
@@ -135,7 +136,7 @@ export const CAPABILITY = {
   TASKS_LISTS_VIEW:                        'tasks.lists.view',
   TASKS_VIEW:                              'tasks.view',
 
-  // ── Scopes — read with resolveScope(), not can() (30) ──
+  // ── Scopes — read with resolveScope(), not can() (32) ──
   ADMIN_TEAM_VIEW_ORG:       'admin.team.view.org',
   ADMIN_TEAM_VIEW_TEAM:      'admin.team.view.team',
   HR_ATTENDANCE_VIEW_ORG:    'hr.attendance.view.org',
@@ -145,6 +146,8 @@ export const CAPABILITY = {
   HR_LEAVE_VIEW_OWN:         'hr.leave.view.own',
   HR_LEAVE_VIEW_TEAM:        'hr.leave.view.team',
   HR_LEAVE_VIEW_TENANT:      'hr.leave.view.tenant',
+  HR_REPORTS_ATTENDANCE_VIEW_ORG:    'hr.reports.attendance.view.org',
+  HR_REPORTS_ATTENDANCE_VIEW_TENANT: 'hr.reports.attendance.view.tenant',
   LMS_HISTORY_VIEW_ALL:      'lms.history.view.all',
   LMS_HISTORY_VIEW_ORG:      'lms.history.view.org',
   LMS_HISTORY_VIEW_OWN:      'lms.history.view.own',

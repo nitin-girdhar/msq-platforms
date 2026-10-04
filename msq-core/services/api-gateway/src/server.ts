@@ -1254,7 +1254,27 @@ app.post('/hr/assets/:id/return', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, `/api/v1/assets/${id}/return`, req, reply, req.userCtx);
 });
 
+// Roster planner (schema 1.66.0).
+app.get('/hr/attendance/planner/week', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/planner/week', req, reply, req.userCtx);
+});
+app.put('/hr/attendance/planner/cells', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/planner/cells', req, reply, req.userCtx);
+});
+app.put('/hr/attendance/planner/requirements', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/planner/requirements', req, reply, req.userCtx);
+});
+app.post('/hr/attendance/planner/publish', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/planner/publish', req, reply, req.userCtx);
+});
+
 // Documents vault (schema 1.65.0). Static paths first.
+app.get('/hr/documents/settings', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/documents/settings', req, reply, req.userCtx);
+});
+app.put('/hr/documents/settings', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/documents/settings', req, reply, req.userCtx);
+});
 app.get('/hr/documents/mine', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/documents/mine', req, reply, req.userCtx);
 });
@@ -1636,6 +1656,19 @@ app.delete('/task-lists/:id', { ...withAuth }, async (req, reply) => {
 
 app.get('/tasks/mine', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.tasksServiceUrl, '/api/v1/tasks/mine', req, reply, req.userCtx);
+});
+// KPI counts, CSV export and bulk update (schema 1.66.0). Static paths, so they
+// never collide with '/tasks/:id'. Capabilities are enforced in tasks-service.
+app.get('/tasks/stats', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.tasksServiceUrl, '/api/v1/tasks/stats', req, reply, req.userCtx);
+});
+app.get('/tasks/export', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.tasksServiceUrl, '/api/v1/tasks/export', req, reply, req.userCtx, {
+    forwardResponseHeaders: ['x-export-truncated'],
+  });
+});
+app.post('/tasks/bulk', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.tasksServiceUrl, '/api/v1/tasks/bulk', req, reply, req.userCtx);
 });
 app.get('/tasks', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.tasksServiceUrl, '/api/v1/tasks', req, reply, req.userCtx);

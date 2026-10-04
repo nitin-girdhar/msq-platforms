@@ -537,6 +537,10 @@ GRANT SELECT, INSERT, UPDATE ON task.tasks TO tenant_admin;
 REVOKE DELETE                ON task.tasks FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON task.tasks TO root_service;
 
+-- 1.66.0: counters are reachable only through the SECURITY DEFINER trigger.
+REVOKE ALL PRIVILEGES ON task.task_counters FROM app_user, tenant_admin, task_svc;
+GRANT ALL PRIVILEGES  ON task.task_counters TO root_service;
+
 GRANT SELECT                  ON task.task_status_log TO app_user;
 GRANT SELECT                  ON task.task_status_log TO tenant_admin;
 REVOKE INSERT, UPDATE, DELETE ON task.task_status_log FROM app_user, tenant_admin;
@@ -985,5 +989,12 @@ GRANT SELECT, INSERT, UPDATE ON hr.employee_documents TO tenant_admin;
 REVOKE DELETE                ON hr.employee_documents FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON hr.employee_documents TO root_service;
 GRANT SELECT, INSERT, UPDATE ON hr.employee_documents TO hr_svc;
+
+-- Roster planner + document limit (1.66.0). Not secret: the branch may read; writes are service-only.
+GRANT SELECT                 ON hr.document_settings, hr.shift_requirements, hr.roster_publications TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.document_settings, hr.shift_requirements, hr.roster_publications TO tenant_admin;
+REVOKE DELETE                ON hr.document_settings, hr.shift_requirements, hr.roster_publications FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.document_settings, hr.shift_requirements, hr.roster_publications TO root_service;
+GRANT SELECT, INSERT, UPDATE ON hr.document_settings, hr.shift_requirements, hr.roster_publications TO hr_svc;
 
 COMMIT;

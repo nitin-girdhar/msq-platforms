@@ -1162,7 +1162,17 @@ SELECT
   t.completed_at,
   t.recurrence_rule,
   t.created_at,
-  t.updated_at
+  t.updated_at,
+  -- 1.66.0: appended (CREATE OR REPLACE VIEW can only add columns at the end).
+  t.task_no,
+  o.name         AS org_name,
+  -- SLA chip: derived from due_at, no policy table. Finished tasks never breach.
+  CASE
+    WHEN t.due_at IS NULL OR ts.is_terminal THEN 'none'
+    WHEN t.due_at < now()                   THEN 'overdue'
+    WHEN t.due_at < now() + INTERVAL '24 hours' THEN 'due_soon'
+    ELSE 'ok'
+  END            AS sla_state
 FROM task.tasks t
 LEFT JOIN task.task_lists      tl ON tl.id = t.list_id
 -- Catalog joins are qualified on tenant_id: these views are read under

@@ -200,6 +200,13 @@ CREATE TABLE IF NOT EXISTS hr.employee_profiles (
   department_id       UUID    REFERENCES iam.departments(id)     ON DELETE RESTRICT,
   designation_id      UUID    REFERENCES hr.designations(id)     ON DELETE RESTRICT,
   probation_end_date  DATE,
+  -- Org-chart facts the Stitch directory / Employee 360 show (schema 1.66.0). All optional.
+  grade               TEXT,            -- level, e.g. 'L4'
+  squad               TEXT,            -- team inside the department
+  cost_center         TEXT,
+  notice_period_days  SMALLINT CONSTRAINT chk_employee_profiles_notice CHECK (notice_period_days IS NULL OR notice_period_days BETWEEN 0 AND 365),
+  work_mode           TEXT     CONSTRAINT chk_employee_profiles_work_mode CHECK (work_mode IS NULL OR work_mode IN ('office','hybrid','remote')),
+  seat_label          TEXT,
   -- days of week off, 0=Sunday .. 6=Saturday; overridable by shift assignment
   weekly_off_pattern  SMALLINT[] NOT NULL DEFAULT '{0,6}',
   metadata            JSONB   NOT NULL DEFAULT '{}',
@@ -896,6 +903,9 @@ CREATE TABLE IF NOT EXISTS task.task_lists (
 CREATE TABLE IF NOT EXISTS task.tasks (
   id                   UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   org_id               UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  -- Human-facing code (TASK-904): a per-branch (org) running number, assigned by
+  -- trg_02_tasks_assign_no from task.task_counters. Never supplied by a client.
+  task_no              BIGINT  NOT NULL,
   list_id              UUID    REFERENCES task.task_lists(id) ON DELETE SET NULL,
   title                TEXT    NOT NULL,
   description          TEXT,
@@ -922,6 +932,17 @@ CREATE TABLE IF NOT EXISTS task.tasks (
   -- related_entity_type and _id are set together or not at all.
   CONSTRAINT chk_tasks_related_entity
     CHECK ((related_entity_type IS NULL) = (related_entity_id IS NULL))
+);
+
+
+-- ===================================================================
+-- 3b. task.task_counters — last task_no handed out per org (schema 1.66.0)
+--     Touched only by the SECURITY DEFINER trigger task.assign_task_no(); no
+--     app_user / tenant_admin policy or grant, so it is unreachable from a request.
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS task.task_counters (
+  org_id  UUID   PRIMARY KEY REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  last_no BIGINT NOT NULL DEFAULT 0
 );
 
 
@@ -1444,7 +1465,7 @@ CREATE TABLE IF NOT EXISTS hr.employee_documents (
   mime_type   TEXT    NOT NULL
                       CONSTRAINT chk_employee_documents_mime CHECK (mime_type IN ('application/pdf','image/jpeg','image/png','image/webp')),
   size_bytes  INT     NOT NULL
-                      CONSTRAINT chk_employee_documents_size CHECK (size_bytes > 0 AND size_bytes <= 3145728),
+                      CONSTRAINT chk_employee_documents_size CHECK (size_bytes > 0 AND size_bytes <= 3670016),
   status      TEXT    NOT NULL DEFAULT 'pending'
                       CONSTRAINT chk_employee_documents_status CHECK (status IN ('pending','verified','rejected')),
   reviewed_by UUID    REFERENCES iam.users(id) ON DELETE SET NULL,
@@ -1462,6 +1483,62 @@ CREATE TABLE IF NOT EXISTS hr.employee_documents (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   CONSTRAINT chk_employee_documents_review CHECK ((status = 'pending') = (reviewed_at IS NULL)),
   CONSTRAINT chk_employee_documents_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+-- ===================================================================
+-- 14. Roster planner + document limit (schema 1.66.0)
+--     hr.document_settings   one row per org: the largest document upload HR allows (bytes).
+--       Capped by CHECK at 3.5 MiB: documents travel as base64 inside the 5 MB JSON body.
+--     hr.shift_requirements  how many people a shift needs in a branch (capacity cards).
+--     hr.roster_publications a week of the roster that HR has published, by whom and when.
+--     Not secret, so readable by the branch; every write goes through the service transaction
+--     behind the manage capabilities.
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.document_settings (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  org_id      UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  max_bytes   INT     NOT NULL DEFAULT 3145728
+                      CONSTRAINT chk_document_settings_max CHECK (max_bytes BETWEEN 102400 AND 3670016),
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_document_settings_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+CREATE TABLE IF NOT EXISTS hr.shift_requirements (
+  id                 UUID     PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  org_id             UUID     NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  shift_id           UUID     NOT NULL REFERENCES hr.shifts(id)            ON DELETE CASCADE,
+  required_headcount SMALLINT NOT NULL CONSTRAINT chk_shift_requirements_count CHECK (required_headcount BETWEEN 0 AND 5000),
+  is_active          BOOLEAN  NOT NULL DEFAULT TRUE,
+  is_deleted         BOOLEAN  NOT NULL DEFAULT FALSE,
+  deleted_at         TIMESTAMPTZ,
+  deleted_by         UUID,
+  created_by         UUID,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_shift_requirements_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+CREATE TABLE IF NOT EXISTS hr.roster_publications (
+  id            UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  org_id        UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  week_start    DATE    NOT NULL CONSTRAINT chk_roster_publications_monday CHECK (EXTRACT(ISODOW FROM week_start) = 1),
+  published_by  UUID    REFERENCES iam.users(id) ON DELETE SET NULL,
+  published_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  note          TEXT,
+  is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted    BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at    TIMESTAMPTZ,
+  deleted_by    UUID,
+  created_by    UUID,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_roster_publications_active_deleted CHECK (NOT (is_active AND is_deleted))
 );
 
 COMMIT;

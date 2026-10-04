@@ -32,6 +32,7 @@ export const BRANDABLE_NAV: ReadonlyArray<{ product: string; label: string; item
       { id: 'dashboard', label: 'Home', icon: 'layout-dashboard' },
       { id: 'attendance', label: 'Attendance', icon: 'clock' },
       { id: 'team', label: 'My team', icon: 'users-round' },
+      { id: 'planner', label: 'Roster planner', icon: 'calendar-days' },
       { id: 'leave', label: 'Leave', icon: 'plane' },
       { id: 'payroll', label: 'Payroll', icon: 'file-text' },
       { id: 'documents', label: 'Documents', icon: 'folder-open' },
@@ -43,7 +44,11 @@ export const BRANDABLE_NAV: ReadonlyArray<{ product: string; label: string; item
   {
     product: 'task',
     label: 'Tasks',
-    items: [{ id: 'tasks', label: 'Tasks', icon: 'square-check-big' }],
+    items: [
+      { id: 'tasks', label: 'My Tasks', icon: 'square-check-big' },
+      { id: 'tasks-team', label: 'Team Tasks', icon: 'users-round' },
+      { id: 'tasks-lists', label: 'Lists & Scopes', icon: 'list-checks' },
+    ],
   },
 ];
 

@@ -2544,6 +2544,25 @@ BEGIN
   RETURN NEW;
 END; $$;
 
+-- Per-org running task number (schema 1.66.0). SECURITY DEFINER: app_user has no
+-- access to task.task_counters. The upsert row-locks the org's counter, so two
+-- concurrent inserts into one org serialise and can never draw the same number.
+-- Runs after trg_00_tasks_set_org_id, so NEW.org_id is already populated. A
+-- caller-supplied task_no is always overwritten.
+CREATE OR REPLACE FUNCTION task.assign_task_no()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, task AS $$
+BEGIN
+  INSERT INTO task.task_counters AS c (org_id, last_no)
+  VALUES (NEW.org_id, 1)
+  ON CONFLICT (org_id) DO UPDATE SET last_no = c.last_no + 1
+  RETURNING c.last_no INTO NEW.task_no;
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_02_tasks_assign_no ON task.tasks;
+CREATE TRIGGER trg_02_tasks_assign_no
+  BEFORE INSERT ON task.tasks FOR EACH ROW EXECUTE FUNCTION task.assign_task_no();
+
 DROP TRIGGER IF EXISTS trg_tasks_updated_at        ON task.tasks;
 CREATE TRIGGER trg_tasks_updated_at
   BEFORE UPDATE ON task.tasks FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
@@ -3194,5 +3213,65 @@ CREATE TRIGGER trg_01_employee_documents_set_created_by
 DROP TRIGGER IF EXISTS trg_employee_documents_audit             ON hr.employee_documents;
 CREATE TRIGGER trg_employee_documents_audit
   AFTER UPDATE OR DELETE ON hr.employee_documents FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_document_settings_updated_at        ON hr.document_settings;
+CREATE TRIGGER trg_document_settings_updated_at
+  BEFORE UPDATE ON hr.document_settings FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_document_settings_soft_delete       ON hr.document_settings;
+CREATE TRIGGER trg_document_settings_soft_delete
+  BEFORE DELETE ON hr.document_settings FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_document_settings_set_org_id     ON hr.document_settings;
+CREATE TRIGGER trg_00_document_settings_set_org_id
+  BEFORE INSERT ON hr.document_settings FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_document_settings_set_created_by ON hr.document_settings;
+CREATE TRIGGER trg_01_document_settings_set_created_by
+  BEFORE INSERT ON hr.document_settings FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_document_settings_audit             ON hr.document_settings;
+CREATE TRIGGER trg_document_settings_audit
+  AFTER UPDATE OR DELETE ON hr.document_settings FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_shift_requirements_updated_at        ON hr.shift_requirements;
+CREATE TRIGGER trg_shift_requirements_updated_at
+  BEFORE UPDATE ON hr.shift_requirements FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_shift_requirements_soft_delete       ON hr.shift_requirements;
+CREATE TRIGGER trg_shift_requirements_soft_delete
+  BEFORE DELETE ON hr.shift_requirements FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_shift_requirements_set_org_id     ON hr.shift_requirements;
+CREATE TRIGGER trg_00_shift_requirements_set_org_id
+  BEFORE INSERT ON hr.shift_requirements FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_shift_requirements_set_created_by ON hr.shift_requirements;
+CREATE TRIGGER trg_01_shift_requirements_set_created_by
+  BEFORE INSERT ON hr.shift_requirements FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_shift_requirements_audit             ON hr.shift_requirements;
+CREATE TRIGGER trg_shift_requirements_audit
+  AFTER UPDATE OR DELETE ON hr.shift_requirements FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_roster_publications_updated_at        ON hr.roster_publications;
+CREATE TRIGGER trg_roster_publications_updated_at
+  BEFORE UPDATE ON hr.roster_publications FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_roster_publications_soft_delete       ON hr.roster_publications;
+CREATE TRIGGER trg_roster_publications_soft_delete
+  BEFORE DELETE ON hr.roster_publications FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_roster_publications_set_org_id     ON hr.roster_publications;
+CREATE TRIGGER trg_00_roster_publications_set_org_id
+  BEFORE INSERT ON hr.roster_publications FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_roster_publications_set_created_by ON hr.roster_publications;
+CREATE TRIGGER trg_01_roster_publications_set_created_by
+  BEFORE INSERT ON hr.roster_publications FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_roster_publications_audit             ON hr.roster_publications;
+CREATE TRIGGER trg_roster_publications_audit
+  AFTER UPDATE OR DELETE ON hr.roster_publications FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
 COMMIT;

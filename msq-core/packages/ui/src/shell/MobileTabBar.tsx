@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
 import { useBranding } from '../branding/BrandingProvider';
-import { brandNav, filterNav, isNavGroups, type NavItem, type NavGroup } from './nav';
+import { brandNav, filterNav, isNavGroups, isNavItemActive, type NavItem, type NavGroup } from './nav';
 import { badgeText, useNavBadges } from './NavBadges';
 import { toggleSidebar } from './MobileSidebar';
 import NavIcon from './NavIcon';
@@ -54,7 +54,7 @@ export default function MobileTabBar({ actor, items: rawItems, tabs }: Props) {
       className="fixed inset-x-0 bottom-0 z-30 flex border-t border-outline-variant bg-surface-container-lowest pb-[env(safe-area-inset-bottom)] shadow-overlay lg:hidden"
     >
       {picked.map((item) => {
-        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const active = isNavItemActive(item, pathname, picked);
         const count = badges[item.id];
         const showBadge = typeof count === 'number' && count > 0;
         return (

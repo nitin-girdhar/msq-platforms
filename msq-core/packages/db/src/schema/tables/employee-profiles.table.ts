@@ -21,6 +21,13 @@ export const employeeProfilesTable = hrSchema.table('employee_profiles', {
   departmentId:      uuid('department_id').references(() => departmentsTable.id, { onDelete: 'restrict' }),
   designationId:     uuid('designation_id').references(() => designationsTable.id, { onDelete: 'restrict' }),
   probationEndDate:  date('probation_end_date'),
+  // Org-chart facts (schema 1.66.0). work_mode: office | hybrid | remote.
+  grade:             text('grade'),
+  squad:             text('squad'),
+  costCenter:        text('cost_center'),
+  noticePeriodDays:  smallint('notice_period_days'),
+  workMode:          text('work_mode'),
+  seatLabel:         text('seat_label'),
   // 0=Sunday .. 6=Saturday
   weeklyOffPattern:  smallint('weekly_off_pattern').array().notNull().default(sql`'{0,6}'`),
   metadata:          jsonb('metadata').notNull().default({}),

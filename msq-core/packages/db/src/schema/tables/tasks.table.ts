@@ -1,4 +1,4 @@
-import { uuid, text, boolean, timestamp } from 'drizzle-orm/pg-core';
+import { uuid, text, boolean, timestamp, bigint } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { taskSchema } from '../pg-schemas';
 import { organizationsTable } from './organizations.table';
@@ -10,6 +10,8 @@ import { taskPrioritiesTable } from './task-priorities.table';
 export const tasksTable = taskSchema.table('tasks', {
   id:                uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   orgId:             uuid('org_id').notNull().references(() => organizationsTable.id, { onDelete: 'restrict' }),
+  // Set by trg_02_tasks_assign_no on INSERT (per-org running number); never written by the app.
+  taskNo:            bigint('task_no', { mode: 'number' }).notNull().default(sql`0`),
   listId:            uuid('list_id').references(() => taskListsTable.id, { onDelete: 'set null' }),
   title:             text('title').notNull(),
   description:       text('description'),

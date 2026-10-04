@@ -1184,9 +1184,46 @@ Plan: `C:\Users\ni3gi\.claude\plans\i-have-a-project-greedy-platypus.md` (Stitch
 - **Timesheet.** On wide screens the day breakdown (status, every in/out session, the break between sessions) opens as a side panel beside the calendar instead of a modal; phones keep the modal.
 - Roll-out: `db_scripts/one_time/apply_documents_vault.sql` (+ `_dryrun`). **Service-login policies:** the HRMS one_time scripts (comp-off through documents) create `TO app_user` self policies, and `hr_svc` is NOINHERIT, so a `withRoleTx` read as `hr_svc` returns ZERO rows with no error until every policy also names the service logins. `apply_schema.ps1` does this at the tail of `08_rls.sql`; for a server updated only by one_time scripts run `db_scripts/one_time/apply_widen_service_login_policies.sql` (the documents script already includes the sweep). Verify with `SET LOCAL ROLE hr_svc; SELECT set_config('app.current_user_id', '<uuid>', true); SELECT count(*) FROM hr.payslips;` - a published own payslip must count. Found on 2026-10-04 by a real publish-then-view flow.
 
+**H9 - roster planner part 1, employee org fields, configurable upload limit (schema `1.66.0`).**
+- **Roster planner** (`/planner`, side nav "Roster planner", capability `hr.attendance.roster.manage`, back-filled from effective holders of `hr.attendance.admin.assignments.manage`). HR sees every active employee of the branch as a staff-by-day week grid; clicking a cell sets or clears that person's shift for a day or through a date; ticking people and "Assign shift pattern" sets a shift over a range for all of them; capacity cards show assigned vs required people per shift for today (or Monday) with a Short / Full / Over marker; "Publish roster" records the week as published (who, when, note) and the page then shows "N changes since" if assignments move afterwards. API: `GET /attendance/planner/week`, `PUT /attendance/planner/cells`, `PUT /attendance/planner/requirements`, `POST /attendance/planner/publish`; everything runs in the service transaction, org-fenced, actor from the session. Edits reuse `hr.shift_assignments`: `lib/attendance/planner.ts planRange` carves the dates out of the person's existing rows (shrink/delete first, then insert) so the no-overlap exclusion holds, and every edit is checked against the 11-hour rest rule - a person it would break is skipped and named in the response, not silently changed. Past days cannot be edited (they are already resolved into attendance). New tables `hr.shift_requirements` and `hr.roster_publications` (branch-readable, service-written). **Part 2 (not built yet):** swap and weekly-off request desk in the planner, capacity donut, bulk reallocate, Day and Month views, and notifying people on publish (needs the HR notification renderer).
+- **Employee org fields.** `hr.employee_profiles` gains `grade`, `squad`, `cost_center`, `notice_period_days` (0-365), `work_mode` (office/hybrid/remote), `seat_label`, all optional; editable in the employee edit form, returned by the employees list and both profile APIs, shown as tiles and chips on Employee 360.
+- **Upload limit.** `hr.document_settings` (one row per org) holds the largest document upload, 100 KB to 3.5 MB (CHECK), default 3 MB. 3.5 MB is the ceiling because files travel as base64 inside the 5 MB JSON body. `GET/PUT /documents/settings` (read: anyone using the vault; write: `hr.employees.documents.manage`); the upload route and the form both use it. Larger needs a multipart upload route.
+- Roll-out: `db_scripts/one_time/apply_planner_profile_fields.sql` (+ `_dryrun`), which includes the service-login policy sweep; it needs `apply_documents_vault.sql` first.
+
 **Branch reach of reports** is the scope ladder under `hr.reports.attendance.view` — `.org` (the session branch) or `.tenant` (every branch of the tenant), read with `attendanceReportReach()`. The Reports page opens the combined sheet on "All branches" when the navbar switcher is on All branches (`session.all_branches`) and the actor holds `.tenant`, otherwise on the session branch, and offers a branch picker only to `.tenant` holders. hr-service re-checks the same scope and derives the branch list from the gateway-verified `tenant_id`, so the picker is a convenience, never the boundary. The report read runs on the service transaction (attendance RLS lets `app_user` read only its own rows), pinned to that server-derived list — the same justification as the detailed report.
 
 Roll-out: `db_scripts/one_time/apply_hr_reports_capability.sql` (+ `_dryrun`) grants the new keys to every role that could **effectively** open the old tab (a grant row pruned by a denied ancestor is skipped), `.tenant` to tenant_admin / hr_admin / super_admin, then deactivates the old nodes. Ship it together with the hr-service / hr-web / api-gateway release.
+
+## Tasks (To-Do) — Stitch redesign (`1.66.0`)
+
+The Tasks product (`msq-todo`: `tasks-service`, `@task/web`, `todo-web`) follows the Stitch "ToDo" design. A **branch is an organization** (`entity.organizations`); every task and list is `org_id`-scoped, so "my branch" is the org the user is currently working in.
+
+**Screens** (`apps/todo-web`, nav ids `tasks` / `tasks-team` / `tasks-lists`, phone tab bar `MOBILE_TABS`, overdue count badge on `tasks`):
+
+| Route | Shell | Gate (advisory — the service re-checks) |
+|---|---|---|
+| `/tasks` | `TasksShell` → `TaskHubShell scope=own` | `tasks` |
+| `/tasks/team` | `TeamTasksShell` → `TaskHubShell scope=team` | `tasks.view.team` |
+| `/tasks/[id]` | `TaskDetailShell` (breadcrumbs, sibling-in-list rail, `TaskDetailPanel`) | `tasks.view`; the service answers 404 for a task the caller cannot read |
+| `/tasks/lists` | `TaskListsShell` (cards by owner / tier / open-task count, create-edit-delete) | `tasks.lists.view`; manage / delete follow `tasks.lists.manage` / `.delete` and owner-or-`tasks.edit.any` |
+
+`TaskHubShell` is one orchestrator for both hub tabs: KPI tiles (click filters), quick-add, filter bar, **List / Board** toggle (board is desktop only; phones always get cards), server-side sort and paging (25 per page; the board loads one page of 100), bulk bar, Export CSV, "New task" dialog and the quick-edit drawer. Tables are a semantic, token-styled `<table>` rather than AG Grid: ToDo has no grid dependency and the data is already server-paged and server-sorted. Timeline view, sprints/velocity, subtasks, recurrence, attachments, departments, AI Polish and list templates from the design are **not built**; the "Sync health / latency / ledger block / reference panel" elements are mock decoration and are dropped.
+
+**Lists & tiers.** The design's four tiers map onto the existing `task_lists.visibility` (`private` / `team` / `org`), relabelled **Private / Team / Branch** (the Branch word comes from the tenant's own `branch` brand term). No new tier, no schema change. Cross-tenant oversight is the existing super-admin **Switch tenant** flow (1.55.0), not a page: the user switches tenant, then reads that tenant's data under its normal RLS.
+
+**API additions** (all behind `authenticate` + `requireModule('tasks')` + a capability, gateway routes in `api-gateway/src/server.ts`; static paths registered before `/tasks/:id`):
+
+| Method / path | Capability | Notes |
+|---|---|---|
+| `GET /tasks/stats?scope=own\|team\|org&list_id=` | `tasks.view` (+ the scope's capability) | `open, todo, in_progress, blocked, completed, overdue, due_soon, unassigned` in one aggregate; same scope runner as the list, so tiles and rows cannot disagree |
+| `GET /tasks/export?<list filters>` | `tasks.view` + `tasks.export` | `text/csv`, UTF-8 BOM, formula-injection guard (cells starting `= + - @` get a leading `'`), capped at 5,000 rows (`X-Export-Truncated: true` when hit), audited as `tasks_exported` |
+| `POST /tasks/bulk` | `tasks.bulk` + `tasks.edit` (+ `tasks.assign` to reassign to anyone but yourself) | 1–100 ids; each id is authorised exactly like a single PATCH (visible **and** editable) in its own transaction; a task the caller may not touch is skipped and reported (`{results:[{id,ok,error?}], updated, failed}`), never failing the rest; audited as `tasks_bulk_updated` |
+| `GET /tasks` | unchanged | gained `unassigned`, `sla_state`, `sort` (`created_at \| due_at \| priority \| status \| task_no \| title`, whitelisted to fixed SQL fragments) and `dir`; rows now carry `task_no`, `org_name`, `sla_state` |
+| `GET /task-lists` | unchanged | rows gained `open_task_count` |
+
+**Task code and SLA.** `TASK-<n>` is `task_no`, a per-branch running number from `task.task_counters` via the SECURITY DEFINER trigger (unreachable from a request). `sla_state` is derived from `due_at` in the view — overdue / due within 24h / on track; no policy table. Due dates are stored as **end of the chosen day in the user's timezone** so "due today" is not overdue until the day ends.
+
+**Known gap (not changed here).** The single-task `PATCH /tasks/:id` and `POST /tasks` do not require `tasks.assign` on the server to set `assignee_id` (the UI hides the picker). The new bulk endpoint does enforce it; closing the single-task path is a separate behaviour change.
 
 ## The single reporting hierarchy (P4, `1.27.0`)
 

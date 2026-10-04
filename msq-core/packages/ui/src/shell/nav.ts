@@ -68,6 +68,24 @@ export function filterNav(
 }
 
 /**
+ * Is `item` the current page's nav entry?
+ *
+ * A plain prefix test lights up BOTH "My Tasks" (/tasks) and "Team Tasks"
+ * (/tasks/team) on /tasks/team. When two entries match, the one with the longer
+ * href is the more specific page and wins; the shorter one stays dark. Entries
+ * that do not overlap behave exactly as the prefix test did.
+ */
+export function isNavItemActive(
+  item: Pick<NavItem, 'href'>,
+  pathname: string,
+  all: readonly Pick<NavItem, 'href'>[],
+): boolean {
+  const matches = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+  if (!matches(item.href)) return false;
+  return !all.some((other) => other.href.length > item.href.length && matches(other.href));
+}
+
+/**
  * A labeled block of nav items — e.g. one entry per module (LMS/HR/Tasks/…) in
  * an admin tool's left rail. Optional on top of {@link NavItem}: apps with a
  * flat sidebar keep passing `NavItem[]` to {@link AppSidebar}/{@link MobileSidebar}

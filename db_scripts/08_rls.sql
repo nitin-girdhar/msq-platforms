@@ -1679,6 +1679,11 @@ CREATE POLICY tenant_isolation_policy ON task.tasks AS PERMISSIVE FOR ALL TO ten
   USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
   WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
 
+-- 1.66.0: RLS on, deliberately NO policy and not FORCEd -- app_user / tenant_admin
+-- see zero rows (and hold no grant); only the table owner, via the SECURITY DEFINER
+-- task.assign_task_no() trigger, and root_service touch it.
+ALTER TABLE task.task_counters ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE task.task_status_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE task.task_status_log FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON task.task_status_log;
@@ -2141,6 +2146,35 @@ DROP POLICY IF EXISTS tenant_isolation_policy ON hr.employee_documents;
 CREATE POLICY self_policy ON hr.employee_documents AS PERMISSIVE FOR SELECT TO app_user
   USING (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
 CREATE POLICY tenant_isolation_policy ON hr.employee_documents AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+
+-- Roster planner + document limit: readable by the branch, written through the service.
+
+ALTER TABLE hr.document_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.document_settings FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.document_settings;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.document_settings;
+CREATE POLICY org_isolation_policy ON hr.document_settings AS PERMISSIVE FOR SELECT TO app_user
+  USING (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
+CREATE POLICY tenant_isolation_policy ON hr.document_settings AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+
+ALTER TABLE hr.shift_requirements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.shift_requirements FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.shift_requirements;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.shift_requirements;
+CREATE POLICY org_isolation_policy ON hr.shift_requirements AS PERMISSIVE FOR SELECT TO app_user
+  USING (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
+CREATE POLICY tenant_isolation_policy ON hr.shift_requirements AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+
+ALTER TABLE hr.roster_publications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.roster_publications FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.roster_publications;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.roster_publications;
+CREATE POLICY org_isolation_policy ON hr.roster_publications AS PERMISSIVE FOR SELECT TO app_user
+  USING (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
+CREATE POLICY tenant_isolation_policy ON hr.roster_publications AS PERMISSIVE FOR ALL TO tenant_admin
   USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
 
 -- Widen every RLS policy to also name the roles that are MEMBERS of the roles

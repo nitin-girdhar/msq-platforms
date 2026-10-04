@@ -4,6 +4,7 @@ import {
   filterNavGroups,
   holdsUsableNode,
   isNavGroups,
+  isNavItemActive,
   type NavItem,
   type NavGroup,
 } from '../nav';
@@ -113,5 +114,32 @@ describe('isNavGroups', () => {
 
   it('treats an empty list as flat', () => {
     expect(isNavGroups([])).toBe(false);
+  });
+});
+
+describe("isNavItemActive", () => {
+  const tasks = [{ href: "/tasks" }, { href: "/tasks/team" }, { href: "/tasks/lists" }];
+
+  it("lights only the most specific entry when two prefixes match", () => {
+    expect(isNavItemActive(tasks[1]!, "/tasks/team", tasks)).toBe(true);
+    expect(isNavItemActive(tasks[0]!, "/tasks/team", tasks)).toBe(false);
+    expect(isNavItemActive(tasks[2]!, "/tasks/lists", tasks)).toBe(true);
+    expect(isNavItemActive(tasks[0]!, "/tasks/lists", tasks)).toBe(false);
+  });
+
+  it("keeps the parent lit on a page that no sibling claims (e.g. a detail page)", () => {
+    expect(isNavItemActive(tasks[0]!, "/tasks/0198-abc", tasks)).toBe(true);
+    expect(isNavItemActive(tasks[1]!, "/tasks/0198-abc", tasks)).toBe(false);
+  });
+
+  it("matches the exact path and does not match a shared prefix without a slash", () => {
+    expect(isNavItemActive(tasks[0]!, "/tasks", tasks)).toBe(true);
+    expect(isNavItemActive({ href: "/leads" }, "/leads-history", [{ href: "/leads" }, { href: "/leads-history" }])).toBe(false);
+  });
+
+  it("behaves like the plain prefix test when entries do not overlap", () => {
+    const lms = [{ href: "/dashboard/leads" }, { href: "/dashboard/follow-ups" }];
+    expect(isNavItemActive(lms[0]!, "/dashboard/leads/42", lms)).toBe(true);
+    expect(isNavItemActive(lms[1]!, "/dashboard/leads/42", lms)).toBe(false);
   });
 });

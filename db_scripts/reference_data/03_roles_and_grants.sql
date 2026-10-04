@@ -684,6 +684,33 @@ ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO NOTHING;
 
 
+-- ── Back-fill: tasks.bulk + tasks.export (schema 1.66.0) ───────────
+-- Same trap as above (a global-template grant never reaches a tenant's own role
+-- copy), so each is pinned to an existing key with the audience we want:
+--   tasks.bulk    ← tasks.assign     whoever may already hand tasks to others
+--   tasks.export  ← tasks.view.team  managers and up (the Team tab audience)
+-- DO NOTHING: a tenant's is_granted = FALSE opt-out must survive a re-seed.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id
+JOIN iam.capabilities tgt ON (src.key, tgt.key) IN (('tasks.assign','tasks.bulk'), ('tasks.view.team','tasks.export'))
+WHERE rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO NOTHING;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id
+JOIN iam.capabilities tgt ON (src.key, tgt.key) IN (('tasks.assign','tasks.bulk'), ('tasks.view.team','tasks.export'))
+WHERE rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO NOTHING;
+
+
 -- ── Back-fill: admin.team.notify (schema 1.46.0) ───────────────────
 -- Same trap as the WhatsApp back-fill above: a grant on the global
 -- org_admin/tenant_admin template never reaches a tenant that already holds its
@@ -1198,6 +1225,50 @@ DO NOTHING;
 WITH pin(src_key, tgt_key) AS (
   VALUES ('hr.employees.view',   'hr.employees.documents.view'),
          ('hr.employees.manage', 'hr.employees.documents.manage')
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id
+JOIN pin ON pin.src_key = src.key
+JOIN iam.capabilities tgt ON tgt.key = pin.tgt_key
+JOIN iam.user_roles r ON r.id = rc.role_id
+JOIN LATERAL (
+  SELECT 1 FROM iam.fn_role_capability_matrix(rc.tenant_id) m
+  WHERE m.role_name = r.name AND m.capability_key = pin.src_key AND m.granted
+  LIMIT 1
+) eff ON TRUE
+WHERE rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO NOTHING;
+
+-- ── Back-fill: roster planner capability (schema 1.66.0) ───────────────
+--   hr.attendance.roster.manage <- hr.attendance.admin.assignments.manage
+-- Effective holders only; DO NOTHING so a tenant opt-out survives.
+
+WITH pin(src_key, tgt_key) AS (
+  VALUES ('hr.attendance.admin.assignments.manage', 'hr.attendance.roster.manage')
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id
+JOIN pin ON pin.src_key = src.key
+JOIN iam.capabilities tgt ON tgt.key = pin.tgt_key
+JOIN iam.user_roles r ON r.id = rc.role_id
+JOIN LATERAL (
+  SELECT 1 FROM iam.fn_role_capability_matrix(rc.tenant_id) m
+  WHERE m.role_name = r.name AND m.capability_key = pin.src_key AND m.granted
+  LIMIT 1
+) eff ON TRUE
+WHERE rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO NOTHING;
+
+WITH pin(src_key, tgt_key) AS (
+  VALUES ('hr.attendance.admin.assignments.manage', 'hr.attendance.roster.manage')
 )
 INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
 SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE

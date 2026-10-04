@@ -527,6 +527,9 @@ CREATE INDEX IF NOT EXISTS idx_tasks_created_by
   ON task.tasks (org_id, created_by) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_tasks_parent
   ON task.tasks (parent_task_id) WHERE parent_task_id IS NOT NULL;
+-- 1.66.0: the TASK-<n> code is unique within a branch (soft-deleted rows keep theirs).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_org_task_no
+  ON task.tasks (org_id, task_no);
 
 CREATE INDEX IF NOT EXISTS idx_task_status_log_task
   ON task.task_status_log (org_id, task_id, changed_at DESC);
@@ -779,5 +782,13 @@ CREATE INDEX IF NOT EXISTS idx_employee_documents_user
   ON hr.employee_documents (org_id, user_id) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_employee_documents_pending
   ON hr.employee_documents (org_id, created_at) WHERE status = 'pending' AND NOT is_deleted;
+
+-- 1.66.0.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_document_settings_org
+  ON hr.document_settings (org_id) WHERE NOT is_deleted;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_shift_requirements_org_shift
+  ON hr.shift_requirements (org_id, shift_id) WHERE NOT is_deleted;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_roster_publications_org_week
+  ON hr.roster_publications (org_id, week_start) WHERE NOT is_deleted;
 
 COMMIT;

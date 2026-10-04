@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
 import { useBranding } from '../branding/BrandingProvider';
-import { brandNav, filterNav, filterNavGroups, isNavGroups, type NavItem, type NavGroup } from './nav';
+import { brandNav, filterNav, filterNavGroups, isNavGroups, isNavItemActive, type NavItem, type NavGroup } from './nav';
 import NavIcon from './NavIcon';
 import BrandMark, { type ShellBrand } from './BrandMark';
 import { badgeText, useNavBadges } from './NavBadges';
@@ -34,8 +34,8 @@ interface Props {
   brand?: ShellBrand | undefined;
 }
 
-function MobileNavLink({ item, pathname, badge }: { item: NavItem; pathname: string; badge?: number | undefined }) {
-  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+function MobileNavLink({ item, pathname, badge, all }: { item: NavItem; pathname: string; badge?: number | undefined; all: readonly NavItem[] }) {
+  const active = isNavItemActive(item, pathname, all);
   const showBadge = typeof badge === 'number' && badge > 0;
   return (
     <Link
@@ -69,6 +69,8 @@ export default function MobileSidebar({ actor, items: rawItems, brand }: Props) 
   const grouped = isNavGroups(items);
   const flatVisible = grouped ? [] : filterNav(items, actor);
   const groupsVisible = grouped ? filterNavGroups(items, actor) : [];
+  // Every entry in the drawer, so the most specific href is the one that lights up.
+  const allItems: readonly NavItem[] = grouped ? items.flatMap((g) => g.items) : items;
 
   useEffect(() => {
     const onToggle = () => setOpen((v) => !v);
@@ -147,12 +149,12 @@ export default function MobileSidebar({ actor, items: rawItems, brand }: Props) 
                     {group.label}
                   </span>
                   {group.items.map((item) => (
-                    <MobileNavLink key={item.id} item={item} pathname={pathname} badge={badges[item.id]} />
+                    <MobileNavLink key={item.id} item={item} pathname={pathname} badge={badges[item.id]} all={allItems} />
                   ))}
                 </div>
               ))
             : flatVisible.map((item) => (
-                <MobileNavLink key={item.id} item={item} pathname={pathname} badge={badges[item.id]} />
+                <MobileNavLink key={item.id} item={item} pathname={pathname} badge={badges[item.id]} all={allItems} />
               ))}
         </nav>
       </aside>

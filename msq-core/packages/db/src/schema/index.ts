@@ -98,6 +98,7 @@ export * from './tables/payslips.table.js';
 export * from './tables/announcements.table.js';
 export * from './tables/assets.table.js';
 export * from './tables/employee-documents.table.js';
+export * from './tables/roster-planner.table.js';
 export * from './tables/leave-encashment-requests.table.js';
 export * from './tables/employee-statutory.table.js';
 

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
 import { useBranding } from '../branding/BrandingProvider';
-import { brandNav, filterNav, filterNavGroups, isNavGroups, type NavItem, type NavGroup } from './nav';
+import { brandNav, filterNav, filterNavGroups, isNavGroups, isNavItemActive, type NavItem, type NavGroup } from './nav';
 import NavIcon from './NavIcon';
 import BrandMark, { type ShellBrand } from './BrandMark';
 import { badgeText, useNavBadges } from './NavBadges';
@@ -61,13 +61,16 @@ function NavLink({
   pathname,
   collapsed,
   badge,
+  all,
 }: {
   item: NavItem;
   pathname: string;
   collapsed: boolean;
   badge?: number | undefined;
+  /** Every entry in the rail, so the most specific match is the one that lights up. */
+  all: readonly NavItem[];
 }) {
-  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+  const active = isNavItemActive(item, pathname, all);
   const showBadge = typeof badge === 'number' && badge > 0;
 
   if (collapsed) {
@@ -115,6 +118,7 @@ export default function AppSidebar({ actor, items: rawItems, brand, badges: badg
   const { navOverrides } = useBranding();
   const items = useMemo(() => brandNav(rawItems, navOverrides), [rawItems, navOverrides]);
   const pathname = usePathname();
+  const allItems = useMemo<readonly NavItem[]>(() => (isNavGroups(items) ? items.flatMap((g) => g.items) : items), [items]);
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
@@ -202,13 +206,13 @@ export default function AppSidebar({ actor, items: rawItems, brand, badges: badg
                 </span>
               )}
               {group.items.map((item) => (
-                <NavLink key={item.id} item={item} pathname={pathname} collapsed={collapsed} badge={badges?.[item.id]} />
+                <NavLink key={item.id} item={item} pathname={pathname} collapsed={collapsed} badge={badges?.[item.id]} all={allItems} />
               ))}
             </div>
           ))
         ) : (
           filterNav(items, actor).map((item) => (
-            <NavLink key={item.id} item={item} pathname={pathname} collapsed={collapsed} badge={badges?.[item.id]} />
+            <NavLink key={item.id} item={item} pathname={pathname} collapsed={collapsed} badge={badges?.[item.id]} all={allItems} />
           ))
         )}
       </nav>

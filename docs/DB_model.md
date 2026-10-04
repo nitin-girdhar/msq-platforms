@@ -687,6 +687,22 @@ erDiagram
     UUID peer_shift_id FK
     UUID manager_id FK
   }
+  pay_periods {
+    UUID id PK
+    UUID org_id FK
+    UUID locked_by FK
+  }
+  payslips {
+    UUID id PK
+    UUID org_id FK
+    UUID user_id FK
+    UUID published_by FK
+  }
+  payslip_lines {
+    UUID id PK
+    UUID payslip_id FK
+    UUID org_id FK
+  }
   employee_profiles |o--|| users : "user_id"
   employee_profiles }o--o| employment_types : "employment_type_id"
   employee_profiles }o--o| departments : "department_id"
@@ -731,6 +747,10 @@ erDiagram
   shift_swap_requests }o--o| users : "manager_id"
   shift_swap_requests }o--|| shifts : "requester_shift_id"
   shift_swap_requests }o--|| shifts : "peer_shift_id"
+  pay_periods }o--o| users : "locked_by"
+  payslips }o--|| users : "user_id"
+  payslips }o--o| users : "published_by"
+  payslip_lines }o--|| payslips : "payslip_id"
 ```
 
 #### `task`

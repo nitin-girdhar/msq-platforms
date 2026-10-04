@@ -730,4 +730,14 @@ CREATE INDEX IF NOT EXISTS idx_shift_swap_requests_org_status
   ON hr.shift_swap_requests (org_id, status) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_shift_swap_requests_manager_pending
   ON hr.shift_swap_requests (manager_id) WHERE status = 'pending_manager' AND NOT is_deleted;
+
+-- Payroll viewer (1.62.0).
+CREATE UNIQUE INDEX IF NOT EXISTS uix_pay_periods_org_period
+  ON hr.pay_periods (org_id, period) WHERE NOT is_deleted;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_payslips_user_period
+  ON hr.payslips (user_id, period) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_payslips_org_period
+  ON hr.payslips (org_id, period) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_payslip_lines_payslip
+  ON hr.payslip_lines (payslip_id, sort_order);
 COMMIT;

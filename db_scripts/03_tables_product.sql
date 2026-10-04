@@ -1180,4 +1180,73 @@ CREATE TABLE IF NOT EXISTS hr.shift_swap_requests (
   CONSTRAINT chk_shift_swap_requests_active_deleted CHECK (NOT (is_active AND is_deleted))
 );
 
+
+-- ===================================================================
+-- 10. Payroll viewer + month lock (schema 1.62.0)
+--     NOT a payroll engine: no PF/ESI/PT/TDS computation. HR prepares each
+--     employee's payslip lines outside (or types them in) and publishes them; the
+--     employee reads their own. hr.pay_periods carries the per-branch month LOCK:
+--     once a month is locked, attendance corrections for it are refused so the
+--     figures HR took to payroll cannot move underneath them.
+--
+--     hr.pay_periods     one row per (org, month); absent row = open.
+--     hr.payslips        one per (employee, month); amounts are computed from the
+--                        lines by the service, never trusted from the client.
+--     hr.payslip_lines   earning / deduction rows of a payslip.
+--
+--     PRIVACY: salary is the most sensitive thing in HR. An employee reads ONLY their
+--     own PUBLISHED payslip (self policy with a published_at check); there is no
+--     org-wide policy. HR drafts, publishes and reads others' payslips through the
+--     service transaction behind hr.reports.payroll.manage.
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.pay_periods (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  org_id      UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE RESTRICT,
+  period      DATE    NOT NULL CONSTRAINT chk_pay_periods_first_of_month CHECK (period = date_trunc('month', period)::date),
+  status      TEXT    NOT NULL DEFAULT 'open' CONSTRAINT chk_pay_periods_status CHECK (status IN ('open','locked')),
+  locked_by   UUID    REFERENCES iam.users(id) ON DELETE SET NULL,
+  locked_at   TIMESTAMPTZ,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_pay_periods_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+CREATE TABLE IF NOT EXISTS hr.payslips (
+  id             UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  org_id         UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE RESTRICT,
+  user_id        UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  period         DATE    NOT NULL CONSTRAINT chk_payslips_first_of_month CHECK (period = date_trunc('month', period)::date),
+  working_days   NUMERIC(4,1),
+  lop_days       NUMERIC(4,1),
+  gross          NUMERIC(12,2) NOT NULL DEFAULT 0,
+  deductions     NUMERIC(12,2) NOT NULL DEFAULT 0,
+  net            NUMERIC(12,2) NOT NULL DEFAULT 0,
+  published_at   TIMESTAMPTZ,
+  published_by   UUID    REFERENCES iam.users(id) ON DELETE SET NULL,
+  is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted     BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at     TIMESTAMPTZ,
+  deleted_by     UUID,
+  created_by     UUID,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_payslips_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+CREATE TABLE IF NOT EXISTS hr.payslip_lines (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  payslip_id  UUID    NOT NULL REFERENCES hr.payslips(id) ON DELETE CASCADE,
+  org_id      UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  kind        TEXT    NOT NULL CONSTRAINT chk_payslip_lines_kind CHECK (kind IN ('earning','deduction')),
+  label       TEXT    NOT NULL,
+  amount      NUMERIC(12,2) NOT NULL CONSTRAINT chk_payslip_lines_amount CHECK (amount >= 0),
+  sort_order  INT     NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
+);
+
 COMMIT;

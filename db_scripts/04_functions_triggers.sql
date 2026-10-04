@@ -2287,6 +2287,51 @@ DROP TRIGGER IF EXISTS trg_shift_swap_requests_audit             ON hr.shift_swa
 CREATE TRIGGER trg_shift_swap_requests_audit
   AFTER UPDATE OR DELETE ON hr.shift_swap_requests FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
+DROP TRIGGER IF EXISTS trg_pay_periods_updated_at        ON hr.pay_periods;
+CREATE TRIGGER trg_pay_periods_updated_at
+  BEFORE UPDATE ON hr.pay_periods FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_pay_periods_soft_delete       ON hr.pay_periods;
+CREATE TRIGGER trg_pay_periods_soft_delete
+  BEFORE DELETE ON hr.pay_periods FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_pay_periods_set_org_id     ON hr.pay_periods;
+CREATE TRIGGER trg_00_pay_periods_set_org_id
+  BEFORE INSERT ON hr.pay_periods FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_pay_periods_set_created_by ON hr.pay_periods;
+CREATE TRIGGER trg_01_pay_periods_set_created_by
+  BEFORE INSERT ON hr.pay_periods FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_pay_periods_audit             ON hr.pay_periods;
+CREATE TRIGGER trg_pay_periods_audit
+  AFTER UPDATE OR DELETE ON hr.pay_periods FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_payslips_updated_at        ON hr.payslips;
+CREATE TRIGGER trg_payslips_updated_at
+  BEFORE UPDATE ON hr.payslips FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_payslips_soft_delete       ON hr.payslips;
+CREATE TRIGGER trg_payslips_soft_delete
+  BEFORE DELETE ON hr.payslips FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_payslips_set_org_id     ON hr.payslips;
+CREATE TRIGGER trg_00_payslips_set_org_id
+  BEFORE INSERT ON hr.payslips FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_payslips_set_created_by ON hr.payslips;
+CREATE TRIGGER trg_01_payslips_set_created_by
+  BEFORE INSERT ON hr.payslips FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_payslips_audit             ON hr.payslips;
+CREATE TRIGGER trg_payslips_audit
+  AFTER UPDATE OR DELETE ON hr.payslips FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_00_payslip_lines_set_org_id     ON hr.payslip_lines;
+CREATE TRIGGER trg_00_payslip_lines_set_org_id
+  BEFORE INSERT ON hr.payslip_lines FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+
 
 
 

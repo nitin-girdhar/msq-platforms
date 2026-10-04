@@ -486,6 +486,17 @@ REVOKE DELETE                ON hr.shift_swap_requests FROM app_user, tenant_adm
 GRANT ALL PRIVILEGES         ON hr.shift_swap_requests TO root_service;
 GRANT SELECT, INSERT, UPDATE ON hr.shift_swap_requests TO hr_svc;
 
+-- Payroll viewer (1.62.0). An employee reads their own PUBLISHED payslip through
+-- app_user; everything else (drafting, publishing, locking, reading others') runs
+-- in the service transaction.
+GRANT SELECT                 ON hr.pay_periods, hr.payslips, hr.payslip_lines TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.pay_periods, hr.payslips TO tenant_admin;
+GRANT SELECT, INSERT, UPDATE, DELETE ON hr.payslip_lines TO tenant_admin;
+REVOKE DELETE                ON hr.pay_periods, hr.payslips FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.pay_periods, hr.payslips, hr.payslip_lines TO root_service;
+GRANT SELECT, INSERT, UPDATE ON hr.pay_periods, hr.payslips TO hr_svc;
+GRANT SELECT, INSERT, UPDATE, DELETE ON hr.payslip_lines TO hr_svc;
+
 GRANT EXECUTE ON FUNCTION hr.can_approve(UUID,UUID,UUID) TO app_user, tenant_admin;
 
 GRANT SELECT ON hr.vw_attendance_monthly_summary, hr.vw_org_attendance_today

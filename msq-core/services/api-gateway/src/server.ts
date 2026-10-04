@@ -1123,6 +1123,33 @@ app.post('/hr/leave/requests/:id/cancel', { ...withAuth }, async (req, reply) =>
   return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}/cancel`, req, reply, req.userCtx);
 });
 
+// Payroll viewer + month lock (schema 1.62.0). Static `admin` paths first.
+app.get('/hr/payroll/payslips', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/payroll/payslips', req, reply, req.userCtx);
+});
+app.get('/hr/payroll/payslips/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/payroll/payslips/${id}`, req, reply, req.userCtx);
+});
+app.get('/hr/payroll/admin/overview', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/payroll/admin/overview', req, reply, req.userCtx);
+});
+app.put('/hr/payroll/admin/payslips', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/payroll/admin/payslips', req, reply, req.userCtx);
+});
+app.post('/hr/payroll/admin/:month/publish', { ...withAuth }, async (req, reply) => {
+  const { month } = req.params as { month: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/payroll/admin/${month}/publish`, req, reply, req.userCtx);
+});
+app.post('/hr/payroll/admin/:month/lock', { ...withAuth }, async (req, reply) => {
+  const { month } = req.params as { month: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/payroll/admin/${month}/lock`, req, reply, req.userCtx);
+});
+app.post('/hr/payroll/admin/:month/unlock', { ...withAuth }, async (req, reply) => {
+  const { month } = req.params as { month: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/payroll/admin/${month}/unlock`, req, reply, req.userCtx);
+});
+
 // Team roster + peer shift swaps (schema 1.61.0). Static paths come before the `:id` ones.
 app.get('/hr/attendance/roster', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/roster', req, reply, req.userCtx);

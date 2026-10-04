@@ -304,6 +304,8 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Open any employee''s full profile (Employee 360): job details, personal details, emergency contacts, leave balances and HR notes.', 5),
 ('hr.employees.notes.manage', 'operation', 'hr.employees', 'Manage HR notes',
  'Add notes to an employee''s HR timeline (appraisals, promotions, transfers). Notes are visible only to people who can open the full profile.', 6),
+('hr.employees.payslip.view', 'operation', 'hr.employees', 'View own payslips',
+ 'Open their own published payslips.', 7),
 
 -- ── HR REPORTS ──────────────────────────────────────────────────────
 -- Its own tool (the HRMS left-nav "Reports" entry), not a tab of Attendance
@@ -321,6 +323,8 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Everyone in the branch they are working in.', 3),
 ('hr.reports.attendance.view.tenant', 'scope', 'hr.reports.attendance.view', 'Every branch',
  'Everyone across every branch in the tenant, in one sheet.', 4),
+('hr.reports.payroll.manage', 'operation', 'hr.reports', 'Manage payslips and payroll lock',
+ 'Prepare and publish payslips, and lock a month so attendance for it can no longer be corrected.', 3),
 
 -- ── TASKS ───────────────────────────────────────────────────────────
 ('tasks', 'tool', NULL, 'Tasks',

@@ -1502,6 +1502,40 @@ CREATE POLICY participant_policy ON hr.shift_swap_requests AS PERMISSIVE FOR SEL
   USING (NOT is_deleted AND NULLIF(current_setting('app.current_user_id',true),'')::uuid IN (requester_id, peer_id, manager_id));
 
 
+ALTER TABLE hr.pay_periods ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.pay_periods FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.pay_periods;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.pay_periods;
+-- A month's lock state is not secret: anyone in the branch may read it (the
+-- attendance correction paths check it inside the caller's own transaction).
+CREATE POLICY org_isolation_policy ON hr.pay_periods AS PERMISSIVE FOR SELECT TO app_user
+  USING (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
+CREATE POLICY tenant_isolation_policy ON hr.pay_periods AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+
+ALTER TABLE hr.payslips ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.payslips FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.payslips;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.payslips;
+DROP POLICY IF EXISTS self_policy             ON hr.payslips;
+-- Salary: deliberately no org_isolation_policy. An employee sees only their own
+-- payslip, and only once it is published.
+CREATE POLICY tenant_isolation_policy ON hr.payslips AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+CREATE POLICY self_policy ON hr.payslips AS PERMISSIVE FOR SELECT TO app_user
+  USING (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND published_at IS NOT NULL AND NOT is_deleted);
+
+ALTER TABLE hr.payslip_lines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.payslip_lines FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.payslip_lines;
+DROP POLICY IF EXISTS self_policy             ON hr.payslip_lines;
+CREATE POLICY tenant_isolation_policy ON hr.payslip_lines AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted))) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)));
+-- A line is readable exactly when its payslip is (the payslips self policy applies inside the subquery).
+CREATE POLICY self_policy ON hr.payslip_lines AS PERMISSIVE FOR SELECT TO app_user
+  USING (EXISTS (SELECT 1 FROM hr.payslips p WHERE p.id = payslip_id));
+
+
 -- ── hr.attendance_regularization_approvals — mirrors hr.leave_request_approvals ──
 ALTER TABLE hr.attendance_regularization_approvals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.attendance_regularization_approvals FORCE ROW LEVEL SECURITY;

@@ -87,6 +87,8 @@ export const CAPABILITY = {
   HR_LEAVE_ADMIN_POLICIES_MANAGE:          'hr.leave.admin.policies.manage',
   HR_LEAVE_ADMIN_POLICIES_VIEW:            'hr.leave.admin.policies.view',
   HR_LEAVE_APPROVE:                        'hr.leave.approve',
+  HR_LEAVE_COMP_OFF_APPROVE:               'hr.leave.comp_off.approve',
+  HR_LEAVE_COMP_OFF_REQUEST:               'hr.leave.comp_off.request',
   HR_LEAVE_REJECT:                         'hr.leave.reject',
   HR_LEAVE_REQUEST_CANCEL:                 'hr.leave.request.cancel',
   HR_LEAVE_REQUEST_CREATE:                 'hr.leave.request.create',

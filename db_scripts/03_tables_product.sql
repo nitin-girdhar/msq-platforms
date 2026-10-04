@@ -1012,4 +1012,48 @@ CREATE TABLE IF NOT EXISTS entity.tenant_catalog_versions (
   CONSTRAINT uq_tenant_catalog_versions_tenant_key UNIQUE (tenant_id, catalog_key)
 );
 
+
+-- ===================================================================
+-- 7. hr.comp_off_claims -- compensatory-off claims (schema 1.59.0)
+--    An employee who worked a day off (weekly off / holiday) claims a day (or a
+--    half) back. One approver -- the level-1 approver the leave chain resolves
+--    for the claimant at submit time -- decides it, or an authorized override.
+--    Approval credits hr.leave_ledger (entry_type 'adjustment', note 'Comp-off
+--    credit') on the tenant's active 'comp_off' leave type and stamps expires_on;
+--    the nightly job writes a 'lapse' entry once it passes, capped at the
+--    balance so the ledger never goes negative because of it. Nothing here
+--    changes how a comp-off day is CONSUMED: that is an ordinary leave request
+--    against the comp_off leave type.
+--    Standard recipe + org/tenant RLS + a self policy. Decisions run in the
+--    service transaction (the approver is not the row's owner).
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.comp_off_claims (
+  id               UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  user_id          UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  org_id           UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE RESTRICT,
+  worked_date      DATE    NOT NULL,
+  days             NUMERIC(3,1) NOT NULL
+                           CONSTRAINT chk_comp_off_claims_days CHECK (days IN (0.5, 1.0)),
+  reason           TEXT    NOT NULL,
+  status           TEXT    NOT NULL DEFAULT 'pending'
+                           CONSTRAINT chk_comp_off_claims_status
+                           CHECK (status IN ('pending','approved','rejected','cancelled')),
+  approver_id      UUID    REFERENCES iam.users(id)                      ON DELETE SET NULL,
+  acted_by         UUID    REFERENCES iam.users(id)                      ON DELETE SET NULL,
+  acted_at         TIMESTAMPTZ,
+  approver_comment TEXT,
+  leave_type_id    UUID    REFERENCES hr.leave_types(id)                 ON DELETE RESTRICT,
+  ledger_entry_id  UUID    REFERENCES hr.leave_ledger(id)                ON DELETE SET NULL,
+  expires_on       DATE,
+  lapsed_at        TIMESTAMPTZ,
+  is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted       BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at       TIMESTAMPTZ,
+  deleted_by       UUID,
+  created_by       UUID,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_comp_off_claims_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
 COMMIT;

@@ -255,6 +255,10 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Accept a request. Who they can act for follows the scope above.', 4),
 ('hr.leave.reject',  'operation', 'hr.leave', 'Reject leave',
  'Decline a request.', 5),
+('hr.leave.comp_off.request', 'operation', 'hr.leave', 'Claim comp-off',
+ 'Claim a day off for work done on a day off. The claim goes to their approver, and the day is credited to the Comp-off leave balance once approved.', 7),
+('hr.leave.comp_off.approve', 'operation', 'hr.leave', 'Decide comp-off',
+ 'Approve or reject comp-off claims. Who they can act for follows the same authority as Approve leave.', 8),
 
 ('hr.leave.admin', 'page', 'hr.leave', 'Leave admin',
  'Leave configuration for the whole branch.', 6),

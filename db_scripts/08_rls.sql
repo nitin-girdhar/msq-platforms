@@ -1431,6 +1431,22 @@ CREATE POLICY self_policy ON hr.attendance_regularizations AS PERMISSIVE FOR ALL
   USING      (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted)
   WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
 
+
+ALTER TABLE hr.comp_off_claims ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.comp_off_claims FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.comp_off_claims;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.comp_off_claims;
+DROP POLICY IF EXISTS self_policy             ON hr.comp_off_claims;
+CREATE POLICY org_isolation_policy ON hr.comp_off_claims AS PERMISSIVE FOR ALL TO app_user
+  USING     (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted)
+  WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
+CREATE POLICY tenant_isolation_policy ON hr.comp_off_claims AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+CREATE POLICY self_policy ON hr.comp_off_claims AS PERMISSIVE FOR ALL TO app_user
+  USING      (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted)
+  WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
+
 -- ── hr.attendance_regularization_approvals — mirrors hr.leave_request_approvals ──
 ALTER TABLE hr.attendance_regularization_approvals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.attendance_regularization_approvals FORCE ROW LEVEL SECURITY;

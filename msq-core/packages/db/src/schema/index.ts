@@ -88,6 +88,7 @@ export * from './tables/attendance-geo-exceptions.table.js';
 export * from './tables/attendance-events.table.js';
 export * from './tables/attendance-days.table.js';
 export * from './tables/attendance-regularizations.table.js';
+export * from './tables/comp-off-claims.table.js';
 
 export * from './views/dashboard-leads.view.js';
 export * from './views/lead-followup-timeline.view.js';

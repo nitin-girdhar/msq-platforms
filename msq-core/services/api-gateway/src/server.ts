@@ -1123,6 +1123,30 @@ app.post('/hr/leave/requests/:id/cancel', { ...withAuth }, async (req, reply) =>
   return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}/cancel`, req, reply, req.userCtx);
 });
 
+// Comp-off claims (schema 1.59.0). The static `queue` route is registered before the
+// `:id` ones so it is never captured as an id.
+app.post('/hr/leave/comp-off', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/leave/comp-off', req, reply, req.userCtx);
+});
+app.get('/hr/leave/comp-off', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/leave/comp-off', req, reply, req.userCtx);
+});
+app.get('/hr/leave/comp-off/queue', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/leave/comp-off/queue', req, reply, req.userCtx);
+});
+app.post('/hr/leave/comp-off/:id/approve', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/comp-off/${id}/approve`, req, reply, req.userCtx);
+});
+app.post('/hr/leave/comp-off/:id/reject', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/comp-off/${id}/reject`, req, reply, req.userCtx);
+});
+app.post('/hr/leave/comp-off/:id/cancel', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/comp-off/${id}/cancel`, req, reply, req.userCtx);
+});
+
 // Leave balances & ledger
 app.get('/hr/leave/balances', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/leave/balances', req, reply, req.userCtx);

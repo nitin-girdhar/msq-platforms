@@ -462,6 +462,14 @@ GRANT SELECT, INSERT, UPDATE ON hr.attendance_regularizations TO tenant_admin;
 REVOKE DELETE                ON hr.attendance_regularizations FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON hr.attendance_regularizations TO root_service;
 
+-- hr.comp_off_claims (1.59.0): requesters insert/cancel their own claim through
+-- app_user; decisions and the expiry sweep run in the service transaction.
+GRANT SELECT, INSERT, UPDATE ON hr.comp_off_claims TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.comp_off_claims TO tenant_admin;
+REVOKE DELETE                ON hr.comp_off_claims FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.comp_off_claims TO root_service;
+GRANT SELECT, INSERT, UPDATE ON hr.comp_off_claims TO hr_svc;
+
 GRANT EXECUTE ON FUNCTION hr.can_approve(UUID,UUID,UUID) TO app_user, tenant_admin;
 
 GRANT SELECT ON hr.vw_attendance_monthly_summary, hr.vw_org_attendance_today

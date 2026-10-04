@@ -690,4 +690,19 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_created
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires
   ON iam.password_reset_tokens (expires_at);
 
+
+-- hr.comp_off_claims (1.59.0). One live claim per (user, worked_date): a rejected
+-- or cancelled one frees the date so the employee can claim again.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_comp_off_claims_open
+  ON hr.comp_off_claims (user_id, worked_date)
+  WHERE status IN ('pending','approved') AND NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_comp_off_claims_user
+  ON hr.comp_off_claims (user_id, worked_date DESC) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_comp_off_claims_org_status
+  ON hr.comp_off_claims (org_id, status) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_comp_off_claims_approver_pending
+  ON hr.comp_off_claims (approver_id) WHERE status = 'pending' AND NOT is_deleted;
+-- The nightly expiry sweep: approved, not yet lapsed, ordered by when they run out.
+CREATE INDEX IF NOT EXISTS idx_comp_off_claims_expiry
+  ON hr.comp_off_claims (expires_on) WHERE status = 'approved' AND lapsed_at IS NULL AND NOT is_deleted;
 COMMIT;

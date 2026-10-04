@@ -2187,6 +2187,27 @@ DROP TRIGGER IF EXISTS trg_attendance_regularizations_audit             ON hr.at
 CREATE TRIGGER trg_attendance_regularizations_audit
   AFTER UPDATE OR DELETE ON hr.attendance_regularizations FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
+DROP TRIGGER IF EXISTS trg_comp_off_claims_updated_at        ON hr.comp_off_claims;
+CREATE TRIGGER trg_comp_off_claims_updated_at
+  BEFORE UPDATE ON hr.comp_off_claims FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_comp_off_claims_soft_delete       ON hr.comp_off_claims;
+CREATE TRIGGER trg_comp_off_claims_soft_delete
+  BEFORE DELETE ON hr.comp_off_claims FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_comp_off_claims_set_org_id     ON hr.comp_off_claims;
+CREATE TRIGGER trg_00_comp_off_claims_set_org_id
+  BEFORE INSERT ON hr.comp_off_claims FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_comp_off_claims_set_created_by ON hr.comp_off_claims;
+CREATE TRIGGER trg_01_comp_off_claims_set_created_by
+  BEFORE INSERT ON hr.comp_off_claims FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_comp_off_claims_audit             ON hr.comp_off_claims;
+CREATE TRIGGER trg_comp_off_claims_audit
+  AFTER UPDATE OR DELETE ON hr.comp_off_claims FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+
 
 -- ===================================================================
 -- 7. hr.can_approve — thin authority alias over hr.can_approve_leave (§Service).

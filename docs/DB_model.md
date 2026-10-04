@@ -4408,7 +4408,7 @@ Core task entity. Supports subtasks (self-FK) and a polymorphic soft link to ano
 | ------------------- | ----------- | ----------------------------------------------------------------------------------------------------------- |
 | id                  | UUID        | PK                                                                                                          |
 | org_id              | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT                                                  |
-| task_no             | BIGINT      | NOT NULL, UNIQUE per org (`uq_tasks_org_task_no`) — the `TASK-<n>` code; per-branch running number set by `trg_02_tasks_assign_no` (1.66.0), never supplied by a client |
+| task_no             | BIGINT      | NOT NULL, UNIQUE per org (`uq_tasks_org_task_no`) — the `TASK-<n>` code; per-branch running number set by `trg_02_tasks_assign_no` (1.67.0), never supplied by a client |
 | list_id             | UUID        | FK → task.task_lists(id) ON DELETE SET NULL                                                                 |
 | title               | TEXT        | NOT NULL                                                                                                    |
 | description         | TEXT        |                                                                                                             |
@@ -4432,13 +4432,13 @@ Core task entity. Supports subtasks (self-FK) and a polymorphic soft link to ano
 
 **Triggers:** `task.set_task_completion()` (syncs `completed_at` ↔ a terminal `status_id`, mirroring `lms.lead_follow_ups`' completion sync); `task.assign_task_no()` (`trg_02_tasks_assign_no`, BEFORE INSERT, SECURITY DEFINER — draws the next number for the row's org from `task.task_counters`, row-locking the counter so concurrent inserts cannot collide, and overwrites any caller-supplied `task_no`).
 
-**Due dates are calendar days stored as end-of-day.** The UI stores a due date as 23:59:59 in the user's timezone and reads it back as the local date, so a task due "today" is not overdue until the day ends. (Before 1.66.0 the UI anchored at UTC midnight, which would read as overdue from 05:30 IST on the due day; rows saved that way correct themselves on their next save.)
+**Due dates are calendar days stored as end-of-day.** The UI stores a due date as 23:59:59 in the user's timezone and reads it back as the local date, so a task due "today" is not overdue until the day ends. (Before 1.67.0 the UI anchored at UTC midnight, which would read as overdue from 05:30 IST on the due day; rows saved that way correct themselves on their next save.)
 
 ---
 
 ### task.task_counters
 
-Last `task_no` handed out per org (1.66.0). One row per org, `PRIMARY KEY (org_id)`.
+Last `task_no` handed out per org (1.67.0). One row per org, `PRIMARY KEY (org_id)`.
 
 | Column  | Type   | Constraints                                                  |
 | ------- | ------ | ------------------------------------------------------------ |
@@ -4513,7 +4513,7 @@ Append-only.
 | `hr.vw_team_leave_calendar`                  | hr        | yes              | Team leave calendar for a manager's subtree                 |
 | `hr.vw_attendance_monthly_summary`           | hr        | yes              | Per-user monthly attendance rollup (status counts; `missed_punch_count` appended last in 1.52.0; `wfh_count` = days with a counted WFH punch or status wfh) |
 | `hr.vw_org_attendance_today`                 | hr        | yes              | Today's resolved attendance for an org                      |
-| `task.vw_tasks_enriched`                     | task      | yes              | Tasks with resolved assignee/status/priority/list display fields. 1.66.0 appends `task_no`, `org_name` and `sla_state` (`none` \| `ok` \| `due_soon` (due < 24h) \| `overdue`, derived from `due_at`; finished tasks are always `none`) |
+| `task.vw_tasks_enriched`                     | task      | yes              | Tasks with resolved assignee/status/priority/list display fields. 1.67.0 appends `task_no`, `org_name` and `sla_state` (`none` \| `ok` \| `due_soon` (due < 24h) \| `overdue`, derived from `due_at`; finished tasks are always `none`) |
 
 > `<product>.vw_member_roles` (previously listed here) was **dropped at schema 1.40.0** along with the per-product role/grant tables — see "Retired: per-product role tables" above.
 
@@ -4578,7 +4578,7 @@ Append-only.
 | `hr.can_approve(...)`                    | hr     | Approver-scope check shared by regularizations and the face-review queue |
 | `task.set_task_completion()`             | task   | Trigger: syncs `task.tasks.completed_at` with a terminal `status_id` |
 | `task.log_task_status_change()`          | task   | Trigger: writes `task.task_status_log` |
-| `task.assign_task_no()`                  | task   | Trigger (SECURITY DEFINER, BEFORE INSERT on `task.tasks`): assigns the per-org `task_no` from `task.task_counters` (1.66.0) |
+| `task.assign_task_no()`                  | task   | Trigger (SECURITY DEFINER, BEFORE INSERT on `task.tasks`): assigns the per-org `task_no` from `task.task_counters` (1.67.0) |
 | `entity.seed_tenant_defaults(UUID)`      | entity | Provisioning entry point — copies each licensed catalog's current version into a new tenant (see "Tenant default catalogs") |
 | `entity.reset_tenant_catalog(UUID,TEXT,INT?)` | entity | Restores one catalog to a default version, FK-safe (preserves row ids) |
 | `entity._apply_catalog_rows(...)`        | entity | Shared per-catalog copy helper behind the two functions above |

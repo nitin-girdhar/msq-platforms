@@ -1261,6 +1261,9 @@ app.get('/hr/attendance/planner/week', { ...withAuth }, async (req, reply) => {
 app.put('/hr/attendance/planner/cells', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/planner/cells', req, reply, req.userCtx);
 });
+app.post('/hr/attendance/planner/reallocate', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/planner/reallocate', req, reply, req.userCtx);
+});
 app.put('/hr/attendance/planner/requirements', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/planner/requirements', req, reply, req.userCtx);
 });
@@ -1657,7 +1660,7 @@ app.delete('/task-lists/:id', { ...withAuth }, async (req, reply) => {
 app.get('/tasks/mine', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.tasksServiceUrl, '/api/v1/tasks/mine', req, reply, req.userCtx);
 });
-// KPI counts, CSV export and bulk update (schema 1.66.0). Static paths, so they
+// KPI counts, CSV export and bulk update (schema 1.67.0). Static paths, so they
 // never collide with '/tasks/:id'. Capabilities are enforced in tasks-service.
 app.get('/tasks/stats', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.tasksServiceUrl, '/api/v1/tasks/stats', req, reply, req.userCtx);

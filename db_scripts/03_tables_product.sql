@@ -1136,4 +1136,48 @@ CREATE TABLE IF NOT EXISTS hr.employee_notes (
   CONSTRAINT chk_employee_notes_active_deleted CHECK (NOT (is_active AND is_deleted))
 );
 
+
+-- ===================================================================
+-- 9. hr.shift_swap_requests -- peer shift swaps (schema 1.61.0)
+--    Two employees trade shifts for ONE future day: the requester asks, the peer
+--    consents, then the requester's approver decides. Approval rewrites both
+--    people's hr.shift_assignments around that date in one transaction (shrink the
+--    current assignment, insert a one-day row with the other shift, insert a
+--    continuation) -- the table itself never touches attendance. Only FUTURE days
+--    can be swapped, so no attendance day has been resolved yet and nothing needs
+--    recomputing.
+--    Status flow: pending_peer -> pending_manager -> approved | rejected;
+--    pending_peer -> declined (peer says no); pending_peer/pending_manager ->
+--    cancelled (requester withdraws).
+--    PRIVACY: only the participants may see a request (a swap reason is between
+--    colleagues and their approver), so there is no org-wide policy -- see 08_rls.sql.
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.shift_swap_requests (
+  id                  UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  org_id              UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE RESTRICT,
+  requester_id        UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  peer_id             UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  swap_date           DATE    NOT NULL,
+  requester_shift_id  UUID    NOT NULL REFERENCES hr.shifts(id)             ON DELETE RESTRICT,
+  peer_shift_id       UUID    NOT NULL REFERENCES hr.shifts(id)             ON DELETE RESTRICT,
+  reason              TEXT    NOT NULL,
+  status              TEXT    NOT NULL DEFAULT 'pending_peer'
+                              CONSTRAINT chk_shift_swap_requests_status
+                              CHECK (status IN ('pending_peer','pending_manager','approved','rejected','declined','cancelled')),
+  manager_id          UUID    REFERENCES iam.users(id)                      ON DELETE SET NULL,
+  peer_responded_at   TIMESTAMPTZ,
+  acted_by            UUID    REFERENCES iam.users(id)                      ON DELETE SET NULL,
+  acted_at            TIMESTAMPTZ,
+  approver_comment    TEXT,
+  is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted          BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at          TIMESTAMPTZ,
+  deleted_by          UUID,
+  created_by          UUID,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_shift_swap_requests_distinct      CHECK (requester_id <> peer_id),
+  CONSTRAINT chk_shift_swap_requests_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
 COMMIT;

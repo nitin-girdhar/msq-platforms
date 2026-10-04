@@ -2267,6 +2267,27 @@ DROP TRIGGER IF EXISTS trg_employee_notes_audit             ON hr.employee_notes
 CREATE TRIGGER trg_employee_notes_audit
   AFTER UPDATE OR DELETE ON hr.employee_notes FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
+DROP TRIGGER IF EXISTS trg_shift_swap_requests_updated_at        ON hr.shift_swap_requests;
+CREATE TRIGGER trg_shift_swap_requests_updated_at
+  BEFORE UPDATE ON hr.shift_swap_requests FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_shift_swap_requests_soft_delete       ON hr.shift_swap_requests;
+CREATE TRIGGER trg_shift_swap_requests_soft_delete
+  BEFORE DELETE ON hr.shift_swap_requests FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_shift_swap_requests_set_org_id     ON hr.shift_swap_requests;
+CREATE TRIGGER trg_00_shift_swap_requests_set_org_id
+  BEFORE INSERT ON hr.shift_swap_requests FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_shift_swap_requests_set_created_by ON hr.shift_swap_requests;
+CREATE TRIGGER trg_01_shift_swap_requests_set_created_by
+  BEFORE INSERT ON hr.shift_swap_requests FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_shift_swap_requests_audit             ON hr.shift_swap_requests;
+CREATE TRIGGER trg_shift_swap_requests_audit
+  AFTER UPDATE OR DELETE ON hr.shift_swap_requests FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+
 
 
 

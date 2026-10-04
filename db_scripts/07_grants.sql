@@ -478,6 +478,14 @@ REVOKE DELETE                ON hr.employee_personal, hr.emergency_contacts, hr.
 GRANT ALL PRIVILEGES         ON hr.employee_personal, hr.emergency_contacts, hr.employee_notes TO root_service;
 GRANT SELECT, INSERT, UPDATE ON hr.employee_personal, hr.emergency_contacts, hr.employee_notes TO hr_svc;
 
+-- hr.shift_swap_requests (1.61.0): participants act through the service transaction;
+-- app_user keeps SELECT on its own rows (participant policy) for direct reads.
+GRANT SELECT                 ON hr.shift_swap_requests TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.shift_swap_requests TO tenant_admin;
+REVOKE DELETE                ON hr.shift_swap_requests FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.shift_swap_requests TO root_service;
+GRANT SELECT, INSERT, UPDATE ON hr.shift_swap_requests TO hr_svc;
+
 GRANT EXECUTE ON FUNCTION hr.can_approve(UUID,UUID,UUID) TO app_user, tenant_admin;
 
 GRANT SELECT ON hr.vw_attendance_monthly_summary, hr.vw_org_attendance_today

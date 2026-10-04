@@ -678,6 +678,15 @@ erDiagram
     UUID org_id FK
     UUID author_id FK
   }
+  shift_swap_requests {
+    UUID id PK
+    UUID org_id FK
+    UUID requester_id FK
+    UUID peer_id FK
+    UUID requester_shift_id FK
+    UUID peer_shift_id FK
+    UUID manager_id FK
+  }
   employee_profiles |o--|| users : "user_id"
   employee_profiles }o--o| employment_types : "employment_type_id"
   employee_profiles }o--o| departments : "department_id"
@@ -717,6 +726,11 @@ erDiagram
   emergency_contacts }o--|| users : "user_id"
   employee_notes }o--|| users : "user_id"
   employee_notes }o--o| users : "author_id"
+  shift_swap_requests }o--|| users : "requester_id"
+  shift_swap_requests }o--|| users : "peer_id"
+  shift_swap_requests }o--o| users : "manager_id"
+  shift_swap_requests }o--|| shifts : "requester_shift_id"
+  shift_swap_requests }o--|| shifts : "peer_shift_id"
 ```
 
 #### `task`

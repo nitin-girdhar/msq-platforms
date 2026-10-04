@@ -1487,6 +1487,21 @@ CREATE POLICY tenant_isolation_policy ON hr.employee_notes AS PERMISSIVE FOR ALL
   WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
 
 
+ALTER TABLE hr.shift_swap_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.shift_swap_requests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.shift_swap_requests;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.shift_swap_requests;
+DROP POLICY IF EXISTS participant_policy      ON hr.shift_swap_requests;
+-- Deliberately no org_isolation_policy: a swap and its reason are between the two
+-- colleagues and the approver. Anyone else (an HR admin) goes through the service
+-- transaction after a capability check.
+CREATE POLICY tenant_isolation_policy ON hr.shift_swap_requests AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+CREATE POLICY participant_policy ON hr.shift_swap_requests AS PERMISSIVE FOR SELECT TO app_user
+  USING (NOT is_deleted AND NULLIF(current_setting('app.current_user_id',true),'')::uuid IN (requester_id, peer_id, manager_id));
+
+
 -- ── hr.attendance_regularization_approvals — mirrors hr.leave_request_approvals ──
 ALTER TABLE hr.attendance_regularization_approvals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.attendance_regularization_approvals FORCE ROW LEVEL SECURITY;

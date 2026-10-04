@@ -204,6 +204,12 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Accept a correction request.', 5),
 ('hr.attendance.regularization.reject',  'operation', 'hr.attendance', 'Reject corrections',
  'Decline a correction request.', 6),
+('hr.attendance.roster.view', 'operation', 'hr.attendance', 'View team roster',
+ 'See the weekly shift roster of their team: who works which shift, who is off, who is on leave.', 8),
+('hr.attendance.swap.request', 'operation', 'hr.attendance', 'Request a shift swap',
+ 'Ask a teammate to swap shifts for a future day. The teammate must agree and an approver must sign off.', 9),
+('hr.attendance.swap.approve', 'operation', 'hr.attendance', 'Decide shift swaps',
+ 'Approve or reject shift swaps their reports have agreed on. Approving changes both people''s shifts for that day.', 10),
 
 ('hr.attendance.admin', 'page', 'hr.attendance', 'Attendance admin',
  'Configuration for the whole branch''s attendance.', 7),

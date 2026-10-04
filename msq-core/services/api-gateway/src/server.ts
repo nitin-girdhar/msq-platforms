@@ -1123,6 +1123,36 @@ app.post('/hr/leave/requests/:id/cancel', { ...withAuth }, async (req, reply) =>
   return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}/cancel`, req, reply, req.userCtx);
 });
 
+// Team roster + peer shift swaps (schema 1.61.0). Static paths come before the `:id` ones.
+app.get('/hr/attendance/roster', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/roster', req, reply, req.userCtx);
+});
+app.get('/hr/attendance/swaps', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/swaps', req, reply, req.userCtx);
+});
+app.post('/hr/attendance/swaps', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/swaps', req, reply, req.userCtx);
+});
+app.get('/hr/attendance/swaps/queue', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/swaps/queue', req, reply, req.userCtx);
+});
+app.post('/hr/attendance/swaps/:id/respond', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/swaps/${id}/respond`, req, reply, req.userCtx);
+});
+app.post('/hr/attendance/swaps/:id/cancel', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/swaps/${id}/cancel`, req, reply, req.userCtx);
+});
+app.post('/hr/attendance/swaps/:id/approve', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/swaps/${id}/approve`, req, reply, req.userCtx);
+});
+app.post('/hr/attendance/swaps/:id/reject', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/swaps/${id}/reject`, req, reply, req.userCtx);
+});
+
 // My profile (self) and Employee 360 (schema 1.60.0). The `me` routes never take a user id.
 app.get('/hr/profile/me', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/profile/me', req, reply, req.userCtx);

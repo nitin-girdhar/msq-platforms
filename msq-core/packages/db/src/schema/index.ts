@@ -92,6 +92,7 @@ export * from './tables/comp-off-claims.table.js';
 export * from './tables/employee-personal.table.js';
 export * from './tables/emergency-contacts.table.js';
 export * from './tables/employee-notes.table.js';
+export * from './tables/shift-swap-requests.table.js';
 
 export * from './views/dashboard-leads.view.js';
 export * from './views/lead-followup-timeline.view.js';

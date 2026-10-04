@@ -716,4 +716,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_emergency_contacts_primary
   ON hr.emergency_contacts (user_id) WHERE is_primary AND NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_employee_notes_user
   ON hr.employee_notes (user_id, created_at DESC) WHERE NOT is_deleted;
+
+-- hr.shift_swap_requests (1.61.0). A person may be in at most one OPEN swap per day,
+-- whether as requester or as peer (the service also refuses a day where they are
+-- the peer of another open swap, which two partial indexes cannot express).
+CREATE UNIQUE INDEX IF NOT EXISTS uix_shift_swap_requests_open_requester
+  ON hr.shift_swap_requests (requester_id, swap_date)
+  WHERE status IN ('pending_peer','pending_manager') AND NOT is_deleted;
+CREATE UNIQUE INDEX IF NOT EXISTS uix_shift_swap_requests_open_peer
+  ON hr.shift_swap_requests (peer_id, swap_date)
+  WHERE status IN ('pending_peer','pending_manager') AND NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_shift_swap_requests_org_status
+  ON hr.shift_swap_requests (org_id, status) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_shift_swap_requests_manager_pending
+  ON hr.shift_swap_requests (manager_id) WHERE status = 'pending_manager' AND NOT is_deleted;
 COMMIT;

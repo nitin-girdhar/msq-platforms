@@ -1,5 +1,5 @@
 import webpush, { WebPushError } from 'web-push';
-import { ensureVapidConfigured } from './config.js';
+import { ensureVapidConfigured, isWebPushEnabled } from './config.js';
 import { log } from './logger.js';
 import { deleteSubscription, findSubscriptions, touchLastUsed } from './repository.js';
 
@@ -57,6 +57,9 @@ export async function sendToUser(
 ): Promise<SendResult> {
   let sent = 0;
   let pruned = 0;
+
+  // Sending is switched off in local development (WEB_PUSH_ENABLED=false); see config.ts.
+  if (!isWebPushEnabled()) return { sent, pruned };
 
   try {
     ensureVapidConfigured();

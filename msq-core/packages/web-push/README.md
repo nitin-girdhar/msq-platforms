@@ -17,6 +17,7 @@ Set three vars wherever the consuming service runs:
 |---|---|
 | `VAPID_PUBLIC_KEY` | the public key; also served to clients via `GET /notifications/push/public-key` |
 | `VAPID_PRIVATE_KEY` | the private key — a long-lived secret, treated like a signing key |
+| `WEB_PUSH_ENABLED` | `false` stops SENDING pushes (subscriptions are still recorded, so enabling later needs no re-subscribe). Missing or any other value = on, so UAT and production keep sending. **Local `.env` sets `false`** because the local database is a copy of production data with real subscriptions; `msq-deploy/.env-uat` and `.env-prd` set `true`. |
 | `VAPID_SUBJECT` | `mailto:ops@…` or an `https://` URL; push services reject anything else |
 
 > **Rotating these keys invalidates every existing subscription on every

@@ -40,6 +40,37 @@ beforeEach(() => {
   touchLastUsed.mockResolvedValue(undefined);
 });
 
+describe('sendToUser with WEB_PUSH_ENABLED', () => {
+  it('sends nothing and never touches the push service or the table when set to false', async () => {
+    process.env['WEB_PUSH_ENABLED'] = 'false';
+    try {
+      const result = await sendToUser('user-1', 'org-1', PAYLOAD);
+      expect(result).toEqual({ sent: 0, pruned: 0 });
+      expect(sendNotification).not.toHaveBeenCalled();
+      expect(findSubscriptions).not.toHaveBeenCalled();
+    } finally {
+      delete process.env['WEB_PUSH_ENABLED'];
+    }
+  });
+
+  it('sends when the variable is missing, so UAT and production keep working', async () => {
+    delete process.env['WEB_PUSH_ENABLED'];
+    sendNotification.mockResolvedValueOnce({});
+    const result = await sendToUser('user-1', 'org-1', PAYLOAD);
+    expect(result.sent).toBe(1);
+  });
+
+  it('sends when set to true', async () => {
+    process.env['WEB_PUSH_ENABLED'] = 'true';
+    try {
+      sendNotification.mockResolvedValueOnce({});
+      expect((await sendToUser('user-1', 'org-1', PAYLOAD)).sent).toBe(1);
+    } finally {
+      delete process.env['WEB_PUSH_ENABLED'];
+    }
+  });
+});
+
 describe('sendToUser', () => {
   it('deletes the row and reports pruned:1 on a 410', async () => {
     sendNotification.mockRejectedValueOnce(new FakeWebPushError(410));

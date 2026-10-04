@@ -38,6 +38,16 @@ export function assertWebPushEnv(): void {
 }
 
 /**
+ * Whether this environment may SEND web pushes. On unless WEB_PUSH_ENABLED is exactly 'false', so
+ * a missing variable keeps UAT and production sending. Local development sets it to 'false': the
+ * local database is a copy of production data, with real people's push subscriptions in it.
+ * Subscriptions are still recorded when off, so switching it on later needs no re-subscribe.
+ */
+export function isWebPushEnabled(): boolean {
+  return (process.env['WEB_PUSH_ENABLED'] ?? 'true').trim().toLowerCase() !== 'false';
+}
+
+/**
  * Applies the VAPID details to the `web-push` library exactly once per process.
  * Idempotent so callers never have to reason about ordering.
  */

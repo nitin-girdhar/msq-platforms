@@ -1265,6 +1265,9 @@ app.get('/hr/payroll/payslips/:id', { ...withAuth }, async (req, reply) => {
 app.get('/hr/payroll/admin/overview', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/payroll/admin/overview', req, reply, req.userCtx);
 });
+app.get('/hr/payroll/admin/readiness', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/payroll/admin/readiness', req, reply, req.userCtx);
+});
 app.put('/hr/payroll/admin/payslips', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/payroll/admin/payslips', req, reply, req.userCtx);
 });

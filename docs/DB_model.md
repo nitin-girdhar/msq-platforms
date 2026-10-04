@@ -723,6 +723,12 @@ erDiagram
     UUID user_id FK
     UUID org_id FK
   }
+  employee_documents {
+    UUID id PK
+    UUID org_id FK
+    UUID user_id FK
+    UUID reviewed_by FK
+  }
   leave_encashment_requests {
     UUID id PK
     UUID user_id FK

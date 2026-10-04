@@ -773,4 +773,11 @@ CREATE INDEX IF NOT EXISTS idx_profile_change_org_status
 -- One open change request per person and section.
 CREATE UNIQUE INDEX IF NOT EXISTS uix_profile_change_open
   ON hr.profile_change_requests (user_id, section) WHERE status = 'pending' AND NOT is_deleted;
+
+-- 1.65.0.
+CREATE INDEX IF NOT EXISTS idx_employee_documents_user
+  ON hr.employee_documents (org_id, user_id) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_employee_documents_pending
+  ON hr.employee_documents (org_id, created_at) WHERE status = 'pending' AND NOT is_deleted;
+
 COMMIT;

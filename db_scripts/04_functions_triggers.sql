@@ -3174,4 +3174,25 @@ CREATE TRIGGER trg_tenant_branding_theme_lock
   BEFORE UPDATE ON entity.tenant_branding
   FOR EACH ROW EXECUTE FUNCTION entity.guard_tenant_branding_theme_lock();
 
+
+DROP TRIGGER IF EXISTS trg_employee_documents_updated_at        ON hr.employee_documents;
+CREATE TRIGGER trg_employee_documents_updated_at
+  BEFORE UPDATE ON hr.employee_documents FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_employee_documents_soft_delete       ON hr.employee_documents;
+CREATE TRIGGER trg_employee_documents_soft_delete
+  BEFORE DELETE ON hr.employee_documents FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_employee_documents_set_org_id     ON hr.employee_documents;
+CREATE TRIGGER trg_00_employee_documents_set_org_id
+  BEFORE INSERT ON hr.employee_documents FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_employee_documents_set_created_by ON hr.employee_documents;
+CREATE TRIGGER trg_01_employee_documents_set_created_by
+  BEFORE INSERT ON hr.employee_documents FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_employee_documents_audit             ON hr.employee_documents;
+CREATE TRIGGER trg_employee_documents_audit
+  AFTER UPDATE OR DELETE ON hr.employee_documents FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
 COMMIT;

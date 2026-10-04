@@ -85,6 +85,8 @@ export const CAPABILITY = {
   HR_EMPLOYEES_ANNOUNCEMENTS_VIEW:         'hr.employees.announcements.view',
   HR_EMPLOYEES_ASSETS_MANAGE:              'hr.employees.assets.manage',
   HR_EMPLOYEES_ASSETS_VIEW:                'hr.employees.assets.view',
+  HR_EMPLOYEES_DOCUMENTS_MANAGE:           'hr.employees.documents.manage',
+  HR_EMPLOYEES_DOCUMENTS_VIEW:             'hr.employees.documents.view',
   HR_EMPLOYEES_MANAGE:                     'hr.employees.manage',
   HR_EMPLOYEES_NOTES_MANAGE:               'hr.employees.notes.manage',
   HR_EMPLOYEES_STATUTORY_MANAGE:           'hr.employees.statutory.manage',

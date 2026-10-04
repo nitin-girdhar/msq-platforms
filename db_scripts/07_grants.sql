@@ -977,4 +977,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON iam.user_preferences TO app_user, tenant
 -- the default SELECT privileges above never even expose the hashes' shape.
 REVOKE ALL ON iam.password_reset_tokens FROM app_user, tenant_admin, lms_svc, hr_svc, task_svc;
 
+
+-- Documents vault (1.65.0). An employee reads their own rows (self policy); every write, and
+-- HR's reads of other people's rows, go through the service transaction.
+GRANT SELECT                 ON hr.employee_documents TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.employee_documents TO tenant_admin;
+REVOKE DELETE                ON hr.employee_documents FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.employee_documents TO root_service;
+GRANT SELECT, INSERT, UPDATE ON hr.employee_documents TO hr_svc;
+
 COMMIT;

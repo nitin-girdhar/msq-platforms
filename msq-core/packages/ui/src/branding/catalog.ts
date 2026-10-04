@@ -34,6 +34,7 @@ export const BRANDABLE_NAV: ReadonlyArray<{ product: string; label: string; item
       { id: 'team', label: 'My team', icon: 'users-round' },
       { id: 'leave', label: 'Leave', icon: 'plane' },
       { id: 'payroll', label: 'Payroll', icon: 'file-text' },
+      { id: 'documents', label: 'Documents', icon: 'folder-open' },
       { id: 'employees', label: 'Employees', icon: 'id-card' },
       { id: 'reports', label: 'Reports', icon: 'chart-column' },
       { id: 'profile', label: 'My profile', icon: 'users-round' },

@@ -1169,4 +1169,51 @@ WHERE rc.is_granted
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO NOTHING;
 
+-- ── Back-fill: documents capabilities (schema 1.65.0) ───────────────────
+--   *.documents.view   <- hr.employees.view
+--   *.documents.manage <- hr.employees.manage
+-- Effective holders only; DO NOTHING so a tenant opt-out survives.
+
+WITH pin(src_key, tgt_key) AS (
+  VALUES ('hr.employees.view',   'hr.employees.documents.view'),
+         ('hr.employees.manage', 'hr.employees.documents.manage')
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id
+JOIN pin ON pin.src_key = src.key
+JOIN iam.capabilities tgt ON tgt.key = pin.tgt_key
+JOIN iam.user_roles r ON r.id = rc.role_id
+JOIN LATERAL (
+  SELECT 1 FROM iam.fn_role_capability_matrix(rc.tenant_id) m
+  WHERE m.role_name = r.name AND m.capability_key = pin.src_key AND m.granted
+  LIMIT 1
+) eff ON TRUE
+WHERE rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO NOTHING;
+
+WITH pin(src_key, tgt_key) AS (
+  VALUES ('hr.employees.view',   'hr.employees.documents.view'),
+         ('hr.employees.manage', 'hr.employees.documents.manage')
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id
+JOIN pin ON pin.src_key = src.key
+JOIN iam.capabilities tgt ON tgt.key = pin.tgt_key
+JOIN iam.user_roles r ON r.id = rc.role_id
+JOIN LATERAL (
+  SELECT 1 FROM iam.fn_role_capability_matrix(rc.tenant_id) m
+  WHERE m.role_name = r.name AND m.capability_key = pin.src_key AND m.granted
+  LIMIT 1
+) eff ON TRUE
+WHERE rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO NOTHING;
+
 COMMIT;

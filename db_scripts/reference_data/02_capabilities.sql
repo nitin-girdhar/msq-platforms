@@ -322,6 +322,10 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Keep the asset inventory and assign or take back equipment.', 11),
 ('hr.employees.statutory.manage', 'operation', 'hr.employees', 'Manage statutory and bank details',
  'See and edit anyone''s PAN, Aadhaar, UAN and bank details, and decide change requests from employees. Every access is audited.', 12),
+('hr.employees.documents.view', 'operation', 'hr.employees', 'Keep own documents',
+ 'Upload and read their own documents (ID and address proof, certificates, tax proofs).', 13),
+('hr.employees.documents.manage', 'operation', 'hr.employees', 'Verify documents',
+ 'Open anyone''s documents and verify or reject them. Every access to another person''s file is audited.', 14),
 
 -- ── HR REPORTS ──────────────────────────────────────────────────────
 -- Its own tool (the HRMS left-nav "Reports" entry), not a tab of Attendance

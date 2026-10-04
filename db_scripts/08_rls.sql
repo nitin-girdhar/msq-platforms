@@ -2131,6 +2131,18 @@ ALTER TABLE iam.password_reset_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE iam.password_reset_tokens FORCE  ROW LEVEL SECURITY;
 
 
+
+-- Documents vault: identity paperwork, NO org-wide policy.
+
+ALTER TABLE hr.employee_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.employee_documents FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS self_policy             ON hr.employee_documents;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.employee_documents;
+CREATE POLICY self_policy ON hr.employee_documents AS PERMISSIVE FOR SELECT TO app_user
+  USING (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
+CREATE POLICY tenant_isolation_policy ON hr.employee_documents AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+
 -- Widen every RLS policy to also name the roles that are MEMBERS of the roles
 -- it already targets.
 --

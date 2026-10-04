@@ -1254,6 +1254,33 @@ app.post('/hr/assets/:id/return', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, `/api/v1/assets/${id}/return`, req, reply, req.userCtx);
 });
 
+// Documents vault (schema 1.65.0). Static paths first.
+app.get('/hr/documents/mine', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/documents/mine', req, reply, req.userCtx);
+});
+app.post('/hr/documents/mine', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/documents/mine', req, reply, req.userCtx);
+});
+app.get('/hr/documents/admin/pending', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/documents/admin/pending', req, reply, req.userCtx);
+});
+app.get('/hr/documents/employee/:userId', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/documents/employee/${userId}`, req, reply, req.userCtx);
+});
+app.get('/hr/documents/:id/file', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/documents/${id}/file`, req, reply, req.userCtx);
+});
+app.post('/hr/documents/:id/review', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/documents/${id}/review`, req, reply, req.userCtx);
+});
+app.delete('/hr/documents/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/documents/${id}`, req, reply, req.userCtx);
+});
+
 // Payroll viewer + month lock (schema 1.62.0). Static `admin` paths first.
 app.get('/hr/payroll/payslips', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/payroll/payslips', req, reply, req.userCtx);

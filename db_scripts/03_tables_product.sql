@@ -1422,4 +1422,46 @@ CREATE TABLE IF NOT EXISTS hr.profile_change_requests (
   CONSTRAINT chk_profile_change_active_deleted CHECK (NOT (is_active AND is_deleted))
 );
 
+
+-- ===================================================================
+-- 13. Documents & compliance vault (schema 1.65.0)
+--     hr.employee_documents  an employee's uploaded paperwork (ID/address proof, education,
+--       employment letters, tax proofs). HR verifies or rejects each one. The file bytes live
+--       in blob storage (file_key); this row is the metadata + review state.
+--     PRIVACY: identity documents, so NO org-wide policy -- an employee reads their own, a
+--       tenant_admin reads their tenant's, and HR reads/verifies through the service
+--       transaction behind hr.employees.documents.manage.
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.employee_documents (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  org_id      UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  user_id     UUID    NOT NULL REFERENCES iam.users(id)            ON DELETE RESTRICT,
+  category    TEXT    NOT NULL
+                      CONSTRAINT chk_employee_documents_category CHECK (category IN ('id_proof','address_proof','education','employment','tax_proof','medical','other')),
+  title       TEXT    NOT NULL,
+  file_key    TEXT    NOT NULL,
+  file_name   TEXT    NOT NULL,
+  mime_type   TEXT    NOT NULL
+                      CONSTRAINT chk_employee_documents_mime CHECK (mime_type IN ('application/pdf','image/jpeg','image/png','image/webp')),
+  size_bytes  INT     NOT NULL
+                      CONSTRAINT chk_employee_documents_size CHECK (size_bytes > 0 AND size_bytes <= 3145728),
+  status      TEXT    NOT NULL DEFAULT 'pending'
+                      CONSTRAINT chk_employee_documents_status CHECK (status IN ('pending','verified','rejected')),
+  reviewed_by UUID    REFERENCES iam.users(id) ON DELETE SET NULL,
+  reviewed_at TIMESTAMPTZ,
+  review_note TEXT,
+  expires_on  DATE,
+  tax_section TEXT,
+  amount      NUMERIC(15,2) CONSTRAINT chk_employee_documents_amount CHECK (amount IS NULL OR amount >= 0),
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_employee_documents_review CHECK ((status = 'pending') = (reviewed_at IS NULL)),
+  CONSTRAINT chk_employee_documents_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
 COMMIT;

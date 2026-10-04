@@ -161,3 +161,35 @@ Every phase ends with: typecheck and unit tests; grep gate (no hex, no `slate-`)
 
 ## 6. Left out on purpose (Stitch decoration with no real data behind it)
 KYC "L4 verified", DigiLocker links, SHA-256 / HSM / KMS / ISO 27001 badges, "Biometric Geofence Validated" ticker, "Nexus Shield" audit lines, zodiac / donor / Slack handle fields, "Nexus Auto-Rule" as an approver name, hardware floor/desk beyond a seat label, device list and notification toggles (no sessions table; nothing consumes preferences).
+
+---
+
+## 7. Progress log
+
+**2026-10-05 - decisions received:** D1, D2, D3, D5, D7 left out for now; D4 yes (columns on `hr.employee_profiles`); D6 small payroll set yes; D8 upload limit configurable up to 3.5 MB; D9 planner in two parts, in the side nav; D10 (header search) not yet decided.
+
+| Item | Status | Notes |
+|---|---|---|
+| Employee fields (grade, squad, cost centre, notice period, work mode, seat) | DONE | Schema 1.66.0; edit form, directory, Employee 360 |
+| Configurable document upload limit | DONE | 100 KB to 3.5 MB per branch; `hr.document_settings` |
+| Roster planner part 1 | DONE | Grid, cell edit, shift pattern, requirements, publish |
+| Roster planner part 2 | DONE | Day/Week/Month views, capacity donut, bulk reallocate, swap desk |
+| Planner: weekly-off change requests | NOT BUILT | Needs a decision: ~12 places read `weekly_off_pattern` (attendance resolution, leave counting, reports); half-honouring an approval would misstate pay |
+| Planner: notify on publish | NOT BUILT | Needs an HR renderer on the notification stream |
+| Shared blocks (avatar, stat card, status pill, pagination) | DONE | `components/common` |
+| Employee Directory | DONE | Server-side paging, filters, tab counts (fixes the old 20-row cap); today's shift, grade/squad, avatars |
+| Dashboard | MOSTLY | Profile card, KPI strip, quick actions, leave donut, dated holidays. Missing: recent-activity log, per-slot punch log |
+| Leave approvals hub | DONE | Summary cards, filter chips, decision ledger. Handover/attachment lines wait on Leave apply |
+| Daily roster | MOSTLY | Six KPIs, shift column, punch source, presence donut, shift chips, paging. Missing: inline pending-exceptions panel, XLS export |
+| Matrix report | MOSTLY | KPI strip, legend filter, search, paging, payable-of-days. Missing: PDF dossier, shift/level columns |
+| Payroll (small set, D6) | DONE | KPI cards, FY archive tabs, payslip document (browser Save-as-PDF), bank card, breakdown bar. No TDS/Form 16/CTC by decision |
+| Employee 360 / My profile | DONE structure | |
+| Punch hub in-page (selfie/geofence panels, inline regularization) | TODO | |
+| Timesheet KPI strip + view tabs | TODO | |
+| Leave apply page (handover, attachment, draft, history table) | TODO | Needs schema change |
+| Documents vault tabs / tax-proof panel / ZIP | TODO | |
+| My team: swap desk in page, leadership card | TODO | |
+| Header search, notifications bell, sidebar working-time card | TODO | D10 undecided |
+| Mobile pass (12 Stitch mobile screens) | TODO | |
+
+Found along the way: the directory and the payroll draft picker both fetched only the default 20 employees (fixed); the dashboard greeting caused a hydration warning (fixed).

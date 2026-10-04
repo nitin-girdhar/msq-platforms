@@ -1001,7 +1001,15 @@ SELECT
   la.action        AS latest_approval_action,
   la.acted_at      AS latest_approval_acted_at,
   lr.created_at,
-  lr.updated_at
+  lr.updated_at,
+  lr.info_requested_at,
+  lr.info_request_note,
+  -- Approval SLA (hours) of the effective policy for this request: the org's own revision
+  -- beats the tenant's, newest applicable_from wins (same rule as resolveEffectivePolicy).
+  (SELECT p.sla_hours FROM hr.leave_policies p
+    WHERE p.leave_type_id = lr.leave_type_id AND NOT p.is_deleted AND p.is_active
+      AND (p.org_id = lr.org_id OR p.org_id IS NULL) AND p.applicable_from <= lr.start_date
+    ORDER BY (p.org_id IS NOT NULL) DESC, p.applicable_from DESC LIMIT 1) AS sla_hours
 FROM hr.leave_requests lr
 JOIN iam.users                    u   ON u.id   = lr.user_id
 -- Catalog joins are qualified on tenant_id: these views are read under

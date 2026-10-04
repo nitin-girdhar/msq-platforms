@@ -291,6 +291,10 @@ CREATE TABLE IF NOT EXISTS hr.leave_policies (
   -- N levels; a chain shorter than N terminates at the highest available
   -- manager (org_admin / hr_admin fallback). See Platform_Expansion_Plan §4.2.
   approval_levels               SMALLINT NOT NULL DEFAULT 1 CHECK (approval_levels >= 1),
+  -- 1.64.0: approval window in hours (shown as a countdown), and cash-out rules.
+  sla_hours                     SMALLINT NOT NULL DEFAULT 48 CHECK (sla_hours > 0),
+  encashable                    BOOLEAN NOT NULL DEFAULT FALSE,
+  max_encash_days               NUMERIC(5,2),
   applicable_from               DATE    NOT NULL,
   is_active                     BOOLEAN NOT NULL DEFAULT TRUE,
   is_deleted                    BOOLEAN NOT NULL DEFAULT FALSE,
@@ -341,6 +345,9 @@ CREATE TABLE IF NOT EXISTS hr.leave_requests (
   reason        TEXT,
   status_id     UUID    NOT NULL REFERENCES hr.leave_request_statuses(id)   ON DELETE RESTRICT,
   document_url  TEXT,
+  -- "Request more info" (1.64.0): the approver's question; cleared when the requester edits the request.
+  info_requested_at TIMESTAMPTZ,
+  info_request_note TEXT,
   -- Maintained by trigger from status_id: TRUE while pending/approved, else
   -- FALSE. Drives the overlap exclusion constraint below.
   is_open       BOOLEAN NOT NULL DEFAULT TRUE,
@@ -652,7 +659,7 @@ CREATE TABLE IF NOT EXISTS hr.attendance_events (
   org_id               UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
   event_type           TEXT    NOT NULL CHECK (event_type IN ('check_in','check_out')),
   occurred_at          TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
-  source               TEXT    NOT NULL CHECK (source IN ('web','mobile','biometric','api')),
+  source               TEXT    NOT NULL CHECK (source IN ('web','mobile','biometric','api','manual')),
   geo_lat              NUMERIC(9,6),
   geo_lng              NUMERIC(9,6),
   distance_from_org_m  NUMERIC(10,2),
@@ -1327,6 +1334,92 @@ CREATE TABLE IF NOT EXISTS hr.asset_assignments (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   CONSTRAINT chk_asset_assignments_dates CHECK (returned_on IS NULL OR returned_on >= assigned_on),
   CONSTRAINT chk_asset_assignments_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+
+-- ===================================================================
+-- 12. Leave encashment, statutory/bank details, profile change requests (schema 1.64.0)
+--
+--     hr.leave_encashment_requests  an employee asks to cash out unused days of an
+--       ENCASHABLE leave type (hr.leave_policies.encashable, capped by max_encash_days).
+--       Approval writes a negative 'encashment' ledger entry. Same approver rule as comp-off.
+--
+--     hr.employee_statutory  PAN, Aadhaar, UAN, bank account, tax regime. STORED AS PLAIN
+--       TEXT for now (product decision 2026-10-04: encryption is added later -- where the
+--       key lives, who may reveal and rotation are still open). Until then the protection
+--       is access control only: a self policy + tenant_admin policy and NO org-wide policy,
+--       the API masks every value except for the owner and for hr.employees.statutory.manage,
+--       and every read/write by someone else is audited. Do not widen the policies.
+--
+--     hr.profile_change_requests  an employee asks HR to change their statutory/bank
+--       details; HR approves (the payload is applied) or rejects.
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.leave_encashment_requests (
+  id               UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  user_id          UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  org_id           UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE RESTRICT,
+  leave_type_id    UUID    NOT NULL REFERENCES hr.leave_types(id)        ON DELETE RESTRICT,
+  days             NUMERIC(5,2) NOT NULL CONSTRAINT chk_leave_encashment_days CHECK (days > 0),
+  reason           TEXT,
+  status           TEXT    NOT NULL DEFAULT 'pending'
+                           CONSTRAINT chk_leave_encashment_status CHECK (status IN ('pending','approved','rejected','cancelled')),
+  approver_id      UUID    REFERENCES iam.users(id)                      ON DELETE SET NULL,
+  acted_by         UUID    REFERENCES iam.users(id)                      ON DELETE SET NULL,
+  acted_at         TIMESTAMPTZ,
+  approver_comment TEXT,
+  ledger_entry_id  UUID    REFERENCES hr.leave_ledger(id)                ON DELETE SET NULL,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_leave_encashment_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+CREATE TABLE IF NOT EXISTS hr.employee_statutory (
+  user_id         UUID    PRIMARY KEY REFERENCES iam.users(id)            ON DELETE RESTRICT,
+  org_id          UUID    NOT NULL REFERENCES entity.organizations(id)    ON DELETE RESTRICT,
+  pan             TEXT    CONSTRAINT chk_employee_statutory_pan     CHECK (pan ~ '^[A-Z]{5}[0-9]{4}[A-Z]$'),
+  aadhaar         TEXT    CONSTRAINT chk_employee_statutory_aadhaar CHECK (aadhaar ~ '^[0-9]{12}$'),
+  uan             TEXT    CONSTRAINT chk_employee_statutory_uan     CHECK (uan ~ '^[0-9]{12}$'),
+  bank_name       TEXT,
+  bank_branch     TEXT,
+  account_number  TEXT    CONSTRAINT chk_employee_statutory_account CHECK (account_number ~ '^[0-9]{6,20}$'),
+  ifsc            TEXT    CONSTRAINT chk_employee_statutory_ifsc    CHECK (ifsc ~ '^[A-Z]{4}0[A-Z0-9]{6}$'),
+  account_type    TEXT    CONSTRAINT chk_employee_statutory_acctype CHECK (account_type IN ('savings','current')),
+  tax_regime      TEXT    CONSTRAINT chk_employee_statutory_regime  CHECK (tax_regime IN ('old','new')),
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_employee_statutory_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+CREATE TABLE IF NOT EXISTS hr.profile_change_requests (
+  id               UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  user_id          UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  org_id           UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE RESTRICT,
+  section          TEXT    NOT NULL DEFAULT 'statutory' CONSTRAINT chk_profile_change_section CHECK (section IN ('statutory')),
+  payload          JSONB   NOT NULL,
+  reason           TEXT,
+  status           TEXT    NOT NULL DEFAULT 'pending'
+                           CONSTRAINT chk_profile_change_status CHECK (status IN ('pending','approved','rejected','cancelled')),
+  reviewer_id      UUID    REFERENCES iam.users(id)                      ON DELETE SET NULL,
+  acted_at         TIMESTAMPTZ,
+  reviewer_comment TEXT,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_profile_change_active_deleted CHECK (NOT (is_active AND is_deleted))
 );
 
 COMMIT;

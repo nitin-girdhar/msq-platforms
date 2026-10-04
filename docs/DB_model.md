@@ -723,6 +723,24 @@ erDiagram
     UUID user_id FK
     UUID org_id FK
   }
+  leave_encashment_requests {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID leave_type_id FK
+    UUID approver_id FK
+    UUID ledger_entry_id FK
+  }
+  employee_statutory {
+    UUID user_id PK
+    UUID org_id FK
+  }
+  profile_change_requests {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID reviewer_id FK
+  }
   employee_profiles |o--|| users : "user_id"
   employee_profiles }o--o| employment_types : "employment_type_id"
   employee_profiles }o--o| departments : "department_id"
@@ -776,6 +794,12 @@ erDiagram
   announcement_reads }o--|| users : "user_id"
   asset_assignments }o--|| assets : "asset_id"
   asset_assignments }o--|| users : "user_id"
+  leave_encashment_requests }o--|| users : "user_id"
+  leave_encashment_requests }o--|| leave_types : "leave_type_id"
+  leave_encashment_requests }o--o| leave_ledger : "ledger_entry_id"
+  employee_statutory |o--|| users : "user_id"
+  profile_change_requests }o--|| users : "user_id"
+  profile_change_requests }o--o| users : "reviewer_id"
 ```
 
 #### `task`

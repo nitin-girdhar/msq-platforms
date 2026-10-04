@@ -755,4 +755,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_asset_assignments_open
   ON hr.asset_assignments (asset_id) WHERE returned_on IS NULL AND NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_asset_assignments_user
   ON hr.asset_assignments (user_id) WHERE NOT is_deleted;
+
+-- 1.64.0.
+CREATE INDEX IF NOT EXISTS idx_leave_encashment_user
+  ON hr.leave_encashment_requests (user_id, created_at DESC) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_leave_encashment_org_status
+  ON hr.leave_encashment_requests (org_id, status) WHERE NOT is_deleted;
+-- One open encashment request per person and leave type.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_leave_encashment_open
+  ON hr.leave_encashment_requests (user_id, leave_type_id) WHERE status = 'pending' AND NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_employee_statutory_org
+  ON hr.employee_statutory (org_id) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_profile_change_user
+  ON hr.profile_change_requests (user_id, created_at DESC) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_profile_change_org_status
+  ON hr.profile_change_requests (org_id, status) WHERE NOT is_deleted;
+-- One open change request per person and section.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_profile_change_open
+  ON hr.profile_change_requests (user_id, section) WHERE status = 'pending' AND NOT is_deleted;
 COMMIT;

@@ -22,6 +22,10 @@ export const leavePoliciesTable = hrSchema.table('leave_policies', {
   allowHalfDay:              boolean('allow_half_day').notNull().default(true),
   requiresDocumentAfterDays: smallint('requires_document_after_days'),
   approvalLevels:            smallint('approval_levels').notNull().default(1),
+  // 1.64.0: approval window (hours, a countdown), and cash-out rules.
+  slaHours:                  smallint('sla_hours').notNull().default(48),
+  encashable:                boolean('encashable').notNull().default(false),
+  maxEncashDays:             numeric('max_encash_days', { precision: 5, scale: 2 }),
   applicableFrom:            date('applicable_from').notNull(),
   isActive:                  boolean('is_active').notNull().default(true),
   isDeleted:                 boolean('is_deleted').notNull().default(false),

@@ -19,6 +19,9 @@ export const leaveRequestsTable = hrSchema.table('leave_requests', {
   reason:       text('reason'),
   statusId:     uuid('status_id').notNull().references(() => leaveRequestStatusesTable.id, { onDelete: 'restrict' }),
   documentUrl:  text('document_url'),
+  // 1.64.0 "request more info": the approver's question, cleared when the requester edits.
+  infoRequestedAt: timestamp('info_requested_at', { withTimezone: true }),
+  infoRequestNote: text('info_request_note'),
   // Maintained by trigger from status_id: TRUE while pending/approved.
   isOpen:       boolean('is_open').notNull().default(true),
   isActive:     boolean('is_active').notNull().default(true),

@@ -508,6 +508,15 @@ GRANT ALL PRIVILEGES         ON hr.announcements, hr.announcement_reads, hr.asse
 GRANT SELECT, INSERT, UPDATE ON hr.announcements, hr.assets, hr.asset_assignments TO hr_svc;
 GRANT SELECT, INSERT         ON hr.announcement_reads TO hr_svc;
 
+-- 1.64.0. Encashment: employees read their own via app_user, everything else via the
+-- service transaction. Statutory data + change requests: self read via app_user,
+-- HR and the employee's own writes through the service transaction.
+GRANT SELECT                 ON hr.leave_encashment_requests, hr.employee_statutory, hr.profile_change_requests TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.leave_encashment_requests, hr.employee_statutory, hr.profile_change_requests TO tenant_admin;
+REVOKE DELETE                ON hr.leave_encashment_requests, hr.employee_statutory, hr.profile_change_requests FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.leave_encashment_requests, hr.employee_statutory, hr.profile_change_requests TO root_service;
+GRANT SELECT, INSERT, UPDATE ON hr.leave_encashment_requests, hr.employee_statutory, hr.profile_change_requests TO hr_svc;
+
 GRANT EXECUTE ON FUNCTION hr.can_approve(UUID,UUID,UUID) TO app_user, tenant_admin;
 
 GRANT SELECT ON hr.vw_attendance_monthly_summary, hr.vw_org_attendance_today

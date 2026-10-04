@@ -1123,6 +1123,97 @@ app.post('/hr/leave/requests/:id/cancel', { ...withAuth }, async (req, reply) =>
   return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}/cancel`, req, reply, req.userCtx);
 });
 
+// Statutory details, change requests, 360 tabs, org chart, attendance tools (schema 1.64.0).
+// Static paths are registered before the `:userId` ones.
+app.get('/hr/profile/me/statutory', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/profile/me/statutory', req, reply, req.userCtx);
+});
+app.get('/hr/profile/me/change-requests', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/profile/me/change-requests', req, reply, req.userCtx);
+});
+app.post('/hr/profile/me/change-requests', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/profile/me/change-requests', req, reply, req.userCtx);
+});
+app.post('/hr/profile/me/change-requests/:id/cancel', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/profile/me/change-requests/${id}/cancel`, req, reply, req.userCtx);
+});
+app.get('/hr/profile/change-requests', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/profile/change-requests', req, reply, req.userCtx);
+});
+app.post('/hr/profile/change-requests/:id/approve', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/profile/change-requests/${id}/approve`, req, reply, req.userCtx);
+});
+app.post('/hr/profile/change-requests/:id/reject', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/profile/change-requests/${id}/reject`, req, reply, req.userCtx);
+});
+app.get('/hr/employees/org-chart', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/employees/org-chart', req, reply, req.userCtx);
+});
+app.get('/hr/employees/:userId/statutory', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/statutory`, req, reply, req.userCtx);
+});
+app.put('/hr/employees/:userId/statutory', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/statutory`, req, reply, req.userCtx);
+});
+app.get('/hr/employees/:userId/attendance', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/attendance`, req, reply, req.userCtx);
+});
+app.get('/hr/employees/:userId/audit', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/audit`, req, reply, req.userCtx);
+});
+app.get('/hr/attendance/me/punches', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/me/punches', req, reply, req.userCtx);
+});
+app.get('/hr/attendance/me/nudges', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/me/nudges', req, reply, req.userCtx);
+});
+app.post('/hr/attendance/admin/manual-punch', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/admin/manual-punch', req, reply, req.userCtx);
+});
+app.post('/hr/attendance/admin/bulk-regularize', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/admin/bulk-regularize', req, reply, req.userCtx);
+});
+app.post('/hr/attendance/admin/nudge', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/admin/nudge', req, reply, req.userCtx);
+});
+
+// Leave: request more info, policy summary, encashment (schema 1.64.0). Static paths first.
+app.get('/hr/leave/policy-summary', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/leave/policy-summary', req, reply, req.userCtx);
+});
+app.post('/hr/leave/encashments', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/leave/encashments', req, reply, req.userCtx);
+});
+app.get('/hr/leave/encashments', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/leave/encashments', req, reply, req.userCtx);
+});
+app.get('/hr/leave/encashments/queue', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/leave/encashments/queue', req, reply, req.userCtx);
+});
+app.post('/hr/leave/encashments/:id/approve', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/encashments/${id}/approve`, req, reply, req.userCtx);
+});
+app.post('/hr/leave/encashments/:id/reject', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/encashments/${id}/reject`, req, reply, req.userCtx);
+});
+app.post('/hr/leave/encashments/:id/cancel', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/encashments/${id}/cancel`, req, reply, req.userCtx);
+});
+app.post('/hr/leave/requests/:id/request-info', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}/request-info`, req, reply, req.userCtx);
+});
+
 // Announcements + assets (schema 1.63.0). Static paths before the `:id` ones.
 app.get('/hr/announcements', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/announcements', req, reply, req.userCtx);

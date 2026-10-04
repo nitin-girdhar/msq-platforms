@@ -1570,6 +1570,43 @@ CREATE POLICY tenant_isolation_policy ON hr.asset_assignments AS PERMISSIVE FOR 
   USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
 
 
+-- Encashment: leave data, same shape as comp-off (branch read; writes via the service).
+
+ALTER TABLE hr.leave_encashment_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.leave_encashment_requests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.leave_encashment_requests;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.leave_encashment_requests;
+DROP POLICY IF EXISTS self_policy             ON hr.leave_encashment_requests;
+CREATE POLICY org_isolation_policy ON hr.leave_encashment_requests AS PERMISSIVE FOR SELECT TO app_user
+  USING (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
+CREATE POLICY tenant_isolation_policy ON hr.leave_encashment_requests AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+CREATE POLICY self_policy ON hr.leave_encashment_requests AS PERMISSIVE FOR SELECT TO app_user
+  USING (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
+
+-- Statutory + change requests: NO org-wide policy. Plain text until encryption lands, so access control is the whole defence.
+
+ALTER TABLE hr.employee_statutory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.employee_statutory FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.employee_statutory;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.employee_statutory;
+DROP POLICY IF EXISTS self_policy             ON hr.employee_statutory;
+CREATE POLICY tenant_isolation_policy ON hr.employee_statutory AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+CREATE POLICY self_policy ON hr.employee_statutory AS PERMISSIVE FOR SELECT TO app_user
+  USING (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
+
+ALTER TABLE hr.profile_change_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.profile_change_requests FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.profile_change_requests;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.profile_change_requests;
+DROP POLICY IF EXISTS self_policy             ON hr.profile_change_requests;
+CREATE POLICY tenant_isolation_policy ON hr.profile_change_requests AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+CREATE POLICY self_policy ON hr.profile_change_requests AS PERMISSIVE FOR SELECT TO app_user
+  USING (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
+
+
 -- ── hr.attendance_regularization_approvals — mirrors hr.leave_request_approvals ──
 ALTER TABLE hr.attendance_regularization_approvals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.attendance_regularization_approvals FORCE ROW LEVEL SECURITY;

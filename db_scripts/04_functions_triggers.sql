@@ -2395,6 +2395,67 @@ DROP TRIGGER IF EXISTS trg_asset_assignments_audit             ON hr.asset_assig
 CREATE TRIGGER trg_asset_assignments_audit
   AFTER UPDATE OR DELETE ON hr.asset_assignments FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
+DROP TRIGGER IF EXISTS trg_leave_encashment_updated_at        ON hr.leave_encashment_requests;
+CREATE TRIGGER trg_leave_encashment_updated_at
+  BEFORE UPDATE ON hr.leave_encashment_requests FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_leave_encashment_soft_delete       ON hr.leave_encashment_requests;
+CREATE TRIGGER trg_leave_encashment_soft_delete
+  BEFORE DELETE ON hr.leave_encashment_requests FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_leave_encashment_set_org_id     ON hr.leave_encashment_requests;
+CREATE TRIGGER trg_00_leave_encashment_set_org_id
+  BEFORE INSERT ON hr.leave_encashment_requests FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_leave_encashment_set_created_by ON hr.leave_encashment_requests;
+CREATE TRIGGER trg_01_leave_encashment_set_created_by
+  BEFORE INSERT ON hr.leave_encashment_requests FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_leave_encashment_audit             ON hr.leave_encashment_requests;
+CREATE TRIGGER trg_leave_encashment_audit
+  AFTER UPDATE OR DELETE ON hr.leave_encashment_requests FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_employee_statutory_updated_at        ON hr.employee_statutory;
+CREATE TRIGGER trg_employee_statutory_updated_at
+  BEFORE UPDATE ON hr.employee_statutory FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_employee_statutory_soft_delete       ON hr.employee_statutory;
+CREATE TRIGGER trg_employee_statutory_soft_delete
+  BEFORE DELETE ON hr.employee_statutory FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_employee_statutory_set_org_id     ON hr.employee_statutory;
+CREATE TRIGGER trg_00_employee_statutory_set_org_id
+  BEFORE INSERT ON hr.employee_statutory FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_employee_statutory_set_created_by ON hr.employee_statutory;
+CREATE TRIGGER trg_01_employee_statutory_set_created_by
+  BEFORE INSERT ON hr.employee_statutory FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_employee_statutory_audit             ON hr.employee_statutory;
+CREATE TRIGGER trg_employee_statutory_audit
+  AFTER UPDATE OR DELETE ON hr.employee_statutory FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_profile_change_updated_at        ON hr.profile_change_requests;
+CREATE TRIGGER trg_profile_change_updated_at
+  BEFORE UPDATE ON hr.profile_change_requests FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_profile_change_soft_delete       ON hr.profile_change_requests;
+CREATE TRIGGER trg_profile_change_soft_delete
+  BEFORE DELETE ON hr.profile_change_requests FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_profile_change_set_org_id     ON hr.profile_change_requests;
+CREATE TRIGGER trg_00_profile_change_set_org_id
+  BEFORE INSERT ON hr.profile_change_requests FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_profile_change_set_created_by ON hr.profile_change_requests;
+CREATE TRIGGER trg_01_profile_change_set_created_by
+  BEFORE INSERT ON hr.profile_change_requests FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_profile_change_audit             ON hr.profile_change_requests;
+CREATE TRIGGER trg_profile_change_audit
+  AFTER UPDATE OR DELETE ON hr.profile_change_requests FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+
 
 
 

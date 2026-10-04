@@ -13,6 +13,7 @@ export const attendanceEventsTable = hrSchema.table('attendance_events', {
   orgId:              uuid('org_id').notNull().references(() => organizationsTable.id, { onDelete: 'restrict' }),
   eventType:          text('event_type').notNull(),
   occurredAt:         timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  // web | mobile | biometric | api | manual (manual = added by HR on someone's behalf, 1.64.0)
   source:             text('source').notNull(),
   geoLat:             numeric('geo_lat', { precision: 9, scale: 6 }),
   geoLng:             numeric('geo_lng', { precision: 9, scale: 6 }),

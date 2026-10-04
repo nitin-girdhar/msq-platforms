@@ -239,6 +239,8 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Read who may check in remotely, and until when.', 1),
 ('hr.attendance.admin.geo_exceptions.manage', 'operation', 'hr.attendance.admin.geo_exceptions', 'Manage exceptions',
  'Let a named person check in from anywhere — a rotating field role, or an approved work-from-home stretch.', 2),
+('hr.attendance.admin.override', 'operation', 'hr.attendance.admin', 'Correct attendance on behalf',
+ 'Add a missed punch for someone, regularize several people at once and nudge people who have not punched. Every action is audited.', 6),
 
 -- ── LEAVE ───────────────────────────────────────────────────────────
 ('hr.leave', 'tool', NULL, 'Leave',
@@ -265,6 +267,10 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Claim a day off for work done on a day off. The claim goes to their approver, and the day is credited to the Comp-off leave balance once approved.', 7),
 ('hr.leave.comp_off.approve', 'operation', 'hr.leave', 'Decide comp-off',
  'Approve or reject comp-off claims. Who they can act for follows the same authority as Approve leave.', 8),
+('hr.leave.encashment.request', 'operation', 'hr.leave', 'Request leave encashment',
+ 'Ask to cash out unused days of a leave type that allows encashment.', 9),
+('hr.leave.encashment.approve', 'operation', 'hr.leave', 'Decide leave encashment',
+ 'Approve or reject encashment requests. Who they can act for follows the same authority as Approve leave.', 10),
 
 ('hr.leave.admin', 'page', 'hr.leave', 'Leave admin',
  'Leave configuration for the whole branch.', 6),
@@ -314,6 +320,8 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'See the equipment assigned to them.', 10),
 ('hr.employees.assets.manage', 'operation', 'hr.employees', 'Manage assets',
  'Keep the asset inventory and assign or take back equipment.', 11),
+('hr.employees.statutory.manage', 'operation', 'hr.employees', 'Manage statutory and bank details',
+ 'See and edit anyone''s PAN, Aadhaar, UAN and bank details, and decide change requests from employees. Every access is audited.', 12),
 
 -- ── HR REPORTS ──────────────────────────────────────────────────────
 -- Its own tool (the HRMS left-nav "Reports" entry), not a tab of Attendance

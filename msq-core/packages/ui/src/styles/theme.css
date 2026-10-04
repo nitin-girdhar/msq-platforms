@@ -1,0 +1,270 @@
+/*
+ * Platform theme tokens — design system "Precision Enterprise Kinetic"
+ * (Google Stitch, LMS project, 2026-10-02). Material 3 colour roles.
+ *
+ * Every app imports this right after `@import "tailwindcss";`. The values
+ * here are the platform DEFAULT (light). A tenant brand / user appearance
+ * choice / dark mode replaces the brandable roles at runtime: <ThemeStyle>
+ * (ui-kit/theme) emits unlayered `:root` / `html[data-mode=dark]` overrides,
+ * which beat this `@layer theme` block without any component knowing.
+ *
+ * Rules (skills/react-typescript §6):
+ *  - use the generated utilities (bg-primary, text-on-surface, …), never hex;
+ *  - the status-* roles are FIXED — they are never generated from a brand
+ *    seed, so "overdue" reads the same for every tenant.
+ */
+
+@theme static {
+  /* ── Brand roles (generated per tenant/user at runtime) ─────────────── */
+  --color-primary: #3525cd;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #4f46e5;
+  --color-on-primary-container: #dad7ff;
+  --color-primary-fixed: #e2dfff;
+  --color-primary-fixed-dim: #c3c0ff;
+  --color-on-primary-fixed: #0f0069;
+  --color-on-primary-fixed-variant: #3323cc;
+  --color-inverse-primary: #c3c0ff;
+  --color-surface-tint: #4d44e3;
+
+  --color-secondary: #565e74;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #dae2fd;
+  --color-on-secondary-container: #5c647a;
+
+  --color-tertiary: #004d70;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #006693;
+  --color-on-tertiary-container: #b8e0ff;
+  --color-tertiary-fixed: #c9e6ff;
+
+  /* ── Neutral roles (generated alongside the brand roles) ────────────── */
+  --color-background: #f8f9ff;
+  --color-on-background: #0b1c30;
+  --color-surface: #f8f9ff;
+  --color-surface-dim: #cbdbf5;
+  --color-surface-bright: #f8f9ff;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #eff4ff;
+  --color-surface-container: #e5eeff;
+  --color-surface-container-high: #dce9ff;
+  --color-surface-container-highest: #d3e4fe;
+  --color-surface-variant: #d3e4fe;
+  --color-on-surface: #0b1c30;
+  --color-on-surface-variant: #464555;
+  --color-outline: #777587;
+  --color-outline-variant: #c7c4d8;
+  --color-inverse-surface: #213145;
+  --color-inverse-on-surface: #eaf1ff;
+  --color-scrim: rgb(11 28 48 / 0.45);
+
+  /* ── Error (M3) ──────────────────────────────────────────────────────── */
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+
+  /* ── Status — FIXED, never brand-generated ──────────────────────────── */
+  --color-status-overdue: #dc2626;
+  --color-on-status-overdue: #ffffff;
+  --color-status-overdue-container: #fee2e2;
+  --color-on-status-overdue-container: #991b1b;
+
+  --color-status-due: #d97706;
+  --color-on-status-due: #ffffff;
+  --color-status-due-container: #fef3c7;
+  --color-on-status-due-container: #92400e;
+
+  --color-status-success: #16a34a;
+  --color-on-status-success: #ffffff;
+  --color-status-success-container: #dcfce7;
+  --color-on-status-success-container: #166534;
+
+  --color-status-info: #0284c7;
+  --color-on-status-info: #ffffff;
+  --color-status-info-container: #e0f2fe;
+  --color-on-status-info-container: #075985;
+
+  /* ── Categorical — FIXED, never brand-generated ─────────────────────────
+   * For data that is coloured by CATEGORY (lead source chips, stage chips,
+   * chart series): "Instagram is orange" must hold for every tenant, so these
+   * never follow the brand seed. Each hue has a dot/solid, a container and an
+   * on-container. Use via utilities (bg-cat-orange-container …) or, for
+   * charts / inline styles, var(--color-cat-orange).                        */
+  --color-cat-blue: #3b82f6;      --color-cat-blue-container: #eff6ff;      --color-on-cat-blue-container: #1d4ed8;
+  --color-cat-orange: #f97316;    --color-cat-orange-container: #fff7ed;    --color-on-cat-orange-container: #c2410c;
+  --color-cat-purple: #a855f7;    --color-cat-purple-container: #faf5ff;    --color-on-cat-purple-container: #7e22ce;
+  --color-cat-green: #22c55e;     --color-cat-green-container: #f0fdf4;     --color-on-cat-green-container: #15803d;
+  --color-cat-red: #ef4444;       --color-cat-red-container: #fef2f2;       --color-on-cat-red-container: #b91c1c;
+  --color-cat-amber: #f59e0b;     --color-cat-amber-container: #fffbeb;     --color-on-cat-amber-container: #92400e;
+  --color-cat-pink: #ec4899;      --color-cat-pink-container: #fdf2f8;      --color-on-cat-pink-container: #be185d;
+  --color-cat-cyan: #06b6d4;      --color-cat-cyan-container: #ecfeff;      --color-on-cat-cyan-container: #0e7490;
+  --color-cat-yellow: #eab308;    --color-cat-yellow-container: #fefce8;    --color-on-cat-yellow-container: #a16207;
+  --color-cat-indigo: #6366f1;    --color-cat-indigo-container: #eef2ff;    --color-on-cat-indigo-container: #4338ca;
+  --color-cat-slate: #94a3b8;     --color-cat-slate-container: #f1f5f9;     --color-on-cat-slate-container: #475569;
+
+  /* WhatsApp brand action — fixed by Meta's brand rules, not ours. */
+  --color-whatsapp: #25d366;
+  --color-whatsapp-hover: #1da851;
+  --color-on-whatsapp: #ffffff;
+  --color-on-whatsapp-container: #128c4b;
+
+  /* ── Fonts ───────────────────────────────────────────────────────────
+   * --font-brand is set by <ThemeStyle> to the chosen next/font variable;
+   * the fallbacks keep a sane stack before any brand resolves.            */
+  --font-sans: var(--font-brand, "Inter"), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-brand-mono, "JetBrains Mono"), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ── Type scale ──────────────────────────────────────────────────────── */
+  --text-display: 2.25rem;
+  --text-display--line-height: 2.75rem;
+  --text-display--letter-spacing: -0.025em;
+  --text-display--font-weight: 700;
+
+  --text-headline-lg: 1.5rem;
+  --text-headline-lg--line-height: 2rem;
+  --text-headline-lg--letter-spacing: -0.02em;
+  --text-headline-lg--font-weight: 600;
+
+  --text-headline-md: 1.125rem;
+  --text-headline-md--line-height: 1.625rem;
+  --text-headline-md--letter-spacing: -0.015em;
+  --text-headline-md--font-weight: 600;
+
+  --text-headline-sm: 0.9375rem;
+  --text-headline-sm--line-height: 1.375rem;
+  --text-headline-sm--letter-spacing: -0.01em;
+  --text-headline-sm--font-weight: 600;
+
+  --text-body-lg: 0.9375rem;
+  --text-body-lg--line-height: 1.5rem;
+  --text-body-lg--letter-spacing: -0.005em;
+
+  --text-body-md: 0.8125rem;
+  --text-body-md--line-height: 1.25rem;
+
+  --text-body-sm: 0.75rem;
+  --text-body-sm--line-height: 1.125rem;
+
+  --text-label-md: 0.8125rem;
+  --text-label-md--line-height: 1.125rem;
+  --text-label-md--letter-spacing: -0.005em;
+  --text-label-md--font-weight: 500;
+
+  --text-label-sm: 0.6875rem;
+  --text-label-sm--line-height: 1rem;
+  --text-label-sm--letter-spacing: 0.02em;
+  --text-label-sm--font-weight: 600;
+
+  /* ── Elevation ───────────────────────────────────────────────────────── */
+  --shadow-card: 0 1px 2px 0 rgb(11 28 48 / 0.04), 0 1px 3px 0 rgb(11 28 48 / 0.06);
+  --shadow-overlay: 0 12px 32px -8px rgb(11 28 48 / 0.18), 0 4px 12px -4px rgb(11 28 48 / 0.08);
+}
+
+/* Status roles are fixed per MODE, not per brand: dark mode gets its own
+   readable set. The brandable roles' dark values come from <ThemeStyle>.
+   Same block twice: forced dark, and "Follow device" on a dark device.
+   (Keep the two in sync.) */
+@media (prefers-color-scheme: dark) {
+  html[data-mode="system"] {
+    color-scheme: dark;
+    --color-status-overdue: #f87171;
+    --color-on-status-overdue: #450a0a;
+    --color-status-overdue-container: #4c1414;
+    --color-on-status-overdue-container: #fecaca;
+
+    --color-status-due: #fbbf24;
+    --color-on-status-due: #451a03;
+    --color-status-due-container: #4a2f07;
+    --color-on-status-due-container: #fde68a;
+
+    --color-status-success: #4ade80;
+    --color-on-status-success: #052e16;
+    --color-status-success-container: #0f3d22;
+    --color-on-status-success-container: #bbf7d0;
+
+    --color-status-info: #38bdf8;
+    --color-on-status-info: #082f49;
+    --color-status-info-container: #0c3a55;
+    --color-on-status-info-container: #bae6fd;
+
+    --color-cat-blue-container: #172554;   --color-on-cat-blue-container: #bfdbfe;
+
+    --color-cat-orange-container: #431407; --color-on-cat-orange-container: #fed7aa;
+
+    --color-cat-purple-container: #3b0764; --color-on-cat-purple-container: #e9d5ff;
+
+    --color-cat-green-container: #052e16;  --color-on-cat-green-container: #bbf7d0;
+
+    --color-cat-red-container: #450a0a;    --color-on-cat-red-container: #fecaca;
+
+    --color-cat-amber-container: #451a03;  --color-on-cat-amber-container: #fde68a;
+
+    --color-cat-pink-container: #500724;   --color-on-cat-pink-container: #fbcfe8;
+
+    --color-cat-cyan-container: #083344;   --color-on-cat-cyan-container: #a5f3fc;
+
+    --color-cat-yellow-container: #422006; --color-on-cat-yellow-container: #fef08a;
+
+    --color-cat-indigo-container: #1e1b4b; --color-on-cat-indigo-container: #c7d2fe;
+
+    --color-cat-slate-container: #1e293b;  --color-on-cat-slate-container: #cbd5e1;
+
+    --color-on-whatsapp-container: #4ade80;
+
+
+    --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 1px 3px 0 rgb(0 0 0 / 0.35);
+    --shadow-overlay: 0 12px 32px -8px rgb(0 0 0 / 0.55), 0 4px 12px -4px rgb(0 0 0 / 0.4);
+  }
+}
+
+html[data-mode="dark"] {
+  color-scheme: dark;
+  --color-status-overdue: #f87171;
+  --color-on-status-overdue: #450a0a;
+  --color-status-overdue-container: #4c1414;
+  --color-on-status-overdue-container: #fecaca;
+
+  --color-status-due: #fbbf24;
+  --color-on-status-due: #451a03;
+  --color-status-due-container: #4a2f07;
+  --color-on-status-due-container: #fde68a;
+
+  --color-status-success: #4ade80;
+  --color-on-status-success: #052e16;
+  --color-status-success-container: #0f3d22;
+  --color-on-status-success-container: #bbf7d0;
+
+  --color-status-info: #38bdf8;
+  --color-on-status-info: #082f49;
+  --color-status-info-container: #0c3a55;
+  --color-on-status-info-container: #bae6fd;
+
+  --color-cat-blue-container: #172554;   --color-on-cat-blue-container: #bfdbfe;
+
+  --color-cat-orange-container: #431407; --color-on-cat-orange-container: #fed7aa;
+
+  --color-cat-purple-container: #3b0764; --color-on-cat-purple-container: #e9d5ff;
+
+  --color-cat-green-container: #052e16;  --color-on-cat-green-container: #bbf7d0;
+
+  --color-cat-red-container: #450a0a;    --color-on-cat-red-container: #fecaca;
+
+  --color-cat-amber-container: #451a03;  --color-on-cat-amber-container: #fde68a;
+
+  --color-cat-pink-container: #500724;   --color-on-cat-pink-container: #fbcfe8;
+
+  --color-cat-cyan-container: #083344;   --color-on-cat-cyan-container: #a5f3fc;
+
+  --color-cat-yellow-container: #422006; --color-on-cat-yellow-container: #fef08a;
+
+  --color-cat-indigo-container: #1e1b4b; --color-on-cat-indigo-container: #c7d2fe;
+
+  --color-cat-slate-container: #1e293b;  --color-on-cat-slate-container: #cbd5e1;
+
+  --color-on-whatsapp-container: #4ade80;
+
+
+  --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 1px 3px 0 rgb(0 0 0 / 0.35);
+  --shadow-overlay: 0 12px 32px -8px rgb(0 0 0 / 0.55), 0 4px 12px -4px rgb(0 0 0 / 0.4);
+}

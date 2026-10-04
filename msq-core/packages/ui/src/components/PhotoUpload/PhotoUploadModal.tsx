@@ -202,7 +202,7 @@ export default function PhotoUploadModal({
           size="md"
           onClick={submit}
           disabled={stage.status !== 'captured' || !consent || submitting}
-          className="!bg-emerald-600 hover:!bg-emerald-700"
+          className="!bg-status-success hover:!bg-on-status-success-container"
         >
           {submitting ? 'Saving…' : 'Save photo'}
         </Button>
@@ -220,7 +220,7 @@ export default function PhotoUploadModal({
       maxWidth="max-w-xl"
     >
       {locked ? (
-        <p className="rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-800">
+        <p className="rounded-lg bg-status-due-container px-3 py-3 text-sm text-on-status-due-container">
           {gate?.message ?? 'You cannot change your photo right now.'}
         </p>
       ) : (
@@ -228,7 +228,7 @@ export default function PhotoUploadModal({
           {/* Height is viewport-relative (not aspect-square) so the preview,
               consent checkbox and any error all fit between the pinned header
               and footer — the body never has to scroll. */}
-          <div className="flex h-[min(46vh,20rem)] w-full items-center justify-center overflow-hidden rounded-xl bg-slate-100">
+          <div className="flex h-[min(46vh,20rem)] w-full items-center justify-center overflow-hidden rounded-xl bg-surface-container">
             {stage.status === 'streaming' && (
               <video ref={videoRef} className="h-full w-full object-cover" muted playsInline />
             )}
@@ -237,7 +237,7 @@ export default function PhotoUploadModal({
               <img src={stage.dataUrl} alt="Preview" className="h-full w-full object-cover" />
             )}
             {(stage.status === 'choose' || stage.status === 'error') && (
-              <span className="px-4 text-center text-sm text-slate-400">
+              <span className="px-4 text-center text-sm text-outline">
                 {stage.status === 'error' ? stage.message : 'Take a photo or upload one from your device.'}
               </span>
             )}
@@ -245,17 +245,17 @@ export default function PhotoUploadModal({
 
           <input ref={fileRef} type="file" accept="image/*" capture="user" onChange={onFile} className="hidden" />
 
-          <label className="flex items-start gap-2 text-xs text-slate-600">
+          <label className="flex items-start gap-2 text-xs text-on-surface-variant">
             <input
               type="checkbox"
               checked={consent}
               onChange={(e) => setConsent(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-slate-300"
+              className="mt-0.5 h-4 w-4 rounded border-outline-variant"
             />
             <span>{consentLabel}</span>
           </label>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-error">{error}</p>}
         </div>
       )}
     </Modal>

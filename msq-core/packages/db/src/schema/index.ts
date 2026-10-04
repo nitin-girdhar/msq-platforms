@@ -33,6 +33,8 @@ export * from './tables/activities.table.js';
 export * from './tables/marketing-leads-history.table.js';
 export * from './tables/audit-log.table.js';
 export * from './tables/token-blocklist.table.js';
+export * from './tables/user-preferences.table.js';
+export * from './tables/password-reset-tokens.table.js';
 export * from './tables/schema-versions.table.js';
 export * from './tables/user-org-mapping.table.js';
 export * from './tables/lead-assignment-weights.table.js';
@@ -52,6 +54,7 @@ export * from './tables/lead-stage-capi-event-map.table.js';
 
 // HR + Task platform (Phase 0)
 export * from './tables/tenant-modules.table.js';
+export * from './tables/tenant-branding.table.js';
 
 // Tenant default seeding (Phase 3B — db_scripts/23)
 export * from './tables/catalog-defaults.table.js';

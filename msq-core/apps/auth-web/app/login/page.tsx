@@ -1,20 +1,26 @@
 import type { Metadata } from 'next';
-import Image from 'next/image';
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@platform/ui-kit/server';
 import { productOrigins } from '@platform/ui-kit';
 import LoginForm from '@/components/auth/LoginForm';
+import AuthFrame from '@/components/auth/AuthFrame';
 import { resolveCallback, sessionDestination } from '@/src/lib/callback';
-
-export const metadata: Metadata = {
-  title: 'Sign in · FitClass',
-  description: 'Secure single sign-on for the FitClass platform',
-};
+import { loadBrand } from '@/src/lib/brand';
 
 export const dynamic = 'force-dynamic';
 
 interface LoginPageProps {
-  searchParams: Promise<{ callbackUrl?: string }>;
+  searchParams: Promise<{ callbackUrl?: string; t?: string }>;
+}
+
+export async function generateMetadata({ searchParams }: LoginPageProps): Promise<Metadata> {
+  const { brand } = await loadBrand((await searchParams).t);
+  const name = brand.brandName ?? 'FitClass';
+  return {
+    title: `Sign in · ${name}`,
+    description: `Secure single sign-on for the ${name} platform`,
+    ...(brand.assets.favicon ? { icons: { icon: brand.assets.favicon, apple: brand.assets.app_icon ?? '/icons/apple-touch-icon.png' } } : {}),
+  };
 }
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
@@ -37,89 +43,26 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   // because productOrigins() reads server-only env.
   const origins = productOrigins();
 
+  // ?t=<public_key> (tenant login link) or the brand this device remembered:
+  // display only — the tenant is still derived from the authenticated user.
+  const { brandKey, brand } = await loadBrand(params.t);
+  const name = brand.brandName ?? 'FitClass';
+
   return (
-    <div className="grid h-full min-h-screen w-full overflow-y-auto bg-white lg:grid-cols-2">
-      {/* Brand panel — left on desktop, hidden on mobile */}
-      <aside className="relative hidden flex-col justify-between overflow-hidden bg-[#0b1f3a] p-12 lg:flex">
-        <div
-          className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-[#0b6cbf] opacity-30 blur-3xl"
-          aria-hidden
-        />
-        <div
-          className="pointer-events-none absolute -bottom-32 -left-20 h-96 w-96 rounded-full bg-[#1e88e5] opacity-20 blur-3xl"
-          aria-hidden
-        />
-
-        <div className="relative">
-          {/*
-            The emblem alone, not the fitclass-logo-white.webp LOCKUP (emblem +
-            FITCLASS wordmark + tagline stacked in a square canvas). The old
-            width/height (220x50) declared a wide aspect ratio the real 1:1
-            file doesn't have; object-contain then shrank the actual square
-            content to fit the h-11 (44px) height, crushing the wordmark and
-            tagline into an illegible smudge. The emblem is a circle: it reads
-            fine at this height with no wordmark to lose.
-          */}
-          <Image
-            src="/fitclass-emblem.png"
-            alt="FitClass"
-            width={160}
-            height={160}
-            priority
-            className="h-11 w-auto object-contain"
-          />
-        </div>
-
-        <div className="relative max-w-md">
-          <h1 className="text-3xl font-bold leading-tight text-white">
-            One sign-in for every FitClass product.
-          </h1>
-          <p className="mt-4 text-sm leading-relaxed text-slate-300">
-            Leads, HR, and tasks — one account, one session. Sign in once and move
-            between tools without logging in again.
-          </p>
-        </div>
-
-        <p className="relative text-xs text-slate-400">
-          © {new Date().getFullYear()} FitClass · Internal platform
+    <AuthFrame
+      brand={brand}
+      brandKey={brandKey}
+      footer={
+        <p className="text-center text-label-sm leading-relaxed text-outline lg:text-left">
+          Access is restricted to authorised {name} accounts. By signing in you agree to {name} internal usage policies.
         </p>
-      </aside>
-
-      {/* Auth panel */}
-      <section className="flex items-center justify-center px-6 py-12 sm:px-12">
-        <div className="w-full max-w-sm">
-          <div className="mb-10 flex justify-center lg:hidden">
-            <div className="rounded-2xl bg-[#0b1f3a] px-6 py-4">
-              {/* Emblem, not the full lockup — see the comment on the aside
-                  logo above; same crush happens here at h-9 (36px). */}
-              <Image
-                src="/fitclass-emblem.png"
-                alt="FitClass"
-                width={160}
-                height={160}
-                priority
-                className="h-9 w-auto object-contain"
-              />
-            </div>
-          </div>
-
-          <header className="mb-8 text-center lg:text-left">
-            <h2 className="text-2xl font-bold tracking-tight text-slate-900">
-              Welcome back
-            </h2>
-            <p className="mt-2 text-sm text-slate-500">
-              Sign in to access your FitClass tools.
-            </p>
-          </header>
-
-          <LoginForm callbackUrl={callbackUrl} productOrigins={origins} />
-
-          <p className="mt-8 text-center text-xs leading-relaxed text-slate-400 lg:text-left">
-            Access is restricted to authorised FitClass accounts. By signing in
-            you agree to FitClass internal usage policies.
-          </p>
-        </div>
-      </section>
-    </div>
+      }
+    >
+      <header className="mb-8 text-center lg:text-left">
+        <h2 className="text-headline-md font-bold tracking-tight text-on-surface">Welcome back</h2>
+        <p className="mt-2 text-body-sm text-on-surface-variant">Sign in to access your {name} tools.</p>
+      </header>
+      <LoginForm callbackUrl={callbackUrl} productOrigins={origins} />
+    </AuthFrame>
   );
 }

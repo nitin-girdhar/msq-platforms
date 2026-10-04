@@ -66,7 +66,9 @@ FROM (VALUES
 -- An audit account: sees the branch, changes nothing. No platform.write, so the
 -- database itself refuses writes even if an app check is ever missed.
 ('read_only', ARRAY[
-  'platform',
+  -- Appearance is personal and changes nothing shared, so even the audit
+  -- account may pick its own colours.
+  'platform','platform.appearance',
   'lms','lms.dashboard.view','lms.leads.view','lms.leads.view.org',
   'lms.leads.timeline.view','lms.followups.view',
   'lms.history.detail.view',
@@ -79,7 +81,7 @@ FROM (VALUES
 
 -- ── sales_representative (20) ───────────────────────────────────────
 ('sales_representative', ARRAY[
-  'platform','platform.write',
+  'platform','platform.write','platform.appearance',
   'lms','lms.dashboard.view',
   'lms.leads.view','lms.leads.view.own',
   'lms.leads.create','lms.leads.edit','lms.leads.edit.own',
@@ -102,7 +104,7 @@ FROM (VALUES
 -- ── senior_sales_executive (40) ─────────────────────────────────────
 -- First tier that sees a team, works the unassigned queue, and may hand work down.
 ('senior_sales_executive', ARRAY[
-  'platform','platform.write',
+  'platform','platform.write','platform.appearance',
   'lms','lms.dashboard.view',
   'lms.leads.view','lms.leads.view.own','lms.leads.view.team',
   'lms.leads.unassigned.view',
@@ -130,7 +132,7 @@ FROM (VALUES
 -- ── org_manager (60) ────────────────────────────────────────────────
 -- Branch-wide visibility and the first tier that approves leave and deletes leads.
 ('org_manager', ARRAY[
-  'platform','platform.write',
+  'platform','platform.write','platform.appearance',
   'lms','lms.dashboard.view',
   'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
   'lms.leads.unassigned.view',
@@ -167,7 +169,7 @@ FROM (VALUES
 -- ── org_sr_manager (70) ─────────────────────────────────────────────
 -- As org_manager, plus branch-wide edit and peer-level assignment reach.
 ('org_sr_manager', ARRAY[
-  'platform','platform.write',
+  'platform','platform.write','platform.appearance',
   'lms','lms.dashboard.view',
   'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
   'lms.leads.unassigned.view',
@@ -215,7 +217,7 @@ FROM (VALUES
 -- _migrations/19, so this list alone won't reach existing tenants' copies —
 -- see the backfill block below.
 ('hr_admin', ARRAY[
-  'platform','platform.write',
+  'platform','platform.write','platform.appearance',
   'hr.attendance','hr.attendance.view',
   'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
   'hr.attendance.photo.view',
@@ -244,7 +246,7 @@ FROM (VALUES
 -- org_admin views and decides on their branch's attendance and leave, they
 -- don't clock themselves in or file their own requests through this role.
 ('org_admin', ARRAY[
-  'platform','platform.write',
+  'platform','platform.write','platform.appearance',
   'lms','lms.dashboard.view',
   'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
   'lms.leads.unassigned.view',
@@ -296,7 +298,7 @@ FROM (VALUES
 -- Everything org_admin has, across every branch, plus role administration.
 -- No self-service punch/leave-apply, same reasoning as org_admin above.
 ('tenant_admin', ARRAY[
-  'platform','platform.write',
+  'platform','platform.write','platform.appearance',
   'lms','lms.dashboard.view',
   'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
   -- The only role with cross-BRANCH lead reach: this is what puts every branch
@@ -327,6 +329,9 @@ FROM (VALUES
   'lms.leads.view.all_types',
   'admin','admin.team.view','admin.team.view.team','admin.team.view.org','admin.team.manage','admin.team.notify',
   'admin.api_tokens.view','admin.api_tokens.manage',
+  -- Branding (1.57.0): tenant admins own the colours / terms / menu half;
+  -- Super Admin owns logos, names and the login link.
+  'admin.branding','admin.branding.view','admin.branding.manage',
   'hr.attendance','hr.attendance.view',
   'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
   'hr.attendance.photo.view',
@@ -637,6 +642,42 @@ FROM iam.role_capabilities rc
 JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.assign.any'
 CROSS JOIN iam.capabilities tgt
 WHERE tgt.key = 'lms.leads.assign.bulk'
+  AND rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO NOTHING;
+
+
+-- ── Back-fill: bulk update + bulk reschedule (schema 1.58.0) ───────
+-- Same trap as the back-fills above: a grant on a global role template never
+-- reaches a tenant that already holds its own copy of that role, so both new
+-- capabilities are pinned to an existing one with the audience we want.
+--
+--   lms.leads.bulk.update          ← lms.leads.assign.bulk
+--   lms.followups.bulk.reschedule  ← lms.leads.assign.bulk
+--
+-- Whoever may already move many leads between people (senior_sales_executive
+-- upward, org_admin, tenant_admin, super_admin) may also bulk-update and
+-- bulk-reschedule them; sales reps and read_only do not. DO NOTHING, not
+-- DO UPDATE: a tenant that unticks one in the Capability Matrix writes
+-- is_granted = FALSE, and a re-seed must not flip it back.
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.assign.bulk'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key IN ('lms.leads.bulk.update', 'lms.followups.bulk.reschedule')
+  AND rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO NOTHING;
+
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.leads.assign.bulk'
+CROSS JOIN iam.capabilities tgt
+WHERE tgt.key IN ('lms.leads.bulk.update', 'lms.followups.bulk.reschedule')
   AND rc.is_granted
   AND rc.tenant_id IS NOT NULL
 ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL

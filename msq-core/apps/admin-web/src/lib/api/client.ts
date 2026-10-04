@@ -92,3 +92,40 @@ export const apiTokens = {
   revoke: (id: string) =>
     request<void>(`/api-clients/${id}`, { method: 'DELETE' }),
 };
+
+// ── Branding (Settings → Branding) ───────────────────────────────────────────
+//
+// identity-service /tenant/branding: the SESSION's tenant only (RLS); reads
+// need admin.branding.view, writes admin.branding.manage. The body schema has
+// no asset / product-name / lock / key fields — those are Super Admin's — and
+// colour/font/mode changes are refused with BRANDING_THEME_LOCKED while locked.
+
+export interface TenantBrandingView {
+  theme: { preset: string | null; seed_hex: string | null; font: string | null; mode: string | null } | null;
+  theme_locked: boolean;
+  terms: Record<string, string>;
+  nav_overrides: Record<string, { label?: string; icon?: string }>;
+  product_names: Record<string, Record<string, string>>;
+  assets: Record<string, string>;
+  asset_meta: Record<string, { content_type?: string; bytes?: number; width?: number; height?: number }>;
+  public_key: string | null;
+  updated_at: string | null;
+}
+
+export interface TenantBrandingUpdate {
+  preset?: string | null;
+  seed_hex?: string | null;
+  font?: string | null;
+  default_mode?: string;
+  terms?: Record<string, string>;
+  nav_overrides?: Record<string, { label?: string; icon?: string }>;
+}
+
+export const branding = {
+  get: () => request<{ success: true; data: TenantBrandingView }>('/tenant/branding'),
+  update: (data: TenantBrandingUpdate) =>
+    request<{ success: true; data: TenantBrandingView }>('/tenant/branding', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+};

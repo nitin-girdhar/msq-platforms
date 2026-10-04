@@ -16,6 +16,7 @@ const DESCRIPTIONS: Record<string, string> = {
   'api-tokens': 'Issue and rotate machine credentials for integrations.',
   'leave-admin': 'Policies, holidays, and leave cycle configuration.',
   'attendance-admin': 'Shifts, rules, and attendance reports.',
+  branding: 'Company colours and font, terms, and menu labels & icons.',
 };
 
 export const dynamic = 'force-dynamic';

@@ -71,6 +71,15 @@ const webhookRateLimit = createRateLimiter({ max: 60, windowMs: 60_000 });
 // sharing webhookRateLimit, so a burst of Meta callbacks cannot exhaust the
 // budget for /intake/webhook (a different integration entirely) or vice versa.
 const metaWebhookRateLimit = createRateLimiter({ max: 120, windowMs: 60_000 });
+// Pre-login branding lookups (login page). Generous for a real page load (one
+// JSON call + a few cached images) but bounds key enumeration from one IP.
+const brandingRateLimit = createRateLimiter({ max: 60, windowMs: 60_000 });
+// Asset bytes are cache-busted by ?v= and served immutable, so browsers rarely
+// re-request them; still bounded so the route cannot be used to pull bytes in a loop.
+const brandingAssetRateLimit = createRateLimiter({ max: 240, windowMs: 60_000 });
+// Each forgot-password hit can send an email, so far tighter than login. The
+// identity-service adds a per-user cap on top (3 per 15 minutes).
+const forgotPasswordRateLimit = createRateLimiter({ max: 5, windowMs: 15 * 60_000 });
 
 app.get('/health', async () => ({ status: 'ok', service: 'api-gateway' }));
 
@@ -83,6 +92,15 @@ app.get('/.well-known/jwks.json', async (_req, reply) => {
 // ── Public routes (no JWT required) ────────────────────────────────────────
 app.post('/auth/login', { preHandler: [loginRateLimit] }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/auth/login', req, reply);
+});
+
+// Self-service password reset (pre-login; no session).
+app.post('/auth/forgot-password', { preHandler: [forgotPasswordRateLimit] }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/auth/forgot-password', req, reply);
+});
+
+app.post('/auth/reset-password', { preHandler: [loginRateLimit] }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/auth/reset-password', req, reply);
 });
 
 app.post('/auth/logout', async (req, reply) => {
@@ -285,6 +303,11 @@ app.get('/leads', { ...withAuth }, async (req, reply) => {
 });
 app.post('/leads', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.leadsServiceUrl, '/api/v1/leads', req, reply, req.userCtx);
+});
+// Bulk actions on selected leads (<=200). Static path, so it never collides with
+// /leads/:id (which has no POST). Capabilities are enforced in leads-service.
+app.post('/leads/bulk', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.leadsServiceUrl, '/api/v1/leads/bulk', req, reply, req.userCtx);
 });
 app.get('/leads/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
@@ -627,6 +650,62 @@ app.get('/users/team', { ...withAuth }, async (req, reply) => {
 app.get('/users/org-chart', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/users/org-chart', req, reply, req.userCtx);
 });
+// ── Branding & appearance (1.57.0) ─────────────────────────────────────────
+// Platform surface (ungated by product, like /users/me/photo). Authorisation is
+// downstream: platform.appearance / admin.branding.* capabilities and the
+// super-admin rank gate in identity-service, plus RLS and column grants in the DB.
+app.get('/me/branding', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/me/branding', req, reply, req.userCtx);
+});
+app.put('/me/preferences/theme', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/me/preferences/theme', req, reply, req.userCtx);
+});
+app.delete('/me/preferences/theme', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/me/preferences/theme', req, reply, req.userCtx);
+});
+app.get('/tenant/branding', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/tenant/branding', req, reply, req.userCtx);
+});
+app.put('/tenant/branding', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.identityServiceUrl, '/api/v1/tenant/branding', req, reply, req.userCtx);
+});
+app.get('/sa/tenants/:id/branding', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.identityServiceUrl, `/api/v1/sa/tenants/${encodeURIComponent(id)}/branding`, req, reply, req.userCtx);
+});
+app.put('/sa/tenants/:id/branding', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.identityServiceUrl, `/api/v1/sa/tenants/${encodeURIComponent(id)}/branding`, req, reply, req.userCtx);
+});
+app.post('/sa/tenants/:id/branding/assets/:slot', { ...withAuth }, async (req, reply) => {
+  const { id, slot } = req.params as { id: string; slot: string };
+  return proxyTo(config.identityServiceUrl, `/api/v1/sa/tenants/${encodeURIComponent(id)}/branding/assets/${encodeURIComponent(slot)}`, req, reply, req.userCtx);
+});
+app.delete('/sa/tenants/:id/branding/assets/:slot', { ...withAuth }, async (req, reply) => {
+  const { id, slot } = req.params as { id: string; slot: string };
+  return proxyTo(config.identityServiceUrl, `/api/v1/sa/tenants/${encodeURIComponent(id)}/branding/assets/${encodeURIComponent(slot)}`, req, reply, req.userCtx);
+});
+app.post('/sa/tenants/:id/branding/rotate-key', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.identityServiceUrl, `/api/v1/sa/tenants/${encodeURIComponent(id)}/branding/rotate-key`, req, reply, req.userCtx);
+});
+// Pre-login (no JWT): the login page's branding by login-link key, and brand
+// asset bytes. Display data only; an unknown key gets the platform default.
+// Own rate-limit bucket so a key-guessing loop cannot starve login.
+app.get('/public/branding/:key', { preHandler: [brandingRateLimit] }, async (req, reply) => {
+  const { key } = req.params as { key: string };
+  return proxyTo(config.identityServiceUrl, `/api/v1/public/branding/${encodeURIComponent(key)}`, req, reply, undefined, {
+    forwardResponseHeaders: ['cache-control'],
+  });
+});
+app.get('/public/branding/:key/assets/:slot', { preHandler: [brandingAssetRateLimit] }, async (req, reply) => {
+  const { key, slot } = req.params as { key: string; slot: string };
+  return proxyTo(config.identityServiceUrl, `/api/v1/public/branding/${encodeURIComponent(key)}/assets/${encodeURIComponent(slot)}`, req, reply, undefined, {
+    forwardResponseHeaders: ['cache-control', 'etag', 'content-security-policy', 'x-content-type-options'],
+    forwardRequestHeaders: ['if-none-match'],
+  });
+});
+
 // Profile photo / avatar. `/users/me/photo` is self-service, `/users/:id/photo`
 // POST is admin-only, GET streams the image bytes — all enforced downstream.
 // Registered before `/users/:id` so the literal `me` segment is unambiguous.

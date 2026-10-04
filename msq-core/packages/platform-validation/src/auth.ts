@@ -50,6 +50,25 @@ export function createChangePasswordSchema(minLength: number = DEFAULT_PASSWORD_
 
 export const changePasswordSchema = createChangePasswordSchema();
 
+// Self-service reset. Email only (users sign in with email; a mobile number
+// is not a reset channel). The response never says whether it matched.
+export const forgotPasswordSchema = z.object({
+  email: z.string().trim().min(1, 'Email is required').max(254).email('Enter a valid email'),
+}).strict();
+
+export function createSelfResetPasswordSchema(minLength: number = DEFAULT_PASSWORD_MIN_LENGTH) {
+  return z.object({
+    // 32 random bytes, base64url → 43 chars.
+    token: z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid or expired reset link'),
+    new_password: createStrongPasswordSchema(minLength),
+  }).strict();
+}
+
+export const selfResetPasswordSchema = createSelfResetPasswordSchema();
+
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type SelfResetPasswordInput = z.infer<typeof selfResetPasswordSchema>;
+
 // Either one branch, or "All branches" (only honoured for users whose branch
 // list is the whole tenant — enforced in identity-service, not here).
 // `tenant_id` with all_branches is a platform super_admin's cross-tenant

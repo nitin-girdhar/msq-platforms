@@ -1,5 +1,6 @@
 import { can, holdsUsableNode, type CapabilityHolder, type CapabilityKey } from '@platform/rbac';
 import type { NavIconName } from './NavIcon';
+import { applyNavOverride, type NavOverride } from '../branding/types';
 
 // holdsUsableNode moved down into @platform/rbac so the product PAGE GUARDS can
 // ask the same question the sidebar asks without depending on a React package —
@@ -95,4 +96,20 @@ export function filterNavGroups(
 export function isNavGroups(items: readonly NavItem[] | readonly NavGroup[]): items is readonly NavGroup[] {
   const first = items[0];
   return first !== undefined && 'items' in first;
+}
+
+/**
+ * Apply the tenant's menu overrides (label / icon from the fixed NavIcon set)
+ * keyed by nav item id. Visual only: ids, hrefs and capabilities are untouched,
+ * so filtering and page guards behave exactly as without branding.
+ */
+export function brandNav<T extends readonly NavItem[] | readonly NavGroup[]>(
+  items: T,
+  overrides: Record<string, NavOverride>,
+): T {
+  if (Object.keys(overrides).length === 0) return items;
+  if (isNavGroups(items)) {
+    return items.map((g) => ({ ...g, items: g.items.map((i) => applyNavOverride(i, overrides)) })) as unknown as T;
+  }
+  return (items as readonly NavItem[]).map((i) => applyNavOverride(i, overrides)) as unknown as T;
 }

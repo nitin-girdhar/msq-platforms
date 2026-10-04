@@ -66,7 +66,7 @@ export function AppErrorBoundary({ error, reset, homeHref, homeLabel = 'Go back'
           // shared origin's root, which auth-web owns. It resolves the session
           // and redirects (sessionDestination), so this is the one href here
           // that genuinely means the root and not "this app's root".
-          <a href="/" className={`${buttonClass} bg-slate-900 text-white hover:bg-slate-800`}>
+          <a href="/" className={`${buttonClass} bg-on-surface text-on-primary hover:bg-on-surface`}>
             Sign in again
           </a>
         ) : (
@@ -74,7 +74,7 @@ export function AppErrorBoundary({ error, reset, homeHref, homeLabel = 'Go back'
             <button
               type="button"
               onClick={reset}
-              className={`${buttonClass} bg-slate-900 text-white hover:bg-slate-800`}
+              className={`${buttonClass} bg-on-surface text-on-primary hover:bg-on-surface`}
             >
               Try again
             </button>
@@ -84,7 +84,7 @@ export function AppErrorBoundary({ error, reset, homeHref, homeLabel = 'Go back'
                 origin root (auth-web) and 404. See api/base-path.ts. */}
             <a
               href={withBasePath(homeHref)}
-              className={`${buttonClass} border border-slate-200 text-slate-700 hover:bg-slate-50`}
+              className={`${buttonClass} border border-outline-variant text-on-surface hover:bg-surface-container-low`}
             >
               {homeLabel}
             </a>

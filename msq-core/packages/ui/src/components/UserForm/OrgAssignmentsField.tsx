@@ -218,18 +218,18 @@ export default function OrgAssignmentsField({
         <div
           onClick={() => { if (canPickBranches && !disabled) setOpen(!open); }}
           className={
-            'flex min-h-[42px] flex-wrap items-center gap-1.5 rounded-xl border border-[#E2E8F0] bg-white px-2 py-1.5 shadow-sm ' +
-            (canPickBranches && !disabled ? 'cursor-pointer' : 'cursor-not-allowed bg-[#F8FAFC]')
+            'flex min-h-[42px] flex-wrap items-center gap-1.5 rounded-xl border border-outline-variant bg-surface-container-lowest px-2 py-1.5 shadow-sm ' +
+            (canPickBranches && !disabled ? 'cursor-pointer' : 'cursor-not-allowed bg-surface-container-low')
           }
         >
           {assignments.length === 0 && (
-            <span className="px-1 text-sm text-[#94A3B8]">Select a branch…</span>
+            <span className="px-1 text-sm text-outline">Select a branch…</span>
           )}
           {assignments.map((a) => (
             <span
               key={a.org_id}
               title={a.org_id}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#BFDBFE] bg-[#EFF6FF] px-2 py-0.5 text-[12.5px] font-semibold text-[#0b6cbf]"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-primary-fixed-dim bg-primary-fixed px-2 py-0.5 text-[12.5px] font-semibold text-primary"
             >
               {label(a.org_id)}
               {canPickBranches && !disabled && (
@@ -237,7 +237,7 @@ export default function OrgAssignmentsField({
                   type="button"
                   aria-label={`Remove ${label(a.org_id)}`}
                   onClick={(e) => { e.stopPropagation(); removeBranch(a.org_id); }}
-                  className="text-[#60A5FA] hover:text-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/30 rounded"
+                  className="text-primary-fixed-dim hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 rounded"
                 >
                   ✕
                 </button>
@@ -247,24 +247,24 @@ export default function OrgAssignmentsField({
         </div>
 
         {open && canPickBranches && !disabled && (
-          <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg">
+          <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-lg">
             <input
               ref={searchInputRef}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search branches…"
-              className="w-full border-b border-[#F1F5F9] px-3 py-2 text-sm text-[#0F172A] focus:outline-none"
+              className="w-full border-b border-outline-variant/60 px-3 py-2 text-sm text-on-surface focus:outline-none"
             />
             <div className="max-h-52 overflow-y-auto">
               {available.length === 0 && (
-                <p className="px-3 py-2.5 text-sm text-[#94A3B8]">No branches left to add.</p>
+                <p className="px-3 py-2.5 text-sm text-outline">No branches left to add.</p>
               )}
               {available.map((b) => (
                 <button
                   key={b.id}
                   type="button"
                   onClick={() => addBranch(b.id)}
-                  className="block w-full px-3 py-2 text-left text-sm text-[#0F172A] hover:bg-[#F8FAFC] focus:bg-[#F8FAFC] focus:outline-none"
+                  className="block w-full px-3 py-2 text-left text-sm text-on-surface hover:bg-surface-container-low focus:bg-surface-container-low focus:outline-none"
                 >
                   {b.name}
                 </button>
@@ -300,8 +300,8 @@ export default function OrgAssignmentsField({
       {multi && (
         <div className="flex flex-col gap-1.5">
           <label className={FIELD_LABEL}>Role &amp; weight per branch</label>
-          <div className="overflow-hidden rounded-xl border border-[#E2E8F0]">
-            <div className="grid grid-cols-[64px_minmax(0,1.4fr)_minmax(0,1.5fr)] items-center gap-2.5 border-b border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-[#64748B]">
+          <div className="overflow-hidden rounded-xl border border-outline-variant">
+            <div className="grid grid-cols-[64px_minmax(0,1.4fr)_minmax(0,1.5fr)] items-center gap-2.5 border-b border-outline-variant bg-surface-container-low px-3 py-2 text-[10.5px] font-bold uppercase tracking-wider text-on-surface-variant">
               <div>Home</div><div>Branch</div><div>Role</div>
             </div>
 
@@ -309,7 +309,7 @@ export default function OrgAssignmentsField({
               const isHome = a.org_id === homeOrgId;
               const pool = poolScopeFor(a);
               return (
-                <div key={a.org_id} className={isHome ? 'bg-[#F7FBFF]' : ''}>
+                <div key={a.org_id} className={isHome ? 'bg-primary-fixed/60' : ''}>
                   <div className="grid grid-cols-[64px_minmax(0,1.4fr)_minmax(0,1.5fr)] items-center gap-2.5 px-3 py-2">
                     <div>
                       <input
@@ -319,13 +319,13 @@ export default function OrgAssignmentsField({
                         disabled={disabled}
                         onChange={() => onHomeChange(a.org_id)}
                         aria-label={`Make ${label(a.org_id)} the home branch`}
-                        className="h-4 w-4 accent-[#0b6cbf] focus:ring-2 focus:ring-[#0b6cbf]/20"
+                        className="h-4 w-4 accent-primary focus:ring-2 focus:ring-primary/20"
                       />
                     </div>
-                    <div title={a.org_id} className="min-w-0 truncate text-[13.5px] font-semibold text-[#0F172A]">
+                    <div title={a.org_id} className="min-w-0 truncate text-[13.5px] font-semibold text-on-surface">
                       {label(a.org_id)}
                       {isHome && (
-                        <span className="ml-1.5 rounded border border-[#BFDBFE] bg-[#EFF6FF] px-1 py-px text-[10px] font-bold uppercase tracking-wide text-[#0b6cbf]">
+                        <span className="ml-1.5 rounded border border-primary-fixed-dim bg-primary-fixed px-1 py-px text-[10px] font-bold uppercase tracking-wide text-primary">
                           Home
                         </span>
                       )}
@@ -370,7 +370,7 @@ export default function OrgAssignmentsField({
               );
             })}
 
-            <div className="border-t border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-[12px] text-[#475569]">
+            <div className="border-t border-outline-variant bg-surface-container-low px-3 py-2 text-[12px] text-on-surface-variant">
               Weight is per branch, per campaign type of the role&apos;s department — it splits that type&apos;s
               leads within the branch, not this person&apos;s time.
             </div>
@@ -389,7 +389,7 @@ function PoolScopeHint({ pool }: { pool: PoolScope }) {
   }
   if (pool.state === 'no_department') {
     return (
-      <p className="text-[11px] leading-snug text-[#92400E]">
+      <p className="text-[11px] leading-snug text-on-status-due-container">
         This role has no department, so lead weights can&apos;t be set. Assign the role a department first.
       </p>
     );
@@ -420,11 +420,11 @@ function MismatchedWeights({
 }) {
   if (entries.length === 0) return null;
   return (
-    <div className="mt-1.5 flex flex-col gap-1 rounded-lg border border-amber-200 bg-amber-50 p-2">
+    <div className="mt-1.5 flex flex-col gap-1 rounded-lg border border-status-due/30 bg-status-due-container p-2">
       {entries.map((w) => {
         const name = catalog.find((t) => t.id === w.campaign_type_id)?.label ?? 'Unknown campaign type';
         return (
-          <div key={w.campaign_type_id} className="flex items-center justify-between gap-2 text-[11.5px] text-[#92400E]">
+          <div key={w.campaign_type_id} className="flex items-center justify-between gap-2 text-[11.5px] text-on-status-due-container">
             <span>
               {name} · {w.weight}% — not in {departmentLabel ? `the ${departmentLabel}` : "this role's"} department, so
               routing skips it.
@@ -433,7 +433,7 @@ function MismatchedWeights({
               type="button"
               disabled={disabled}
               onClick={() => onRemove(w.campaign_type_id)}
-              className="shrink-0 rounded border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-[#92400E] hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+              className="shrink-0 rounded border border-status-due/40 bg-surface-container-lowest px-2 py-0.5 text-[11px] font-semibold text-on-status-due-container hover:bg-status-due-container disabled:cursor-not-allowed disabled:opacity-60"
             >
               Remove
             </button>
@@ -509,11 +509,11 @@ function SingleBranchRow({
       {pool.state === 'ok' && pool.types.length > 1 && (
         <div className="flex flex-col gap-1.5">
           <label className={FIELD_LABEL}>Lead assignment weight per campaign type</label>
-          <div className="flex flex-col gap-2 rounded-xl border border-[#E2E8F0] p-2.5">
+          <div className="flex flex-col gap-2 rounded-xl border border-outline-variant p-2.5">
             {pool.types.map((t) => (
               <div key={t.id} className="flex flex-col gap-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[12.5px] font-semibold text-[#0F172A]">
+                  <span className="text-[12.5px] font-semibold text-on-surface">
                     {typeLabel(t, departmentLabelById)}
                   </span>
                   <WeightInput
@@ -607,7 +607,7 @@ function BranchWeightsBlock({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-left text-[11.5px] font-semibold text-[#0b6cbf] hover:underline focus:outline-none"
+        className="flex items-center gap-1.5 text-left text-[11.5px] font-semibold text-primary hover:underline focus:outline-none"
         aria-expanded={open}
         aria-label={`Campaign-type weights in ${branchLabel}`}
       >
@@ -618,7 +618,7 @@ function BranchWeightsBlock({
       </button>
 
       {!open && emptyPoolLabels.length > 0 && (
-        <p className="flex items-baseline gap-1.5 text-[11px] leading-snug text-[#92400E]">
+        <p className="flex items-baseline gap-1.5 text-[11px] leading-snug text-on-status-due-container">
           <span aria-hidden className="font-bold">!</span>
           <span>
             {emptyPoolLabels.join(', ')} {emptyPoolLabels.length === 1 ? 'has' : 'have'} no active weight in this
@@ -628,7 +628,7 @@ function BranchWeightsBlock({
       )}
 
       {open && (
-        <div className="flex flex-col gap-2 rounded-lg border border-[#E2E8F0] bg-white p-2.5">
+        <div className="flex flex-col gap-2 rounded-lg border border-outline-variant bg-surface-container-lowest p-2.5">
           {nonZeroTypes.map((t) => (
             <TypeWeightRow
               key={t.id}
@@ -647,7 +647,7 @@ function BranchWeightsBlock({
               <button
                 type="button"
                 onClick={() => setShowZero(!showZero)}
-                className="text-left text-[11px] font-semibold text-[#64748B] hover:underline focus:outline-none"
+                className="text-left text-[11px] font-semibold text-on-surface-variant hover:underline focus:outline-none"
               >
                 {showZero ? 'Hide' : 'Show'} {zeroTypes.length} type{zeroTypes.length === 1 ? '' : 's'} at 0%
               </button>
@@ -667,15 +667,15 @@ function BranchWeightsBlock({
           )}
 
           {notInPoolTypes.length > 0 && (
-            <div className="flex flex-col gap-1.5 border-t border-[#F1F5F9] pt-2">
+            <div className="flex flex-col gap-1.5 border-t border-outline-variant/60 pt-2">
               {notInPoolTypes.map((t) => (
-                <div key={t.id} className="flex items-center justify-between gap-2 text-[11.5px] text-[#94A3B8]">
+                <div key={t.id} className="flex items-center justify-between gap-2 text-[11.5px] text-outline">
                   <span>{typeLabel(t, departmentLabelById)} — not in this pool</span>
                   <button
                     type="button"
                     disabled={disabled}
                     onClick={() => onChange(withWeight(weights, t.id, 0))}
-                    className="rounded border border-[#E2E8F0] bg-white px-2 py-0.5 text-[11px] font-semibold text-[#0b6cbf] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
+                    className="rounded border border-outline-variant bg-surface-container-lowest px-2 py-0.5 text-[11px] font-semibold text-primary hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     Add to pool
                   </button>
@@ -703,7 +703,7 @@ function TypeWeightRow({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between gap-2">
-        <span className="min-w-0 truncate text-[12.5px] font-semibold text-[#0F172A]">
+        <span className="min-w-0 truncate text-[12.5px] font-semibold text-on-surface">
           {typeLabel(type, departmentLabelById)}
         </span>
         <div className="flex items-center gap-1.5">
@@ -718,7 +718,7 @@ function TypeWeightRow({
             disabled={disabled}
             onClick={onRemove}
             aria-label={`Remove from ${typeLabel(type, departmentLabelById)} pool`}
-            className="text-[#94A3B8] hover:text-red-600 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="text-outline hover:text-error focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
           >
             ✕
           </button>
@@ -750,16 +750,16 @@ function PoolMembership({
 }) {
   const link = 'font-semibold hover:underline focus:outline-none disabled:cursor-not-allowed disabled:opacity-60';
   return inPool ? (
-    <p className="text-[11px] text-[#64748B]">
+    <p className="text-[11px] text-on-surface-variant">
       In the {label} pool.{' '}
-      <button type="button" disabled={disabled} onClick={onRemove} className={`${link} text-[#64748B] hover:text-red-600`}>
+      <button type="button" disabled={disabled} onClick={onRemove} className={`${link} text-on-surface-variant hover:text-error`}>
         Remove from pool
       </button>
     </p>
   ) : (
-    <p className="text-[11px] text-[#94A3B8]">
+    <p className="text-[11px] text-outline">
       Not in the {label} pool — enter a weight, or{' '}
-      <button type="button" disabled={disabled} onClick={onAdd} className={`${link} text-[#0b6cbf]`}>
+      <button type="button" disabled={disabled} onClick={onAdd} className={`${link} text-primary`}>
         add at 0%
       </button>
       .
@@ -813,7 +813,7 @@ function WeightStatusLine({ status, typeLabel: label }: { status: WeightStatus |
 
   if (status.userCount === 0) {
     return (
-      <p className={`${common} text-[#64748B]`}>
+      <p className={`${common} text-on-surface-variant`}>
         <span aria-hidden>·</span>
         <span>No one is weighted for {label ?? 'this type'} in this branch.</span>
       </p>
@@ -822,7 +822,7 @@ function WeightStatusLine({ status, typeLabel: label }: { status: WeightStatus |
 
   if (status.status === 'ok') {
     return (
-      <p className={`${common} text-[#047857]`}>
+      <p className={`${common} text-on-status-success-container`}>
         <span aria-hidden className="font-bold">✓</span>
         <span>Pool totals <b className="tabular-nums">100%</b> across {status.userCount} {status.userCount === 1 ? 'user' : 'users'}.</span>
       </p>
@@ -831,7 +831,7 @@ function WeightStatusLine({ status, typeLabel: label }: { status: WeightStatus |
 
   if (status.status === 'zero') {
     return (
-      <p className={`${common} text-[#92400E]`}>
+      <p className={`${common} text-on-status-due-container`}>
         <span aria-hidden className="font-bold">!</span>
         <span>Pool totals <b className="tabular-nums">0%</b> — new leads here stay unassigned.</span>
       </p>
@@ -839,7 +839,7 @@ function WeightStatusLine({ status, typeLabel: label }: { status: WeightStatus |
   }
 
   return (
-    <p className={`${common} text-[#92400E]`}>
+    <p className={`${common} text-on-status-due-container`}>
       <span aria-hidden className="font-bold">!</span>
       <span>
         Pool totals <b className="tabular-nums">{status.total}%</b> across {status.userCount}{' '}

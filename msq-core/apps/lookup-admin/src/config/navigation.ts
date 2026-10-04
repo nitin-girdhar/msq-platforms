@@ -36,4 +36,17 @@ export const ADMIN_NAV: NavGroup[] = [
           },
     ),
   },
+  {
+    id: 'tenants',
+    label: 'Tenants',
+    items: [
+      {
+        id: 'tenant-branding',
+        label: 'Tenant Branding',
+        icon: 'palette',
+        href: '/dashboard/branding',
+        capability: CAPABILITY.SUPERADMIN_LOOKUPS,
+      },
+    ],
+  },
 ];

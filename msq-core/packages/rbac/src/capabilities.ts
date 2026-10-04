@@ -27,8 +27,9 @@ export const CAPABILITY = {
   SUPERADMIN:     'superadmin',
   TASKS:          'tasks',
 
-  // ── Pages (14) ──
+  // ── Pages (15) ──
   ADMIN_API_TOKENS:     'admin.api_tokens',
+  ADMIN_BRANDING:       'admin.branding',
   ADMIN_TEAM:           'admin.team',
   HR_ATTENDANCE_ADMIN:  'hr.attendance.admin',
   HR_LEAVE_ADMIN:       'hr.leave.admin',
@@ -54,9 +55,11 @@ export const CAPABILITY = {
   HR_LEAVE_ADMIN_HOLIDAYS:          'hr.leave.admin.holidays',
   HR_LEAVE_ADMIN_POLICIES:          'hr.leave.admin.policies',
 
-  // ── Operations (70) ──
+  // ── Operations (73) ──
   ADMIN_API_TOKENS_MANAGE:                 'admin.api_tokens.manage',
   ADMIN_API_TOKENS_VIEW:                   'admin.api_tokens.view',
+  ADMIN_BRANDING_MANAGE:                   'admin.branding.manage',
+  ADMIN_BRANDING_VIEW:                     'admin.branding.view',
   ADMIN_TEAM_MANAGE:                       'admin.team.manage',
   ADMIN_TEAM_NOTIFY:                       'admin.team.notify',
   ADMIN_TEAM_VIEW:                         'admin.team.view',
@@ -97,6 +100,7 @@ export const CAPABILITY = {
   LMS_CAMPAIGNS_MANAGE:                    'lms.campaigns.manage',
   LMS_CAMPAIGNS_VIEW:                      'lms.campaigns.view',
   LMS_DASHBOARD_VIEW:                      'lms.dashboard.view',
+  LMS_FOLLOWUPS_BULK_RESCHEDULE:           'lms.followups.bulk.reschedule',
   LMS_FOLLOWUPS_CREATE:                    'lms.followups.create',
   LMS_FOLLOWUPS_DELETE:                    'lms.followups.delete',
   LMS_FOLLOWUPS_EDIT:                      'lms.followups.edit',
@@ -104,6 +108,7 @@ export const CAPABILITY = {
   LMS_HISTORY_DETAIL_VIEW:                 'lms.history.detail.view',
   LMS_HISTORY_VIEW:                        'lms.history.view',
   LMS_LEADS_ASSIGN:                        'lms.leads.assign',
+  LMS_LEADS_BULK_UPDATE:                   'lms.leads.bulk.update',
   LMS_LEADS_CREATE:                        'lms.leads.create',
   LMS_LEADS_DELETE:                        'lms.leads.delete',
   LMS_LEADS_EDIT:                          'lms.leads.edit',
@@ -122,6 +127,7 @@ export const CAPABILITY = {
   // type. Ask it with can(), never with resolveScope().
   LMS_LEADS_VIEW_ALL_TYPES:                'lms.leads.view.all_types',
   LMS_LEADS_WHATSAPP_SEND:                 'lms.leads.whatsapp.send',
+  PLATFORM_APPEARANCE:                     'platform.appearance',
   PLATFORM_WRITE:                          'platform.write',
   SUPERADMIN_LOOKUPS_MANAGE:               'superadmin.lookups.manage',
   SUPERADMIN_ROLES_MANAGE:                 'superadmin.roles.manage',

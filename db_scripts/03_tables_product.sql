@@ -32,6 +32,61 @@ CREATE TABLE IF NOT EXISTS entity.tenant_modules (
 
 
 -- ===================================================================
+-- entity.tenant_branding — per-tenant brand identity + theme (1.57.0)
+-- One row per tenant (PK = tenant_id). Absent row = platform default (MSquare).
+--
+-- Two owners, enforced at the DB as well as in the API (07_grants.sql):
+--   Super Admin (admin-service, withServiceTx, rank-gated) — everything:
+--     brand assets, product names, public_key, theme + theme_locked.
+--   Tenant admin (admin.branding.manage, withRoleTx) — UPDATE is column-GRANTed
+--     to theme (only while NOT theme_locked — trigger below), terms and
+--     nav_overrides only. Assets / names / public_key / theme_locked are not
+--     grantable to app_user / tenant_admin at all.
+--
+-- preset / font / default_mode are TEXT + CHECK rather than lookup FKs: they
+-- are a code-owned registry (@platform/ui-kit/theme presets.ts — fonts must
+-- also be declared to next/font at build time), so a DB lookup would be a
+-- second copy of the list. Same precedent as lms.lead_assignment_log.action.
+-- Keep the CHECK lists in step with presets.ts.
+--
+-- public_key: random (v4, not the time-ordered v7 PK family — it must reveal
+-- nothing, not even creation time) id used ONLY in the tenant login link
+-- (/login?t=<public_key>) to show branding before sign-in. Rotatable by Super
+-- Admin; it never authorises anything.
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS entity.tenant_branding (
+  tenant_id      UUID    PRIMARY KEY REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  public_key     UUID    NOT NULL DEFAULT gen_random_uuid(),
+  -- theme
+  preset         TEXT    CONSTRAINT chk_tenant_branding_preset CHECK (preset IN (
+                   'indigo-kinetic','pacific-ocean','teal-horizon','sky-velocity',
+                   'emerald-fit','royal-violet','electric-amber','slate-modern')),
+  seed_hex       TEXT    CONSTRAINT chk_tenant_branding_seed CHECK (seed_hex ~ '^#[0-9a-f]{6}$'),
+  font           TEXT    CONSTRAINT chk_tenant_branding_font CHECK (font IN (
+                   'inter','manrope','dm-sans','ibm-plex-sans','plus-jakarta-sans','public-sans','outfit')),
+  default_mode   TEXT    NOT NULL DEFAULT 'light'
+                         CONSTRAINT chk_tenant_branding_mode CHECK (default_mode IN ('light','dark','system')),
+  theme_locked   BOOLEAN NOT NULL DEFAULT FALSE,
+  -- identity (Super Admin only). assets: { "<slot>": { "key", "content_type",
+  -- "bytes", "updated_at" } } with slot in logo | logo_dark | mark | favicon |
+  -- app_icon; blob bytes live in @platform/blob-storage like iam.users.photo_key.
+  assets         JSONB   NOT NULL DEFAULT '{}',
+  product_names  JSONB   NOT NULL DEFAULT '{}',
+  -- tenant-admin managed
+  terms          JSONB   NOT NULL DEFAULT '{}',
+  nav_overrides  JSONB   NOT NULL DEFAULT '{}',
+  updated_by     UUID    REFERENCES iam.users(id) ON DELETE SET NULL,
+  metadata       JSONB   NOT NULL DEFAULT '{}',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT uq_tenant_branding_public_key UNIQUE (public_key),
+  CONSTRAINT chk_tenant_branding_json_objects CHECK (
+    jsonb_typeof(assets) = 'object' AND jsonb_typeof(product_names) = 'object'
+    AND jsonb_typeof(terms) = 'object' AND jsonb_typeof(nav_overrides) = 'object')
+);
+
+
+-- ===================================================================
 -- HR GLOBAL LOOKUP TABLES  (UUID PKs, same shape as lms.lead_stage — no RLS)
 -- Managed globally (admin-service slugs); readable by every subject role.
 -- ===================================================================

@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { productOrigins, adminOrigin } from '@platform/ui-kit';
-import { AppNavbar, AppSidebar, MobileSidebar, filterNavGroups } from '@platform/ui-kit/shell';
+import { filterNavGroups, AppShell } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { ADMIN_NAV } from '@/src/config/navigation';
 import LogoutButton from '@/components/auth/LogoutButton';
@@ -50,32 +50,28 @@ export default async function DashboardLayout({ children }: { children: React.Re
     );
   }
 
+  // The shared navbar, not a hand-rolled one: it is the only place the
+  // responsive rules live (product pills inline on sm+, full-width row on
+  // mobile), and this console's own copy of that header used to squeeze
+  // the pills off-screen on a phone. activeExtra marks the Admin pill as
+  // the current page — this console is capability-gated chrome, not a
+  // licensed product, so it can never be the activeProduct. The SA pill
+  // rides along on lookup-admin's own guard predicate, hidden outright
+  // when ADMIN_URL is unset (single-host dev with no /sa deployed).
   return (
-    <div className="flex min-h-screen w-full flex-col bg-[#F8FAFC] lg:h-full lg:min-h-0 lg:overflow-hidden">
-      {/* The shared navbar, not a hand-rolled one: it is the only place the
-          responsive rules live (product pills inline on sm+, full-width row on
-          mobile), and this console's own copy of that header used to squeeze
-          the pills off-screen on a phone. activeExtra marks the Admin pill as
-          the current page — this console is capability-gated chrome, not a
-          licensed product, so it can never be the activeProduct. The SA pill
-          rides along on lookup-admin's own guard predicate, hidden outright
-          when ADMIN_URL is unset (single-host dev with no /sa deployed). */}
-      <AppNavbar
-        user={session}
-        licensedProducts={licensedProducts}
-        productOrigins={productOrigins()}
-        activeExtra="admin"
-        homeHref="/dashboard"
-        title="Admin"
-        lookupAdminUrl={adminOrigin()}
-      />
-      <MobileSidebar actor={session} items={navGroups} />
-      <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">
-        <AppSidebar actor={session} items={navGroups} />
-        <main className="flex w-full min-w-0 flex-1 flex-col lg:overflow-y-auto">
-          {children}
-        </main>
-      </div>
-    </div>
+    <AppShell
+      nav={navGroups}
+      productLine="Admin Console"
+      productKey="admin"
+      user={session}
+      licensedProducts={licensedProducts}
+      productOrigins={productOrigins()}
+      activeExtra="admin"
+      homeHref="/dashboard"
+      title="Admin"
+      lookupAdminUrl={adminOrigin()}
+    >
+      {children}
+    </AppShell>
   );
 }

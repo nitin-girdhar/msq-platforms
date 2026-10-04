@@ -183,6 +183,14 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
           Manage modules →
         </Link>
       )}
+      {table === 'tenants' && (
+        <Link
+          href={`/dashboard/tenants/${row.id}/branding`}
+          className="mb-2 ml-4 inline-block text-xs font-semibold text-primary hover:underline"
+        >
+          Manage branding →
+        </Link>
+      )}
       <LookupForm
         formId={FORM_ID}
         idPrefix="el"

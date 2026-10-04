@@ -12,6 +12,8 @@ export const ACTIVITY_ACTIONS = [
   'user_password_reset',
   'password_reset_by_admin',
   'password_changed_self',
+  'password_reset_requested',
+  'password_reset_self',
   'role_changed',
   'privilege_denied_attempt',
   'assignment_created',

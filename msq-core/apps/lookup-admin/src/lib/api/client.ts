@@ -936,3 +936,56 @@ export const orgs = {
     };
   },
 };
+
+// ── Tenant branding (Super Admin) ────────────────────────────────────────────
+//
+// identity-service /sa/tenants/:id/branding — rank-gated to super admin on the
+// server; cross-tenant by design (this is the platform operator's screen).
+// Assets go up as base64 and are sniffed/sanitised server-side.
+
+export type BrandAssetSlot = 'logo' | 'logo_dark' | 'mark' | 'favicon' | 'app_icon';
+
+export interface SaBrandingView {
+  tenant_name: string;
+  theme: { preset: string | null; seed_hex: string | null; font: string | null; mode: string | null } | null;
+  theme_locked: boolean;
+  terms: Record<string, string>;
+  nav_overrides: Record<string, { label?: string; icon?: string }>;
+  product_names: Record<string, Record<string, string>>;
+  assets: Record<string, string>;
+  asset_meta: Record<string, { content_type: string; bytes: number; updated_at: string }>;
+  public_key: string | null;
+  updated_at: string | null;
+}
+
+export interface SaBrandingUpdate {
+  preset?: string | null;
+  seed_hex?: string | null;
+  font?: string | null;
+  default_mode?: string;
+  theme_locked?: boolean;
+  product_names?: Record<string, Record<string, string>>;
+}
+
+export const saBranding = {
+  get: (tenantId: string) =>
+    request<{ success: true; data: SaBrandingView }>(`/sa/tenants/${tenantId}/branding`),
+  update: (tenantId: string, data: SaBrandingUpdate) =>
+    request<{ success: true; data: SaBrandingView }>(`/sa/tenants/${tenantId}/branding`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  uploadAsset: (tenantId: string, slot: BrandAssetSlot, data: string) =>
+    request<{ success: true; data: SaBrandingView }>(`/sa/tenants/${tenantId}/branding/assets/${slot}`, {
+      method: 'POST',
+      body: JSON.stringify({ data }),
+    }),
+  deleteAsset: (tenantId: string, slot: BrandAssetSlot) =>
+    request<{ success: true; data: SaBrandingView }>(`/sa/tenants/${tenantId}/branding/assets/${slot}`, {
+      method: 'DELETE',
+    }),
+  rotateKey: (tenantId: string) =>
+    request<{ success: true; data: SaBrandingView }>(`/sa/tenants/${tenantId}/branding/rotate-key`, {
+      method: 'POST',
+    }),
+};

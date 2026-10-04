@@ -3,7 +3,7 @@ import { sessionCookieOptions, clearedSessionCookieOptions } from '../../../lib/
 import { config } from '../../../config/index.js';
 import { UnauthorizedError } from '../../../lib/errors.js';
 import * as service from './auth.service.js';
-import { loginSchema, switchOrgSchema, changePasswordSchema } from './auth.schema.js';
+import { loginSchema, switchOrgSchema, changePasswordSchema, forgotPasswordSchema, resetPasswordSchema } from './auth.schema.js';
 
 export class AuthController {
   login = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -78,5 +78,21 @@ export class AuthController {
       .setCookie(config.authCookieName, new_token, sessionCookieOptions())
       .status(200)
       .send({ success: true, data: null });
+  };
+
+  // Pre-login, gateway-secret only. Always the same 200, sent BEFORE the lookup
+  // runs, so neither the body nor the timing says whether the email exists.
+  forgotPassword = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { email } = forgotPasswordSchema.parse(request.body);
+    void service.requestPasswordReset(email).catch((err: unknown) => {
+      console.error('[auth] requestPasswordReset failed:', (err as Error).message);
+    });
+    return reply.status(200).send({ success: true, data: null });
+  };
+
+  resetPassword = async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = resetPasswordSchema.parse(request.body);
+    await service.resetPassword(body.token, body.new_password);
+    return reply.status(200).send({ success: true, data: null });
   };
 }

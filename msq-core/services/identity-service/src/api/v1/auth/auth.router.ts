@@ -11,4 +11,7 @@ export async function authRouter(app: FastifyInstance): Promise<void> {
   app.get('/my-orgs', ctrl.myOrgs);
   app.post('/switch-org', ctrl.switchOrg);
   app.post('/change-password', { preHandler: [requireInternalSecret] }, ctrl.changePassword);
+  // Pre-login: no session exists. Gateway-secret only; the gateway rate-limits.
+  app.post('/forgot-password', { preHandler: [requireInternalSecret] }, ctrl.forgotPassword);
+  app.post('/reset-password', { preHandler: [requireInternalSecret] }, ctrl.resetPassword);
 }

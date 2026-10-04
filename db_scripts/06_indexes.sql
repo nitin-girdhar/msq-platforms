@@ -679,4 +679,15 @@ CREATE INDEX IF NOT EXISTS idx_marketing_leads_auto_assign_reason
   ON lms.marketing_leads (org_id, auto_assign_reason)
   WHERE auto_assign_reason IS NOT NULL AND NOT is_deleted;
 
+-- Branding & personal preferences (1.57.0). tenant_branding is keyed by its PK
+-- (tenant_id) and the UNIQUE public_key — no further index needed.
+CREATE INDEX IF NOT EXISTS idx_user_preferences_tenant
+  ON iam.user_preferences (tenant_id);
+-- Reset tokens: lookup is by the UNIQUE token_hash; these back the per-user
+-- rate limit ("how many requested recently") and the expiry sweep.
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_created
+  ON iam.password_reset_tokens (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires
+  ON iam.password_reset_tokens (expires_at);
+
 COMMIT;

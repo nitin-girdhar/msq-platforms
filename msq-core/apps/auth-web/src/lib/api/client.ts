@@ -44,4 +44,20 @@ export const auth = {
       method: 'POST',
       body: JSON.stringify({ current_password, new_password }),
     }),
+
+  // Self-service reset (pre-login). Always 200 for a well-formed email — the
+  // response never says whether an account exists.
+  forgotPassword: (email: string) =>
+    request<{ success: true; data: null }>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  // Spends the emailed single-use token; every session for the account is
+  // revoked server-side, so the user signs in fresh afterwards.
+  resetPassword: (token: string, new_password: string) =>
+    request<{ success: true; data: null }>('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, new_password }),
+    }),
 };

@@ -38,8 +38,8 @@ export default function PageTabs({ tabs, label }: Props) {
             aria-current={active ? 'page' : undefined}
             className={
               active
-                ? 'shrink-0 border-b-2 border-[#0b6cbf] px-3 py-2 text-sm font-semibold text-[#0b6cbf]'
-                : 'shrink-0 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-[#64748B] transition-colors hover:text-[#0F172A]'
+                ? 'shrink-0 border-b-2 border-primary px-3 py-2 text-sm font-semibold text-primary'
+                : 'shrink-0 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-on-surface-variant transition-colors hover:text-on-surface'
             }
           >
             {tab.label}
@@ -47,7 +47,7 @@ export default function PageTabs({ tabs, label }: Props) {
               <span
                 // Amber rather than the active blue: this is "something needs
                 // you", which must read the same whether the tab is selected.
-                className="ml-1.5 inline-flex min-w-[1.25rem] justify-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-amber-800"
+                className="ml-1.5 inline-flex min-w-[1.25rem] justify-center rounded-full bg-status-due-container px-1.5 py-0.5 text-[10px] font-semibold leading-none text-on-status-due-container"
                 // Without this the tab announces as "Team 3", which says nothing
                 // about what the 3 is.
                 aria-label={`${tab.badge} awaiting your attention`}

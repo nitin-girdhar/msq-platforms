@@ -109,17 +109,17 @@ export default function SearchableSelect({
           <div
             ref={panelRef}
             style={rect.style}
-            className="flex flex-col overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg"
+            className="flex flex-col overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-lg"
           >
             {showSearch && (
-              <div className="shrink-0 border-b border-[#F1F5F9] p-2">
+              <div className="shrink-0 border-b border-outline-variant/60 p-2">
                 <input
                   autoFocus
                   type="search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search…"
-                  className="w-full rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20"
+                  className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>
             )}
@@ -135,7 +135,7 @@ export default function SearchableSelect({
                     setOpen(false);
                   }}
                   className={`cursor-pointer px-3 py-2 text-sm transition-colors ${
-                    !value ? "bg-[#EFF6FF] text-[#0b6cbf]" : "text-[#64748B] hover:bg-[#F8FAFC]"
+                    !value ? "bg-primary-fixed text-primary" : "text-on-surface-variant hover:bg-surface-container-low"
                   }`}
                 >
                   {emptyLabel}
@@ -154,24 +154,24 @@ export default function SearchableSelect({
                     }}
                     className={`cursor-pointer px-3 py-2 transition-colors ${
                       isSelected
-                        ? "bg-[#EFF6FF] text-[#0b6cbf]"
-                        : "text-[#0F172A] hover:bg-[#F8FAFC]"
+                        ? "bg-primary-fixed text-primary"
+                        : "text-on-surface hover:bg-surface-container-low"
                     }`}
                   >
                     <span className="block truncate text-sm font-medium">{o.label}</span>
                     {o.hint && (
-                      <span className="block truncate text-[11px] text-[#64748B]">{o.hint}</span>
+                      <span className="block truncate text-[11px] text-on-surface-variant">{o.hint}</span>
                     )}
                   </li>
                 );
               })}
               {options.length === 0 && (
-                <li className="px-3 py-4 text-center text-xs text-[#64748B]">
+                <li className="px-3 py-4 text-center text-xs text-on-surface-variant">
                   Nothing to choose from
                 </li>
               )}
               {options.length > 0 && filtered.length === 0 && (
-                <li className="px-3 py-4 text-center text-xs text-[#64748B]">
+                <li className="px-3 py-4 text-center text-xs text-on-surface-variant">
                   No matches for &quot;{search.trim()}&quot;.
                 </li>
               )}
@@ -191,13 +191,13 @@ export default function SearchableSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
-        className={`flex items-center justify-between rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-left text-xs font-semibold text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
+        className={`flex items-center justify-between rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 text-left text-xs font-semibold text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
       >
-        <span className={selectedLabel ? "truncate" : "truncate text-[#94A3B8]"}>
+        <span className={selectedLabel ? "truncate" : "truncate text-outline"}>
           {selectedLabel || placeholder}
         </span>
         <svg
-          className={`ml-2 h-4 w-4 shrink-0 text-[#64748B] transition-transform ${open ? "rotate-180" : ""}`}
+          className={`ml-2 h-4 w-4 shrink-0 text-on-surface-variant transition-transform ${open ? "rotate-180" : ""}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"

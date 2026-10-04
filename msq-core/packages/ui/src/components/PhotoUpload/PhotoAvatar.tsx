@@ -4,7 +4,7 @@
 // initial when there is none or the image fails to load. Same visual as the
 // initials chip used across the shell so swapping in a photo is seamless.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface Props {
   /** Image URL (e.g. users.photoUrl(id)); null/undefined renders the fallback. */
@@ -18,18 +18,26 @@ interface Props {
 
 export default function PhotoAvatar({ src, label, sizeClass = 'h-7 w-7', className = '' }: Props) {
   const [failed, setFailed] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
 
   // Reset the error state when the source changes (e.g. after a re-upload).
-  useEffect(() => setFailed(false), [src]);
+  // Also catch an image that ALREADY failed before hydration: a server-rendered
+  // <img> can error before React attaches onError, which then never fires and
+  // the alt text shows instead of the initial.
+  useEffect(() => {
+    const img = imgRef.current;
+    setFailed(Boolean(img && img.complete && img.naturalWidth === 0));
+  }, [src]);
 
   const initial = (label?.trim()?.charAt(0) || '?').toUpperCase();
   const base = `flex ${sizeClass} shrink-0 items-center justify-center overflow-hidden rounded-full ${className}`;
 
   if (src && !failed) {
     return (
-      <span className={`${base} bg-slate-100`}>
+      <span className={`${base} bg-surface-container`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
+          ref={imgRef}
           src={src}
           alt={label}
           className="h-full w-full object-cover"
@@ -38,5 +46,5 @@ export default function PhotoAvatar({ src, label, sizeClass = 'h-7 w-7', classNa
       </span>
     );
   }
-  return <span className={`${base} bg-[#0b6cbf] text-xs font-bold text-white`}>{initial}</span>;
+  return <span className={`${base} bg-primary text-xs font-bold text-on-primary`}>{initial}</span>;
 }

@@ -102,8 +102,8 @@ export default function UserPicker({
         : "";
 
   const borderClass = hasError
-    ? "border-red-400 focus:ring-red-200"
-    : "border-[#E2E8F0] focus:border-[#0b6cbf] focus:ring-[#0b6cbf]/20";
+    ? "border-error focus:ring-error/30"
+    : "border-outline-variant focus:border-primary focus:ring-primary/20";
 
   const panel =
     open && rect && typeof document !== "undefined"
@@ -111,17 +111,17 @@ export default function UserPicker({
           <div
             ref={panelRef}
             style={rect.style}
-            className="flex flex-col overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg"
+            className="flex flex-col overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-lg"
           >
             {showSearch && (
-              <div className="shrink-0 border-b border-[#F1F5F9] p-2">
+              <div className="shrink-0 border-b border-outline-variant/60 p-2">
                 <input
                   autoFocus
                   type="search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search…"
-                  className="w-full rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20"
+                  className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>
             )}
@@ -138,8 +138,8 @@ export default function UserPicker({
                   }}
                   className={`cursor-pointer px-3 py-2 text-sm transition-colors ${
                     !value
-                      ? "bg-[#EFF6FF] text-[#0b6cbf]"
-                      : "text-[#64748B] hover:bg-[#F8FAFC]"
+                      ? "bg-primary-fixed text-primary"
+                      : "text-on-surface-variant hover:bg-surface-container-low"
                   }`}
                 >
                   {emptyLabel}
@@ -155,8 +155,8 @@ export default function UserPicker({
                   }}
                   className={`cursor-pointer px-3 py-2 text-sm transition-colors ${
                     value === extraOption.id
-                      ? "bg-[#EFF6FF] text-[#0b6cbf]"
-                      : "text-[#0F172A] hover:bg-[#F8FAFC]"
+                      ? "bg-primary-fixed text-primary"
+                      : "text-on-surface hover:bg-surface-container-low"
                   }`}
                 >
                   {extraOption.label}
@@ -175,20 +175,20 @@ export default function UserPicker({
                     }}
                     className={`cursor-pointer px-3 py-2 transition-colors ${
                       isSelected
-                        ? "bg-[#EFF6FF] text-[#0b6cbf]"
-                        : "text-[#0F172A] hover:bg-[#F8FAFC]"
+                        ? "bg-primary-fixed text-primary"
+                        : "text-on-surface hover:bg-surface-container-low"
                     }`}
                   >
                     <span className="block truncate text-sm font-medium">
                       {u.name || u.email}
                     </span>
                     {u.name && (
-                      <span className="block truncate text-[11px] text-[#64748B]">
+                      <span className="block truncate text-[11px] text-on-surface-variant">
                         {u.email}
                       </span>
                     )}
                     {u.role_label && (
-                      <span className="block truncate text-[11px] text-[#64748B]">
+                      <span className="block truncate text-[11px] text-on-surface-variant">
                         {u.role_label}
                       </span>
                     )}
@@ -196,12 +196,12 @@ export default function UserPicker({
                 );
               })}
               {users.length === 0 && !extraOption && (
-                <li className="px-3 py-4 text-center text-xs text-[#64748B]">
+                <li className="px-3 py-4 text-center text-xs text-on-surface-variant">
                   No assignees available
                 </li>
               )}
               {users.length > 0 && filtered.length === 0 && (
-                <li className="px-3 py-4 text-center text-xs text-[#64748B]">
+                <li className="px-3 py-4 text-center text-xs text-on-surface-variant">
                   No matches for &quot;{search.trim()}&quot;.
                 </li>
               )}
@@ -220,13 +220,13 @@ export default function UserPicker({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm text-[#0F172A] focus:outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-[#F8FAFC] ${borderClass}`}
+        className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm text-on-surface focus:outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-surface-container-low ${borderClass}`}
       >
-        <span className={selectedLabel ? "truncate" : "text-[#94A3B8]"}>
+        <span className={selectedLabel ? "truncate" : "text-outline"}>
           {selectedLabel || placeholder}
         </span>
         <svg
-          className={`ml-2 h-4 w-4 shrink-0 text-[#64748B] transition-transform ${open ? "rotate-180" : ""}`}
+          className={`ml-2 h-4 w-4 shrink-0 text-on-surface-variant transition-transform ${open ? "rotate-180" : ""}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"

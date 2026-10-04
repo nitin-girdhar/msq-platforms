@@ -20,7 +20,7 @@ interface Props {
 export default function FilterField({ label, children }: Props) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">{label}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-on-surface-variant">{label}</span>
       {children}
     </div>
   );

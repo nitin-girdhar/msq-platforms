@@ -77,9 +77,9 @@ export default function SpeechInputButton({ onText, disabled = false, compact = 
       {status && (
         <span
           role="status"
-          className={`truncate text-[11px] ${error ? 'text-red-600' : 'italic text-slate-500'} ${
+          className={`truncate text-[11px] ${error ? 'text-error' : 'italic text-on-surface-variant'} ${
             compact
-              ? 'absolute right-0 top-full z-10 mt-1 max-w-[16rem] rounded-md border border-slate-200 bg-white px-2 py-1 shadow-sm'
+              ? 'absolute right-0 top-full z-10 mt-1 max-w-[16rem] rounded-md border border-outline-variant bg-surface-container-lowest px-2 py-1 shadow-sm'
               : 'min-w-0 max-w-[14rem]'
           }`}
           title={status}
@@ -87,7 +87,7 @@ export default function SpeechInputButton({ onText, disabled = false, compact = 
           {status}
         </span>
       )}
-      <span className="inline-flex shrink-0 overflow-hidden rounded-md border border-slate-200 text-[10px] font-semibold">
+      <span className="inline-flex shrink-0 overflow-hidden rounded-md border border-outline-variant text-[10px] font-semibold">
         {(['en-IN', 'hi-IN'] as const).map((code) => (
           <button
             key={code}
@@ -97,7 +97,7 @@ export default function SpeechInputButton({ onText, disabled = false, compact = 
             aria-pressed={lang === code}
             aria-label={code === 'en-IN' ? 'Dictate in English' : 'Dictate in Hindi'}
             className={`px-1.5 py-0.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-              lang === code ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 hover:bg-slate-100'
+              lang === code ? 'bg-on-surface text-on-primary' : 'bg-surface-container-lowest text-on-surface-variant hover:bg-surface-container'
             }`}
           >
             {code === 'en-IN' ? 'EN' : 'HI'}
@@ -113,8 +113,8 @@ export default function SpeechInputButton({ onText, disabled = false, compact = 
         title={listening ? 'Stop dictation' : 'Speak to type'}
         className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
           listening
-            ? 'animate-pulse bg-red-600 text-white hover:bg-red-700'
-            : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+            ? 'animate-pulse bg-error text-on-primary hover:bg-on-error-container'
+            : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
         }`}
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">

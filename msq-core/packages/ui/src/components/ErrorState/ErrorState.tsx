@@ -23,9 +23,9 @@ export function ErrorState({ title, description, detail, digest, actions }: Erro
       <div className="w-full max-w-md text-center">
         <div
           aria-hidden
-          className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100"
+          className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-surface-container"
         >
-          <svg className="h-7 w-7 text-slate-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <svg className="h-7 w-7 text-outline" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -34,8 +34,8 @@ export function ErrorState({ title, description, detail, digest, actions }: Erro
           </svg>
         </div>
 
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h1>
-        <p className="mt-2 text-sm leading-relaxed text-slate-500">{description}</p>
+        <h1 className="text-xl font-semibold tracking-tight text-on-surface">{title}</h1>
+        <p className="mt-2 text-sm leading-relaxed text-on-surface-variant">{description}</p>
 
         {actions ? <div className="mt-8 flex items-center justify-center gap-3">{actions}</div> : null}
 
@@ -44,17 +44,17 @@ export function ErrorState({ title, description, detail, digest, actions }: Erro
             internal detail that does not belong on screen by default. */}
         {(detail || digest) && (
           <details className="mt-8 text-left">
-            <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-600">
+            <summary className="cursor-pointer text-xs text-outline hover:text-on-surface-variant">
               Technical details
             </summary>
-            <div className="mt-2 rounded-lg bg-slate-50 p-3">
+            <div className="mt-2 rounded-lg bg-surface-container-low p-3">
               {digest && (
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-on-surface-variant">
                   Reference: <code className="font-mono">{digest}</code>
                 </p>
               )}
               {detail && (
-                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-slate-500">
+                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-on-surface-variant">
                   {detail}
                 </pre>
               )}

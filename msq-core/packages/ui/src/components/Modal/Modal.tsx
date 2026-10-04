@@ -90,7 +90,7 @@ export default function Modal({
 
   return createPortal(
     <div
-      className={`fixed inset-0 ${layer === 'nested' ? 'z-[300]' : 'z-50'} flex items-center justify-center bg-slate-900/50 px-4 py-8`}
+      className={`fixed inset-0 ${layer === 'nested' ? 'z-[300]' : 'z-50'} flex items-center justify-center bg-on-surface/50 px-4 py-8`}
       onMouseDown={(e) => {
         pressStartedOnBackdrop.current = e.target === e.currentTarget;
       }}
@@ -111,19 +111,19 @@ export default function Modal({
       aria-label={title}
     >
       <div
-        className={`flex max-h-[calc(100dvh-4rem)] w-full ${maxWidth} flex-col overflow-hidden rounded-2xl bg-white shadow-2xl`}
+        className={`flex max-h-[calc(100dvh-4rem)] w-full ${maxWidth} flex-col overflow-hidden rounded-2xl bg-surface-container-lowest shadow-2xl`}
       >
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[#F1F5F9] px-5 py-3.5 sm:px-6">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-outline-variant/60 px-5 py-3.5 sm:px-6">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-[#0F172A]">{title}</h2>
-            {subtitle && <div className="mt-0.5 text-xs text-[#64748B]">{subtitle}</div>}
+            <h2 className="text-base font-semibold text-on-surface">{title}</h2>
+            {subtitle && <div className="mt-0.5 text-xs text-on-surface-variant">{subtitle}</div>}
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={locked}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+            className="shrink-0 rounded-lg p-1 text-outline transition-colors hover:bg-surface-container hover:text-on-surface-variant disabled:cursor-not-allowed disabled:opacity-40"
           >
             <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
               <path
@@ -142,7 +142,7 @@ export default function Modal({
         </div>
 
         {footer && (
-          <div className="shrink-0 border-t border-[#F1F5F9] px-5 py-3 sm:px-6">{footer}</div>
+          <div className="shrink-0 border-t border-outline-variant/60 px-5 py-3 sm:px-6">{footer}</div>
         )}
       </div>
     </div>,

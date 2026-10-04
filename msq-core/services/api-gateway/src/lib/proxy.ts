@@ -23,6 +23,16 @@ export interface ProxyOptions {
    * server.ts). Use sparingly: the default is the platform's latency budget.
    */
   timeoutMs?: number;
+  /**
+   * Upstream response headers to pass through, beyond Content-Type /
+   * Content-Disposition / Set-Cookie. Opt-in per route so no existing route's
+   * responses change. Used by the public brand-asset route to keep its caching
+   * (Cache-Control, ETag) and its SVG lock-down (Content-Security-Policy,
+   * X-Content-Type-Options). Lower-case names.
+   */
+  forwardResponseHeaders?: readonly string[];
+  /** Request headers to pass upstream (e.g. 'if-none-match' for a 304). Lower-case names. */
+  forwardRequestHeaders?: readonly string[];
 }
 
 // Injects the acting user's identity headers (verified by the gateway from the
@@ -79,6 +89,11 @@ export async function proxyTo(
     Object.assign(forwardHeaders, options.extraHeaders);
   }
 
+  for (const name of options?.forwardRequestHeaders ?? []) {
+    const v = request.headers[name];
+    if (typeof v === 'string') forwardHeaders[name] = v;
+  }
+
   const method = request.method.toUpperCase();
   // DELETE is included because DELETE /notifications/push/subscribe identifies
   // the registration to remove by its endpoint in the body (the endpoint is a
@@ -119,6 +134,10 @@ export async function proxyTo(
     // Preserve attachment filenames for file downloads (e.g. attendance CSV/xlsx).
     const disposition = upstream.headers.get('content-disposition');
     if (disposition) reply.header('Content-Disposition', disposition);
+    for (const name of options?.forwardResponseHeaders ?? []) {
+      const v = upstream.headers.get(name);
+      if (v) reply.header(name, v);
+    }
     reply.status(upstream.status);
 
     if (upstream.body) {

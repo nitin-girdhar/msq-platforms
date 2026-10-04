@@ -40,6 +40,10 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Cross-product controls that are not tied to one tool.', 0),
 ('platform.write', 'operation', 'platform', 'Write anything',
  'Without this the account is read-only everywhere, enforced at the database.', 1),
+-- Personal appearance (1.57.0): the user's own colour / font / light-dark
+-- choice. Ignored while the tenant's theme is locked (except light/dark).
+('platform.appearance', 'operation', 'platform', 'Change own appearance',
+ 'Pick a personal colour, font and light or dark mode.', 2),
 
 -- ── CRM ─────────────────────────────────────────────────────────────
 ('lms', 'tool', NULL, 'CRM',
@@ -108,6 +112,8 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Message a lead on WhatsApp using an approved template. Separate from logging an interaction, because it contacts the customer directly.', 10),
 ('lms.leads.assign.bulk', 'operation', 'lms.leads', 'Bulk assign leads',
  'Assign many leads to one person in a single action.', 11),
+('lms.leads.bulk.update', 'operation', 'lms.leads', 'Bulk update leads',
+ 'Change the stage and outcome, or log a call, on many selected leads at once. Each lead is still checked on its own, and one that fails is skipped. Reassigning in bulk is Bulk assign leads, a separate permission.', 12),
 
 ('lms.followups', 'page', 'lms', 'Follow-ups',
  'The follow-up queue across leads.', 3),
@@ -119,6 +125,8 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Reschedule or close a follow-up.', 3),
 ('lms.followups.delete', 'operation', 'lms.followups', 'Delete follow-ups',
  'Remove a scheduled follow-up.', 4),
+('lms.followups.bulk.reschedule', 'operation', 'lms.followups', 'Bulk reschedule follow-ups',
+ 'Move the next follow-up of many selected leads to one new time. Each lead is still checked on its own, and one that fails is skipped.', 5),
 
 ('lms.history', 'page', 'lms', 'Leads history',
  'The audit view of lead activity over time.', 4),
@@ -393,6 +401,16 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Read the client list. Secrets are never shown.', 1),
 ('admin.api_tokens.manage', 'operation', 'admin.api_tokens', 'Manage API tokens',
  'Create clients and rotate their secrets.', 2),
+
+-- Tenant branding (1.57.0). The tenant admin's half only: colours and font
+-- (while Super Admin leaves them unlocked), terms and menu labels/icons. Logos,
+-- product names and the login link are Super Admin's and are read-only here.
+('admin.branding',        'page',      'admin',          'Branding',
+ 'How the company looks across every product: colours, words and menu.', 3),
+('admin.branding.view',   'operation', 'admin.branding', 'View branding',
+ 'See the company branding settings.', 1),
+('admin.branding.manage', 'operation', 'admin.branding', 'Manage branding',
+ 'Change colours and font, terms and menu labels.', 2),
 
 -- ── SUPERADMIN — the PLATFORM OPERATOR console (lookup-admin) ───────
 -- Never assignable to a tenant role: admin-service's putGrants refuses it below

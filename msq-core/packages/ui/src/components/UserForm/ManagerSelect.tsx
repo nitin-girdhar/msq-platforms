@@ -125,19 +125,19 @@ export default function ManagerSelect({
         )}
       </select>
 
-      {error && <p className="text-[11px] text-red-600">{error}</p>}
+      {error && <p className="text-[11px] text-error">{error}</p>}
       {!error && !homeOrgId && <p className={HINT}>Pick a branch first.</p>}
       {!error && homeOrgId && <p className={HINT}>Set for the home branch only.</p>}
 
       {orphanValue && (
-        <p className="rounded-lg border border-[#FDE68A] bg-[#FFFBEB] px-2.5 py-1.5 text-[11.5px] leading-snug text-[#92400E]">
+        <p className="rounded-lg border border-status-due/40 bg-status-due-container px-2.5 py-1.5 text-[11.5px] leading-snug text-on-status-due-container">
           {currentManagerName || 'The current manager'} is no longer an active manager option for this branch.
           It stays as-is unless you pick someone else.
         </p>
       )}
 
       {selected && !selected.in_branch && (
-        <p className="rounded-lg border border-[#A7F3D0] bg-[#ECFDF5] px-2.5 py-1.5 text-[11.5px] leading-snug text-[#065F46]">
+        <p className="rounded-lg border border-status-success/40 bg-status-success-container px-2.5 py-1.5 text-[11.5px] leading-snug text-on-status-success-container">
           {selected.full_name} isn&apos;t a member of this branch. Saving will also grant them access to it
           at weight 0 so they can be set as manager.
         </p>

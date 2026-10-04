@@ -7,3 +7,5 @@
 export { getServerSession, GATEWAY_URL, type ServerSession } from './server-session';
 export { requireSession, type AuthenticatedSession } from './require-session';
 export { getEnabledModules, type PlatformModule } from './modules';
+export { getEffectiveTheme, getEffectiveBranding } from './theme';
+export { getPublicBranding, resolveBrandKey, brandedMetadata } from './branding';

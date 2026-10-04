@@ -19,13 +19,13 @@ const SIZES: Record<ButtonSize, string> = {
 
 const VARIANTS: Record<ButtonVariant, string> = {
   primary:
-    'bg-[#0b6cbf] text-white shadow-sm hover:bg-[#095699] focus-visible:ring-[#0b6cbf]/30',
+    'bg-primary text-on-primary shadow-sm hover:bg-primary/90 focus-visible:ring-primary/30',
   secondary:
-    'border border-[#E2E8F0] bg-white text-[#475569] shadow-sm hover:bg-[#F8FAFC] focus-visible:ring-[#0b6cbf]/20',
+    'border border-outline-variant bg-surface-container-lowest text-on-surface-variant shadow-sm hover:bg-surface-container-low focus-visible:ring-primary/20',
   ghost:
-    'text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] focus-visible:ring-[#0b6cbf]/20',
+    'text-on-surface-variant hover:bg-surface-container hover:text-on-surface focus-visible:ring-primary/20',
   danger:
-    'border border-[#E2E8F0] bg-white text-[#475569] shadow-sm hover:border-red-300 hover:text-red-600 focus-visible:ring-red-200',
+    'border border-outline-variant bg-surface-container-lowest text-on-surface-variant shadow-sm hover:border-error/50 hover:text-error focus-visible:ring-error/30',
 };
 
 export default function Button({

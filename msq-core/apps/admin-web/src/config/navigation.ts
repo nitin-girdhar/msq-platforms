@@ -47,6 +47,13 @@ export const ADMIN_NAV: NavGroup[] = [
         icon: 'clock',
         capability: CAPABILITY.HR_ATTENDANCE_ADMIN,
       },
+      {
+        id: 'branding',
+        label: 'Branding',
+        href: '/dashboard/branding',
+        icon: 'palette',
+        capability: CAPABILITY.ADMIN_BRANDING,
+      },
     ],
   },
 ];

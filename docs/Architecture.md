@@ -68,6 +68,10 @@ caddy (ports 80/443, profile "sso-proxy", root docker-compose.yml, infra/Caddyfi
 | GET | `/auth/me` | identity |
 | GET | `/auth/my-orgs` (session cookie verified by identity) | identity |
 | POST | `/auth/switch-org` (session cookie verified by identity, login rate limit) | identity |
+| POST | `/auth/forgot-password` (email only; always 200; 5 per 15 min per IP + 3 per 15 min per user) | identity |
+| POST | `/auth/reset-password` (single-use 15-min token, SHA-256 stored; revokes every session; login rate limit) | identity |
+| GET | `/public/branding/:publicKey` (login-link display branding; unknown/rotated key → platform default, 60/min per IP) | identity |
+| GET | `/public/branding/:publicKey/assets/:slot` (logo/icon bytes, immutable + CSP sandbox, 240/min per IP) | identity |
 | POST | `/intake/webhook` (x-internal-secret) | leads |
 | GET/POST | `/meta/webhook/:integrationId` | meta-conversion-api |
 | GET/POST | `/meta/webhook` (shared app across tenants) | meta-conversion-api |
@@ -121,6 +125,12 @@ Downstream handlers run under `withServiceTx`, because there is no user context 
 | Method | Path | Service |
 |---|---|---|
 | POST | `/auth/change-password` | identity |
+| GET | `/me/branding` (session tenant names/terms/menu/assets + theme layers) | identity |
+| PUT/DELETE | `/me/preferences/theme` (own appearance; `platform.appearance`) | identity |
+| GET/PUT | `/tenant/branding` (session tenant; `admin.branding.view` / `.manage`; theme fields refused while locked) | identity |
+| GET/PUT | `/sa/tenants/:id/branding` (super admin) | identity |
+| POST/DELETE | `/sa/tenants/:id/branding/assets/:slot` (super admin; sniffed + SVG-sanitised) | identity |
+| POST | `/sa/tenants/:id/branding/rotate-key` (super admin) | identity |
 | GET/POST | `/leads` | leads |
 | GET/PATCH/DELETE | `/leads/:id` | leads |
 | POST | `/leads/:id/transfer` | leads |
@@ -1134,6 +1144,14 @@ hr-web's `HR_NAV` is **Attendance · Leave · Employees · Reports**, each filte
 
 The tabs were **moved, not duplicated**: Attendance Administration is Rules · Shifts · Assignments · Exceptions and Leave Administration is Policies · Leave cycle · Holidays · Adjustment, wherever those shells render (admin-web and the hr-web redirects). Employees opens when either the `leave` or `attendance` module is enabled (`HrModuleShell` takes a module list); Reports follows the `attendance` module.
 
+### HRMS Stitch redesign — H0 foundation (branch `hrms-stitch-redesign`, uncommitted)
+
+Plan: `C:\Users\ni3gi\.claude\plans\i-have-a-project-greedy-platypus.md` (Stitch project "HRMS" 7964813948240899929; phases H0–H6). H0 is no-feature groundwork:
+
+- `HrModuleShell` passes `mobileTabs={HR_MOBILE_TABS}` (`apps/hr-web/src/config/navigation.ts`) — today Attendance · Leave · Employees · Reports, ids only. Home / Payroll / Team tabs are added by the phase that creates each route, never before.
+- `packages/hr-web/src/lib/ui.ts` (shared field/label/empty-state classes) moved from hex to theme tokens, so tenant brand colour and appearance reach every form control that uses it. Screens still on inline hex are migrated as each is re-skinned (H1); HR keeps dark mode off until none remain.
+- Branding: nav renaming already works for HR ids (`BRANDABLE_NAV`); HR `<Term>` keys are deferred until H1 touches the screens that use them.
+
 **Branch reach of reports** is the scope ladder under `hr.reports.attendance.view` — `.org` (the session branch) or `.tenant` (every branch of the tenant), read with `attendanceReportReach()`. The Reports page opens the combined sheet on "All branches" when the navbar switcher is on All branches (`session.all_branches`) and the actor holds `.tenant`, otherwise on the session branch, and offers a branch picker only to `.tenant` holders. hr-service re-checks the same scope and derives the branch list from the gateway-verified `tenant_id`, so the picker is a convenience, never the boundary. The report read runs on the service transaction (attendance RLS lets `app_user` read only its own rows), pinned to that server-derived list — the same justification as the detailed report.
 
 Roll-out: `db_scripts/one_time/apply_hr_reports_capability.sql` (+ `_dryrun`) grants the new keys to every role that could **effectively** open the old tab (a grant row pruned by a denied ancestor is skipped), `.tenant` to tenant_admin / hr_admin / super_admin, then deactivates the old nodes. Ship it together with the hr-service / hr-web / api-gateway release.
@@ -1272,6 +1290,8 @@ illegible smudge. The icon set is emblem-only at every size, same reasoning.
 | `icon-192.png` | 192x192 | emblem, 92% box | manifest; also the notification `icon`/`badge` in `sw.js` |
 | `icon-512.png` | 512x512 | emblem, 92% box | manifest; splash screen |
 | `icon-512-maskable.png` | 512x512 | emblem, 76% box | manifest `purpose: 'maskable'` |
+
+**Per-tenant icons (schema 1.57.0).** These files are the platform default. A tenant whose Super Admin uploaded brand assets gets its own favicon, Apple touch icon and app icon: product layouts emit them via `brandedMetadata()` (`@platform/ui-kit/server`) and link `/manifest.webmanifest?b=<public_key>`. The manifest is a route handler (`auth-web/app/manifest.webmanifest/route.ts`) because a manifest fetch carries no session cookie — the rotatable public key selects display data only (name + app icon); an unknown or rotated key serves the default manifest. Tenant asset bytes come from `/api/public/branding/<key>/assets/<slot>?v=…` (immutable, `?v`-busted).
 | `apple-touch-icon.png` | 180x180 | emblem, 90% box | iOS Home Screen, via `pwa/metadata.ts` |
 | `favicon.png` | 256x256 | emblem, 94% box | browser tab, via `pwa/metadata.ts` |
 

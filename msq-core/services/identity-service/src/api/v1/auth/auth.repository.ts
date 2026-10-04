@@ -374,3 +374,85 @@ export async function getUserOrgs(user_id: string): Promise<UserOrgRow[]> {
     }));
   });
 }
+
+// ── Self-service password reset (iam.password_reset_tokens) ──
+// The table is REVOKEd from every login role and deny-all under RLS: only the
+// service connection (pre-login, no user session exists) may touch it. Only
+// the SHA-256 of the token is stored; the raw token lives in the email alone.
+
+/** Reset requests for this user in the last `windowMinutes` (per-user cap). */
+export async function countRecentResetRequests(user_id: string, windowMinutes: number): Promise<number> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT COUNT(*)::int AS n FROM iam.password_reset_tokens
+      WHERE user_id = ${user_id}::uuid
+        AND created_at > CLOCK_TIMESTAMP() - make_interval(mins => ${windowMinutes})
+    `)) as Array<{ n: number }>;
+    return Number(rows[0]?.n ?? 0);
+  });
+}
+
+/**
+ * Stores a new token and invalidates any older unused one, so only the most
+ * recent email's link works.
+ */
+export async function createResetToken(
+  user_id: string,
+  token_hash: string,
+  ttlMinutes: number,
+  requested_ip: string | null,
+): Promise<void> {
+  await withServiceTx(async (tx) => {
+    await tx.execute(sql`
+      UPDATE iam.password_reset_tokens SET used_at = CLOCK_TIMESTAMP()
+      WHERE user_id = ${user_id}::uuid AND used_at IS NULL
+    `);
+    await tx.execute(sql`
+      INSERT INTO iam.password_reset_tokens (user_id, token_hash, expires_at, requested_ip)
+      VALUES (${user_id}::uuid, ${token_hash},
+              CLOCK_TIMESTAMP() + make_interval(mins => ${ttlMinutes}), ${requested_ip})
+    `);
+  });
+}
+
+/**
+ * Consumes a live token and sets the new password in ONE transaction, so a
+ * token can never be spent without the password changing (or vice versa).
+ * The conditional UPDATE is the single-use guard: two concurrent submits of
+ * the same link race on it and exactly one wins. Returns null for an unknown,
+ * expired or already-used token, or an inactive/deleted user.
+ */
+export async function consumeResetTokenAndSetPassword(
+  token_hash: string,
+  new_hash: string,
+): Promise<{ user_id: string; org_id: string; password_changed_at: Date } | null> {
+  return withServiceTx(async (tx) => {
+    const spent = (await tx.execute(sql`
+      UPDATE iam.password_reset_tokens t SET used_at = CLOCK_TIMESTAMP()
+      FROM iam.users u
+      WHERE t.token_hash = ${token_hash}
+        AND t.used_at IS NULL
+        AND t.expires_at > CLOCK_TIMESTAMP()
+        AND u.id = t.user_id AND u.is_active AND NOT u.is_deleted
+      RETURNING t.user_id
+    `)) as Array<{ user_id: string }>;
+    const user_id = spent[0]?.user_id;
+    if (!user_id) return null;
+    const rows = (await tx.execute(sql`
+      UPDATE iam.users
+      SET password_hash = ${new_hash},
+          password_changed_at = CLOCK_TIMESTAMP(),
+          force_password_change = FALSE,
+          failed_login_attempts = 0, locked_until = NULL, last_failed_login_at = NULL
+      WHERE id = ${user_id}::uuid
+      RETURNING org_id, password_changed_at
+    `)) as Array<Record<string, unknown>>;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      user_id,
+      org_id: row['org_id'] as string,
+      password_changed_at: row['password_changed_at'] as Date,
+    };
+  });
+}

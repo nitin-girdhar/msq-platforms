@@ -161,3 +161,35 @@ export function buildBranchChangedEmail(p: BranchChangedParams): BuiltEmail {
     html: wrapHtml(htmlLines),
   };
 }
+
+export interface ResetLinkParams {
+  firstName?: string | null;
+  // Absolute URL carrying the single-use token. Never logged.
+  resetUrl: string;
+  ttlMinutes: number;
+}
+
+// Self-service "Forgot password" (auth.service requestPasswordReset).
+export function buildPasswordResetLinkEmail(p: ResetLinkParams): BuiltEmail {
+  const bodyLines = [
+    greeting(p.firstName),
+    `We received a request to reset your ${APP} password.`,
+    `Choose a new password: ${p.resetUrl}`,
+    `This link works once and expires in ${p.ttlMinutes} minutes.`,
+    "If you didn't ask for this, you can ignore this email — your password stays the same.",
+    `— ${APP}`,
+  ];
+  const htmlLines = [
+    esc(greeting(p.firstName)),
+    `We received a request to reset your ${esc(APP)} password.`,
+    `<a href="${esc(p.resetUrl)}">Choose a new password</a>`,
+    `This link works once and expires in ${p.ttlMinutes} minutes.`,
+    "If you didn't ask for this, you can ignore this email — your password stays the same.",
+    `— ${esc(APP)}`,
+  ];
+  return {
+    subject: `Reset your ${APP} password`,
+    body: bodyLines.join('\n\n'),
+    html: wrapHtml(htmlLines),
+  };
+}

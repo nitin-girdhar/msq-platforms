@@ -76,7 +76,7 @@ export { createApiClient, type ApiRequestError } from './api/http';
 export { appBasePath, withBasePath } from './api/base-path';
 // `auth` is exported for myOrgs() — the covered-branches list that drives the
 // Leads History branch picker, and the same source BranchSwitcher uses.
-export { orgs, users, auth, push } from './api/resources';
+export { orgs, users, auth, push, appearance } from './api/resources';
 
 export {
   exportRows,
@@ -117,3 +117,8 @@ export { authOrigin, adminOrigin, adminWebOrigin, buildLoginUrl, buildChangePass
 // auth-web's redirect logic can import it from this barrel rather than ./shell,
 // which would drag in the chrome components.
 export { usableProducts, landingFor, productHref, PRODUCT_LANDING } from './shell/products';
+
+// Theme controls shared by Appearance and the Branding pages.
+export { default as ThemePicker } from './components/ThemePicker/ThemePicker';
+export type { ThemePickerProps } from './components/ThemePicker/ThemePicker';
+export { applyThemePreview, seedContrast } from './components/ThemePicker/preview';

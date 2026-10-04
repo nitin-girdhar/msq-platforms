@@ -4,8 +4,8 @@ interface Props {
 }
 
 const TONES = {
-  success: 'border-green-200 bg-green-50 text-green-700',
-  error: 'border-red-200 bg-red-50 text-red-700',
+  success: 'border-status-success/30 bg-status-success-container text-on-status-success-container',
+  error: 'border-error/30 bg-error-container text-on-error-container',
 } as const;
 
 // Inline page notice. Same shape in every product so the "Checked in." banner in

@@ -1,11 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
-import { filterNav, filterNavGroups, isNavGroups, type NavItem, type NavGroup } from './nav';
+import { useBranding } from '../branding/BrandingProvider';
+import { brandNav, filterNav, filterNavGroups, isNavGroups, type NavItem, type NavGroup } from './nav';
 import NavIcon from './NavIcon';
+import BrandMark, { type ShellBrand } from './BrandMark';
+import { badgeText, useNavBadges } from './NavBadges';
 
 const TOGGLE_EVENT = 'fc:sidebar-toggle';
 const SET_EVENT = 'fc:sidebar-set';
@@ -27,29 +30,40 @@ interface Props {
   // Carries the DB-resolved capability list that decides which entries appear.
   actor: SessionUser;
   items: readonly NavItem[] | readonly NavGroup[];
+  // Brand block in the drawer header; omitted → the plain "Workspace" heading.
+  brand?: ShellBrand | undefined;
 }
 
-function MobileNavLink({ item, pathname }: { item: NavItem; pathname: string }) {
+function MobileNavLink({ item, pathname, badge }: { item: NavItem; pathname: string; badge?: number | undefined }) {
   const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+  const showBadge = typeof badge === 'number' && badge > 0;
   return (
     <Link
       href={item.href}
       aria-current={active ? 'page' : undefined}
       className={
         active
-          ? 'flex items-center gap-2.5 rounded-lg bg-[#EFF6FF] px-3 py-2.5 text-sm font-semibold text-[#0b6cbf]'
-          : 'flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-[#475569] transition-colors hover:bg-[#F8FAFC] hover:text-[#0F172A]'
+          ? 'flex items-center gap-3 rounded-lg bg-primary-container px-3 py-2.5 text-body-md font-semibold text-on-primary-container shadow-card'
+          : 'flex items-center gap-3 rounded-lg px-3 py-2.5 text-body-md font-medium text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface'
       }
     >
-      {item.icon && <NavIcon name={item.icon} className="h-4 w-4 shrink-0" />}
+      {item.icon && <NavIcon name={item.icon} className="h-5 w-5 shrink-0" />}
       <span className="truncate">{item.label}</span>
+      {showBadge && (
+        <span className="ml-auto rounded-full bg-status-overdue-container px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-on-status-overdue-container">
+          {badgeText(badge)}
+        </span>
+      )}
     </Link>
   );
 }
 
 // Mobile slide-over nav, shared across product apps. Same product-agnostic
 // contract as AppSidebar.
-export default function MobileSidebar({ actor, items }: Props) {
+export default function MobileSidebar({ actor, items: rawItems, brand }: Props) {
+  const { navOverrides } = useBranding();
+  const items = useMemo(() => brandNav(rawItems, navOverrides), [rawItems, navOverrides]);
+  const badges = useNavBadges();
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const grouped = isNavGroups(items);
@@ -96,7 +110,7 @@ export default function MobileSidebar({ actor, items }: Props) {
       {/* Backdrop */}
       <div
         onClick={() => setOpen(false)}
-        className={`fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px] transition-opacity ${
+        className={`fixed inset-0 z-40 bg-scrim backdrop-blur-[2px] transition-opacity ${
           open ? 'opacity-100' : 'opacity-0'
         }`}
       />
@@ -104,37 +118,41 @@ export default function MobileSidebar({ actor, items }: Props) {
       <aside
         role="dialog"
         aria-label="Primary navigation"
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 max-w-[80vw] flex-col border-r border-[#E2E8F0] bg-white shadow-2xl transition-transform duration-200 ease-out ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col bg-surface-container-lowest shadow-overlay transition-transform duration-200 ease-out ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#E2E8F0] px-4">
-          <span className="text-sm font-bold tracking-tight text-[#0F172A]">Workspace</span>
+        <div className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-outline-variant px-4">
+          {brand ? (
+            <BrandMark brand={brand} />
+          ) : (
+            <span className="text-headline-sm font-bold text-on-surface">Workspace</span>
+          )}
           <button
             type="button"
             onClick={() => setOpen(false)}
             aria-label="Close navigation"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[#64748B] hover:bg-[#F1F5F9]"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-on-surface"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
-        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-3" aria-label="Primary mobile">
+        <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3" aria-label="Primary mobile">
           {grouped
             ? groupsVisible.map((group) => (
                 <div key={group.id} className="flex flex-col gap-1 pb-3">
-                  <span className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8]">
+                  <span className="px-3 pb-1 pt-2 text-label-sm uppercase tracking-wider text-outline">
                     {group.label}
                   </span>
                   {group.items.map((item) => (
-                    <MobileNavLink key={item.id} item={item} pathname={pathname} />
+                    <MobileNavLink key={item.id} item={item} pathname={pathname} badge={badges[item.id]} />
                   ))}
                 </div>
               ))
             : flatVisible.map((item) => (
-                <MobileNavLink key={item.id} item={item} pathname={pathname} />
+                <MobileNavLink key={item.id} item={item} pathname={pathname} badge={badges[item.id]} />
               ))}
         </nav>
       </aside>

@@ -83,7 +83,7 @@ export default function MultiSelect({
   return (
     <div ref={rootRef} className={`relative flex min-w-0 ${isChip ? 'shrink-0' : 'flex-col gap-1'}`}>
       {!isChip && (
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-on-surface-variant">
           {label}
         </span>
       )}
@@ -97,18 +97,18 @@ export default function MultiSelect({
           aria-expanded={open}
           aria-label={`${label}: ${chipValue}`}
           title={`${label}: ${chipValue}`}
-          className={`flex max-w-[240px] items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-semibold text-[#0F172A] transition-colors hover:bg-[#F8FAFC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b6cbf]/30 disabled:cursor-not-allowed disabled:opacity-60 ${
-            selected.length > 0 ? 'border-[#0b6cbf]' : 'border-[#E2E8F0]'
+          className={`flex max-w-[240px] items-center gap-1.5 rounded-full border bg-surface-container-lowest px-3 py-1.5 text-xs font-semibold text-on-surface transition-colors hover:bg-surface-container-low focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60 ${
+            selected.length > 0 ? 'border-primary' : 'border-outline-variant'
           }`}
         >
-          <svg className="h-3.5 w-3.5 shrink-0 text-[#64748B]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+          <svg className="h-3.5 w-3.5 shrink-0 text-on-surface-variant" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
             <path fillRule="evenodd" d="M2.628 1.601C5.028 1.206 7.49 1 10 1s4.973.206 7.372.601a.75.75 0 0 1 .628.74v2.288a2.25 2.25 0 0 1-.659 1.59l-4.682 4.683a2.25 2.25 0 0 0-.659 1.59v3.037c0 .684-.31 1.33-.844 1.757l-1.937 1.55A.75.75 0 0 1 8 18.25v-5.757a2.25 2.25 0 0 0-.659-1.591L2.659 6.22A2.25 2.25 0 0 1 2 4.629V2.34a.75.75 0 0 1 .628-.74Z" clipRule="evenodd" />
           </svg>
           <span className="truncate">
-            <span className="font-medium text-[#64748B]">{label}:</span>{' '}
-            <span className={selected.length > 0 ? 'text-[#0b6cbf]' : ''}>{chipValue}</span>
+            <span className="font-medium text-on-surface-variant">{label}:</span>{' '}
+            <span className={selected.length > 0 ? 'text-primary' : ''}>{chipValue}</span>
           </span>
-          <svg className="h-3.5 w-3.5 shrink-0 text-[#64748B]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+          <svg className="h-3.5 w-3.5 shrink-0 text-on-surface-variant" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
             <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clipRule="evenodd" />
           </svg>
         </button>
@@ -119,19 +119,19 @@ export default function MultiSelect({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex min-h-[34px] w-full min-w-[140px] flex-wrap items-center gap-1 rounded-lg border border-[#E2E8F0] bg-white px-2 py-1 text-left shadow-sm transition-colors hover:border-[#0b6cbf] focus:outline-none disabled:cursor-not-allowed disabled:bg-[#F8FAFC] aria-expanded:border-[#0b6cbf] aria-expanded:ring-2 aria-expanded:ring-[#0b6cbf]/20"
+        className="flex min-h-[34px] w-full min-w-[140px] flex-wrap items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-lowest px-2 py-1 text-left shadow-sm transition-colors hover:border-primary focus:outline-none disabled:cursor-not-allowed disabled:bg-surface-container-low aria-expanded:border-primary aria-expanded:ring-2 aria-expanded:ring-primary/20"
       >
         {selected.length === 0 ? (
-          <span className="text-xs text-[#94A3B8]">{placeholder}</span>
+          <span className="text-xs text-outline">{placeholder}</span>
         ) : summary ? (
-          <span className="rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-1.5 py-0.5 text-[11px] font-semibold text-[#0b6cbf]">
+          <span className="rounded-full border border-primary-fixed-dim bg-primary-fixed px-1.5 py-0.5 text-[11px] font-semibold text-primary">
             {summary}
           </span>
         ) : (
           selected.map((opt) => (
             <span
               key={opt.id}
-              className="flex items-center gap-0.5 rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-1.5 py-0.5 text-[11px] font-semibold text-[#0b6cbf]"
+              className="flex items-center gap-0.5 rounded-full border border-primary-fixed-dim bg-primary-fixed px-1.5 py-0.5 text-[11px] font-semibold text-primary"
             >
               {opt.label}
               <span
@@ -139,7 +139,7 @@ export default function MultiSelect({
                 tabIndex={-1}
                 onClick={(e) => removeChip(opt, e)}
                 aria-label={`Remove ${opt.label}`}
-                className="cursor-pointer text-[#0b6cbf]/60 hover:text-[#0b6cbf]"
+                className="cursor-pointer text-primary/60 hover:text-primary"
               >
                 ×
               </span>
@@ -153,26 +153,26 @@ export default function MultiSelect({
         <div
           role="listbox"
           className={isChip
-            ? 'absolute right-0 top-[calc(100%+8px)] z-50 w-60 overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg'
-            : 'absolute top-full z-50 mt-1 w-full min-w-[180px] overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg'}
+            ? 'absolute right-0 top-[calc(100%+8px)] z-50 w-60 overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-lg'
+            : 'absolute top-full z-50 mt-1 w-full min-w-[180px] overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-lg'}
         >
-          <div className="border-b border-[#F1F5F9] p-2">
+          <div className="border-b border-outline-variant/60 p-2">
             <input
               ref={searchInputRef}
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search…"
-              className="w-full rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs text-[#0F172A] focus:border-[#0b6cbf] focus:outline-none"
+              className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-2.5 py-1.5 text-xs text-on-surface focus:border-primary focus:outline-none"
             />
           </div>
 
           <div className="max-h-56 overflow-y-auto">
             {loading && (
-              <p className="px-3 py-4 text-center text-xs text-[#64748B]">Loading…</p>
+              <p className="px-3 py-4 text-center text-xs text-on-surface-variant">Loading…</p>
             )}
             {!loading && filtered.length === 0 && (
-              <p className="px-3 py-4 text-center text-xs text-[#64748B]">
+              <p className="px-3 py-4 text-center text-xs text-on-surface-variant">
                 {search ? `No matches for "${search}"` : 'No options available'}
               </p>
             )}
@@ -185,11 +185,11 @@ export default function MultiSelect({
                   role="option"
                   aria-selected={checked}
                   onClick={() => toggle(opt)}
-                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-[#F8FAFC]"
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-surface-container-low"
                 >
                   <span
                     className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
-                      checked ? 'border-[#0b6cbf] bg-[#0b6cbf]' : 'border-[#CBD5E1] bg-white'
+                      checked ? 'border-primary bg-primary' : 'border-outline-variant bg-surface-container-lowest'
                     }`}
                   >
                     {checked && (
@@ -198,7 +198,7 @@ export default function MultiSelect({
                       </svg>
                     )}
                   </span>
-                  <span className={`truncate text-xs ${checked ? 'font-semibold text-[#0F172A]' : 'text-[#374151]'}`}>
+                  <span className={`truncate text-xs ${checked ? 'font-semibold text-on-surface' : 'text-on-surface'}`}>
                     {opt.label}
                   </span>
                 </button>
@@ -207,13 +207,13 @@ export default function MultiSelect({
           </div>
 
           {(selected.length > 0 || selectAllLabel) && (
-            <div className="flex gap-1 border-t border-[#F1F5F9] p-2">
+            <div className="flex gap-1 border-t border-outline-variant/60 p-2">
               {selectAllLabel && (
                 <button
                   type="button"
                   onClick={() => onChange([...options])}
                   disabled={allSelected}
-                  className="flex-1 rounded-lg py-1 text-center text-[11px] font-semibold text-[#64748B] transition-colors hover:bg-[#F1F5F9] hover:text-[#0F172A] disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[#64748B]"
+                  className="flex-1 rounded-lg py-1 text-center text-[11px] font-semibold text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-on-surface-variant"
                 >
                   {selectAllLabel}
                 </button>
@@ -222,7 +222,7 @@ export default function MultiSelect({
                 type="button"
                 onClick={() => onChange([])}
                 disabled={selected.length === 0}
-                className="flex-1 rounded-lg py-1 text-center text-[11px] font-semibold text-[#64748B] transition-colors hover:bg-[#F1F5F9] hover:text-[#0F172A] disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[#64748B]"
+                className="flex-1 rounded-lg py-1 text-center text-[11px] font-semibold text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-on-surface-variant"
               >
                 Clear all
               </button>

@@ -79,17 +79,17 @@ export function InstallPrompt(): React.ReactNode {
   if (dismissed || (!deferredPrompt && !iosHint)) return null;
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-[#E2E8F0] bg-white px-4 py-3 shadow-sm">
-      <div className="flex-1 text-sm text-[#334155]">
-        <p className="font-semibold text-[#0F172A]">Get notified when a follow-up is due</p>
+    <div className="flex items-start gap-3 rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-3 shadow-sm">
+      <div className="flex-1 text-sm text-on-surface">
+        <p className="font-semibold text-on-surface">Get notified when a follow-up is due</p>
         {iosHint ? (
-          <p className="mt-0.5 text-xs text-[#64748B]">
+          <p className="mt-0.5 text-xs text-on-surface-variant">
             Install FitClass to your Home Screen for push alerts even when the app is
             closed: tap <span className="font-medium">Share</span>, then{' '}
             <span className="font-medium">Add to Home Screen</span>.
           </p>
         ) : (
-          <p className="mt-0.5 text-xs text-[#64748B]">
+          <p className="mt-0.5 text-xs text-on-surface-variant">
             Install FitClass for push alerts even when the app is closed.
           </p>
         )}
@@ -104,7 +104,7 @@ export function InstallPrompt(): React.ReactNode {
           type="button"
           onClick={dismiss}
           aria-label="Dismiss install prompt"
-          className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+          className="rounded-lg p-1 text-outline transition-colors hover:bg-surface-container hover:text-on-surface-variant"
         >
           ✕
         </button>

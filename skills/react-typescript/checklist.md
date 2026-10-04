@@ -30,7 +30,10 @@ Run every item before marking a frontend task complete or opening a PR.
 
 ## Styling
 - [ ] Tailwind utility classes inline in JSX (consistent with neighbouring components)
-- [ ] No new `*.module.css` files or token/theme layer introduced
+- [ ] No new `*.module.css` files; no second token file or per-app colour constants
+- [ ] New/changed classes use theme tokens (`bg-primary`, `text-on-surface`, `border-outline-variant`, `…-status-*`) — no hex/arbitrary colours or raw `slate-*`
+- [ ] Status meaning (overdue/due/success) uses the fixed `status-*` tokens, never the brand colour
+- [ ] Screen checked in light **and** dark mode (when the app has `supportsDark`)
 - [ ] Conditional classes composed with template strings (no `clsx`)
 - [ ] Reused generic primitives come from `@platform/ui-kit` (`Modal`, `Pagination`, …), not re-implemented
 - [ ] AG Grid `defaultColDef` is `GRID_DEFAULT_COL_DEF` from `@platform/ui-kit/grid`, not a local literal

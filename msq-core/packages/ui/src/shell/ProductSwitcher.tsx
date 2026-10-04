@@ -2,6 +2,7 @@ import type { ProductKey } from "@platform/types";
 import type { CapabilityHolder } from "@platform/rbac";
 import { withBasePath } from "../api/base-path";
 import { productHref, usableProducts } from "./products";
+import ProductLabel from "./ProductLabel";
 
 const PRODUCT_LABELS: Record<ProductKey, string> = {
   lms: "LMS",
@@ -77,7 +78,7 @@ export default function ProductSwitcher({
   return (
     <nav aria-label="Products" className="w-full sm:w-auto">
       <div
-        className="grid gap-1 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-1 sm:inline-flex sm:items-center"
+        className="grid gap-1 rounded-lg bg-surface-container-low p-1 sm:inline-flex sm:items-center"
         style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
       >
         {products.map((p) => {
@@ -89,11 +90,11 @@ export default function ProductSwitcher({
               aria-current={active ? "page" : undefined}
               className={
                 active
-                  ? "rounded-md bg-white px-2 py-1.5 text-center text-xs font-semibold text-[#0b6cbf] shadow-sm sm:px-3 sm:py-1"
-                  : "rounded-md px-2 py-1.5 text-center text-xs font-medium text-[#475569] transition-colors hover:text-[#0F172A] sm:px-3 sm:py-1"
+                  ? "rounded-md bg-surface-container-lowest px-2 py-1.5 text-center text-label-md font-semibold text-primary shadow-card sm:px-3 sm:py-1"
+                  : "rounded-md px-2 py-1.5 text-center text-label-md text-on-surface-variant transition-colors hover:text-on-surface sm:px-3 sm:py-1"
               }
             >
-              {PRODUCT_LABELS[p]}
+              <ProductLabel product={p} fallback={PRODUCT_LABELS[p]} />
             </a>
           );
         })}
@@ -108,11 +109,11 @@ export default function ProductSwitcher({
             aria-current={link.active ? "page" : undefined}
             className={
               link.active
-                ? "rounded-md bg-white px-2 py-1.5 text-center text-xs font-semibold text-[#0b6cbf] shadow-sm sm:px-3 sm:py-1"
-                : "rounded-md px-2 py-1.5 text-center text-xs font-medium text-[#475569] transition-colors hover:text-[#0F172A] sm:px-3 sm:py-1"
+                ? "rounded-md bg-surface-container-lowest px-2 py-1.5 text-center text-label-md font-semibold text-primary shadow-card sm:px-3 sm:py-1"
+                : "rounded-md px-2 py-1.5 text-center text-label-md text-on-surface-variant transition-colors hover:text-on-surface sm:px-3 sm:py-1"
             }
           >
-            {link.label}
+            <ProductLabel product={link.key} fallback={link.label} />
           </a>
         ))}
       </div>

@@ -107,6 +107,10 @@ erDiagram
     UUID id PK
     UUID tenant_id FK
   }
+  tenant_branding {
+    UUID tenant_id PK
+    UUID public_key UK
+  }
   catalog_defaults {
     UUID id PK
     TEXT catalog_key FK
@@ -127,6 +131,7 @@ erDiagram
   organizations }o--o| states : "state_id"
   organizations }o--o| countries : "country_id"
   tenant_modules }o--|| tenants : "tenant_id"
+  tenant_branding |o--|| tenants : "tenant_id"
   tenant_catalog_versions }o--|| tenants : "tenant_id"
   catalog_defaults }o..|| catalog_versions : "catalog_key"
   tenant_catalog_versions }o..|| catalog_versions : "catalog_key"
@@ -1046,6 +1051,1083 @@ Per-tenant **product/module entitlements** (D6). Gates which products a tenant h
 
 ---
 
+### entity.tenant_branding
+
+Per-tenant **brand identity and theme** (1.57.0, Stitch redesign). One row per tenant; **no row = platform default (MSquare)**. Defined in `03_tables_product.sql`.
+
+| Column        | Type        | Constraints                                                                 |
+| ------------- | ----------- | --------------------------------------------------------------------------- |
+| tenant_id     | UUID        | PK, FK → entity.tenants(id) ON DELETE CASCADE                               |
+| public_key    | UUID        | NOT NULL, UNIQUE, DEFAULT gen_random_uuid() (v4 — reveals nothing)          |
+| preset        | TEXT        | CHECK IN the 8 presets of `@platform/ui-kit/theme` (`indigo-kinetic` …)   |
+| seed_hex      | TEXT        | CHECK `^#[0-9a-f]{6}# CRM Monorepo — Database Model
+
+> **Database:** PostgreSQL 14+  
+> **Schema version:** 1.54.0 (see `db_scripts/09_schema_version.sql`)  
+> **Primary keys:** UUIDv7 (time-ordered) everywhere, including `geo.*`; SMALLINT identity only on `ext.meta_capi_event_types`  
+> **Source of truth:** the `CREATE TABLE` statements in `db_scripts/02_tables_core.sql` and `03_tables_product.sql`. The column tables below mirror them; the diagrams are generated from them by `docs/tools/gen_db_diagram.py`  
+> **Multi-tenancy:** Row Level Security (RLS) on every operational table  
+> **Extensions:** pgcrypto, pg_trgm, btree_gin, vector (optional)
+
+---
+
+## Schema Diagram (Entity-Relationship)
+
+<!-- BEGIN GENERATED: gen_db_diagram.py -->
+
+_Generated from the `CREATE TABLE` statements in `db_scripts/` (schema 1.54.0) by `python docs/tools/gen_db_diagram.py` — do not edit by hand, re-run the script after changing `02_tables_core.sql` / `03_tables_product.sql`._
+
+**Interactive version:** open [`docs/db-schema-atlas.html`](db-schema-atlas.html) in a browser — every column of every table, all foreign keys drawn between them, search, and a per-table panel listing what it references and what references it.
+
+### How the schemas connect
+
+Arrows point from the schema holding the foreign key to the schema it references; the label is the number of FK columns. `entity` (tenants, organizations) and `iam` (users, roles) are the foundation every product builds on.
+
+```mermaid
+flowchart BT
+  entity["<b>entity</b><br/>9 tables"]
+  iam["<b>iam</b><br/>10 tables"]
+  geo["<b>geo</b><br/>3 tables"]
+  lms["<b>lms</b><br/>13 tables"]
+  marketing["<b>marketing</b><br/>5 tables"]
+  ext["<b>ext</b><br/>16 tables"]
+  hr["<b>hr</b><br/>23 tables"]
+  task["<b>task</b><br/>6 tables"]
+  audit["<b>audit</b><br/>3 tables"]
+  comms["<b>comms</b><br/>1 table"]
+  notify["<b>notify</b><br/>1 table"]
+  scratch["<b>scratch</b><br/>2 tables"]
+  public["<b>public</b><br/>1 table"]
+  entity -- 3 --> geo
+  iam -- 11 --> entity
+  geo -- 3 --> entity
+  lms -- 14 --> entity
+  lms -- 12 --> iam
+  lms -- 3 --> geo
+  lms -- 3 --> marketing
+  marketing -- 5 --> entity
+  marketing -- 1 --> iam
+  ext -- 16 --> entity
+  ext -- 2 --> iam
+  ext -- 4 --> lms
+  ext -- 4 --> marketing
+  hr -- 27 --> entity
+  hr -- 13 --> iam
+  task -- 6 --> entity
+  task -- 4 --> iam
+  audit -- 1 --> entity
+  audit -- 2 --> iam
+  audit -- 1 --> lms
+  comms -- 2 --> entity
+  notify -- 1 --> entity
+  notify -- 1 --> iam
+  scratch -- 3 --> entity
+  scratch -- 2 --> iam
+  scratch -- 2 --> lms
+  scratch -- 1 --> marketing
+```
+
+### Per-schema diagrams
+
+One diagram per schema, **key columns only** (PK, FK, unique, referenced). The full column lists are in *Table Details* below. Tables from other schemas appear as plain boxes. Conventions:
+
+- `}o--||` many rows reference exactly one row (NOT NULL FK); `}o--o|` the FK is nullable; `|o--||` a 1:1 extension (the FK is also the PK or unique).
+- **`org_id` / `tenant_id` links to `entity.organizations` / `entity.tenants` are left out** outside the `entity` schema — nearly every table has them. They still show as FK columns.
+- Composite `(tenant_id, x)` FKs are drawn on `x`.
+
+#### `entity`
+
+```mermaid
+erDiagram
+  org_types {
+    UUID id PK
+    TEXT name UK
+  }
+  tenant_domains {
+    UUID id PK
+    TEXT name UK
+  }
+  tenant_plan_types {
+    UUID id PK
+    TEXT name UK
+  }
+  tenants {
+    UUID id PK
+    TEXT name UK
+    UUID domain_id FK
+    UUID plan_type_id FK
+  }
+  organizations {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_type_id FK
+    UUID city_id FK
+    UUID state_id FK
+    UUID country_id FK
+  }
+  tenant_modules {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  tenant_branding {
+    UUID tenant_id PK
+    UUID public_key UK
+  }
+  catalog_defaults {
+    UUID id PK
+    TEXT catalog_key FK
+  }
+  catalog_versions {
+    TEXT catalog_key PK
+  }
+  tenant_catalog_versions {
+    UUID id PK
+    UUID tenant_id FK
+    TEXT catalog_key FK
+  }
+  tenants }o--o| tenant_domains : "domain_id"
+  tenants }o--o| tenant_plan_types : "plan_type_id"
+  organizations }o--|| tenants : "tenant_id"
+  organizations }o--o| org_types : "org_type_id"
+  organizations }o--o| cities : "city_id"
+  organizations }o--o| states : "state_id"
+  organizations }o--o| countries : "country_id"
+  tenant_modules }o--|| tenants : "tenant_id"
+  tenant_branding |o--|| tenants : "tenant_id"
+  tenant_catalog_versions }o--|| tenants : "tenant_id"
+  catalog_defaults }o..|| catalog_versions : "catalog_key"
+  tenant_catalog_versions }o..|| catalog_versions : "catalog_key"
+```
+
+#### `iam`
+
+```mermaid
+erDiagram
+  departments {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+  }
+  user_roles {
+    UUID id PK
+    UUID tenant_id FK
+    UUID department_id FK
+  }
+  capabilities {
+    UUID id PK
+    TEXT key UK
+    TEXT parent_key FK
+  }
+  role_capabilities {
+    UUID id PK
+    UUID tenant_id FK
+    UUID role_id FK
+    UUID capability_id FK
+  }
+  users {
+    UUID id PK
+    UUID org_id FK
+    TEXT email UK
+    UUID role_id FK
+    UUID manager_id FK
+  }
+  user_org_mapping {
+    UUID id UK
+    UUID user_id PK,FK
+    UUID org_id PK,FK
+    UUID role_id FK
+    UUID granted_by FK
+  }
+  reporting_lines {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID user_id FK
+    UUID manager_id FK
+  }
+  api_clients {
+    UUID id PK
+    UUID tenant_id FK
+    TEXT key_hash UK
+    UUID created_by FK
+  }
+  api_client_orgs {
+    UUID api_client_id PK,FK
+    UUID org_id PK,FK
+  }
+  token_blocklist {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID revoked_by FK
+  }
+  user_roles }o--o| departments : "department_id"
+  capabilities }o--o| capabilities : "parent_key"
+  role_capabilities }o--|| user_roles : "role_id"
+  role_capabilities }o--|| capabilities : "capability_id"
+  users }o--|| user_roles : "role_id"
+  users }o--o| users : "manager_id"
+  user_org_mapping }o--|| users : "user_id"
+  user_org_mapping }o--|| user_roles : "role_id"
+  user_org_mapping }o--o| users : "granted_by"
+  reporting_lines }o--|| users : "user_id"
+  reporting_lines }o--|| users : "manager_id"
+  api_clients }o--o| users : "created_by"
+  api_client_orgs }o--|| api_clients : "api_client_id"
+  token_blocklist }o--o| users : "user_id"
+  token_blocklist }o--o| users : "revoked_by"
+```
+
+#### `geo`
+
+```mermaid
+erDiagram
+  countries {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  states {
+    UUID id PK
+    UUID tenant_id FK
+    UUID country_id FK
+  }
+  cities {
+    UUID id PK
+    UUID tenant_id FK
+    UUID state_id FK
+  }
+  states }o--|| countries : "country_id"
+  cities }o--|| states : "state_id"
+```
+
+#### `lms`
+
+```mermaid
+erDiagram
+  lead_stage {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  lead_stage_outcome {
+    UUID id PK
+    UUID tenant_id FK
+    UUID stage_id FK
+  }
+  interaction_types {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  follow_up_statuses {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  lead_sources {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  lead_assignment_weights {
+    UUID user_org_mapping_id PK,FK
+    UUID campaign_type_id PK,FK
+    UUID updated_by FK
+  }
+  marketing_leads {
+    UUID id PK
+    UUID org_id FK
+    UUID city_id FK
+    UUID state_id FK
+    UUID country_id FK
+    UUID stage_id FK
+    UUID outcome_id FK
+    UUID campaign_id FK
+    UUID campaign_type_id FK
+    UUID source_id FK
+    UUID assigned_user_id FK
+    UUID superseded_by FK
+  }
+  lead_links {
+    UUID id PK
+    UUID source_lead_id FK
+    UUID source_org_id FK
+    UUID dest_lead_id FK
+    UUID dest_org_id FK
+    UUID created_by FK
+  }
+  lead_report_snapshot {
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID assigned_user_id FK
+    UUID source_id FK
+  }
+  lead_interactions {
+    UUID id PK
+    UUID org_id FK
+    UUID lead_id FK
+    UUID user_id FK
+    UUID interaction_type_id FK
+  }
+  lead_follow_ups {
+    UUID id PK
+    UUID org_id FK
+    UUID lead_id FK
+    UUID assigned_user_id FK
+    UUID status_id FK
+    UUID stage_id FK
+    UUID outcome_id FK
+  }
+  lead_assignment_log {
+    UUID id PK
+    UUID org_id FK
+    UUID lead_id FK
+    UUID assigned_by_id FK
+    UUID assigned_to_id FK
+    UUID previous_assignee_id FK
+  }
+  lead_status_log {
+    UUID id PK
+    UUID org_id FK
+    UUID lead_id FK
+    UUID changed_by_id FK
+    UUID old_stage_id FK
+    UUID new_stage_id FK
+    UUID old_outcome_id FK
+    UUID new_outcome_id FK
+    UUID assigned_user_id FK
+  }
+  lead_stage_outcome }o--|| lead_stage : "stage_id"
+  lead_assignment_weights }o--|| user_org_mapping : "user_org_mapping_id"
+  lead_assignment_weights }o--|| campaign_types : "campaign_type_id"
+  lead_assignment_weights }o--o| users : "updated_by"
+  marketing_leads }o--o| cities : "city_id"
+  marketing_leads }o--o| states : "state_id"
+  marketing_leads }o--o| countries : "country_id"
+  marketing_leads }o--o| lead_stage : "stage_id"
+  marketing_leads }o--o| lead_stage_outcome : "outcome_id"
+  marketing_leads }o--o| ad_campaigns : "campaign_id"
+  marketing_leads }o--o| campaign_types : "campaign_type_id"
+  marketing_leads }o--o| lead_sources : "source_id"
+  marketing_leads }o--o| users : "assigned_user_id"
+  marketing_leads }o--o| marketing_leads : "superseded_by"
+  lead_links }o--|| marketing_leads : "source_lead_id"
+  lead_links }o--o| marketing_leads : "dest_lead_id"
+  lead_links }o--o| users : "created_by"
+  lead_report_snapshot }o--o| users : "assigned_user_id"
+  lead_report_snapshot }o--o| lead_sources : "source_id"
+  lead_interactions }o--|| marketing_leads : "lead_id"
+  lead_interactions }o--|| users : "user_id"
+  lead_interactions }o--o| interaction_types : "interaction_type_id"
+  lead_follow_ups }o--|| marketing_leads : "lead_id"
+  lead_follow_ups }o--|| users : "assigned_user_id"
+  lead_follow_ups }o--|| follow_up_statuses : "status_id"
+  lead_follow_ups }o--o| lead_stage : "stage_id"
+  lead_follow_ups }o--o| lead_stage_outcome : "outcome_id"
+  lead_assignment_log }o--|| marketing_leads : "lead_id"
+  lead_assignment_log }o--o| users : "assigned_by_id"
+  lead_assignment_log }o--o| users : "assigned_to_id"
+  lead_assignment_log }o--o| users : "previous_assignee_id"
+  lead_status_log }o--|| marketing_leads : "lead_id"
+  lead_status_log }o--o| users : "changed_by_id"
+  lead_status_log }o--o| lead_stage : "old_stage_id"
+  lead_status_log }o--|| lead_stage : "new_stage_id"
+  lead_status_log }o--o| lead_stage_outcome : "old_outcome_id"
+  lead_status_log }o--o| lead_stage_outcome : "new_outcome_id"
+  lead_status_log }o--o| users : "assigned_user_id"
+```
+
+#### `marketing`
+
+```mermaid
+erDiagram
+  marketing_platforms {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  campaign_statuses {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  campaign_types {
+    UUID id PK
+    UUID tenant_id FK
+    UUID department_id FK
+  }
+  campaign_type_rules {
+    UUID id PK
+    UUID tenant_id FK
+    UUID campaign_type_id FK
+  }
+  ad_campaigns {
+    UUID id PK
+    UUID org_id FK
+    UUID platform_id FK
+    UUID status_id FK
+    UUID campaign_type_id FK
+  }
+  campaign_types }o--o| departments : "department_id"
+  campaign_type_rules }o--|| campaign_types : "campaign_type_id"
+  ad_campaigns }o--|| marketing_platforms : "platform_id"
+  ad_campaigns }o--|| campaign_statuses : "status_id"
+  ad_campaigns }o--o| campaign_types : "campaign_type_id"
+```
+
+#### `ext`
+
+```mermaid
+erDiagram
+  meta_tenant_config {
+    UUID id PK
+    UUID tenant_id FK,UK
+  }
+  meta_page_form_org_map {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID default_campaign_type_id FK
+  }
+  meta_forms {
+    UUID id PK
+    UUID tenant_id FK
+    BIGINT form_id UK
+  }
+  meta_campaigns {
+    UUID id PK
+    UUID tenant_id FK
+    TEXT ad_account_id FK
+    BIGINT meta_campaign_id UK
+    UUID campaign_type_id FK
+    UUID suggested_campaign_type_id FK
+    UUID matched_rule_id FK
+    UUID confirmed_by FK
+  }
+  meta_ad_accounts {
+    UUID id PK
+    TEXT ad_account_id UK
+  }
+  meta_adsets {
+    UUID id PK
+    UUID tenant_id FK
+    BIGINT meta_adset_id UK
+    BIGINT meta_campaign_id FK
+  }
+  meta_ads {
+    UUID id PK
+    UUID tenant_id FK
+    BIGINT meta_ad_id UK
+    BIGINT meta_adset_id FK
+    BIGINT meta_campaign_id FK
+  }
+  meta_lead_inbox {
+    UUID id PK
+    BIGINT meta_lead_id UK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID integration_id FK
+    UUID resolved_lead_id FK
+    UUID resolved_by FK
+  }
+  meta_leads {
+    UUID id PK
+    UUID org_id FK
+    UUID marketing_lead_id FK
+    BIGINT meta_lead_id UK
+  }
+  meta_lead_custom_fields {
+    UUID id PK
+    UUID meta_lead_id FK
+    UUID org_id FK
+  }
+  meta_capi_outbound_logs {
+    UUID id PK
+    UUID org_id FK
+    UUID marketing_lead_id FK
+    UUID meta_lead_id FK
+  }
+  meta_capi_event_types {
+    SMALLINT id PK
+    VARCHAR code UK
+  }
+  lead_stage_capi_event_map {
+    UUID id PK
+    UUID tenant_id FK
+    UUID stage_id FK,UK
+    SMALLINT capi_event_type_id FK
+  }
+  meta_lead_addresses {
+    UUID meta_lead_id PK,FK
+    UUID org_id FK
+  }
+  meta_lead_professional {
+    UUID meta_lead_id PK,FK
+    UUID org_id FK
+  }
+  meta_lead_demographics {
+    UUID meta_lead_id PK,FK
+    UUID org_id FK
+  }
+  meta_page_form_org_map }o--o| campaign_types : "default_campaign_type_id"
+  meta_campaigns }o--o| campaign_types : "campaign_type_id"
+  meta_campaigns }o--o| campaign_types : "suggested_campaign_type_id"
+  meta_campaigns }o--o| campaign_type_rules : "matched_rule_id"
+  meta_campaigns }o--o| users : "confirmed_by"
+  meta_lead_inbox }o--o| meta_tenant_config : "integration_id"
+  meta_lead_inbox }o--o| marketing_leads : "resolved_lead_id"
+  meta_lead_inbox }o--o| users : "resolved_by"
+  meta_leads }o--o| marketing_leads : "marketing_lead_id"
+  meta_lead_custom_fields }o--|| meta_leads : "meta_lead_id"
+  meta_capi_outbound_logs }o--|| marketing_leads : "marketing_lead_id"
+  meta_capi_outbound_logs }o--o| meta_leads : "meta_lead_id"
+  lead_stage_capi_event_map }o--|| meta_capi_event_types : "capi_event_type_id"
+  lead_stage_capi_event_map |o--|| lead_stage : "stage_id"
+  meta_lead_addresses |o--|| meta_leads : "meta_lead_id"
+  meta_lead_professional |o--|| meta_leads : "meta_lead_id"
+  meta_lead_demographics |o--|| meta_leads : "meta_lead_id"
+  meta_campaigns }o..o| meta_ad_accounts : "ad_account_id"
+  meta_adsets }o..o| meta_campaigns : "meta_campaign_id"
+  meta_ads }o..o| meta_adsets : "meta_adset_id"
+  meta_ads }o..o| meta_campaigns : "meta_campaign_id"
+```
+
+#### `hr`
+
+```mermaid
+erDiagram
+  employment_types {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  leave_types {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  leave_request_statuses {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  attendance_statuses {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  designations {
+    UUID id PK
+    UUID org_id FK
+  }
+  employee_profiles {
+    UUID user_id PK,FK
+    UUID org_id FK
+    UUID tenant_id FK
+    UUID employment_type_id FK
+    UUID department_id FK
+    UUID designation_id FK
+  }
+  holiday_calendars {
+    UUID id PK
+    UUID org_id FK
+  }
+  holidays {
+    UUID id PK
+    UUID calendar_id FK
+    UUID org_id FK
+  }
+  leave_policies {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID leave_type_id FK
+  }
+  hr_settings {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+  }
+  leave_requests {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID leave_type_id FK
+    UUID status_id FK
+  }
+  leave_request_status_log {
+    UUID id PK
+    UUID org_id FK
+    UUID request_id FK
+    UUID changed_by_id FK
+    UUID old_status_id FK
+    UUID new_status_id FK
+  }
+  leave_ledger {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID leave_type_id FK
+    UUID leave_request_id FK
+  }
+  leave_request_approvals {
+    UUID id PK
+    UUID leave_request_id FK
+    UUID org_id FK
+    UUID approver_id FK
+  }
+  attendance_rules {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+  }
+  shifts {
+    UUID id PK
+    UUID org_id FK
+  }
+  shift_segments {
+    UUID id PK
+    UUID shift_id FK
+    UUID org_id FK
+  }
+  shift_assignments {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID shift_id FK
+  }
+  attendance_geo_exceptions {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+  }
+  attendance_events {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+  }
+  attendance_days {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID status_id FK
+    UUID leave_request_id FK
+  }
+  attendance_regularizations {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID requested_status_id FK
+    UUID approver_id FK
+  }
+  attendance_regularization_approvals {
+    UUID id PK
+    UUID regularization_id FK
+    UUID org_id FK
+    UUID approver_id FK
+  }
+  employee_profiles |o--|| users : "user_id"
+  employee_profiles }o--o| employment_types : "employment_type_id"
+  employee_profiles }o--o| departments : "department_id"
+  employee_profiles }o--o| designations : "designation_id"
+  holidays }o--|| holiday_calendars : "calendar_id"
+  leave_policies }o--|| leave_types : "leave_type_id"
+  leave_requests }o--|| users : "user_id"
+  leave_requests }o--|| leave_types : "leave_type_id"
+  leave_requests }o--|| leave_request_statuses : "status_id"
+  leave_request_status_log }o--|| leave_requests : "request_id"
+  leave_request_status_log }o--o| users : "changed_by_id"
+  leave_request_status_log }o--o| leave_request_statuses : "old_status_id"
+  leave_request_status_log }o--|| leave_request_statuses : "new_status_id"
+  leave_ledger }o--|| users : "user_id"
+  leave_ledger }o--|| leave_types : "leave_type_id"
+  leave_ledger }o--o| leave_requests : "leave_request_id"
+  leave_request_approvals }o--|| leave_requests : "leave_request_id"
+  leave_request_approvals }o--|| users : "approver_id"
+  shift_segments }o--|| shifts : "shift_id"
+  shift_assignments }o--|| users : "user_id"
+  shift_assignments }o--|| shifts : "shift_id"
+  attendance_geo_exceptions }o--|| users : "user_id"
+  attendance_events }o--|| users : "user_id"
+  attendance_days }o--|| users : "user_id"
+  attendance_days }o--|| attendance_statuses : "status_id"
+  attendance_days }o--o| leave_requests : "leave_request_id"
+  attendance_regularizations }o--|| users : "user_id"
+  attendance_regularizations }o--o| attendance_statuses : "requested_status_id"
+  attendance_regularizations }o--o| users : "approver_id"
+  attendance_regularization_approvals }o--|| attendance_regularizations : "regularization_id"
+  attendance_regularization_approvals }o--|| users : "approver_id"
+```
+
+#### `task`
+
+```mermaid
+erDiagram
+  task_statuses {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  task_priorities {
+    UUID id PK
+    UUID tenant_id FK
+  }
+  task_lists {
+    UUID id PK
+    UUID org_id FK
+    UUID owner_id FK
+  }
+  tasks {
+    UUID id PK
+    UUID org_id FK
+    UUID list_id FK
+    UUID assignee_id FK
+    UUID priority_id FK
+    UUID status_id FK
+    UUID parent_task_id FK
+  }
+  task_status_log {
+    UUID id PK
+    UUID org_id FK
+    UUID task_id FK
+    UUID changed_by_id FK
+    UUID old_status_id FK
+    UUID new_status_id FK
+  }
+  task_comments {
+    UUID id PK
+    UUID org_id FK
+    UUID task_id FK
+    UUID user_id FK
+  }
+  task_lists }o--|| users : "owner_id"
+  tasks }o--o| task_lists : "list_id"
+  tasks }o--o| users : "assignee_id"
+  tasks }o--o| task_priorities : "priority_id"
+  tasks }o--|| task_statuses : "status_id"
+  tasks }o--o| tasks : "parent_task_id"
+  task_status_log }o--|| tasks : "task_id"
+  task_status_log }o--o| users : "changed_by_id"
+  task_status_log }o--o| task_statuses : "old_status_id"
+  task_status_log }o--|| task_statuses : "new_status_id"
+  task_comments }o--|| tasks : "task_id"
+  task_comments }o--|| users : "user_id"
+```
+
+#### `audit`
+
+```mermaid
+erDiagram
+  activities {
+    UUID id PK
+    UUID performed_by FK
+    UUID org_id FK
+  }
+  marketing_leads_history {
+    UUID id PK
+    UUID lead_id FK
+    UUID changed_by_user_id FK
+  }
+  audit_log {
+    UUID id PK
+  }
+  activities }o--o| users : "performed_by"
+  marketing_leads_history }o--|| marketing_leads : "lead_id"
+  marketing_leads_history }o--o| users : "changed_by_user_id"
+```
+
+#### `comms`
+
+```mermaid
+erDiagram
+  message_templates {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+  }
+```
+
+#### `notify`
+
+```mermaid
+erDiagram
+  push_subscriptions {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    TEXT endpoint UK
+  }
+  push_subscriptions }o--|| users : "user_id"
+```
+
+#### `scratch`
+
+```mermaid
+erDiagram
+  meta_pull_runs {
+    UUID id PK
+    UUID tenant_id FK
+    UUID created_by FK
+    UUID applied_by FK
+  }
+  meta_pull_leads {
+    UUID id PK
+    UUID run_id FK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID existing_lead_id FK
+    UUID suggested_campaign_type_id FK
+    UUID applied_lead_id FK
+  }
+  meta_pull_runs }o--o| users : "created_by"
+  meta_pull_runs }o--o| users : "applied_by"
+  meta_pull_leads }o--|| meta_pull_runs : "run_id"
+  meta_pull_leads }o--o| marketing_leads : "existing_lead_id"
+  meta_pull_leads }o--o| campaign_types : "suggested_campaign_type_id"
+  meta_pull_leads }o--o| marketing_leads : "applied_lead_id"
+```
+
+#### `public`
+
+```mermaid
+erDiagram
+  schema_versions {
+    TEXT version PK
+  }
+```
+
+<!-- END GENERATED: gen_db_diagram.py -->
+
+---
+
+## Database Schemas
+
+| Schema      | Purpose                                         |
+| ----------- | ----------------------------------------------- |
+| `public`    | UUIDv7 generator, utility trigger functions      |
+| `geo`       | Tenant-scoped geographic catalogs (countries/states/cities): platform template rows + per-tenant copies |
+| `entity`    | Tenant, organization, and related lookups          |
+| `iam`       | Users, roles, org mappings, token blocklist       |
+| `lms`       | Leads, interactions, follow-ups, stage pipeline   |
+| `marketing` | Ad campaigns, platforms, statuses                |
+| `audit`     | Audit logs, lead history, activity log           |
+| `ext`       | External integrations (Meta Lead Ads / CAPI)     |
+| `hr`        | Employee profiles, leave, attendance |
+| `task`      | To-do lists, tasks, comments                     |
+| `comms`     | Cross-product WhatsApp/email message templates (org > tenant > global resolution) |
+| `notify`    | Cross-product Web Push subscriptions (one row per installed PWA/device) |
+| `scratch`   | **Staging.** Rows that exist to be reviewed and then thrown away — today the Meta lead-pull runs. DELETEd wholesale, no soft delete, nothing may FK into them |
+
+---
+
+## Database Roles
+
+| Role              | Type         | RLS       | Purpose                                      |
+| ----------------- | ------------ | --------- | --------------------------------------------- |
+| `app_user`        | NOLOGIN      | Subject   | Standard app role — DML on operational tables |
+| `readonly_user`   | NOLOGIN, INHERIT | Subject | Selected via `withRoleTx`'s `ctx.readOnly` on the app path (`SET LOCAL ROLE readonly_user` + `transaction_read_only = on`) — makes a read path physically incapable of writing, independent of the query it runs |
+| `tenant_admin`    | NOLOGIN      | Subject   | Cross-org admin within a tenant               |
+| `root_service`     | LOGIN        | BYPASSRLS | Service superuser — unrestricted DML          |
+| `lead_svc`        | LOGIN        | via app_user | Shared/legacy login — identity-service, notifications-service, admin-service (unrestricted; not yet re-plumbed to a per-product role) |
+| `campaign_svc`    | LOGIN        | via app_user | Campaign management service               |
+| `user_mgmt_svc`   | LOGIN        | via app_user | User management service                   |
+| `notif_svc`       | LOGIN        | via app_user | Notifications service                     |
+| `intake_svc`      | LOGIN        | via app_user | Lead intake / webhook service              |
+| `meta_svc`        | LOGIN        | via app_user | Meta Conversion API service               |
+| `tenant_dash_svc` | LOGIN        | via tenant_admin | Tenant dashboard service              |
+| `analytics_svc`   | LOGIN        | BYPASSRLS | Read-only analytics (SELECT only)          |
+| `lms_svc`         | LOGIN        | membership only (P1.2/D8) | leads-service, meta-conversion-api — direct GRANTs on `lms`/`marketing`/`ext` only + read-only `iam`/`entity`/`geo`; member of `app_user`/`tenant_admin` for RLS matching only (NOINHERIT — no cross-schema privilege) |
+| `hr_svc`          | LOGIN        | membership only (P1.2/D8) | hr-service — direct GRANTs on `hr` only + read-only `iam`/`entity`/`geo`; cannot read `lms.*`/`task.*` |
+| `task_svc`        | LOGIN        | membership only (P1.2/D8) | tasks-service — direct GRANTs on `task` only + read-only `iam`/`entity`/`geo`; cannot read `lms.*`/`hr.*` |
+
+---
+
+## Table Details
+
+### geo.countries
+
+Tenant-scoped geographic catalog, like `lms.lead_stage`. `tenant_id IS NULL` = platform template row (seeded by `reference_data/01_geo.sql`, hidden from every app role by RLS, cloned into a tenant by `entity.seed_tenant_geo()`); `tenant_id` set = a row the tenant owns and can edit. UUIDv7 PKs; the old SMALLINT/INTEGER identity keys could not survive rows authored independently per tenant. Deletes are soft (`is_active = FALSE`) because `entity.organizations` and `lms.marketing_leads` reference these rows ON DELETE RESTRICT.
+
+`UNIQUE (tenant_id, id)` exists on all three geo tables so child FKs can be **composite** — `(tenant_id, state_id) → geo.states(tenant_id, id)` — which is what stops one tenant's city hanging off another tenant's state (RLS alone would not). Name/ISO uniqueness is a pair of partial unique indexes per table in `06_indexes.sql` (one for template rows, one per tenant).
+
+| Column      | Type    | Constraints                                                                       |
+| ----------- | ------- | --------------------------------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                                       |
+| tenant_id   | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row  |
+| name        | TEXT    | NOT NULL, unique per tenant / among global rows (partial indexes, 06_indexes.sql) |
+| iso_code    | CHAR(2) | NOT NULL, unique per tenant / among global rows (partial indexes, 06_indexes.sql) |
+| description | TEXT    |                                                                                   |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                                            |
+
+---
+
+### geo.states
+
+| Column      | Type    | Constraints                                                                            |
+| ----------- | ------- | -------------------------------------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                                            |
+| tenant_id   | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row       |
+| country_id  | UUID    | NOT NULL, FK (tenant_id, country_id) → geo.countries(tenant_id, id) ON DELETE RESTRICT |
+| name        | TEXT    | NOT NULL                                                                               |
+| code        | TEXT    |                                                                                        |
+| description | TEXT    |                                                                                        |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                                                 |
+
+**Unique:** name per parent, as partial index pairs (template rows / per tenant) in `06_indexes.sql`
+
+---
+
+### geo.cities
+
+| Column      | Type    | Constraints                                                                       |
+| ----------- | ------- | --------------------------------------------------------------------------------- |
+| id          | UUID    | PK (UUIDv7)                                                                       |
+| tenant_id   | UUID    | FK → entity.tenants(id) ON DELETE CASCADE, NULL = platform template / global row  |
+| state_id    | UUID    | NOT NULL, FK (tenant_id, state_id) → geo.states(tenant_id, id) ON DELETE RESTRICT |
+| name        | TEXT    | NOT NULL                                                                          |
+| description | TEXT    |                                                                                   |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE                                                            |
+
+**Unique:** name per parent, as partial index pairs (template rows / per tenant) in `06_indexes.sql`
+
+---
+
+### entity.tenant_domains
+
+Classifies tenants by industry vertical.
+
+| Column      | Type    | Constraints            |
+| ----------- | ------- | ---------------------- |
+| id          | UUID    | PK (UUIDv7)            |
+| name        | TEXT    | NOT NULL, UNIQUE       |
+| label       | TEXT    | NOT NULL               |
+| description | TEXT    |                        |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE |
+
+**Seed values:** fitness, retail, healthcare, education, hospitality, medical, real_estate, automotive, logistics
+
+---
+
+### entity.tenant_plan_types
+
+Subscription tiers.
+
+| Column      | Type    | Constraints            |
+| ----------- | ------- | ---------------------- |
+| id          | UUID    | PK (UUIDv7)            |
+| name        | TEXT    | NOT NULL, UNIQUE       |
+| label       | TEXT    | NOT NULL               |
+| description | TEXT    |                        |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE |
+
+**Seed values:** free_trial, starter, growth, enterprise
+
+---
+
+### entity.org_types
+
+Classification of organization locations.
+
+| Column      | Type    | Constraints            |
+| ----------- | ------- | ---------------------- |
+| id          | UUID    | PK (UUIDv7)            |
+| name        | TEXT    | NOT NULL, UNIQUE       |
+| label       | TEXT    | NOT NULL               |
+| description | TEXT    |                        |
+| is_active   | BOOLEAN | NOT NULL, DEFAULT TRUE |
+
+**Seed values:** gym_location, boutique, branch, headquarters, franchise, clinic, warehouse, showroom, head_office
+
+---
+
+### entity.tenants
+
+Top-level tenant entity (SaaS customer).
+
+| Column       | Type        | Constraints                         |
+| ------------ | ----------- | ----------------------------------- |
+| id           | UUID        | PK (UUIDv7)                         |
+| name         | TEXT        | NOT NULL, UNIQUE                    |
+| domain_id    | UUID        | FK → entity.tenant_domains(id)      |
+| plan_type_id | UUID        | FK → entity.tenant_plan_types(id)   |
+| is_active    | BOOLEAN     | NOT NULL, DEFAULT TRUE              |
+| is_deleted   | BOOLEAN     | NOT NULL, DEFAULT FALSE             |
+| deleted_at   | TIMESTAMPTZ |                                     |
+| deleted_by   | UUID        |                                     |
+| metadata     | JSONB       | NOT NULL, DEFAULT '{}'              |
+| created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
+| updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP() |
+
+**Check:** `NOT (is_active AND is_deleted)`  
+**RLS:** tenant sees only own row via `app.current_tenant_id`  
+**Triggers:** `set_updated_at`, `soft_delete_row`
+
+---
+
+### entity.organizations
+
+Business unit / location within a tenant.
+
+| Column            | Type         | Constraints                                                                  |
+| ----------------- | ------------ | ---------------------------------------------------------------------------- |
+| id                | UUID         | PK (UUIDv7)                                                                  |
+| tenant_id         | UUID         | NOT NULL, FK → entity.tenants(id)                                            |
+| name              | TEXT         | NOT NULL                                                                     |
+| legal_entity_name | TEXT         |                                                                              |
+| brand_name        | TEXT         |                                                                              |
+| org_type_id       | UUID         | FK → entity.org_types(id)                                                    |
+| address_line1     | TEXT         |                                                                              |
+| address_line2     | TEXT         |                                                                              |
+| landmark          | TEXT         |                                                                              |
+| pincode           | TEXT         |                                                                              |
+| city              | TEXT         | Free-text city                                                               |
+| city_id           | UUID         | FK (tenant_id, city_id) → geo.cities(tenant_id, id) ON DELETE RESTRICT       |
+| state_id          | UUID         | FK (tenant_id, state_id) → geo.states(tenant_id, id) ON DELETE RESTRICT      |
+| country_id        | UUID         | FK (tenant_id, country_id) → geo.countries(tenant_id, id) ON DELETE RESTRICT |
+| timezone          | TEXT         | NOT NULL, DEFAULT 'Asia/Kolkata'                                             |
+| geo_lat           | NUMERIC(9,6) |                                                                              |
+| geo_lng           | NUMERIC(9,6) |                                                                              |
+| is_active         | BOOLEAN      | NOT NULL, DEFAULT TRUE                                                       |
+| is_deleted        | BOOLEAN      | NOT NULL, DEFAULT FALSE                                                      |
+| deleted_at        | TIMESTAMPTZ  |                                                                              |
+| deleted_by        | UUID         |                                                                              |
+| metadata          | JSONB        | NOT NULL, DEFAULT '{}'                                                       |
+| created_at        | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                          |
+| updated_at        | TIMESTAMPTZ  | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                          |
+
+**Unique:** `(tenant_id, name)`  
+**Check:** `NOT (is_active AND is_deleted)`  
+**RLS:** app_user sees orgs they are mapped to; tenant_admin sees all within tenant  
+**Triggers:** `set_updated_at`, `soft_delete_row`, `auto_grant_tenant_admins_on_new_org`
+
+---
+
+### entity.tenant_modules
+
+Per-tenant **product/module entitlements** (D6). Gates which products a tenant has licensed. Created in `10_init-hr-task-schemas.sql`; the `lms`→`lms` key rename + `lms` backfill land in `15_tenant-modules-lms-rename.sql`.
+
+| Column     | Type        | Constraints                                                |
+| ---------- | ----------- | ---------------------------------------------------------- |
+| id         | UUID        | PK (UUIDv7)                                                |
+| tenant_id  | UUID        | NOT NULL, FK → entity.tenants(id) ON DELETE CASCADE        |
+| module     | TEXT        | NOT NULL, CHECK IN (`lms`, `leave`, `attendance`, `tasks`) |
+| is_active  | BOOLEAN     | NOT NULL, DEFAULT TRUE                                     |
+| enabled_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                        |
+
+**Unique:** `(tenant_id, module)`  
+**`module` values:** `lms` is the lead product's entitlement key (renamed from legacy `lms`; the `lms` *schema* rename is deferred to Phase 1). `leave`/`attendance` are the HR sub-modules; `tasks` is the to-do product.  
+**RLS:** `FORCE`d. tenant_admin `SELECT`s its own tenant's rows (`app.current_tenant_id`); app_user `SELECT`s rows for the tenant owning its current org. **Writes are platform-only** (`root_service`/super_admin) — tenants cannot self-grant entitlements.  
+**Enforcement:** the **api-gateway** is the central choke point — a route-prefix→product map (`/leads*`,`/assignments*`,`/analytics*`→`lms`; `/hr/*` except `/hr/employees*`,`/hr/modules`→`hr` = active `leave`OR`attendance`; `/tasks*`,`/task-lists*`→`task`) returns `403 PRODUCT_NOT_ENABLED` after JWT verify. Per-service `require-module` middleware (leads/hr/tasks) stays as defense-in-depth. `@platform/authz.hasProduct()` reads this table via a 60s cached read.  
+ (custom brand colour; wins over preset)             |
+| font          | TEXT        | CHECK IN `inter, manrope, dm-sans, ibm-plex-sans, plus-jakarta-sans, public-sans, outfit` |
+| default_mode  | TEXT        | NOT NULL DEFAULT `light`, CHECK IN (`light`,`dark`,`system`)            |
+| theme_locked  | BOOLEAN     | NOT NULL DEFAULT FALSE — Super Admin's "tenant admin may not change theme"  |
+| assets        | JSONB       | NOT NULL DEFAULT '{}' — `{slot: {key, content_type, bytes, updated_at}}`, slot ∈ logo/logo_dark/mark/favicon/app_icon (bytes in blob storage) |
+| product_names | JSONB       | NOT NULL DEFAULT '{}' — per product: navbar title, tab title, short name, switcher label |
+| terms         | JSONB       | NOT NULL DEFAULT '{}' — renamed words (`lead` → "Enquiry" …)               |
+| nav_overrides | JSONB       | NOT NULL DEFAULT '{}' — per nav-item id: `{label?, icon?}`                  |
+| updated_by    | UUID        | FK → iam.users(id) ON DELETE SET NULL                                        |
+| metadata / created_at / updated_at | | standard                                                      |
+
+**Ownership, enforced in the database:** application roles (tenant admins with `admin.branding.manage`, via `withRoleTx`) have **column-level** INSERT/UPDATE on `preset, seed_hex, font, default_mode, terms, nav_overrides, updated_by` only (`07_grants.sql`). `assets`, `product_names`, `public_key` and `theme_locked` are written only by Super Admin through admin-service under `root_service`.  
+**Theme lock:** `trg_tenant_branding_theme_lock` (BEFORE UPDATE, `entity.guard_tenant_branding_theme_lock()`) raises `insufficient_privilege` / HINT `BRANDING_THEME_LOCKED` when anyone but `root_service` or a superuser changes the theme columns while `theme_locked` — an allow-list, because product-scoped logins do not `SET ROLE`.  
+**RLS:** `FORCE`d. Every member of the tenant may read its row (app_user via current org, tenant_admin via `app.current_tenant_id`); writes are WITH CHECK-pinned to the same tenant.  
+**Why TEXT + CHECK, not lookups:** preset/font/mode are a code-owned registry (`presets.ts`; fonts are declared to `next/font` at build time) — a lookup table would be a second copy. Keep the CHECK lists in step with `presets.ts`.  
+**Triggers:** `set_updated_at`, theme lock.
+
+---
+
 ### iam.user_roles
 
 Role definitions with rank-based hierarchy. **Current shape (schema 1.45.0):** this single ladder is now authoritative platform-wide. The per-product ladders it was once slated to be replaced by (`lms.roles`, `hr.roles`, `task.roles`) plus their grant tables (`<product>.member_roles`) were **dropped at schema 1.40.0** (`db_scripts/one_time/drop_per_product_role_tables.sql`) — the rollback direction won, not the migration described below. Role/rank resolution now runs solely through `iam.fn_user_org_role`/`iam.fn_role_capability_matrix` against this table. See "Retired: per-product role tables" further down for what existed in between and why it was rolled back.
@@ -1118,7 +2200,7 @@ Role → capability grants (Tier C3), resolved per tenant by `iam.fn_role_capabi
 **Drizzle:** `roleCapabilitiesTable` in `@platform/db/schema` (`tables/role-capabilities.table.ts`).
 **Admin API:** `GET /roles/:id/capabilities?tenant_id=`, `PUT /roles/:id/capabilities` (admin-service, via gateway — see Architecture.md → "Capability administration").
 
-> **Seeding trap — a grant on the global template does not reach a tenant that owns a copy of the role.** `iam.fn_role_capability_matrix` resolves **one role row per name** and the per-tenant copy **wins** (`DISTINCT ON (r.name) … ORDER BY (r.tenant_id IS NOT NULL) DESC`), and grants are keyed on `role_id`. Since `_migrations/19` the ladder roles — and, in practice, tenant copies of `tenant_admin`/`org_admin` too — exist per tenant, so a capability added to a template list in `reference_data/03_roles_and_grants.sql` lands on the template's `role_id` only and is invisible to every tenant that has its own copy. This is why that file ends with **back-fill blocks** that pin each new capability to an existing one with the same audience (`lms.leads.view.tenant` ← `lms.history.view.tenant`; `lms.leads.assign.bulk` ← `lms.leads.assign.any`), run once for `tenant_id IS NULL` and once for `tenant_id IS NOT NULL`. Add a matching pair of blocks for any new capability, or the roles the feature was built for silently will not have it.
+> **Seeding trap — a grant on the global template does not reach a tenant that owns a copy of the role.** `iam.fn_role_capability_matrix` resolves **one role row per name** and the per-tenant copy **wins** (`DISTINCT ON (r.name) … ORDER BY (r.tenant_id IS NOT NULL) DESC`), and grants are keyed on `role_id`. Since `_migrations/19` the ladder roles — and, in practice, tenant copies of `tenant_admin`/`org_admin` too — exist per tenant, so a capability added to a template list in `reference_data/03_roles_and_grants.sql` lands on the template's `role_id` only and is invisible to every tenant that has its own copy. This is why that file ends with **back-fill blocks** that pin each new capability to an existing one with the same audience (`lms.leads.view.tenant` ← `lms.history.view.tenant`; `lms.leads.assign.bulk` ← `lms.leads.assign.any`; `lms.leads.bulk.update` and `lms.followups.bulk.reschedule` ← `lms.leads.assign.bulk`, schema 1.58.0), run once for `tenant_id IS NULL` and once for `tenant_id IS NOT NULL`. Add a matching pair of blocks for any new capability, or the roles the feature was built for silently will not have it.
 
 > **`lms.leads.view.tenant` is what makes the branch picker work.** It is granted to `tenant_admin` only (plus `super_admin` via `'*'`). identity-service's `GET /orgs` widens the branch list to the whole tenant exactly when `resolveScope(actor, 'lms.leads.view')` is `tenant`/`all`, and leads-service reads the picked branch under the tenant Postgres role on the same condition (`RoleTxContext.tenantWide`). It was defined in `iam.capabilities` but granted to **no role at all**, which left every user with a single-option branch picker and the LMS Bulk Assign screen unusable.
 
@@ -1548,6 +2630,21 @@ DB-backed JWT revocation supporting multiple scope levels.
 | expires_at | TIMESTAMPTZ | NOT NULL                         |
 
 **Check:** At least one of jti, user_id, org_id, tenant_id must be non-null
+
+---
+
+### iam.user_preferences
+
+**Personal settings** (1.57.0), one row per user. `theme` JSONB = `{preset | seed_hex, font, mode}` or NULL ("use the company theme"). `user_id` PK, FK → iam.users ON DELETE CASCADE; `tenant_id` NOT NULL (denormalised for cleanup/reporting).  
+**RLS:** `FORCE`d, **user_id-only for every role — tenant_admin included**: nobody can read or change another person's preferences.  
+**Effective theme:** company branding, then this override — except while the tenant's theme is locked, when only `mode` (light/dark/system) from here is honoured.
+
+---
+
+### iam.password_reset_tokens
+
+Self-service **forgot-password** tokens (1.57.0). Only the **SHA-256** of the emailed token is stored (`token_hash` UNIQUE), so a database read never yields a usable link. Single use (`used_at`), 15-minute life (`expires_at`, CHECK > created_at). Indexed by `(user_id, created_at DESC)` for per-user rate limiting and by `expires_at` for sweeping.  
+**Access:** identity-service only, under `root_service` — no session exists before a reset. RLS `FORCE`d with **no** application policy (deny-all) and an explicit REVOKE from app_user / tenant_admin / product logins.
 
 ---
 

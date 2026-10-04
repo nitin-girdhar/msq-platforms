@@ -11,6 +11,9 @@ import { toSessionUser, sessionUserWithCapabilities } from './auth.types.js';
 import type { DatabaseUser } from './auth.types.js';
 import type { LoginInput, SwitchOrgInput } from './auth.schema.js';
 import { config } from '../../../config/index.js';
+import { createHash, randomBytes } from 'node:crypto';
+import { sendUserEmail } from '../../../lib/communication-service-client.js';
+import { buildPasswordResetLinkEmail } from '../users/user-emails.js';
 
 export interface LoginResult {
   token: string;
@@ -506,4 +509,62 @@ export async function changePassword(
   }
 
   return new_token;
+}
+
+// ── Self-service password reset ──
+// Email-only, 15-minute single-use link. requestPasswordReset never reveals
+// whether the email matched: the controller answers the same 200 before this
+// even runs, so neither the body nor the response time is an account oracle.
+
+export const RESET_TOKEN_TTL_MINUTES = 15;
+// Per-user cap on reset emails inside one TTL window. The gateway separately
+// rate-limits the route per IP.
+const RESET_MAX_PER_WINDOW = 3;
+
+function hashResetToken(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+export async function requestPasswordReset(email: string): Promise<void> {
+  const db_user = await repo.getUserByEmail(normalizeEmail(email));
+  if (!db_user || !db_user.is_active || db_user.is_deleted || !db_user.email) return;
+
+  const recent = await repo.countRecentResetRequests(db_user.id, RESET_TOKEN_TTL_MINUTES);
+  if (recent >= RESET_MAX_PER_WINDOW) return;
+
+  const token = randomBytes(32).toString('base64url');
+  await repo.createResetToken(db_user.id, hashResetToken(token), RESET_TOKEN_TTL_MINUTES, null);
+
+  const resetUrl = `${config.authWebUrl.replace(/\/+$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
+  const mail = buildPasswordResetLinkEmail({
+    firstName: db_user.first_name ?? null,
+    resetUrl,
+    ttlMinutes: RESET_TOKEN_TTL_MINUTES,
+  });
+  void sendUserEmail({
+    orgId: db_user.org_id,
+    userId: db_user.id,
+    tenantId: db_user.tenant_id,
+    to: db_user.email,
+    ...mail,
+  });
+  void logActivity({ action_type: 'password_reset_requested', performed_by: db_user.id, org_id: db_user.org_id });
+}
+
+/**
+ * Spends the token and sets the new password. Every session the user has is
+ * revoked (a reset is what you do when a password may be known to someone
+ * else); no new session is minted — the user signs in with the new password.
+ */
+export async function resetPassword(token: string, new_password: string): Promise<void> {
+  const new_hash = await hashPassword(new_password);
+  const done = await repo.consumeResetTokenAndSetPassword(hashResetToken(token), new_hash);
+  if (!done) throw new BadRequestError('This reset link is invalid or has expired. Request a new one.');
+
+  try {
+    await revokeAllUserSessions(done.user_id, { revokedBy: done.user_id, reason: 'password_reset_self' });
+  } catch (err) {
+    console.error('[auth] revokeAllUserSessions failed after password reset:', (err as Error).message, done.user_id);
+  }
+  void logActivity({ action_type: 'password_reset_self', performed_by: done.user_id, org_id: done.org_id });
 }

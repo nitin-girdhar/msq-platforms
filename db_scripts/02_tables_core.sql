@@ -1287,6 +1287,42 @@ CREATE TABLE IF NOT EXISTS iam.token_blocklist (
   )
 );
 
+-- ── USER PREFERENCES (1.57.0) ───────────────────────────────────────
+-- Personal settings, one row per user. Today: the Appearance override
+-- (theme = { preset | seed_hex, font, mode }; NULL = "use the company theme").
+-- PERSONAL, not org data: RLS (08_rls.sql) is user_id-only for every role, so
+-- nobody — tenant admins included — can read or change another person's row.
+-- tenant_id is denormalised from the user's home org for reporting/cleanup; the
+-- policy does not depend on it.
+CREATE TABLE IF NOT EXISTS iam.user_preferences (
+  user_id     UUID        PRIMARY KEY REFERENCES iam.users(id) ON DELETE CASCADE,
+  tenant_id   UUID        NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  theme       JSONB,
+  metadata    JSONB       NOT NULL DEFAULT '{}',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_user_preferences_theme_object CHECK (theme IS NULL OR jsonb_typeof(theme) = 'object')
+);
+
+-- ── PASSWORD RESET TOKENS (1.57.0) ──────────────────────────────────
+-- Self-service "Forgot password". Only the SHA-256 of the emailed token is
+-- stored, so a database read never yields a usable link. Single use (used_at),
+-- 15-minute life (expires_at, set by identity-service). Written and read ONLY by
+-- identity-service's service transaction — there is no user session before a
+-- reset — so RLS is enabled with NO policy for any application role (deny all);
+-- root_service bypasses RLS for exactly this system operation.
+CREATE TABLE IF NOT EXISTS iam.password_reset_tokens (
+  id            UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  user_id       UUID        NOT NULL REFERENCES iam.users(id) ON DELETE CASCADE,
+  token_hash    TEXT        NOT NULL,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  used_at       TIMESTAMPTZ,
+  requested_ip  TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT uq_password_reset_tokens_hash UNIQUE (token_hash),
+  CONSTRAINT chk_password_reset_tokens_expiry CHECK (expires_at > created_at)
+);
+
 -- ===================================================================
 -- META CONVERSION API — Tables for bidirectional Meta Lead Ads integration
 -- Inbound:  Meta webhook → lms.marketing_leads + ext.meta_leads

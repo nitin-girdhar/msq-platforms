@@ -225,3 +225,17 @@ export const users = {
   // authenticated by the session cookie and returns 404 when there is no photo.
   photoUrl: (id: string) => `/api/users/${id}/photo`,
 };
+
+// The caller's own appearance override (schema 1.57.0). Identity and tenant
+// come from the session server-side; writes need platform.appearance. While
+// the tenant's theme is locked the server stores the choice but resolves only
+// its light/dark mode.
+export const appearance = {
+  mine: () => request<{ success: true; data: unknown }>('/me/branding'),
+  save: (choice: import('../theme/presets').ThemeChoice) =>
+    request<{ success: true; data: unknown }>('/me/preferences/theme', {
+      method: 'PUT',
+      body: JSON.stringify(choice),
+    }),
+  reset: () => request<{ success: true; data: unknown }>('/me/preferences/theme', { method: 'DELETE' }),
+};

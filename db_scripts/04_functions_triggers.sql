@@ -2849,4 +2849,55 @@ CREATE TRIGGER trg_marketing_leads_sync_campaign_type
   BEFORE INSERT OR UPDATE OF campaign_id ON lms.marketing_leads
   FOR EACH ROW EXECUTE FUNCTION lms.sync_lead_campaign_type();
 
+-- ===================================================================
+-- Branding & personal preferences (1.57.0)
+-- ===================================================================
+DROP TRIGGER IF EXISTS trg_tenant_branding_updated_at ON entity.tenant_branding;
+CREATE TRIGGER trg_tenant_branding_updated_at
+  BEFORE UPDATE ON entity.tenant_branding FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_user_preferences_updated_at ON iam.user_preferences;
+CREATE TRIGGER trg_user_preferences_updated_at
+  BEFORE UPDATE ON iam.user_preferences FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Theme lock, enforced at the database. Super Admin's "Allow tenant admin to
+-- change" switch (theme_locked) must hold even if an API check is ever missed:
+-- nobody may change preset / seed_hex / font / default_mode while the row is
+-- locked EXCEPT root_service (the Super Admin path, withServiceTx) and a
+-- database superuser doing maintenance.
+--
+-- Written as an allow-list on purpose. withRoleTx does not always SET ROLE:
+-- product-scoped logins (lms_svc / hr_svc / task_svc) stay as themselves, so a
+-- deny-list of 'app_user' / 'tenant_admin' would have let every such session
+-- through the lock.
+--
+-- (INSERT needs no check: an application role cannot set theme_locked — no
+-- column grant — so a row it creates always starts unlocked.) Column GRANTs in
+-- 07_grants.sql keep application roles off theme_locked, assets, product_names
+-- and public_key entirely; this covers the one column group they can write
+-- conditionally.
+CREATE OR REPLACE FUNCTION entity.guard_tenant_branding_theme_lock()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF current_user = 'root_service'
+     OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user AND rolsuper) THEN
+    RETURN NEW;
+  END IF;
+  IF OLD.theme_locked AND (
+       NEW.preset       IS DISTINCT FROM OLD.preset
+    OR NEW.seed_hex     IS DISTINCT FROM OLD.seed_hex
+    OR NEW.font         IS DISTINCT FROM OLD.font
+    OR NEW.default_mode IS DISTINCT FROM OLD.default_mode
+  ) THEN
+    RAISE EXCEPTION 'Theme is locked by the platform administrator'
+      USING ERRCODE = 'insufficient_privilege', HINT = 'BRANDING_THEME_LOCKED';
+  END IF;
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_tenant_branding_theme_lock ON entity.tenant_branding;
+CREATE TRIGGER trg_tenant_branding_theme_lock
+  BEFORE UPDATE ON entity.tenant_branding
+  FOR EACH ROW EXECUTE FUNCTION entity.guard_tenant_branding_theme_lock();
+
 COMMIT;

@@ -9,7 +9,11 @@
 
 export { default as AppNavbar } from './AppNavbar';
 export { default as AppSidebar } from './AppSidebar';
+export { default as AppShell } from './AppShell';
+export { default as BrandMark, type ShellBrand } from './BrandMark';
 export { default as MobileSidebar, toggleSidebar, setSidebar } from './MobileSidebar';
+export { default as MobileTabBar } from './MobileTabBar';
+export { NavBadgesProvider, useNavBadges, type NavBadgeMap } from './NavBadges';
 export { default as HamburgerButton } from './HamburgerButton';
 export { default as ProductSwitcher } from './ProductSwitcher';
 export { default as UserMenu } from './UserMenu';

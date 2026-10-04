@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SessionUser } from '@platform/types';
 import { RANKS } from '@platform/authz';
+import { CAPABILITY, can } from '@platform/rbac';
 import { auth, push, users } from '../api/resources';
 import PhotoAvatar from '../components/PhotoUpload/PhotoAvatar';
 import PhotoUploadModal, { type PhotoUploadGate } from '../components/PhotoUpload/PhotoUploadModal';
+import AppearanceModal from './AppearanceModal';
 
 interface Props {
   user: SessionUser;
@@ -85,12 +87,20 @@ async function tearDownDeviceState(): Promise<void> {
 export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  // Sign out is a two-step action (Stitch "Sign Out of Session" confirm): a
+  // stray tap on a shared phone must not end the session for every product.
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [gate, setGate] = useState<PhotoUploadGate | null>(null);
   // Bumped after a successful upload to bust the browser cache on the stable URL.
   const [photoVersion, setPhotoVersion] = useState(0);
   const [hasPhoto, setHasPhoto] = useState(user.has_photo);
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) setConfirmSignOut(false);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -143,6 +153,10 @@ export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
     setPhotoVersion((v) => v + 1);
   };
 
+  // Own appearance override — every shipped role holds it; a tenant role
+  // without it simply gets the company theme (the API refuses the write too).
+  const mayCustomise = can(user, CAPABILITY.PLATFORM_APPEARANCE);
+
   const rank = user.rank;
   const showTenant = rank <= RANKS.TENANT_ADMIN && !!user.tenant_name;
   const showOrg = rank < RANKS.TENANT_ADMIN && !!user.org_name;
@@ -154,14 +168,17 @@ export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-white py-1 pl-1 pr-2 transition-colors hover:bg-[#F8FAFC] cursor-pointer"
+        className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition-colors hover:bg-surface-container-low cursor-pointer"
         title={label}
       >
-        <PhotoAvatar src={photoSrc} label={label} sizeClass="h-7 w-7" />
-        <span className="hidden max-w-[140px] truncate text-xs font-semibold text-[#0F172A] sm:block">
-          {label}
+        <PhotoAvatar src={photoSrc} label={label} sizeClass="h-8 w-8 ring-1 ring-outline-variant" />
+        <span className="hidden max-w-[160px] flex-col text-left leading-tight sm:flex">
+          <span className="truncate text-label-md font-semibold text-on-surface">{label}</span>
+          <span className="truncate text-label-sm font-normal normal-case tracking-normal text-outline">
+            {user.role_label ?? user.role.replace(/_/g, ' ')}
+          </span>
         </span>
-        <svg className="hidden h-3.5 w-3.5 text-[#64748B] sm:block" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+        <svg className="hidden h-3.5 w-3.5 text-on-surface-variant sm:block" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
           <path
             fillRule="evenodd"
             d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"
@@ -173,29 +190,29 @@ export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-[calc(100%+8px)] z-50 w-64 overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg"
+          className="absolute right-0 top-[calc(100%+8px)] z-50 w-72 overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-overlay"
         >
-          <div className="border-b border-[#F1F5F9] px-4 py-3 flex flex-col gap-0.5">
-            <p className="truncate text-sm font-semibold text-[#0F172A]">
+          <div className="border-b border-outline-variant/60 px-4 py-3 flex flex-col gap-0.5">
+            <p className="truncate text-sm font-semibold text-on-surface">
               {user.name ?? 'Signed in'}
             </p>
-            <p className="truncate text-xs text-[#64748B]">
+            <p className="truncate text-xs text-on-surface-variant">
               {user.role_label ?? user.role.replace(/_/g, ' ')}
             </p>
-            <p className="truncate text-xs text-[#64748B]">{user.email}</p>
-            {user.mobile && <p className="truncate text-xs text-[#64748B]">{user.mobile}</p>}
+            <p className="truncate text-xs text-on-surface-variant">{user.email}</p>
+            {user.mobile && <p className="truncate text-xs text-on-surface-variant">{user.mobile}</p>}
             {(showTenant || showOrg) && (
-              <div className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 border-t border-[#F1F5F9] pt-1.5 text-xs">
+              <div className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 border-t border-outline-variant/60 pt-1.5 text-xs">
                 {showTenant && (
                   <>
-                    <span className="whitespace-nowrap font-semibold text-[#94A3B8]">Company</span>
-                    <span className="truncate text-[#64748B]">{user.tenant_name}</span>
+                    <span className="whitespace-nowrap font-semibold text-outline">Company</span>
+                    <span className="truncate text-on-surface-variant">{user.tenant_name}</span>
                   </>
                 )}
                 {showOrg && (
                   <>
-                    <span className="whitespace-nowrap font-semibold text-[#94A3B8]">Org</span>
-                    <span className="truncate text-[#64748B]">{user.org_name}</span>
+                    <span className="whitespace-nowrap font-semibold text-outline">Org</span>
+                    <span className="truncate text-on-surface-variant">{user.org_name}</span>
                   </>
                 )}
               </div>
@@ -205,9 +222,9 @@ export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
             type="button"
             role="menuitem"
             onClick={openPhotoModal}
-            className="flex w-full items-center gap-2 border-b border-[#F1F5F9] px-4 py-2.5 text-left text-sm font-medium text-[#334155] transition-colors hover:bg-slate-50 cursor-pointer"
+            className="flex w-full items-center gap-2 border-b border-outline-variant/60 px-4 py-2.5 text-left text-sm font-medium text-on-surface transition-colors hover:bg-surface-container-low cursor-pointer"
           >
-            <svg className="h-4 w-4 text-[#64748B]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+            <svg className="h-4 w-4 text-on-surface-variant" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
               <path d="M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
               <path
                 fillRule="evenodd"
@@ -217,13 +234,33 @@ export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
             </svg>
             {hasPhoto ? 'Change photo' : 'Add photo'}
           </button>
+          {mayCustomise && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                setAppearanceOpen(true);
+              }}
+              className="flex w-full items-center gap-2 border-b border-outline-variant/60 px-4 py-2.5 text-left text-sm font-medium text-on-surface transition-colors hover:bg-surface-container-low cursor-pointer"
+            >
+              <svg className="h-4 w-4 text-on-surface-variant" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                <path
+                  fillRule="evenodd"
+                  d="M10 2a8 8 0 1 0 0 16c.9 0 1.5-.7 1.5-1.5 0-.4-.2-.7-.4-1-.2-.3-.4-.6-.4-1 0-.8.7-1.5 1.5-1.5H14a4 4 0 0 0 4-4c0-3.9-3.6-7-8-7Zm-4.5 8a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm2.5-3.5a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm4 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm2.5 3.5a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              Appearance
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"
             onClick={handleChangePassword}
-            className="flex w-full items-center gap-2 border-b border-[#F1F5F9] px-4 py-2.5 text-left text-sm font-medium text-[#334155] transition-colors hover:bg-slate-50 cursor-pointer"
+            className="flex w-full items-center gap-2 border-b border-outline-variant/60 px-4 py-2.5 text-left text-sm font-medium text-on-surface transition-colors hover:bg-surface-container-low cursor-pointer"
           >
-            <svg className="h-4 w-4 text-[#64748B]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+            <svg className="h-4 w-4 text-on-surface-variant" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
               <path
                 fillRule="evenodd"
                 d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z"
@@ -232,25 +269,54 @@ export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
             </svg>
             Change password
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={handleSignOut}
-            disabled={pending}
-            aria-busy={pending}
-            className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-medium text-[#DC2626] transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+          {confirmSignOut ? (
+            <div className="flex flex-col gap-2 bg-error-container/40 px-4 py-3">
+              <p className="text-label-md font-semibold text-on-surface">Sign out?</p>
+              <p className="text-body-sm text-on-surface-variant">
+                You will be signed out of every product on this device.
+              </p>
+              <div className="mt-1 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmSignOut(false)}
+                  disabled={pending}
+                  className="rounded-lg px-3 py-1.5 text-label-md text-on-surface-variant transition-colors hover:bg-surface-container disabled:opacity-60 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={handleSignOut}
+                  disabled={pending}
+                  aria-busy={pending}
+                  className="flex items-center gap-1.5 rounded-lg bg-error px-3 py-1.5 text-label-md font-semibold text-on-error transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                >
+                  {pending ? 'Signing out…' : 'Confirm sign out'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => setConfirmSignOut(true)}
+              className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-medium text-error transition-colors hover:bg-error-container cursor-pointer"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
               <path
                 fillRule="evenodd"
                 d="M3 4.75A2.75 2.75 0 0 1 5.75 2h4.5a.75.75 0 0 1 0 1.5h-4.5c-.69 0-1.25.56-1.25 1.25v10.5c0 .69.56 1.25 1.25 1.25h4.5a.75.75 0 0 1 0 1.5h-4.5A2.75 2.75 0 0 1 3 15.25V4.75Zm10.72 1.97a.75.75 0 0 1 1.06 0l2.75 2.75a.75.75 0 0 1 0 1.06l-2.75 2.75a.75.75 0 1 1-1.06-1.06l1.47-1.47H8.75a.75.75 0 0 1 0-1.5h6.44l-1.47-1.47a.75.75 0 0 1 0-1.06Z"
                 clipRule="evenodd"
               />
             </svg>
-            {pending ? 'Signing out…' : 'Sign out'}
-          </button>
+              Sign out
+            </button>
+          )}
         </div>
       )}
+
+      {mayCustomise && <AppearanceModal open={appearanceOpen} onClose={() => setAppearanceOpen(false)} />}
 
       <PhotoUploadModal
         open={photoOpen}

@@ -898,4 +898,28 @@ GRANT SELECT ON ext.meta_forms                   TO app_user;
 GRANT SELECT ON ext.meta_tenant_config           TO app_user;
 GRANT SELECT ON ext.vw_meta_forms                TO app_user;
 
+-- ===================================================================
+-- Branding & personal preferences (1.57.0)
+-- ===================================================================
+-- entity.tenant_branding — column-level writes. Application roles (withRoleTx:
+-- tenant admins holding admin.branding.manage) may write ONLY the theme, terms
+-- and menu overrides — and the theme only while unlocked (trigger in 04).
+-- Assets, product names, public_key and theme_locked are Super Admin's, written
+-- by admin-service under root_service; they are deliberately absent here, so a
+-- forged API body cannot reach them even through a bug in the route.
+REVOKE ALL ON entity.tenant_branding FROM app_user, tenant_admin;
+GRANT SELECT ON entity.tenant_branding TO app_user, tenant_admin;
+GRANT INSERT (tenant_id, preset, seed_hex, font, default_mode, terms, nav_overrides, updated_by)
+  ON entity.tenant_branding TO app_user, tenant_admin;
+GRANT UPDATE (preset, seed_hex, font, default_mode, terms, nav_overrides, updated_by)
+  ON entity.tenant_branding TO app_user, tenant_admin;
+
+-- iam.user_preferences — personal rows; RLS pins every role to its own user_id.
+GRANT SELECT, INSERT, UPDATE, DELETE ON iam.user_preferences TO app_user, tenant_admin;
+
+-- iam.password_reset_tokens — service transaction only (no session exists
+-- before a reset). Revoked explicitly rather than left to the deny-all RLS, so
+-- the default SELECT privileges above never even expose the hashes' shape.
+REVOKE ALL ON iam.password_reset_tokens FROM app_user, tenant_admin, lms_svc, hr_svc, task_svc;
+
 COMMIT;

@@ -13,7 +13,10 @@
     "./middleware": "./src/middleware.ts",
     "./shell": "./src/shell/index.ts",
     "./grid": "./src/grid/index.ts",
-    "./ag-grid.css": "./src/styles/ag-grid.css"
+    "./ag-grid.css": "./src/styles/ag-grid.css",
+    "./theme": "./src/theme/index.ts",
+    "./theme.css": "./src/styles/theme.css",
+    "./branding": "./src/branding/index.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
@@ -29,7 +32,8 @@
     "@platform/rbac": "workspace:*",
     "@platform/types": "workspace:*",
     "jose": "^6.2.3",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "@material/material-color-utilities": "^0.4.0"
   },
   "peerDependencies": {
     "next": "^15.2.4",

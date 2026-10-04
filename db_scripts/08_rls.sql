@@ -1894,6 +1894,67 @@ CREATE POLICY admin_tenant_config_policy ON scratch.meta_pull_leads
                       = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid));
 
 
+-- ===================================================================
+-- RLS: branding & personal preferences (1.57.0)
+-- Placed BEFORE the widening block below so these policies are re-pointed at
+-- the NOINHERIT service logins too (see that block's note).
+-- ===================================================================
+
+-- entity.tenant_branding — one row per tenant. Every member of the tenant reads
+-- it (the theme / names / terms render for everyone); writes are further
+-- narrowed by column GRANTs (07) and the theme-lock trigger (04), and gated on
+-- admin.branding.manage in the API. Super Admin cross-tenant work and the public
+-- login-link lookup run under root_service (BYPASSRLS), never through these.
+ALTER TABLE entity.tenant_branding ENABLE ROW LEVEL SECURITY;
+ALTER TABLE entity.tenant_branding FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation_policy ON entity.tenant_branding;
+DROP POLICY IF EXISTS org_isolation_policy    ON entity.tenant_branding;
+
+CREATE POLICY tenant_isolation_policy ON entity.tenant_branding
+  AS PERMISSIVE FOR ALL TO tenant_admin
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+-- app_user sessions never set app.current_tenant_id (see withRoleTx), so the
+-- tenant is derived from the current org — same convention as tenant_modules.
+CREATE POLICY org_isolation_policy ON entity.tenant_branding
+  AS PERMISSIVE FOR ALL TO app_user
+  USING (
+    tenant_id = (SELECT tenant_id FROM entity.organizations
+                 WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
+  )
+  WITH CHECK (
+    tenant_id = (SELECT tenant_id FROM entity.organizations
+                 WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
+  );
+
+-- iam.user_preferences — PERSONAL. user_id is the only predicate, for every
+-- role including tenant_admin: an admin has no business reading or changing a
+-- colleague's appearance settings, so there is deliberately no tenant-wide arm.
+ALTER TABLE iam.user_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE iam.user_preferences FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS own_row_policy          ON iam.user_preferences;
+DROP POLICY IF EXISTS tenant_own_row_policy   ON iam.user_preferences;
+
+CREATE POLICY own_row_policy ON iam.user_preferences
+  AS PERMISSIVE FOR ALL TO app_user
+  USING      (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid)
+  WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid);
+
+CREATE POLICY tenant_own_row_policy ON iam.user_preferences
+  AS PERMISSIVE FOR ALL TO tenant_admin
+  USING      (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid)
+  WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid);
+
+-- iam.password_reset_tokens — RLS on, NO policy for any application role:
+-- deny-all. identity-service reads and writes it only under root_service,
+-- because no user session exists before a reset.
+ALTER TABLE iam.password_reset_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE iam.password_reset_tokens FORCE  ROW LEVEL SECURITY;
+
+
 -- Widen every RLS policy to also name the roles that are MEMBERS of the roles
 -- it already targets.
 --

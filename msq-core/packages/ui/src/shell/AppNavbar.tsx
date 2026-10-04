@@ -1,4 +1,3 @@
-import Image from 'next/image';
 import Link from 'next/link';
 import type { SessionUser, ProductKey } from '@platform/types';
 import { canOpenAdminConsole, canOpenLookupAdmin } from '@platform/rbac';
@@ -8,6 +7,7 @@ import UserMenu from './UserMenu';
 import BranchSwitcher from './BranchSwitcher';
 import HamburgerButton from './HamburgerButton';
 import ProductSwitcher from './ProductSwitcher';
+import BrandMark from './BrandMark';
 
 interface Props {
   user: SessionUser;
@@ -42,6 +42,10 @@ interface Props {
   // on which page (the component may return null), the navbar only places it.
   // Inline on sm+; on mobile it drops to the second row, like scopeSlot.
   filterSlot?: React.ReactNode;
+  // Product search (LMS lead search). Same slot contract: the host owns what
+  // renders; the bar places it left of the branch pill. The component handles
+  // its own phone layout (icon → full-width row).
+  searchSlot?: React.ReactNode;
   // admin-web's origin (adminWebOrigin()), for the standalone "Admin" link.
   // Deliberately NOT plumbed through ProductSwitcher/licensedProducts: admin-web
   // is capability-gated (canOpenAdminConsole), not a licensed product, so it must
@@ -54,6 +58,13 @@ interface Props {
   // a licensed product, so it stays out of ProductSwitcher/licensedProducts and
   // rides in as an extra link. Omitted/empty hides it entirely.
   lookupAdminUrl?: string;
+  // Set by AppShell: the full-height AppSidebar beside this bar already shows
+  // the logo + product name on desktop, so the bar shows them only below lg
+  // (where the rail is hidden and the drawer takes over).
+  brandInSidebar?: boolean;
+  // Brand name / product line for the mobile logo block. Defaults keep the
+  // pre-AppShell look for callers that pass neither.
+  brandName?: string;
 }
 
 // Shared top bar for every product app. Product-agnostic: identity, nav targets,
@@ -69,8 +80,11 @@ export default function AppNavbar({
   notificationSlot,
   scopeSlot,
   filterSlot,
+  searchSlot,
   adminWebUrl,
   lookupAdminUrl,
+  brandInSidebar = false,
+  brandName = 'Fitclass',
 }: Props) {
   // Same question admin-web's own dashboard guard asks (a non-empty filtered
   // ADMIN_NAV): the pill must show for exactly the users that guard admits, or a
@@ -100,47 +114,20 @@ export default function AppNavbar({
   // case — it renders nothing off its own page — so it joins the has-[] test via
   // its wrapper, which is :empty exactly when the filter chose not to render.
   const mobileRowClass = scopeSlot
-    ? 'flex flex-col gap-2 border-t border-[#E2E8F0] px-2 py-1.5 sm:hidden'
-    : 'flex flex-col gap-2 sm:hidden has-[nav,[data-slot=filter]:not(:empty)]:border-t has-[nav,[data-slot=filter]:not(:empty)]:border-[#E2E8F0] has-[nav,[data-slot=filter]:not(:empty)]:px-2 has-[nav,[data-slot=filter]:not(:empty)]:py-1.5';
+    ? 'flex flex-col gap-2 border-t border-outline-variant px-2 py-1.5 sm:hidden'
+    : 'flex flex-col gap-2 sm:hidden has-[nav,[data-slot=filter]:not(:empty)]:border-t has-[nav,[data-slot=filter]:not(:empty)]:border-outline-variant has-[nav,[data-slot=filter]:not(:empty)]:px-2 has-[nav,[data-slot=filter]:not(:empty)]:py-1.5';
   return (
-    <header className="sticky top-0 z-30 shrink-0 border-b border-[#E2E8F0] bg-white">
-      <div className="flex h-14 min-w-0 items-center gap-2 px-2 sm:gap-4 sm:px-5">
+    <header className="sticky top-0 z-30 shrink-0 bg-surface-container-lowest shadow-card">
+      <div className="flex h-16 min-w-0 items-center gap-2 px-2 sm:gap-3 sm:px-5">
         <HamburgerButton />
-        <Link href={homeHref} className="shrink-0" aria-label="Home">
-          {/*
-            withBasePath() is REQUIRED here — `next/image` does not add the
-            prefix for us. The generated markup is
-            `/lms/_next/image?url=%2Ffitclass-emblem.png`: the optimizer
-            ENDPOINT is prefixed, but the `url` parameter is passed through
-            verbatim and then resolved against the server root, where this app
-            serves nothing. The optimizer answered 400 "The requested resource
-            isn't a valid image" and the navbar rendered a broken-image icon in
-            every product app. `url=%2Flms%2F…` returns 200.
-          */}
-          {/*
-            The emblem alone, not the fitclass-logo-white.webp LOCKUP (emblem +
-            FITCLASS wordmark + tagline stacked in a square canvas). That file
-            is square (1:1) while width/height below only set next/image's
-            aspect-ratio hint — h-9 w-auto forced a squeezed wide box from the
-            old 220x50 hint, and object-contain then shrank the real 1:1
-            content to fit its height, crushing the stacked wordmark/tagline
-            into an illegible ~36px smudge. The emblem is a circle: it reads
-            fine at nav-bar height with no wordmark to lose.
-          */}
-          <Image
-            src={withBasePath('/fitclass-emblem.png')}
-            alt="FitClass"
-            width={160}
-            height={160}
-            priority
-            className="h-9 w-auto object-contain sm:h-10"
-          />
-        </Link>
-        <div className="hidden h-5 w-px shrink-0 bg-[#E2E8F0] sm:block" />
-        <span className="hidden truncate text-sm font-bold tracking-tight text-[#0F172A] sm:block">
-          {title}
-        </span>
+        {/* Logo + title. With brandInSidebar the rail owns them on desktop. */}
+        <div className={`flex min-w-0 shrink-0 items-center gap-3 ${brandInSidebar ? 'lg:hidden' : ''}`}>
+          <BrandMark brand={{ homeHref, name: brandName }} compact />
+          <span className="hidden h-5 w-px shrink-0 bg-outline-variant sm:block" />
+          <span className="hidden truncate text-headline-sm font-bold text-on-surface sm:block">{title}</span>
+        </div>
         <div className="flex-1" />
+        {searchSlot}
         {/* Branch pill BEFORE the product tabs, not after: admin-web's header is
             rendered through this same navbar (see
             apps/admin-web/app/dashboard/layout.tsx), so anchoring the tabs

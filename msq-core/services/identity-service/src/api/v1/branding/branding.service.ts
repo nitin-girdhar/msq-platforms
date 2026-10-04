@@ -1,0 +1,256 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Branding & appearance service (schema 1.57.0). Business rules + audit; DB via
+// branding.repository, bytes via @platform/blob-storage.
+//
+// Who may do what (user decisions, 2026-10-02/03):
+//   Super Admin — logos/icons, product names, login link, theme + theme lock.
+//   Tenant admin (admin.branding.manage) — theme only while unlocked, terms, menu.
+//   Everyone (platform.appearance) — a personal theme; while the tenant's theme
+//     is locked only their light/dark/system choice is honoured.
+// The DB enforces the same split (column grants + lock trigger + RLS), so a bug
+// here degrades to an error, never to a write that should not have happened.
+// ─────────────────────────────────────────────────────────────────────────────
+import type { RoleTxContext } from '@platform/db';
+import { hasCapability, hasCapabilityFresh } from '@platform/db';
+import { CAPABILITY, type CapabilityKey } from '@platform/rbac';
+import { logActivity } from '@platform/audit-log';
+import { createBlobStorage } from '@platform/blob-storage';
+import type {
+  BrandAssetSlot,
+  SaBrandingUpdateInput,
+  TenantBrandingUpdateInput,
+  UserThemeUpdateInput,
+} from '@platform/validation';
+import { AppError, ForbiddenError, HttpStatus, NotFoundError, ValidationError } from '../../../lib/errors.js';
+import { BrandAssetError, EXT_FOR_TYPE, decodeAsset, validateBrandAsset } from '../../../lib/brand-assets.js';
+import { config } from '../../../config/index.js';
+import * as repo from './branding.repository.js';
+import type { BrandingRow } from './branding.repository.js';
+
+export interface Actor {
+  ctx: RoleTxContext;
+  tenant_id: string;
+  role_name: string | null;
+  org_id: string;
+  user_id: string;
+}
+
+let store: ReturnType<typeof createBlobStorage> | null = null;
+function blobStore() {
+  if (!store) store = createBlobStorage({ driver: config.blobStorageDriver, dir: config.blobStorageDir });
+  return store;
+}
+
+class BrandingLockedError extends AppError {
+  constructor() {
+    super('Colours and font are locked by your platform administrator', HttpStatus.FORBIDDEN, { code: 'BRANDING_THEME_LOCKED' });
+  }
+}
+
+async function requireCap(a: Actor, key: CapabilityKey, fresh: boolean, message: string): Promise<void> {
+  const ok = fresh
+    ? await hasCapabilityFresh(a.tenant_id, a.role_name, key)
+    : await hasCapability(a.tenant_id, a.role_name, key);
+  if (!ok) throw new ForbiddenError(message);
+}
+
+/** Gateway-relative URL for a stored asset; the app prefixes its own /api base. */
+function assetUrls(b: BrandingRow | null): Record<string, string> {
+  if (!b) return {};
+  const out: Record<string, string> = {};
+  for (const [slot, meta] of Object.entries(b.assets)) {
+    const v = encodeURIComponent(String(meta.updated_at ?? b.updated_at));
+    out[slot] = `/public/branding/${b.public_key}/assets/${slot}?v=${v}`;
+  }
+  return out;
+}
+
+const THEME_KEYS = ['preset', 'seed_hex', 'font'] as const;
+
+function tenantThemeLayer(b: BrandingRow | null) {
+  return b ? { preset: b.preset, seed_hex: b.seed_hex, font: b.font, mode: b.default_mode } : null;
+}
+
+// ── /me ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Everything a page needs to render the caller's brand + theme. Theme is
+ * returned as LAYERS (tenant, then user) for the client's resolveTheme(); the
+ * lock is applied HERE: while locked the user layer carries only `mode`.
+ */
+export async function getMyBranding(a: Actor) {
+  const [b, prefs] = await Promise.all([repo.getOwnBranding(a.ctx), repo.getOwnPreferences(a.ctx)]);
+  const userLayer = prefs
+    ? b?.theme_locked
+      ? { mode: (prefs['mode'] as string | null | undefined) ?? null }
+      : prefs
+    : null;
+  return {
+    theme: { tenant: tenantThemeLayer(b), user: userLayer, locked: Boolean(b?.theme_locked) },
+    personal: prefs,
+    product_names: b?.product_names ?? {},
+    terms: b?.terms ?? {},
+    nav_overrides: b?.nav_overrides ?? {},
+    assets: assetUrls(b),
+    public_key: b?.public_key ?? null,
+  };
+}
+
+export async function updateMyTheme(a: Actor, input: UserThemeUpdateInput) {
+  await requireCap(a, CAPABILITY.PLATFORM_APPEARANCE, false, 'Appearance settings are not enabled for your role');
+  // Stored as chosen even while locked — the lock is applied when the theme is
+  // RESOLVED (getMyBranding), so unlocking later restores the user's choice.
+  await repo.setOwnTheme(a.ctx, a.tenant_id, input as Record<string, unknown>);
+  return getMyBranding(a);
+}
+
+export async function clearMyTheme(a: Actor) {
+  await requireCap(a, CAPABILITY.PLATFORM_APPEARANCE, false, 'Appearance settings are not enabled for your role');
+  await repo.setOwnTheme(a.ctx, a.tenant_id, null);
+  return getMyBranding(a);
+}
+
+// ── Tenant admin ─────────────────────────────────────────────────────────────
+
+// Display facts about each uploaded asset — never the blob storage key.
+function assetMeta(b: BrandingRow | null): Record<string, { content_type: string; bytes: number; updated_at: string }> {
+  const out: Record<string, { content_type: string; bytes: number; updated_at: string }> = {};
+  for (const [slot, m] of Object.entries(b?.assets ?? {})) {
+    out[slot] = { content_type: m.content_type, bytes: m.bytes, updated_at: m.updated_at };
+  }
+  return out;
+}
+
+function tenantView(b: BrandingRow | null) {
+  return {
+    theme: tenantThemeLayer(b),
+    theme_locked: Boolean(b?.theme_locked),
+    terms: b?.terms ?? {},
+    nav_overrides: b?.nav_overrides ?? {},
+    // Read-only for the tenant admin (Super Admin owns them):
+    product_names: b?.product_names ?? {},
+    assets: assetUrls(b),
+    asset_meta: assetMeta(b),
+    public_key: b?.public_key ?? null,
+    updated_at: b?.updated_at ?? null,
+  };
+}
+
+export async function getTenantBranding(a: Actor) {
+  await requireCap(a, CAPABILITY.ADMIN_BRANDING_VIEW, false, 'Branding is not enabled for your role');
+  return tenantView(await repo.getOwnBranding(a.ctx));
+}
+
+export async function updateTenantBranding(a: Actor, input: TenantBrandingUpdateInput) {
+  await requireCap(a, CAPABILITY.ADMIN_BRANDING_MANAGE, true, 'You cannot change branding');
+  const current = await repo.getOwnBranding(a.ctx);
+  if (current?.theme_locked) {
+    const changesTheme =
+      THEME_KEYS.some((k) => k in input && (input[k] ?? null) !== (current[k] ?? null))
+      || ('default_mode' in input && input.default_mode !== current.default_mode);
+    if (changesTheme) throw new BrandingLockedError();
+  }
+  let updated: BrandingRow | null;
+  try {
+    updated = await repo.upsertTenantBranding(a.ctx, a.tenant_id, input);
+  } catch (err) {
+    // The DB trigger is the backstop for a lock set between our read and write.
+    if (err instanceof Error && /BRANDING_THEME_LOCKED|locked by the platform administrator/i.test(`${err.message} ${(err as { hint?: string }).hint ?? ''}`)) {
+      throw new BrandingLockedError();
+    }
+    throw err;
+  }
+  await logActivity({ action_type: 'branding_updated', performed_by: a.user_id, org_id: a.org_id });
+  return tenantView(updated);
+}
+
+// ── Super Admin (rank-gated in the controller) ───────────────────────────────
+
+async function requireTenant(tenantId: string) {
+  const t = await repo.tenantExistsAsService(tenantId);
+  if (!t) throw new NotFoundError('Tenant not found');
+  return t;
+}
+
+function saView(b: BrandingRow | null, tenantName: string) {
+  return { ...tenantView(b), tenant_name: tenantName };
+}
+
+export async function saGetBranding(tenantId: string) {
+  const t = await requireTenant(tenantId);
+  return saView(await repo.getBrandingAsService(tenantId), t.name);
+}
+
+export async function saUpdateBranding(tenantId: string, a: Actor, input: SaBrandingUpdateInput) {
+  const t = await requireTenant(tenantId);
+  const updated = await repo.upsertBrandingAsService(tenantId, a.user_id, input);
+  await logActivity({ action_type: 'branding_updated_sa', performed_by: a.user_id, org_id: a.org_id });
+  return saView(updated, t.name);
+}
+
+export async function saUploadAsset(tenantId: string, a: Actor, slot: BrandAssetSlot, data: string) {
+  const t = await requireTenant(tenantId);
+  let type;
+  let bytes: Buffer;
+  try {
+    bytes = decodeAsset(data);
+    type = validateBrandAsset(slot, bytes);
+  } catch (err) {
+    if (err instanceof BrandAssetError) throw new ValidationError(err.message, { code: err.code });
+    throw err;
+  }
+  // Immutable, time-stamped key (same convention as avatars): replacing an asset
+  // writes a new file and repoints the row, so cached URLs never show stale bytes.
+  const key = `brand/${tenantId}/${slot}/${Date.now()}.${EXT_FOR_TYPE[type]}`;
+  await blobStore().putAt(key, bytes);
+  const updated = await repo.setAssetAsService(tenantId, a.user_id, slot, { key, content_type: type, bytes: bytes.length });
+  await logActivity({ action_type: 'branding_asset_uploaded', performed_by: a.user_id, org_id: a.org_id });
+  return saView(updated, t.name);
+}
+
+export async function saDeleteAsset(tenantId: string, a: Actor, slot: BrandAssetSlot) {
+  const t = await requireTenant(tenantId);
+  const updated = await repo.setAssetAsService(tenantId, a.user_id, slot, null);
+  await logActivity({ action_type: 'branding_asset_removed', performed_by: a.user_id, org_id: a.org_id });
+  return saView(updated ?? (await repo.getBrandingAsService(tenantId)), t.name);
+}
+
+export async function saRotateKey(tenantId: string, a: Actor) {
+  const t = await requireTenant(tenantId);
+  const updated = await repo.rotatePublicKeyAsService(tenantId, a.user_id);
+  await logActivity({ action_type: 'branding_login_link_rotated', performed_by: a.user_id, org_id: a.org_id });
+  return saView(updated, t.name);
+}
+
+// ── Public (pre-login) ───────────────────────────────────────────────────────
+
+/**
+ * Display branding for the login page, by login-link key. Only what the page
+ * renders: theme, brand name, product names for the hero chips, asset URLs.
+ * No tenant id, no terms/menu, no user data. Unknown key → null (the route
+ * answers with the platform default, same shape — a probe learns nothing).
+ */
+export async function getPublicBranding(publicKey: string) {
+  const b = await repo.getBrandingByPublicKey(publicKey);
+  if (!b) return null;
+  const names = b.product_names as Record<string, { switcher?: string; title?: string } | { name?: string }>;
+  const brandName = (names['brand'] as { name?: string } | undefined)?.name ?? b.tenant_name;
+  return {
+    theme: tenantThemeLayer(b),
+    brand_name: brandName,
+    product_labels: ['lms', 'hr', 'task', 'admin']
+      .map((p) => (names[p] as { switcher?: string } | undefined)?.switcher)
+      .filter((x): x is string => Boolean(x)),
+    assets: assetUrls(b),
+  };
+}
+
+/** Asset bytes by login-link key + slot, or null. */
+export async function getPublicAsset(publicKey: string, slot: string) {
+  const b = await repo.getBrandingByPublicKey(publicKey);
+  const meta = b?.assets[slot];
+  if (!meta) return null;
+  const bytes = await blobStore().get(meta.key);
+  if (!bytes) return null;
+  return { bytes, content_type: meta.content_type, key: meta.key };
+}

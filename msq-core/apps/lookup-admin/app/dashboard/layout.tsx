@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { canOpenLookupAdmin } from '@platform/rbac';
 import { productOrigins, adminWebOrigin } from '@platform/ui-kit';
-import { AppNavbar, AppSidebar, MobileSidebar } from '@platform/ui-kit/shell';
+import { AppShell } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { ADMIN_NAV } from '@/src/config/navigation';
 import LogoutButton from '@/components/auth/LogoutButton';
@@ -50,31 +50,27 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // (BranchSwitcher, the same one every tool renders) is the scope, and SA
   // pages read it through src/lib/tenant-scope.ts.
 
+  // The shared navbar, not a hand-rolled one — the responsive rules
+  // (product pills inline on sm+, full-width row on mobile) live there and
+  // nowhere else. activeExtra="sa" gives the SA pill the current-page
+  // highlight the products get on their own headers; Admin rides alongside
+  // it only when that console would actually admit this user, which
+  // AppNavbar asks canOpenAdminConsole() for. The title is still the only
+  // thing on screen that says which of the two consoles you are in.
   return (
-    <div className="flex min-h-screen w-full flex-col bg-[#F8FAFC] lg:h-full lg:min-h-0 lg:overflow-hidden">
-      {/* The shared navbar, not a hand-rolled one — the responsive rules
-          (product pills inline on sm+, full-width row on mobile) live there and
-          nowhere else. activeExtra="sa" gives the SA pill the current-page
-          highlight the products get on their own headers; Admin rides alongside
-          it only when that console would actually admit this user, which
-          AppNavbar asks canOpenAdminConsole() for. The title is still the only
-          thing on screen that says which of the two consoles you are in. */}
-      <AppNavbar
-        user={session}
-        licensedProducts={licensedProducts}
-        productOrigins={productOrigins()}
-        activeExtra="sa"
-        homeHref="/dashboard"
-        title="Super Admin"
-        adminWebUrl={adminWebOrigin()}
-      />
-      <MobileSidebar actor={session} items={ADMIN_NAV} />
-      <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">
-        <AppSidebar actor={session} items={ADMIN_NAV} />
-        <main className="flex w-full min-w-0 flex-1 flex-col lg:overflow-y-auto">
-          {children}
-        </main>
-      </div>
-    </div>
+    <AppShell
+      nav={ADMIN_NAV}
+      productLine="Super Admin"
+      productKey="sa"
+      user={session}
+      licensedProducts={licensedProducts}
+      productOrigins={productOrigins()}
+      activeExtra="sa"
+      homeHref="/dashboard"
+      title="Super Admin"
+      adminWebUrl={adminWebOrigin()}
+    >
+      {children}
+    </AppShell>
   );
 }

@@ -79,26 +79,26 @@ export default function MonthGrid({ year, month, bars = [], markers = [], onMont
   };
 
   return (
-    <div className="rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-sm">
+    <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
         <button
           type="button"
           onClick={prev}
           aria-label="Previous month"
-          className="rounded-lg border border-[#E2E8F0] bg-white p-1.5 text-[#475569] transition-colors hover:border-[#0b6cbf] hover:text-[#0b6cbf]"
+          className="rounded-lg border border-outline-variant bg-surface-container-lowest p-1.5 text-on-surface-variant transition-colors hover:border-primary hover:text-primary"
         >
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        <h3 className="text-sm font-semibold text-[#0F172A]">
+        <h3 className="text-sm font-semibold text-on-surface">
           {MONTH_NAMES[month - 1]} {year}
         </h3>
         <button
           type="button"
           onClick={next}
           aria-label="Next month"
-          className="rounded-lg border border-[#E2E8F0] bg-white p-1.5 text-[#475569] transition-colors hover:border-[#0b6cbf] hover:text-[#0b6cbf]"
+          className="rounded-lg border border-outline-variant bg-surface-container-lowest p-1.5 text-on-surface-variant transition-colors hover:border-primary hover:text-primary"
         >
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -108,12 +108,12 @@ export default function MonthGrid({ year, month, bars = [], markers = [], onMont
 
       <div className="grid grid-cols-7 gap-1">
         {WEEKDAYS.map((w) => (
-          <div key={w} className="pb-1 text-center text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8]">
+          <div key={w} className="pb-1 text-center text-[11px] font-semibold uppercase tracking-wide text-outline">
             {w}
           </div>
         ))}
         {cells.map((day, idx) => {
-          if (day === null) return <div key={`empty-${idx}`} className="min-h-[64px] rounded-lg bg-[#F8FAFC]" />;
+          if (day === null) return <div key={`empty-${idx}`} className="min-h-[64px] rounded-lg bg-surface-container-low" />;
           const date = iso(year, month, day);
           const dayBars = barsByDate.get(date) ?? [];
           const dayMarkers = markersByDate.get(date) ?? [];
@@ -125,12 +125,12 @@ export default function MonthGrid({ year, month, bars = [], markers = [], onMont
               type={onDayClick ? 'button' : undefined}
               onClick={onDayClick ? () => onDayClick(date) : undefined}
               className={`min-h-[64px] rounded-lg border p-1 text-left ${
-                isHoliday ? 'border-[#FDE68A] bg-[#FFFBEB]' : 'border-[#E2E8F0] bg-white'
-              } ${onDayClick ? 'cursor-pointer transition-colors hover:border-[#0b6cbf]' : ''}`}
+                isHoliday ? 'border-status-due/40 bg-status-due-container' : 'border-outline-variant bg-surface-container-lowest'
+              } ${onDayClick ? 'cursor-pointer transition-colors hover:border-primary' : ''}`}
             >
-              <div className="mb-1 text-[11px] font-medium text-[#64748B]">{day}</div>
+              <div className="mb-1 text-[11px] font-medium text-on-surface-variant">{day}</div>
               {dayMarkers.map((mk, i) => (
-                <div key={`mk-${i}`} className="truncate text-[10px] font-medium text-[#B45309]" title={mk.label}>
+                <div key={`mk-${i}`} className="truncate text-[10px] font-medium text-on-status-due-container" title={mk.label}>
                   {mk.label}
                 </div>
               ))}
@@ -138,7 +138,7 @@ export default function MonthGrid({ year, month, bars = [], markers = [], onMont
                 <div
                   key={`bar-${i}`}
                   title={bar.title ?? bar.label}
-                  className="mb-0.5 truncate rounded px-1 py-0.5 text-[10px] font-medium text-white"
+                  className="mb-0.5 truncate rounded px-1 py-0.5 text-[10px] font-medium text-on-primary"
                   style={{ backgroundColor: bar.color }}
                 >
                   {bar.label}

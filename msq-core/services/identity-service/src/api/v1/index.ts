@@ -4,6 +4,7 @@ import { usersRouter } from './users/users.router.js';
 import { orgsRouter } from './orgs/orgs.router.js';
 import { apiClientsRouter } from './api-clients/api-clients.router.js';
 import { publicReadRouter } from './public/public-read.router.js';
+import { brandingRouter } from './branding/branding.router.js';
 
 export async function v1Router(app: FastifyInstance): Promise<void> {
   await app.register(authRouter, { prefix: '/auth' });
@@ -11,4 +12,5 @@ export async function v1Router(app: FastifyInstance): Promise<void> {
   await app.register(orgsRouter);
   await app.register(apiClientsRouter);
   await app.register(publicReadRouter);
+  await app.register(brandingRouter);
 }

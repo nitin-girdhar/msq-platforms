@@ -1092,6 +1092,11 @@ app.get('/hr/leave/requests', { ...withAuth }, async (req, reply) => {
 app.get('/hr/leave/requests/preview', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/leave/requests/preview', req, reply, req.userCtx);
 });
+// Many approve/reject decisions in one call (approvals queue). The service runs each
+// request through the single-request path, so this adds no authority.
+app.post('/hr/leave/requests/bulk-decision', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/leave/requests/bulk-decision', req, reply, req.userCtx);
+});
 app.get('/hr/leave/requests/team', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/leave/requests/team', req, reply, req.userCtx);
 });

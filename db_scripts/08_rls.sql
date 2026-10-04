@@ -1536,6 +1536,40 @@ CREATE POLICY self_policy ON hr.payslip_lines AS PERMISSIVE FOR SELECT TO app_us
   USING (EXISTS (SELECT 1 FROM hr.payslips p WHERE p.id = payslip_id));
 
 
+ALTER TABLE hr.announcements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.announcements FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.announcements;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.announcements;
+-- Everyone in the branch reads PUBLISHED, unexpired announcements (drafts are HR's).
+CREATE POLICY org_isolation_policy ON hr.announcements AS PERMISSIVE FOR SELECT TO app_user
+  USING (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted AND published_at IS NOT NULL AND (expires_on IS NULL OR expires_on >= CURRENT_DATE));
+CREATE POLICY tenant_isolation_policy ON hr.announcements AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+
+ALTER TABLE hr.announcement_reads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.announcement_reads FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS self_policy             ON hr.announcement_reads;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.announcement_reads;
+CREATE POLICY self_policy ON hr.announcement_reads AS PERMISSIVE FOR ALL TO app_user
+  USING      (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid)
+  WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid);
+CREATE POLICY tenant_isolation_policy ON hr.announcement_reads AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted))) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)));
+
+ALTER TABLE hr.assets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.assets FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.assets;
+-- Inventory is HR's: no app_user policy.
+CREATE POLICY tenant_isolation_policy ON hr.assets AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+
+ALTER TABLE hr.asset_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.asset_assignments FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.asset_assignments;
+CREATE POLICY tenant_isolation_policy ON hr.asset_assignments AS PERMISSIVE FOR ALL TO tenant_admin
+  USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+
+
 -- ── hr.attendance_regularization_approvals — mirrors hr.leave_request_approvals ──
 ALTER TABLE hr.attendance_regularization_approvals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.attendance_regularization_approvals FORCE ROW LEVEL SECURITY;

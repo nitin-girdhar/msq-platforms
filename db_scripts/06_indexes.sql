@@ -740,4 +740,19 @@ CREATE INDEX IF NOT EXISTS idx_payslips_org_period
   ON hr.payslips (org_id, period) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_payslip_lines_payslip
   ON hr.payslip_lines (payslip_id, sort_order);
+
+-- Announcements + assets (1.63.0).
+CREATE INDEX IF NOT EXISTS idx_announcements_org_published
+  ON hr.announcements (org_id, is_pinned DESC, published_at DESC) WHERE NOT is_deleted AND published_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_announcement_reads_user
+  ON hr.announcement_reads (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uix_assets_org_tag
+  ON hr.assets (org_id, lower(asset_tag)) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_assets_org_status
+  ON hr.assets (org_id, status) WHERE NOT is_deleted;
+-- An asset is held by at most one person at a time.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_asset_assignments_open
+  ON hr.asset_assignments (asset_id) WHERE returned_on IS NULL AND NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_asset_assignments_user
+  ON hr.asset_assignments (user_id) WHERE NOT is_deleted;
 COMMIT;

@@ -306,6 +306,14 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Add notes to an employee''s HR timeline (appraisals, promotions, transfers). Notes are visible only to people who can open the full profile.', 6),
 ('hr.employees.payslip.view', 'operation', 'hr.employees', 'View own payslips',
  'Open their own published payslips.', 7),
+('hr.employees.announcements.view', 'operation', 'hr.employees', 'Read announcements',
+ 'Read the branch''s announcements.', 8),
+('hr.employees.announcements.manage', 'operation', 'hr.employees', 'Post announcements',
+ 'Write, pin and retire announcements for the whole branch.', 9),
+('hr.employees.assets.view', 'operation', 'hr.employees', 'View own assets',
+ 'See the equipment assigned to them.', 10),
+('hr.employees.assets.manage', 'operation', 'hr.employees', 'Manage assets',
+ 'Keep the asset inventory and assign or take back equipment.', 11),
 
 -- ── HR REPORTS ──────────────────────────────────────────────────────
 -- Its own tool (the HRMS left-nav "Reports" entry), not a tab of Attendance

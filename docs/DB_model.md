@@ -703,6 +703,26 @@ erDiagram
     UUID payslip_id FK
     UUID org_id FK
   }
+  announcements {
+    UUID id PK
+    UUID org_id FK
+    UUID author_id FK
+  }
+  announcement_reads {
+    UUID announcement_id FK
+    UUID user_id FK
+    UUID org_id FK
+  }
+  assets {
+    UUID id PK
+    UUID org_id FK
+  }
+  asset_assignments {
+    UUID id PK
+    UUID asset_id FK
+    UUID user_id FK
+    UUID org_id FK
+  }
   employee_profiles |o--|| users : "user_id"
   employee_profiles }o--o| employment_types : "employment_type_id"
   employee_profiles }o--o| departments : "department_id"
@@ -751,6 +771,11 @@ erDiagram
   payslips }o--|| users : "user_id"
   payslips }o--o| users : "published_by"
   payslip_lines }o--|| payslips : "payslip_id"
+  announcements }o--o| users : "author_id"
+  announcement_reads }o--|| announcements : "announcement_id"
+  announcement_reads }o--|| users : "user_id"
+  asset_assignments }o--|| assets : "asset_id"
+  asset_assignments }o--|| users : "user_id"
 ```
 
 #### `task`

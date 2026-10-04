@@ -1123,6 +1123,46 @@ app.post('/hr/leave/requests/:id/cancel', { ...withAuth }, async (req, reply) =>
   return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}/cancel`, req, reply, req.userCtx);
 });
 
+// Announcements + assets (schema 1.63.0). Static paths before the `:id` ones.
+app.get('/hr/announcements', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/announcements', req, reply, req.userCtx);
+});
+app.post('/hr/announcements', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/announcements', req, reply, req.userCtx);
+});
+app.get('/hr/announcements/admin', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/announcements/admin', req, reply, req.userCtx);
+});
+app.get('/hr/assets', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/assets', req, reply, req.userCtx);
+});
+app.post('/hr/assets', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/assets', req, reply, req.userCtx);
+});
+app.get('/hr/assets/mine', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/assets/mine', req, reply, req.userCtx);
+});
+app.post('/hr/announcements/:id/read', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/announcements/${id}/read`, req, reply, req.userCtx);
+});
+app.post('/hr/announcements/:id/publish', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/announcements/${id}/publish`, req, reply, req.userCtx);
+});
+app.post('/hr/announcements/:id/retire', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/announcements/${id}/retire`, req, reply, req.userCtx);
+});
+app.post('/hr/assets/:id/assign', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/assets/${id}/assign`, req, reply, req.userCtx);
+});
+app.post('/hr/assets/:id/return', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/assets/${id}/return`, req, reply, req.userCtx);
+});
+
 // Payroll viewer + month lock (schema 1.62.0). Static `admin` paths first.
 app.get('/hr/payroll/payslips', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/payroll/payslips', req, reply, req.userCtx);

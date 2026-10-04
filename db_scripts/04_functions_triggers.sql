@@ -2331,6 +2331,71 @@ DROP TRIGGER IF EXISTS trg_00_payslip_lines_set_org_id     ON hr.payslip_lines;
 CREATE TRIGGER trg_00_payslip_lines_set_org_id
   BEFORE INSERT ON hr.payslip_lines FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
 
+DROP TRIGGER IF EXISTS trg_announcements_updated_at        ON hr.announcements;
+CREATE TRIGGER trg_announcements_updated_at
+  BEFORE UPDATE ON hr.announcements FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_announcements_soft_delete       ON hr.announcements;
+CREATE TRIGGER trg_announcements_soft_delete
+  BEFORE DELETE ON hr.announcements FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_announcements_set_org_id     ON hr.announcements;
+CREATE TRIGGER trg_00_announcements_set_org_id
+  BEFORE INSERT ON hr.announcements FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_announcements_set_created_by ON hr.announcements;
+CREATE TRIGGER trg_01_announcements_set_created_by
+  BEFORE INSERT ON hr.announcements FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_announcements_audit             ON hr.announcements;
+CREATE TRIGGER trg_announcements_audit
+  AFTER UPDATE OR DELETE ON hr.announcements FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_00_announcement_reads_set_org_id     ON hr.announcement_reads;
+CREATE TRIGGER trg_00_announcement_reads_set_org_id
+  BEFORE INSERT ON hr.announcement_reads FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_assets_updated_at        ON hr.assets;
+CREATE TRIGGER trg_assets_updated_at
+  BEFORE UPDATE ON hr.assets FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_assets_soft_delete       ON hr.assets;
+CREATE TRIGGER trg_assets_soft_delete
+  BEFORE DELETE ON hr.assets FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_assets_set_org_id     ON hr.assets;
+CREATE TRIGGER trg_00_assets_set_org_id
+  BEFORE INSERT ON hr.assets FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_assets_set_created_by ON hr.assets;
+CREATE TRIGGER trg_01_assets_set_created_by
+  BEFORE INSERT ON hr.assets FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_assets_audit             ON hr.assets;
+CREATE TRIGGER trg_assets_audit
+  AFTER UPDATE OR DELETE ON hr.assets FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_asset_assignments_updated_at        ON hr.asset_assignments;
+CREATE TRIGGER trg_asset_assignments_updated_at
+  BEFORE UPDATE ON hr.asset_assignments FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_asset_assignments_soft_delete       ON hr.asset_assignments;
+CREATE TRIGGER trg_asset_assignments_soft_delete
+  BEFORE DELETE ON hr.asset_assignments FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_asset_assignments_set_org_id     ON hr.asset_assignments;
+CREATE TRIGGER trg_00_asset_assignments_set_org_id
+  BEFORE INSERT ON hr.asset_assignments FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_asset_assignments_set_created_by ON hr.asset_assignments;
+CREATE TRIGGER trg_01_asset_assignments_set_created_by
+  BEFORE INSERT ON hr.asset_assignments FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_asset_assignments_audit             ON hr.asset_assignments;
+CREATE TRIGGER trg_asset_assignments_audit
+  AFTER UPDATE OR DELETE ON hr.asset_assignments FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+
 
 
 

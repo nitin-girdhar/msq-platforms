@@ -1249,4 +1249,84 @@ CREATE TABLE IF NOT EXISTS hr.payslip_lines (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP()
 );
 
+
+-- ===================================================================
+-- 11. Announcements + assets (schema 1.63.0)
+--     hr.announcements       branch-wide notices (policy, event, celebration).
+--                            Everyone in the branch reads PUBLISHED, unexpired ones.
+--     hr.announcement_reads  who has read what (own rows only).
+--     hr.assets              HR's inventory of equipment (laptops, phones...).
+--     hr.asset_assignments   who holds an asset, from when to when.
+--     Assets are HR-only data: no app_user policy; an employee sees what they hold
+--     through the service transaction (own rows, capability-checked).
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.announcements (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  org_id      UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  author_id   UUID    REFERENCES iam.users(id) ON DELETE SET NULL,
+  title       TEXT    NOT NULL,
+  body        TEXT    NOT NULL,
+  category    TEXT    NOT NULL DEFAULT 'general'
+                      CONSTRAINT chk_announcements_category CHECK (category IN ('general','policy','event','celebration')),
+  is_pinned   BOOLEAN NOT NULL DEFAULT FALSE,
+  published_at TIMESTAMPTZ,
+  expires_on  DATE,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_announcements_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+CREATE TABLE IF NOT EXISTS hr.announcement_reads (
+  announcement_id UUID NOT NULL REFERENCES hr.announcements(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL REFERENCES iam.users(id)        ON DELETE CASCADE,
+  org_id          UUID NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  read_at         TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  PRIMARY KEY (announcement_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS hr.assets (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  org_id      UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  asset_tag   TEXT    NOT NULL,
+  name        TEXT    NOT NULL,
+  category    TEXT    NOT NULL DEFAULT 'other'
+                      CONSTRAINT chk_assets_category CHECK (category IN ('laptop','monitor','phone','access_card','other')),
+  serial_no   TEXT,
+  status      TEXT    NOT NULL DEFAULT 'in_stock'
+                      CONSTRAINT chk_assets_status CHECK (status IN ('in_stock','assigned','retired')),
+  notes       TEXT,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_assets_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+CREATE TABLE IF NOT EXISTS hr.asset_assignments (
+  id           UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  asset_id     UUID    NOT NULL REFERENCES hr.assets(id)            ON DELETE RESTRICT,
+  user_id      UUID    NOT NULL REFERENCES iam.users(id)            ON DELETE RESTRICT,
+  org_id       UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  assigned_on  DATE    NOT NULL DEFAULT CURRENT_DATE,
+  returned_on  DATE,
+  note         TEXT,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_asset_assignments_dates CHECK (returned_on IS NULL OR returned_on >= assigned_on),
+  CONSTRAINT chk_asset_assignments_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
 COMMIT;

@@ -497,6 +497,17 @@ GRANT ALL PRIVILEGES         ON hr.pay_periods, hr.payslips, hr.payslip_lines TO
 GRANT SELECT, INSERT, UPDATE ON hr.pay_periods, hr.payslips TO hr_svc;
 GRANT SELECT, INSERT, UPDATE, DELETE ON hr.payslip_lines TO hr_svc;
 
+-- Announcements + assets (1.63.0). Employees read announcements and record their own
+-- reads through app_user; assets are service-transaction only.
+GRANT SELECT                 ON hr.announcements TO app_user;
+GRANT SELECT, INSERT         ON hr.announcement_reads TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.announcements, hr.assets, hr.asset_assignments TO tenant_admin;
+GRANT SELECT, INSERT         ON hr.announcement_reads TO tenant_admin;
+REVOKE DELETE                ON hr.announcements, hr.assets, hr.asset_assignments FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.announcements, hr.announcement_reads, hr.assets, hr.asset_assignments TO root_service;
+GRANT SELECT, INSERT, UPDATE ON hr.announcements, hr.assets, hr.asset_assignments TO hr_svc;
+GRANT SELECT, INSERT         ON hr.announcement_reads TO hr_svc;
+
 GRANT EXECUTE ON FUNCTION hr.can_approve(UUID,UUID,UUID) TO app_user, tenant_admin;
 
 GRANT SELECT ON hr.vw_attendance_monthly_summary, hr.vw_org_attendance_today

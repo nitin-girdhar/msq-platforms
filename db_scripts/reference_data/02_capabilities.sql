@@ -292,6 +292,12 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
  'Create and edit employee profiles.', 2),
 ('hr.employees.taxonomy.manage', 'operation', 'hr.employees', 'Manage departments',
  'Create and edit departments and designations.', 3),
+('hr.employees.profile.edit', 'operation', 'hr.employees', 'Edit own profile',
+ 'Keep their own personal details and emergency contacts up to date.', 4),
+('hr.employees.profile360.view', 'operation', 'hr.employees', 'Open full employee profile',
+ 'Open any employee''s full profile (Employee 360): job details, personal details, emergency contacts, leave balances and HR notes.', 5),
+('hr.employees.notes.manage', 'operation', 'hr.employees', 'Manage HR notes',
+ 'Add notes to an employee''s HR timeline (appraisals, promotions, transfers). Notes are visible only to people who can open the full profile.', 6),
 
 -- ── HR REPORTS ──────────────────────────────────────────────────────
 -- Its own tool (the HRMS left-nav "Reports" entry), not a tab of Attendance

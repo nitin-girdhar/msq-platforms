@@ -663,6 +663,21 @@ erDiagram
     UUID leave_type_id FK
     UUID ledger_entry_id FK
   }
+  employee_personal {
+    UUID user_id PK
+    UUID org_id FK
+  }
+  emergency_contacts {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+  }
+  employee_notes {
+    UUID id PK
+    UUID user_id FK
+    UUID org_id FK
+    UUID author_id FK
+  }
   employee_profiles |o--|| users : "user_id"
   employee_profiles }o--o| employment_types : "employment_type_id"
   employee_profiles }o--o| departments : "department_id"
@@ -698,6 +713,10 @@ erDiagram
   comp_off_claims }o--o| users : "approver_id"
   comp_off_claims }o--o| leave_types : "leave_type_id"
   comp_off_claims }o--o| leave_ledger : "ledger_entry_id"
+  employee_personal |o--|| users : "user_id"
+  emergency_contacts }o--|| users : "user_id"
+  employee_notes }o--|| users : "user_id"
+  employee_notes }o--o| users : "author_id"
 ```
 
 #### `task`

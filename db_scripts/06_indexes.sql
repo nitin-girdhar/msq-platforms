@@ -705,4 +705,15 @@ CREATE INDEX IF NOT EXISTS idx_comp_off_claims_approver_pending
 -- The nightly expiry sweep: approved, not yet lapsed, ordered by when they run out.
 CREATE INDEX IF NOT EXISTS idx_comp_off_claims_expiry
   ON hr.comp_off_claims (expires_on) WHERE status = 'approved' AND lapsed_at IS NULL AND NOT is_deleted;
+
+-- Employee 360 (1.60.0).
+CREATE INDEX IF NOT EXISTS idx_employee_personal_org
+  ON hr.employee_personal (org_id) WHERE NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_emergency_contacts_user
+  ON hr.emergency_contacts (user_id) WHERE NOT is_deleted;
+-- At most one primary contact per person.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_emergency_contacts_primary
+  ON hr.emergency_contacts (user_id) WHERE is_primary AND NOT is_deleted;
+CREATE INDEX IF NOT EXISTS idx_employee_notes_user
+  ON hr.employee_notes (user_id, created_at DESC) WHERE NOT is_deleted;
 COMMIT;

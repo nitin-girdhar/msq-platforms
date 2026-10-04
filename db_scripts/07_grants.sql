@@ -470,6 +470,14 @@ REVOKE DELETE                ON hr.comp_off_claims FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON hr.comp_off_claims TO root_service;
 GRANT SELECT, INSERT, UPDATE ON hr.comp_off_claims TO hr_svc;
 
+-- Employee 360 (1.60.0). employee_notes has no app_user grant: an HR note about an
+-- employee is read and written only through the service transaction.
+GRANT SELECT, INSERT, UPDATE ON hr.employee_personal, hr.emergency_contacts TO app_user;
+GRANT SELECT, INSERT, UPDATE ON hr.employee_personal, hr.emergency_contacts, hr.employee_notes TO tenant_admin;
+REVOKE DELETE                ON hr.employee_personal, hr.emergency_contacts, hr.employee_notes FROM app_user, tenant_admin;
+GRANT ALL PRIVILEGES         ON hr.employee_personal, hr.emergency_contacts, hr.employee_notes TO root_service;
+GRANT SELECT, INSERT, UPDATE ON hr.employee_personal, hr.emergency_contacts, hr.employee_notes TO hr_svc;
+
 GRANT EXECUTE ON FUNCTION hr.can_approve(UUID,UUID,UUID) TO app_user, tenant_admin;
 
 GRANT SELECT ON hr.vw_attendance_monthly_summary, hr.vw_org_attendance_today

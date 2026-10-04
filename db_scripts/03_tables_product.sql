@@ -1056,4 +1056,84 @@ CREATE TABLE IF NOT EXISTS hr.comp_off_claims (
   CONSTRAINT chk_comp_off_claims_active_deleted CHECK (NOT (is_active AND is_deleted))
 );
 
+
+-- ===================================================================
+-- 8. Employee 360 data (schema 1.60.0): personal details, emergency contacts, HR notes
+--
+--    PRIVACY SHAPE -- deliberately NOT the usual org-wide policy. Everyone in an
+--    org may read the employee directory (hr.employee_profiles), but a colleague's
+--    date of birth, address, personal email and emergency contacts are not
+--    theirs to read. So these tables carry a SELF policy for app_user (own rows
+--    only) and a tenant_admin policy, and NO org_isolation policy: anyone else
+--    (an HR admin opening an Employee 360) reads and writes through the service
+--    transaction after hr-service has checked hr.employees.profile360.view.
+--    hr.employee_notes goes further: no app_user policy at all, because an HR
+--    note about an employee is not that employee's to read.
+--
+--    Closed value sets (gender, marital status, blood group, note kind) are
+--    CHECK-constrained TEXT, the same house style as accrual_frequency and
+--    leave_ledger.entry_type: a small fixed list that is not tenant-configurable.
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.employee_personal (
+  user_id           UUID    PRIMARY KEY REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  org_id            UUID    NOT NULL REFERENCES entity.organizations(id)     ON DELETE RESTRICT,
+  preferred_name    TEXT,
+  date_of_birth     DATE,
+  gender            TEXT    CONSTRAINT chk_employee_personal_gender
+                            CHECK (gender IN ('female','male','other','undisclosed')),
+  marital_status    TEXT    CONSTRAINT chk_employee_personal_marital_status
+                            CHECK (marital_status IN ('single','married','divorced','widowed','undisclosed')),
+  blood_group       TEXT    CONSTRAINT chk_employee_personal_blood_group
+                            CHECK (blood_group IN ('A+','A-','B+','B-','AB+','AB-','O+','O-')),
+  nationality       TEXT,
+  personal_email    TEXT,
+  current_address   TEXT,
+  permanent_address TEXT,
+  is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted        BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at        TIMESTAMPTZ,
+  deleted_by        UUID,
+  created_by        UUID,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_employee_personal_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+CREATE TABLE IF NOT EXISTS hr.emergency_contacts (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  user_id     UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  org_id      UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE RESTRICT,
+  name        TEXT    NOT NULL,
+  relation    TEXT    NOT NULL,
+  phone       TEXT    NOT NULL,
+  is_primary  BOOLEAN NOT NULL DEFAULT FALSE,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_emergency_contacts_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+CREATE TABLE IF NOT EXISTS hr.employee_notes (
+  id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  user_id     UUID    NOT NULL REFERENCES iam.users(id)             ON DELETE RESTRICT,
+  org_id      UUID    NOT NULL REFERENCES entity.organizations(id)  ON DELETE RESTRICT,
+  author_id   UUID    REFERENCES iam.users(id)                      ON DELETE SET NULL,
+  kind        TEXT    NOT NULL DEFAULT 'note'
+                      CONSTRAINT chk_employee_notes_kind
+                      CHECK (kind IN ('note','appraisal','promotion','transfer','warning','other')),
+  body        TEXT    NOT NULL,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at  TIMESTAMPTZ,
+  deleted_by  UUID,
+  created_by  UUID,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT chk_employee_notes_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
 COMMIT;

@@ -2207,6 +2207,67 @@ DROP TRIGGER IF EXISTS trg_comp_off_claims_audit             ON hr.comp_off_clai
 CREATE TRIGGER trg_comp_off_claims_audit
   AFTER UPDATE OR DELETE ON hr.comp_off_claims FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
+DROP TRIGGER IF EXISTS trg_employee_personal_updated_at        ON hr.employee_personal;
+CREATE TRIGGER trg_employee_personal_updated_at
+  BEFORE UPDATE ON hr.employee_personal FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_employee_personal_soft_delete       ON hr.employee_personal;
+CREATE TRIGGER trg_employee_personal_soft_delete
+  BEFORE DELETE ON hr.employee_personal FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_employee_personal_set_org_id     ON hr.employee_personal;
+CREATE TRIGGER trg_00_employee_personal_set_org_id
+  BEFORE INSERT ON hr.employee_personal FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_employee_personal_set_created_by ON hr.employee_personal;
+CREATE TRIGGER trg_01_employee_personal_set_created_by
+  BEFORE INSERT ON hr.employee_personal FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_employee_personal_audit             ON hr.employee_personal;
+CREATE TRIGGER trg_employee_personal_audit
+  AFTER UPDATE OR DELETE ON hr.employee_personal FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_emergency_contacts_updated_at        ON hr.emergency_contacts;
+CREATE TRIGGER trg_emergency_contacts_updated_at
+  BEFORE UPDATE ON hr.emergency_contacts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_emergency_contacts_soft_delete       ON hr.emergency_contacts;
+CREATE TRIGGER trg_emergency_contacts_soft_delete
+  BEFORE DELETE ON hr.emergency_contacts FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_emergency_contacts_set_org_id     ON hr.emergency_contacts;
+CREATE TRIGGER trg_00_emergency_contacts_set_org_id
+  BEFORE INSERT ON hr.emergency_contacts FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_emergency_contacts_set_created_by ON hr.emergency_contacts;
+CREATE TRIGGER trg_01_emergency_contacts_set_created_by
+  BEFORE INSERT ON hr.emergency_contacts FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_emergency_contacts_audit             ON hr.emergency_contacts;
+CREATE TRIGGER trg_emergency_contacts_audit
+  AFTER UPDATE OR DELETE ON hr.emergency_contacts FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+DROP TRIGGER IF EXISTS trg_employee_notes_updated_at        ON hr.employee_notes;
+CREATE TRIGGER trg_employee_notes_updated_at
+  BEFORE UPDATE ON hr.employee_notes FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_employee_notes_soft_delete       ON hr.employee_notes;
+CREATE TRIGGER trg_employee_notes_soft_delete
+  BEFORE DELETE ON hr.employee_notes FOR EACH ROW EXECUTE FUNCTION public.soft_delete_row();
+
+DROP TRIGGER IF EXISTS trg_00_employee_notes_set_org_id     ON hr.employee_notes;
+CREATE TRIGGER trg_00_employee_notes_set_org_id
+  BEFORE INSERT ON hr.employee_notes FOR EACH ROW EXECUTE FUNCTION public.set_org_id();
+
+DROP TRIGGER IF EXISTS trg_01_employee_notes_set_created_by ON hr.employee_notes;
+CREATE TRIGGER trg_01_employee_notes_set_created_by
+  BEFORE INSERT ON hr.employee_notes FOR EACH ROW EXECUTE FUNCTION public.set_created_by();
+
+DROP TRIGGER IF EXISTS trg_employee_notes_audit             ON hr.employee_notes;
+CREATE TRIGGER trg_employee_notes_audit
+  AFTER UPDATE OR DELETE ON hr.employee_notes FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+
 
 
 -- ===================================================================

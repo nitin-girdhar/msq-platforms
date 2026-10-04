@@ -1123,6 +1123,33 @@ app.post('/hr/leave/requests/:id/cancel', { ...withAuth }, async (req, reply) =>
   return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}/cancel`, req, reply, req.userCtx);
 });
 
+// My profile (self) and Employee 360 (schema 1.60.0). The `me` routes never take a user id.
+app.get('/hr/profile/me', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/profile/me', req, reply, req.userCtx);
+});
+app.put('/hr/profile/me/personal', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/profile/me/personal', req, reply, req.userCtx);
+});
+app.post('/hr/profile/me/contacts', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/profile/me/contacts', req, reply, req.userCtx);
+});
+app.patch('/hr/profile/me/contacts/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/profile/me/contacts/${id}`, req, reply, req.userCtx);
+});
+app.delete('/hr/profile/me/contacts/:id', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/profile/me/contacts/${id}`, req, reply, req.userCtx);
+});
+app.get('/hr/employees/:userId/profile-360', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/profile-360`, req, reply, req.userCtx);
+});
+app.post('/hr/employees/:userId/notes', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/notes`, req, reply, req.userCtx);
+});
+
 // Comp-off claims (schema 1.59.0). The static `queue` route is registered before the
 // `:id` ones so it is never captured as an id.
 app.post('/hr/leave/comp-off', { ...withAuth }, async (req, reply) => {

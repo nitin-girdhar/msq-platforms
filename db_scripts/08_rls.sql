@@ -1447,6 +1447,46 @@ CREATE POLICY self_policy ON hr.comp_off_claims AS PERMISSIVE FOR ALL TO app_use
   USING      (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted)
   WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
 
+ALTER TABLE hr.employee_personal ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.employee_personal FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.employee_personal;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.employee_personal;
+DROP POLICY IF EXISTS self_policy             ON hr.employee_personal;
+-- Deliberately no org_isolation_policy: personal data is the owner's, not the org's.
+-- An HR admin opening an Employee 360 reads it through the service transaction.
+CREATE POLICY tenant_isolation_policy ON hr.employee_personal AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+CREATE POLICY self_policy ON hr.employee_personal AS PERMISSIVE FOR ALL TO app_user
+  USING      (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted)
+  WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
+
+ALTER TABLE hr.emergency_contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.emergency_contacts FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.emergency_contacts;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.emergency_contacts;
+DROP POLICY IF EXISTS self_policy             ON hr.emergency_contacts;
+-- Deliberately no org_isolation_policy: personal data is the owner's, not the org's.
+-- An HR admin opening an Employee 360 reads it through the service transaction.
+CREATE POLICY tenant_isolation_policy ON hr.emergency_contacts AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+CREATE POLICY self_policy ON hr.emergency_contacts AS PERMISSIVE FOR ALL TO app_user
+  USING      (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted)
+  WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
+
+ALTER TABLE hr.employee_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.employee_notes FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.employee_notes;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.employee_notes;
+DROP POLICY IF EXISTS self_policy             ON hr.employee_notes;
+-- No app_user policy at all: an HR note about an employee is not that employee's to
+-- read, and not their colleagues' either. Service transaction + capability only.
+CREATE POLICY tenant_isolation_policy ON hr.employee_notes AS PERMISSIVE FOR ALL TO tenant_admin
+  USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
+  WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
+
+
 -- ── hr.attendance_regularization_approvals — mirrors hr.leave_request_approvals ──
 ALTER TABLE hr.attendance_regularization_approvals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.attendance_regularization_approvals FORCE ROW LEVEL SECURITY;

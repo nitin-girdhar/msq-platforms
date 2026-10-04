@@ -1009,9 +1009,18 @@ SELECT
   (SELECT p.sla_hours FROM hr.leave_policies p
     WHERE p.leave_type_id = lr.leave_type_id AND NOT p.is_deleted AND p.is_active
       AND (p.org_id = lr.org_id OR p.org_id IS NULL) AND p.applicable_from <= lr.start_date
-    ORDER BY (p.org_id IS NOT NULL) DESC, p.applicable_from DESC LIMIT 1) AS sla_hours
+    ORDER BY (p.org_id IS NOT NULL) DESC, p.applicable_from DESC LIMIT 1) AS sla_hours,
+  -- 1.67.0: apply page
+  lr.request_no,
+  lr.handover_user_id,
+  hu.full_name     AS handover_name,
+  lr.attachment_name,
+  lr.attachment_mime,
+  lr.attachment_size,
+  lap.full_name    AS latest_approver_name
 FROM hr.leave_requests lr
 JOIN iam.users                    u   ON u.id   = lr.user_id
+LEFT JOIN iam.users               hu  ON hu.id  = lr.handover_user_id
 -- Catalog joins are qualified on tenant_id: these views are read under
 -- BYPASSRLS service roles too, where RLS does not filter for us.
 JOIN entity.organizations         o   ON o.id  = lr.org_id
@@ -1024,6 +1033,7 @@ LEFT JOIN LATERAL (
   ORDER BY a.level DESC
   LIMIT 1
 ) la ON TRUE
+LEFT JOIN iam.users lap ON lap.id = la.approver_id
 WHERE NOT lr.is_deleted;
 
 -- Approved leaves with user info, for team-calendar date-range queries.
@@ -1163,7 +1173,7 @@ SELECT
   t.recurrence_rule,
   t.created_at,
   t.updated_at,
-  -- 1.66.0: appended (CREATE OR REPLACE VIEW can only add columns at the end).
+  -- 1.67.0: appended (CREATE OR REPLACE VIEW can only add columns at the end).
   t.task_no,
   o.name         AS org_name,
   -- SLA chip: derived from due_at, no policy table. Finished tasks never breach.

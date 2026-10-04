@@ -537,7 +537,7 @@ GRANT SELECT, INSERT, UPDATE ON task.tasks TO tenant_admin;
 REVOKE DELETE                ON task.tasks FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON task.tasks TO root_service;
 
--- 1.66.0: counters are reachable only through the SECURITY DEFINER trigger.
+-- 1.67.0: counters are reachable only through the SECURITY DEFINER trigger.
 REVOKE ALL PRIVILEGES ON task.task_counters FROM app_user, tenant_admin, task_svc;
 GRANT ALL PRIVILEGES  ON task.task_counters TO root_service;
 
@@ -996,5 +996,8 @@ GRANT SELECT, INSERT, UPDATE ON hr.document_settings, hr.shift_requirements, hr.
 REVOKE DELETE                ON hr.document_settings, hr.shift_requirements, hr.roster_publications FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON hr.document_settings, hr.shift_requirements, hr.roster_publications TO root_service;
 GRANT SELECT, INSERT, UPDATE ON hr.document_settings, hr.shift_requirements, hr.roster_publications TO hr_svc;
+
+-- Leave request number (1.67.0).
+GRANT USAGE ON SEQUENCE hr.leave_request_no_seq TO app_user, tenant_admin, root_service, hr_svc;
 
 COMMIT;

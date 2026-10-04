@@ -684,7 +684,7 @@ ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO NOTHING;
 
 
--- ── Back-fill: tasks.bulk + tasks.export (schema 1.66.0) ───────────
+-- ── Back-fill: tasks.bulk + tasks.export (schema 1.67.0) ───────────
 -- Same trap as above (a global-template grant never reaches a tenant's own role
 -- copy), so each is pinned to an existing key with the audience we want:
 --   tasks.bulk    ← tasks.assign     whoever may already hand tasks to others

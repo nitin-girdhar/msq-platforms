@@ -2544,7 +2544,7 @@ BEGIN
   RETURN NEW;
 END; $$;
 
--- Per-org running task number (schema 1.66.0). SECURITY DEFINER: app_user has no
+-- Per-org running task number (schema 1.67.0). SECURITY DEFINER: app_user has no
 -- access to task.task_counters. The upsert row-locks the org's counter, so two
 -- concurrent inserts into one org serialise and can never draw the same number.
 -- Runs after trg_00_tasks_set_org_id, so NEW.org_id is already populated. A

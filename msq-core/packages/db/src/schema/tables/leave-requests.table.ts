@@ -1,4 +1,4 @@
-import { uuid, text, date, numeric, boolean, timestamp } from 'drizzle-orm/pg-core';
+import { uuid, text, date, numeric, boolean, timestamp, bigint, integer } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { hrSchema } from '../pg-schemas';
 import { usersTable } from './users.table';
@@ -21,6 +21,13 @@ export const leaveRequestsTable = hrSchema.table('leave_requests', {
   documentUrl:  text('document_url'),
   // 1.64.0 "request more info": the approver's question, cleared when the requester edits.
   infoRequestedAt: timestamp('info_requested_at', { withTimezone: true }),
+  // Apply page (1.67.0)
+  requestNo:       bigint('request_no', { mode: 'number' }).notNull().default(sql`nextval('hr.leave_request_no_seq')`),
+  handoverUserId:  uuid('handover_user_id'),
+  attachmentKey:   text('attachment_key'),
+  attachmentName:  text('attachment_name'),
+  attachmentMime:  text('attachment_mime'),
+  attachmentSize:  integer('attachment_size'),
   infoRequestNote: text('info_request_note'),
   // Maintained by trigger from status_id: TRUE while pending/approved.
   isOpen:       boolean('is_open').notNull().default(true),

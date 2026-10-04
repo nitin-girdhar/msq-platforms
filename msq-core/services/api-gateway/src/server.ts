@@ -1254,6 +1254,15 @@ app.post('/hr/assets/:id/return', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, `/api/v1/assets/${id}/return`, req, reply, req.userCtx);
 });
 
+// Leave attachments (schema 1.67.0).
+app.post('/hr/leave/attachments', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/leave/attachments', req, reply, req.userCtx);
+});
+app.get('/hr/leave/requests/:id/attachment', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}/attachment`, req, reply, req.userCtx);
+});
+
 // Roster planner (schema 1.66.0).
 app.get('/hr/attendance/planner/week', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/planner/week', req, reply, req.userCtx);

@@ -527,7 +527,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_created_by
   ON task.tasks (org_id, created_by) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_tasks_parent
   ON task.tasks (parent_task_id) WHERE parent_task_id IS NOT NULL;
--- 1.66.0: the TASK-<n> code is unique within a branch (soft-deleted rows keep theirs).
+-- 1.67.0: the TASK-<n> code is unique within a branch (soft-deleted rows keep theirs).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_org_task_no
   ON task.tasks (org_id, task_no);
 

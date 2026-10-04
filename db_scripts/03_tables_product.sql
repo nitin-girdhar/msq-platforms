@@ -337,6 +337,9 @@ CREATE TABLE IF NOT EXISTS hr.hr_settings (
 --    recipe + a self policy (users always see & insert their own requests) +
 --    an is_open exclusion guard against overlapping active requests.
 -- ===================================================================
+-- Human-readable request number (LV-1001 ...), schema 1.67.0.
+CREATE SEQUENCE IF NOT EXISTS hr.leave_request_no_seq START 1001;
+
 CREATE TABLE IF NOT EXISTS hr.leave_requests (
   id            UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   user_id       UUID    NOT NULL REFERENCES iam.users(id)                   ON DELETE RESTRICT,
@@ -355,6 +358,15 @@ CREATE TABLE IF NOT EXISTS hr.leave_requests (
   -- "Request more info" (1.64.0): the approver's question; cleared when the requester edits the request.
   info_requested_at TIMESTAMPTZ,
   info_request_note TEXT,
+  -- Apply page (1.67.0): the colleague covering the work, a readable number, and the uploaded
+  -- supporting document (bytes live in blob storage under attachment_key; document_url above
+  -- stays for a pasted link).
+  request_no        BIGINT NOT NULL DEFAULT nextval('hr.leave_request_no_seq'),
+  handover_user_id  UUID REFERENCES iam.users(id) ON DELETE SET NULL,
+  attachment_key    TEXT,
+  attachment_name   TEXT,
+  attachment_mime   TEXT,
+  attachment_size   INT,
   -- Maintained by trigger from status_id: TRUE while pending/approved, else
   -- FALSE. Drives the overlap exclusion constraint below.
   is_open       BOOLEAN NOT NULL DEFAULT TRUE,
@@ -936,7 +948,7 @@ CREATE TABLE IF NOT EXISTS task.tasks (
 
 
 -- ===================================================================
--- 3b. task.task_counters — last task_no handed out per org (schema 1.66.0)
+-- 3b. task.task_counters — last task_no handed out per org (schema 1.67.0)
 --     Touched only by the SECURITY DEFINER trigger task.assign_task_no(); no
 --     app_user / tenant_admin policy or grant, so it is unreachable from a request.
 -- ===================================================================

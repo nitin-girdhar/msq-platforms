@@ -187,9 +187,9 @@ KYC "L4 verified", DigiLocker links, SHA-256 / HSM / KMS / ISO 27001 badges, "Bi
 | Punch hub in-page (selfie/geofence panels, inline regularization) | DONE | Panel with live distance vs radius; inline form. No map (D2), no break punch (D3) |
 | Timesheet KPI strip + view tabs | MOSTLY | Worked-vs-target and attendance-rate added. Missing: Detailed slot log / Shift regularization tabs, slot filter chips, night allowance (D5) |
 | Leave apply page (handover, attachment, draft, history table) | DONE | Schema 1.67.0. Draft is browser-local by design. Slot-specific leave not built |
-| Documents vault tabs / tax-proof panel / ZIP | TODO | |
+| Documents vault tabs / tax-proof panel / ZIP | DONE | Tiles, category tabs with counts, search, FY chips, tax-by-section summary, ZIP dossier (own + HR). No receipt number or declared target (needs columns) |
 | My team: swap desk in page, leadership card | DONE | Ticket cards, sign-off progress, leadership card. No Nudge manager (needs a notification renderer) |
-| Header search, notifications bell, sidebar working-time card | TODO | D10 undecided |
-| Mobile pass (12 Stitch mobile screens) | TODO | |
+| Header search, notifications bell | DONE | Ctrl+/ pages + people; bell = live "waiting for you" counts (not an event feed: nothing stores HR events). Sidebar working-time card not built |
+| Mobile pass (12 Stitch mobile screens) | IN PROGRESS | Tab bar cut to 4 + More; header actions wrap; 390px overflow scan of every route |
 
 Found along the way: the directory and the payroll draft picker both fetched only the default 20 employees (fixed); the dashboard greeting caused a hydration warning (fixed).

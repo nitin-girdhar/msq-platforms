@@ -189,7 +189,9 @@ KYC "L4 verified", DigiLocker links, SHA-256 / HSM / KMS / ISO 27001 badges, "Bi
 | Leave apply page (handover, attachment, draft, history table) | DONE | Schema 1.67.0. Draft is browser-local by design. Slot-specific leave not built |
 | Documents vault tabs / tax-proof panel / ZIP | DONE | Tiles, category tabs with counts, search, FY chips, tax-by-section summary, ZIP dossier (own + HR). No receipt number or declared target (needs columns) |
 | My team: swap desk in page, leadership card | DONE | Ticket cards, sign-off progress, leadership card. No Nudge manager (needs a notification renderer) |
-| Header search, notifications bell | DONE | Ctrl+/ pages + people; bell = live "waiting for you" counts (not an event feed: nothing stores HR events). Sidebar working-time card not built |
+| Header search, notifications bell | DONE | Ctrl+/ pages + people; bell = live "waiting for you" counts (not an event feed: nothing stores HR events). Sidebar working-time and shift cards built (H12) |
 | Mobile pass (12 Stitch mobile screens) | IN PROGRESS | Tab bar cut to 4 + More; header actions wrap; 390px overflow scan of every route |
 
 Found along the way: the directory and the payroll draft picker both fetched only the default 20 employees (fixed); the dashboard greeting caused a hydration warning (fixed).
+
+H12 (2026-10-05, no schema): dashboard Recent activity and Today's slots, sidebar working-time/shift cards, Timesheet Slot log and Shift regularization tabs, own-shift endpoint. Still open (needs schema review): slot-specific regularization/leave, persistent HR notifications.

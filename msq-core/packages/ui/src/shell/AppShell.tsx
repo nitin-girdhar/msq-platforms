@@ -26,6 +26,8 @@ interface Props extends Omit<NavbarProps, 'brandInSidebar' | 'brandName'> {
   // a list of nav item ids in preference order — see MobileTabBar. Omitted =
   // no bar, so other products are unchanged.
   mobileTabs?: readonly (readonly string[])[];
+  // Optional block at the foot of the desktop rail, above Collapse (see AppSidebar footerSlot).
+  sidebarFooter?: ReactNode;
   children: ReactNode;
 }
 
@@ -43,7 +45,7 @@ interface Props extends Omit<NavbarProps, 'brandInSidebar' | 'brandName'> {
  * body is pinned to 100dvh (globals.css) and only <main> scrolls; below that
  * the page scrolls normally.
  */
-export default function AppShell({ nav, brandName = 'Fitclass', productLine, productKey, sidebar, mobileTabs, children, ...navbar }: Props) {
+export default function AppShell({ nav, brandName = 'Fitclass', productLine, productKey, sidebar, mobileTabs, sidebarFooter, children, ...navbar }: Props) {
   const brand = {
     homeHref: navbar.homeHref,
     name: brandName,
@@ -52,7 +54,7 @@ export default function AppShell({ nav, brandName = 'Fitclass', productLine, pro
   };
   return (
     <div className="flex min-h-screen w-full bg-background lg:h-full lg:min-h-0 lg:overflow-hidden">
-      {sidebar ? sidebar({ actor: navbar.user }) : <AppSidebar actor={navbar.user} items={nav} brand={brand} />}
+      {sidebar ? sidebar({ actor: navbar.user }) : <AppSidebar actor={navbar.user} items={nav} brand={brand} footerSlot={sidebarFooter} />}
       <div className="flex min-w-0 flex-1 flex-col lg:min-h-0 lg:overflow-hidden">
         <AppNavbar {...navbar} brandInSidebar brandName={brandName} />
         <MobileSidebar actor={navbar.user} items={nav} brand={brand} />

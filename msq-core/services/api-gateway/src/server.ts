@@ -1301,6 +1301,12 @@ app.get('/hr/documents/employee/:userId', { ...withAuth }, async (req, reply) =>
   return proxyTo(config.hrServiceUrl, `/api/v1/documents/employee/${userId}`, req, reply, req.userCtx);
 });
 app.get('/hr/documents/:id/file', { ...withAuth }, async (req, reply) => {
+app.get('/hr/attendance/me/shift', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/attendance/me/shift', req, reply, req.userCtx);
+});
+app.get('/hr/me/activity', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/me/activity', req, reply, req.userCtx);
+});
 app.get('/hr/documents/mine/dossier', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/documents/mine/dossier', req, reply, req.userCtx);
 });

@@ -30,6 +30,9 @@ interface Props {
   // status-overdue pill; 0/undefined renders nothing. Purely informational.
   // Falls back to the NavBadgesProvider value when not passed directly.
   badges?: Readonly<Record<string, number>>;
+  // Optional product block between the nav and the Collapse button (HR's working-time and shift cards). Hidden
+  // while the rail is collapsed, which has no room for it. Omitted = nothing, so other products are unchanged.
+  footerSlot?: React.ReactNode;
 }
 
 // Collapsed rail has no room for the label: it shows the entry's icon, or — for
@@ -112,7 +115,7 @@ function NavLink({
 // Desktop left rail, shared across every product app. Product-agnostic: the
 // entries come entirely from `items`. Collapses to an icon-width rail so wide
 // screens (grids, stat cards) get the extra ~12rem back.
-export default function AppSidebar({ actor, items: rawItems, brand, badges: badgesProp }: Props) {
+export default function AppSidebar({ actor, items: rawItems, brand, badges: badgesProp, footerSlot }: Props) {
   const ctxBadges = useNavBadges();
   const badges = badgesProp ?? ctxBadges;
   const { navOverrides } = useBranding();
@@ -216,6 +219,8 @@ export default function AppSidebar({ actor, items: rawItems, brand, badges: badg
           ))
         )}
       </nav>
+
+      {!collapsed && footerSlot && <div className="shrink-0 px-4 pb-1">{footerSlot}</div>}
 
       <div className={`shrink-0 ${collapsed ? 'flex justify-center p-3' : 'px-4 py-3'}`}>
         <button

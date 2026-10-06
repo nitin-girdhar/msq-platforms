@@ -3196,7 +3196,7 @@ CREATE TRIGGER trg_user_preferences_updated_at
 
 -- Theme lock, enforced at the database. Super Admin's "Allow tenant admin to
 -- change" switch (theme_locked) must hold even if an API check is ever missed:
--- nobody may change preset / seed_hex / font / default_mode while the row is
+-- nobody may change preset / seed_hex / font / default_mode / color_overrides while the row is
 -- locked EXCEPT root_service (the Super Admin path, withServiceTx) and a
 -- database superuser doing maintenance.
 --
@@ -3222,6 +3222,7 @@ BEGIN
     OR NEW.seed_hex     IS DISTINCT FROM OLD.seed_hex
     OR NEW.font         IS DISTINCT FROM OLD.font
     OR NEW.default_mode IS DISTINCT FROM OLD.default_mode
+    OR NEW.color_overrides IS DISTINCT FROM OLD.color_overrides
   ) THEN
     RAISE EXCEPTION 'Theme is locked by the platform administrator'
       USING ERRCODE = 'insufficient_privilege', HINT = 'BRANDING_THEME_LOCKED';

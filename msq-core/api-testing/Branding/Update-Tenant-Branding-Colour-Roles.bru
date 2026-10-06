@@ -1,0 +1,46 @@
+meta {
+  name: Update Tenant Branding - fine-tuned colour roles
+  type: http
+  seq: 8
+}
+
+put {
+  url: {{baseUrl}}/tenant/branding
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "seed_hex": "#0d4668",
+    "color_overrides": {
+      "light": { "primary": "#0a3a58", "secondary": "#4a5568" },
+      "dark": { "primary": "#9dccf4" }
+    }
+  }
+}
+
+docs {
+  admin.branding.manage, theme unlocked. color_overrides is SPARSE: only the roles that were
+  changed, per mode (light / dark); every other role keeps following the seed. Send {} to clear all.
+
+  Editable roles (23): primary, onPrimary, primaryContainer, onPrimaryContainer, secondary,
+  onSecondary, secondaryContainer, onSecondaryContainer, tertiary, onTertiary, tertiaryContainer,
+  onTertiaryContainer, background, surface, surfaceContainerLowest, surfaceContainerLow,
+  surfaceContainer, surfaceContainerHigh, surfaceContainerHighest, onSurface, onSurfaceVariant,
+  outline, outlineVariant. Values are #rrggbb.
+
+  422 when a role is not in that list (error and status colours are fixed), a value is not #rrggbb,
+  or a mode other than light/dark is sent.
+  422 COLOR_CONTRAST (details.pairs lists them) when text would fall under 3:1 against its
+  background once the shades are applied over the ones the seed derives - checked against the seed
+  that will be in force, so a seed change alone can trip it.
+  403 BRANDING_THEME_LOCKED while Super Admin has locked the theme (the database trigger enforces it too).
+
+  A user's own override uses PUT /me/preferences/theme with the same color_overrides shape; it is
+  only honoured while the tenant theme is unlocked.
+}

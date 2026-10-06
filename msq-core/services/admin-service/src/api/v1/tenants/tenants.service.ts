@@ -16,7 +16,7 @@ export async function create(data: CreateTenantInput) {
   if (!planType) throw new NotFoundError('Tenant plan type not found');
 
   try {
-    const row = await repo.create({
+    const row = await repo.createWithDefaultBranch({
       name: data.name,
       domainId: data.domain_id,
       planTypeId: data.plan_type_id,

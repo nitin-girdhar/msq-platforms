@@ -60,9 +60,20 @@ export default function CreateLookupModal({ open, onClose, table, config, tenant
   // server is about to overwrite.
   const reservedRank = config.reservedRanks?.[String(values['name'] ?? '')];
 
+  // A table whose rows are scoped by the request (tenant/org tables) takes its
+  // tenant from the navbar. A table that merely carries a `tenant_id` column
+  // (Organizations) seeds it from the navbar but leaves it pickable: a tenant
+  // with no branch yet cannot be entered through the switcher (a session needs
+  // a real org), so its first branch has to be created from another tenant.
+  const tenantLocked = Boolean(scopeTenantId) && config.scope !== undefined && config.scope !== 'global';
+
   const setField = (key: string, value: string | number | boolean) => {
     setValues((prev) => {
       const next = { ...prev, [key]: value };
+      // Places belong to one tenant's catalog; a new tenant invalidates them.
+      if (key === TENANT_KEY) {
+        for (const k of ['country_id', 'state_id', 'city_id']) if (k in next) next[k] = '';
+      }
       if (key === 'name') {
         const pinned = config.reservedRanks?.[String(value)];
         if (pinned !== undefined) next['rank'] = pinned;
@@ -123,7 +134,7 @@ export default function CreateLookupModal({ open, onClose, table, config, tenant
   );
 
   return (
-    <Modal open={open} onClose={handleClose} title={`New ${config.title.replace(/s$/, '')}`} locked={pending} footer={footer}>
+    <Modal open={open} onClose={handleClose} title={`New ${config.title.replace(/s$/, '')}`} locked={pending} footer={footer} maxWidth="max-w-2xl">
       <LookupForm
         formId={FORM_ID}
         idPrefix="cl"
@@ -134,12 +145,12 @@ export default function CreateLookupModal({ open, onClose, table, config, tenant
         tenantId={tenantId}
         orgId={orgId}
         lockedKeys={[
-          ...(scopeTenantId ? [TENANT_KEY] : []),
+          ...(tenantLocked ? [TENANT_KEY] : []),
           ...(reservedRank !== undefined ? ['rank'] : []),
         ]}
         lockedHints={{
           [TENANT_KEY]: 'Set by the tenant selected in the top bar.',
-          rank: 'Fixed for this role — set by the platform.',
+          rank:'Fixed for this role — set by the platform.',
         }}
         error={error}
         onSubmit={handleSubmit}

@@ -1289,7 +1289,9 @@ CREATE TABLE IF NOT EXISTS iam.token_blocklist (
 
 -- ── USER PREFERENCES (1.57.0) ───────────────────────────────────────
 -- Personal settings, one row per user. Today: the Appearance override
--- (theme = { preset | seed_hex, font, mode }; NULL = "use the company theme").
+-- (theme = { preset | seed_hex, font, mode, color_overrides? }; NULL = "use the company theme";
+-- color_overrides = sparse { light: { <role>: #rrggbb }, dark: { ... } }, 1.75.0, same shape as
+-- entity.tenant_branding.color_overrides, only allowed while the tenant theme is unlocked).
 -- PERSONAL, not org data: RLS (08_rls.sql) is user_id-only for every role, so
 -- nobody — tenant admins included — can read or change another person's row.
 -- tenant_id is denormalised from the user's home org for reporting/cleanup; the

@@ -25,7 +25,11 @@ interface Props {
 }
 
 const INPUT_CLASS =
-  'rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low';
+  'rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low';
+
+// Fields that read better across both columns of the two-column grid.
+const WIDE_TYPES: ReadonlySet<string> = new Set(['textarea', 'boolean']);
+const WIDE_KEYS: ReadonlySet<string> = new Set(['address_line1', 'address_line2']);
 
 // Field renderer shared by Create/EditLookupModal — the ~150 lines of field
 // JSX used to be duplicated between them near-verbatim. Owns nothing but
@@ -33,9 +37,9 @@ const INPUT_CLASS =
 // Create and Edit build very different bodies (fresh values vs. a dirty diff).
 export default function LookupForm({ formId, idPrefix, config, values, setField, disabled, tenantId, orgId, lockedKeys = [], lockedHints = {}, error, onSubmit }: Props) {
   return (
-    <form id={formId} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+    <form id={formId} onSubmit={onSubmit} className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2" noValidate>
       {error && (
-        <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">
+        <div role="alert" className="sm:col-span-2 rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">
           {error}
         </div>
       )}
@@ -66,7 +70,7 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
         }
 
         return (
-          <div key={field.key} className="flex flex-col gap-1.5">
+          <div key={field.key} className={`flex flex-col gap-1.5 ${WIDE_TYPES.has(field.type) || WIDE_KEYS.has(field.key) ? 'sm:col-span-2' : ''}`}>
             {field.type !== 'boolean' && (
               <label htmlFor={`${idPrefix}-${field.key}`} className="text-xs font-semibold text-on-surface">
                 {field.label}{field.required ? ' *' : ''}

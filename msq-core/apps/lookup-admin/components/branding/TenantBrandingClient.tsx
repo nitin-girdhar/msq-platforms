@@ -2,8 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Modal, PageBody, PageHeader, ThemePicker } from '@platform/ui-kit';
-import { DEFAULT_FONT_ID, DEFAULT_PRESET_ID, type ThemeChoice } from '@platform/ui-kit/theme';
+import { FineTuneColors, Modal, PageBody, PageHeader, ThemePicker } from '@platform/ui-kit';
+import {
+  DEFAULT_FONT_ID,
+  DEFAULT_PRESET_ID,
+  findUnreadablePairs,
+  resolveTheme,
+  sanitizeColorOverrides,
+  type ThemeChoice,
+} from '@platform/ui-kit/theme';
 import {
   NAV_ICON_NAMES,
   NavIcon,
@@ -62,6 +69,7 @@ function themeOf(v: SaBrandingView): ThemeChoice {
     seed_hex: seed,
     font: (t?.font as ThemeChoice['font']) ?? DEFAULT_FONT_ID,
     mode: (t?.mode as ThemeChoice['mode']) ?? 'light',
+    color_overrides: sanitizeColorOverrides(t?.color_overrides),
   };
 }
 
@@ -200,7 +208,11 @@ export default function TenantBrandingClient({ tenantId, initial }: Props) {
     if (v.trim().length > LABEL_MAX) navErrors[k] = `Max ${LABEL_MAX} characters`;
     else if (MARKUP_RE.test(v)) navErrors[k] = 'Must not contain < > { }';
   }
-  const invalid = Object.keys(nameErrors).length > 0 || Object.keys(termErrors).length > 0 || Object.keys(navErrors).length > 0;
+  // The same readability floor the server enforces (text must keep 3:1 on its background).
+  const effectiveTheme = resolveTheme(theme);
+  const unreadable = findUnreadablePairs(effectiveTheme.seed_hex, theme.color_overrides);
+  const invalid =
+    Object.keys(nameErrors).length > 0 || Object.keys(termErrors).length > 0 || Object.keys(navErrors).length > 0 || unreadable.length > 0;
 
   const adopt = (v: SaBrandingView) => {
     setSaved(v);
@@ -225,6 +237,7 @@ export default function TenantBrandingClient({ tenantId, initial }: Props) {
       body.seed_hex = theme.seed_hex ?? null;
       body.font = theme.font ?? null;
       body.default_mode = theme.mode ?? 'light';
+      body.color_overrides = theme.color_overrides ?? {};
     }
     if (lockDirty) body.theme_locked = locked;
     if (namesDirty) body.product_names = cleanNames(names);
@@ -435,6 +448,14 @@ export default function TenantBrandingClient({ tenantId, initial }: Props) {
         }
       >
         <ThemePicker value={theme} onChange={setTheme} showMode modeLabel="Default mode" modeHint="Users always keep their own light/dark choice, even when locked." disabled={saving} />
+        <div className="mt-5">
+          <FineTuneColors
+            seedHex={effectiveTheme.seed_hex}
+            value={theme.color_overrides ?? {}}
+            onChange={(next) => setTheme((t) => ({ ...t, color_overrides: next }))}
+            disabled={saving}
+          />
+        </div>
       </Card>
 
       <Card title="4. Login link" subtitle="Users who open this link see the tenant's branding on the sign-in page. Rotate it if it leaks — the old link then shows the platform default.">

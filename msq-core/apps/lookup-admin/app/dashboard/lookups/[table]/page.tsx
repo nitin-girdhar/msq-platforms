@@ -72,6 +72,13 @@ export default async function LookupTablePage({ params }: PageProps) {
     // "This page could not be found".
     if (!result.ok) return <LookupLoadError title={config.title} status={result.status} />;
     rows = result.data;
+    // Organizations is the one cross-tenant list, but the navbar scope still
+    // applies: the picked tenant, and — when a single branch (not "All
+    // branches") is picked — only that branch.
+    if (table === 'organizations' && selectedTenantId) {
+      const branchId = await getSelectedOrgId();
+      rows = rows.filter((r) => r['tenant_id'] === selectedTenantId && (!branchId || r['id'] === branchId));
+    }
   }
 
   return (

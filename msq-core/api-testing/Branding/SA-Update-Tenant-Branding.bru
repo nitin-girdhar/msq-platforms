@@ -36,4 +36,6 @@ docs {
   sets terms, nav_overrides and locale_config for the chosen tenant. locale_config is a
   whitelisted object (422 on an unknown key/value; timezone must be a real IANA id) and is
   stored as the deviation from the platform default. branding_version bumps on every write.
+  color_overrides (1.75.0) is accepted here too, with the same rules as the tenant route and the same
+  3:1 readability check (422 COLOR_CONTRAST); Super Admin may write it while the theme is locked.
 }

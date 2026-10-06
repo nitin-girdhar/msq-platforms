@@ -321,7 +321,10 @@ key, `revalidateOnFocus: false`, and return the same named-object shape.
   through `useTerm()` / `<Term k="leads" fallback="Leads" />` with today's text as the fallback,
   so default tenants and e2e see no change. Labels only — routes, API fields, exports and
   capabilities never change with branding. Theme controls are the shared `<ThemePicker>`
-  (+ `applyThemePreview()` for live preview); don't build another.
+  (+ `applyThemePreview()` for live preview); don't build another. Per-role colour tuning is the shared
+  `<FineTuneColors>` (collapsed by default; hosts pass `seedHex`, the sparse `color_overrides`, and `base` when
+  something sits beneath it) — hosts must also disable Save while `findUnreadablePairs()` is non-empty (3:1 floor,
+  enforced again by the server). Error / status colours are never editable.
   **Never spell the default brand name or its image paths** ("FitClass", `/fitclass-emblem.png`,
   `/icons/*`, manifest colours) — import `DEFAULT_BRAND` (`@platform/ui-kit/branding`, or `/server`
   in a Server Component) and show `useBranding().brandName ?? DEFAULT_BRAND.name`. `pnpm check:brand`

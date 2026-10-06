@@ -24,7 +24,8 @@ body:json {
 
 docs {
   admin.branding.manage. The tenant admin's WHOLE remit: preset OR seed_hex, font and
-  default_mode (and only while the theme is not locked: 403 BRANDING_THEME_LOCKED).
+  default_mode, plus color_overrides - see Update-Tenant-Branding-Colour-Roles.bru (and only while the theme is
+  not locked: 403 BRANDING_THEME_LOCKED).
   The body is strict — images, product names, terms, nav_overrides and locale_config are
   Super Admin's, so sending any of them is a 422, and the database column GRANTs would
   refuse them anyway.

@@ -160,7 +160,7 @@ export default function FkSelect({ field, value, onChange, formValues, tenantId,
     // `formValues` is otherwise excluded — every keystroke elsewhere would
     // refetch options.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fk?.table, fk?.endpoint, depValue, tenantId, orgId, parentPending]);
+  }, [fk?.table, fk?.endpoint, depValue, tenantId, orgId, parentPending, fk?.endpoint?.startsWith('geo-') ? formValues['tenant_id'] : undefined]);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -173,7 +173,7 @@ export default function FkSelect({ field, value, onChange, formValues, tenantId,
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled || parentPending || loading}
         required={field.required}
-        className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
+        className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
       >
         <option value="">
           {parentPending

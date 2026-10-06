@@ -15,7 +15,20 @@ export {
   resolveTheme,
 } from './presets';
 export type { ThemePresetId, BrandFontId, ThemeMode, ThemeChoice, EffectiveTheme } from './presets';
-export { buildScheme, contrastRatio } from './scheme';
+export { buildFullScheme, buildScheme, contrastRatio, derivedRoleColors, findUnreadablePairs } from './scheme';
+export type { UnreadablePair } from './scheme';
+export {
+  COLOR_CONTRAST_PAIRS,
+  COLOR_ROLE_GROUPS,
+  COLOR_ROLE_IDS,
+  CONTRAST_BLOCK,
+  CONTRAST_WARN,
+  countOverrides,
+  cssVarFor,
+  mergeColorOverrides,
+  sanitizeColorOverrides,
+} from './roles';
+export type { ColorOverrides, ColorRoleGroup, ColorRoleId, ColorRoleSpec, RoleOverrides } from './roles';
 export type { SchemeVars } from './scheme';
 export { default as ThemeStyle, themeHtmlProps } from './ThemeStyle';
 export type { ThemeStyleProps } from './ThemeStyle';

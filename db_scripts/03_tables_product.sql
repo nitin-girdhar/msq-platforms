@@ -89,6 +89,17 @@ CREATE TABLE IF NOT EXISTS entity.tenant_branding (
   -- Empty {} = platform default (en-IN, DD/MM/YYYY, 12h, Asia/Kolkata, INR, Monday).
   -- A branch's own entity.organizations.timezone still overrides `timezone`.
   locale_config  JSONB   NOT NULL DEFAULT '{}',
+  -- Fine-tuned colour roles (1.75.0): { "light": { "<role>": "#rrggbb" }, "dark": { … } }.
+  -- SPARSE: only roles the admin changed; every other role keeps following the seed.
+  -- Part of the THEME, so the tenant admin may write it (column GRANT) and it is frozen
+  -- by the same theme lock (trigger in 04). Role names are a code-owned whitelist
+  -- (@platform/validation colorOverridesSchema, mirrored by @platform/ui-kit theme);
+  -- the API also enforces the 3:1 contrast floor — the database only guarantees the shape.
+  -- A user's own override lives in iam.user_preferences.theme.color_overrides (same shape).
+  color_overrides JSONB  NOT NULL DEFAULT '{}'
+                         CONSTRAINT chk_tenant_branding_color_overrides CHECK (
+                           jsonb_typeof(color_overrides) = 'object'
+                           AND (color_overrides - 'light' - 'dark') = '{}'::jsonb),
   -- Bumped by trigger on every UPDATE; cache key for the public JSON / manifest.
   branding_version INTEGER NOT NULL DEFAULT 1,
   updated_by     UUID    REFERENCES iam.users(id) ON DELETE SET NULL,

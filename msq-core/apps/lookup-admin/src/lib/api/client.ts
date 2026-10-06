@@ -1041,7 +1041,11 @@ export type BrandAssetSlot =
 
 export interface SaBrandingView {
   tenant_name: string;
-  theme: { preset: string | null; seed_hex: string | null; font: string | null; mode: string | null } | null;
+  theme: {
+    preset: string | null; seed_hex: string | null; font: string | null; mode: string | null;
+    /** Sparse hand-tuned colour roles per mode (schema 1.75.0). */
+    color_overrides?: import('@platform/ui-kit/theme').ColorOverrides;
+  } | null;
   theme_locked: boolean;
   terms: Record<string, string>;
   nav_overrides: Record<string, { label?: string; icon?: string }>;
@@ -1058,6 +1062,8 @@ export interface SaBrandingUpdate {
   seed_hex?: string | null;
   font?: string | null;
   default_mode?: string;
+  /** {} clears every override. Refused below 3:1 text contrast (COLOR_CONTRAST). */
+  color_overrides?: import('@platform/ui-kit/theme').ColorOverrides;
   theme_locked?: boolean;
   product_names?: Record<string, Record<string, string>>;
   terms?: Record<string, string>;

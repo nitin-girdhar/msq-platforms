@@ -122,4 +122,6 @@ export { usableProducts, landingFor, productHref, PRODUCT_LANDING } from './shel
 // Theme controls shared by Appearance and the Branding pages.
 export { default as ThemePicker } from './components/ThemePicker/ThemePicker';
 export type { ThemePickerProps } from './components/ThemePicker/ThemePicker';
+export { default as FineTuneColors } from './components/ThemePicker/FineTuneColors';
+export type { FineTuneColorsProps } from './components/ThemePicker/FineTuneColors';
 export { applyThemePreview, seedContrast } from './components/ThemePicker/preview';

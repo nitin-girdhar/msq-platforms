@@ -1,8 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { PageBody, PageHeader, ThemePicker, applyThemePreview } from '@platform/ui-kit';
-import { DEFAULT_FONT_ID, DEFAULT_PRESET_ID, resolveTheme, type ThemeChoice } from '@platform/ui-kit/theme';
+import { FineTuneColors, PageBody, PageHeader, ThemePicker, applyThemePreview } from '@platform/ui-kit';
+import {
+  DEFAULT_FONT_ID,
+  DEFAULT_PRESET_ID,
+  findUnreadablePairs,
+  resolveTheme,
+  sanitizeColorOverrides,
+  type ThemeChoice,
+} from '@platform/ui-kit/theme';
 import {
   BRANDABLE_NAV,
   BRAND_ASSET_CATALOG,
@@ -27,7 +34,7 @@ const PRODUCT_ROWS: ReadonlyArray<{ key: string; label: string }> = [
 
 // Unset fields are shown (and saved) as the platform default they inherit,
 // so the active swatch / font is always highlighted.
-const PLATFORM_DEFAULT: ThemeChoice = { preset: DEFAULT_PRESET_ID, seed_hex: null, font: DEFAULT_FONT_ID, mode: 'light' };
+const PLATFORM_DEFAULT: ThemeChoice = { preset: DEFAULT_PRESET_ID, seed_hex: null, font: DEFAULT_FONT_ID, mode: 'light', color_overrides: {} };
 
 function themeOf(v: TenantBrandingView): ThemeChoice {
   const t = v.theme;
@@ -37,6 +44,7 @@ function themeOf(v: TenantBrandingView): ThemeChoice {
     seed_hex: seed,
     font: (t?.font as ThemeChoice['font']) ?? DEFAULT_FONT_ID,
     mode: (t?.mode as ThemeChoice['mode']) ?? 'light',
+    color_overrides: sanitizeColorOverrides(t?.color_overrides),
   };
 }
 
@@ -94,6 +102,10 @@ export default function BrandingSettings({ initial, canManage }: Props) {
   const themeDirty = themeEditable && !same(theme, savedTheme);
   const dirty = canManage && themeDirty;
 
+  // The same readability floor the server enforces (text must keep 3:1 on its background).
+  const effectiveTheme = resolveTheme(theme);
+  const unreadable = findUnreadablePairs(effectiveTheme.seed_hex, theme.color_overrides);
+
   // Live preview of an unsaved colour / font on this page.
   useEffect(() => {
     if (!themeDirty) {
@@ -112,7 +124,7 @@ export default function BrandingSettings({ initial, canManage }: Props) {
   };
 
   const save = async () => {
-    if (!dirty) return;
+    if (!dirty || unreadable.length > 0) return;
     setSaving(true);
     setNotice(null);
     const body: TenantBrandingUpdate = {
@@ -120,6 +132,7 @@ export default function BrandingSettings({ initial, canManage }: Props) {
       seed_hex: theme.seed_hex ?? null,
       font: theme.font ?? null,
       default_mode: theme.mode ?? 'light',
+      color_overrides: theme.color_overrides ?? {},
     };
     try {
       await brandingApi.update(body);
@@ -202,6 +215,16 @@ export default function BrandingSettings({ initial, canManage }: Props) {
             <p className="text-label-sm text-outline">
               Status colours (overdue, due, converted) stay fixed so urgency reads the same everywhere.
             </p>
+          </div>
+        )}
+        {!locked && (
+          <div className="mt-5">
+            <FineTuneColors
+              seedHex={effectiveTheme.seed_hex}
+              value={theme.color_overrides ?? {}}
+              onChange={(next) => setTheme((t) => ({ ...t, color_overrides: next }))}
+              disabled={!canManage || saving}
+            />
           </div>
         )}
       </Section>
@@ -366,7 +389,7 @@ export default function BrandingSettings({ initial, canManage }: Props) {
                 <button
                   type="button"
                   onClick={save}
-                  disabled={saving}
+                  disabled={saving || unreadable.length > 0}
                   aria-busy={saving}
                   className="min-h-[2.75rem] rounded-lg bg-primary px-4 py-2 text-label-md font-semibold text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0"
                 >

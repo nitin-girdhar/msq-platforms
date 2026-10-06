@@ -29,6 +29,8 @@ export interface NavOverride {
 
 export interface Branding {
   theme: EffectiveTheme;
+  /** The company's own theme (tenant layer only, no personal override) — what the Appearance panel inherits and Resets to. */
+  companyTheme: EffectiveTheme;
   /** Super Admin locked colours/font: users keep only their light/dark choice. */
   locked: boolean;
   /** The user's own stored appearance override (null = company theme). */
@@ -46,6 +48,7 @@ export interface Branding {
 
 export const DEFAULT_BRANDING: Branding = {
   theme: DEFAULT_THEME,
+  companyTheme: DEFAULT_THEME,
   locked: false,
   personal: null,
   brandName: null,
@@ -111,6 +114,7 @@ export function brandingFromApi(data: unknown): Branding {
   const brand = isObj(names['brand']) ? str(names['brand']['name']) : undefined;
   return {
     theme: resolveTheme(theme['tenant'] as ThemeChoice | null, theme['user'] as ThemeChoice | null),
+    companyTheme: resolveTheme(theme['tenant'] as ThemeChoice | null),
     locked: theme['locked'] === true,
     personal: isObj(data['personal']) ? (data['personal'] as ThemeChoice) : null,
     brandName: brand ?? null,

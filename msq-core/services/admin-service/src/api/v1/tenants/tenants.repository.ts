@@ -1,6 +1,6 @@
 import { asc, eq } from 'drizzle-orm';
 import { withServiceTx } from '@platform/db';
-import { tenantsTable, tenantDomainsTable, tenantPlanTypesTable } from '@platform/db/schema';
+import { tenantsTable, tenantDomainsTable, tenantPlanTypesTable, organizationsTable, orgTypesTable } from '@platform/db/schema';
 
 type TenantInsert = typeof tenantsTable.$inferInsert;
 type TenantUpdate = Partial<TenantInsert>;
@@ -39,6 +39,26 @@ export async function create(fields: TenantInsert) {
   return withServiceTx(async (tx) => {
     const [row] = await tx.insert(tenantsTable).values(fields).returning();
     return row;
+  });
+}
+
+// A session must sit in a real branch (RLS and writes need an org_id), so a
+// tenant with no branch can never be switched into from the navbar. Every new
+// tenant therefore gets a default branch, created in the SAME transaction as the
+// tenant so there is no window where it exists without one. Falls back to any
+// org type if 'head_office' was not seeded.
+export async function createWithDefaultBranch(fields: TenantInsert) {
+  return withServiceTx(async (tx) => {
+    const [tenant] = await tx.insert(tenantsTable).values(fields).returning();
+    if (!tenant) throw new Error('Tenant insert returned no row');
+    const types = await tx.select({ id: orgTypesTable.id, name: orgTypesTable.name }).from(orgTypesTable);
+    const orgType = types.find((t) => t.name === 'head_office') ?? types[0];
+    await tx.insert(organizationsTable).values({
+      tenantId: tenant.id,
+      name: `${tenant.name} - Head Office`,
+      ...(orgType ? { orgTypeId: orgType.id } : {}),
+    });
+    return tenant;
   });
 }
 

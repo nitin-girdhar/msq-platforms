@@ -330,6 +330,9 @@ importers:
 
   msq-core/packages/platform-validation:
     dependencies:
+      '@material/material-color-utilities':
+        specifier: ^0.4.0
+        version: 0.4.0
       '@platform/auth-constants':
         specifier: workspace:*
         version: link:../auth-constants

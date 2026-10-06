@@ -23,7 +23,7 @@ export function applyThemePreview(theme: EffectiveTheme | null): void {
   const font = fontById(theme.font) ?? fontById(DEFAULT_THEME.font);
   const body = [
     // Empty for the default seed: theme.css already carries that palette.
-    ...Object.entries(buildScheme(theme.seed_hex, false)).map(([k, v]) => `${k}:${v}`),
+    ...Object.entries(buildScheme(theme.seed_hex, false, theme.color_overrides.light)).map(([k, v]) => `${k}:${v}`),
     `--font-brand:var(${font?.cssVar ?? '--font-inter'})`,
     '--font-brand-mono:var(--font-jetbrains-mono)',
     `font-size:${fontSizeById(theme.font_size).pct}%`,

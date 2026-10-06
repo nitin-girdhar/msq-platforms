@@ -4,7 +4,7 @@
 // Two transaction kinds, deliberately:
 //   withRoleTx  — tenant-admin edits, the effective-branding read, and personal
 //                 preferences. RLS pins the session to its own tenant / own user
-//                 row; column GRANTs keep it to theme + terms + menu; the DB
+//                 row; column GRANTs keep it to the theme (incl. hand-tuned colour roles); the DB
 //                 trigger enforces the theme lock.
 //   withServiceTx — SYSTEM operations only, each one documented where it is used:
 //                 Super Admin editing a CHOSEN tenant (cross-tenant by design,
@@ -29,6 +29,8 @@ export interface BrandingRow {
   terms: Record<string, string>;
   nav_overrides: Record<string, { label?: string; icon?: string }>;
   locale_config: Record<string, unknown>;
+  /** Sparse { light: { <role>: #rrggbb }, dark: {...} } hand-tuned colour roles (1.75.0). */
+  color_overrides: Record<string, Record<string, string>>;
   branding_version: number;
   updated_at: string;
 }
@@ -50,13 +52,14 @@ function toBranding(r: Row | undefined): BrandingRow | null {
     terms: (r['terms'] as Record<string, string>) ?? {},
     nav_overrides: (r['nav_overrides'] as BrandingRow['nav_overrides']) ?? {},
     locale_config: (r['locale_config'] as Record<string, unknown>) ?? {},
+    color_overrides: (r['color_overrides'] as BrandingRow['color_overrides']) ?? {},
     branding_version: Number(r['branding_version'] ?? 1),
     updated_at: String(r['updated_at']),
   };
 }
 
 const COLS = sql`tenant_id, public_key, preset, seed_hex, font, default_mode, theme_locked,
-  assets, product_names, terms, nav_overrides, locale_config, branding_version, updated_at`;
+  assets, product_names, terms, nav_overrides, locale_config, color_overrides, branding_version, updated_at`;
 
 // ── Session-scoped (RLS) ──────────────────────────────────────────────────────
 
@@ -74,6 +77,7 @@ export interface TenantBrandingWrite {
   seed_hex?: string | null | undefined;
   font?: string | null | undefined;
   default_mode?: string | undefined;
+  color_overrides?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -93,15 +97,17 @@ export async function upsertTenantBranding(
       has('seed_hex') ? sql`seed_hex = EXCLUDED.seed_hex` : null,
       has('font') ? sql`font = EXCLUDED.font` : null,
       has('default_mode') ? sql`default_mode = EXCLUDED.default_mode` : null,
+      has('color_overrides') ? sql`color_overrides = EXCLUDED.color_overrides` : null,
       sql`updated_by = EXCLUDED.updated_by`,
     ].filter((x): x is ReturnType<typeof sql> => x !== null);
     const rows = (await tx.execute(sql`
       INSERT INTO entity.tenant_branding
-        (tenant_id, preset, seed_hex, font, default_mode, updated_by)
+        (tenant_id, preset, seed_hex, font, default_mode, color_overrides, updated_by)
       VALUES (
         ${tenantId}::uuid,
         ${w.preset ?? null}, ${w.seed_hex ?? null}, ${w.font ?? null},
         ${w.default_mode ?? 'light'},
+        ${JSON.stringify(w.color_overrides ?? {})}::jsonb,
         ${ctx.user_id}::uuid
       )
       ON CONFLICT (tenant_id) DO UPDATE SET ${sql.join(sets, sql`, `)}
@@ -184,6 +190,7 @@ export async function upsertBrandingAsService(
       has('seed_hex') ? sql`seed_hex = EXCLUDED.seed_hex` : null,
       has('font') ? sql`font = EXCLUDED.font` : null,
       has('default_mode') ? sql`default_mode = EXCLUDED.default_mode` : null,
+      has('color_overrides') ? sql`color_overrides = EXCLUDED.color_overrides` : null,
       has('theme_locked') ? sql`theme_locked = EXCLUDED.theme_locked` : null,
       has('product_names') ? sql`product_names = EXCLUDED.product_names` : null,
       has('terms') ? sql`terms = EXCLUDED.terms` : null,
@@ -193,12 +200,12 @@ export async function upsertBrandingAsService(
     ].filter((x): x is ReturnType<typeof sql> => x !== null);
     const rows = (await tx.execute(sql`
       INSERT INTO entity.tenant_branding
-        (tenant_id, preset, seed_hex, font, default_mode, theme_locked, product_names,
+        (tenant_id, preset, seed_hex, font, default_mode, color_overrides, theme_locked, product_names,
          terms, nav_overrides, locale_config, updated_by)
       VALUES (
         ${tenantId}::uuid,
         ${w.preset ?? null}, ${w.seed_hex ?? null}, ${w.font ?? null},
-        ${w.default_mode ?? 'light'}, ${w.theme_locked ?? false},
+        ${w.default_mode ?? 'light'}, ${JSON.stringify(w.color_overrides ?? {})}::jsonb, ${w.theme_locked ?? false},
         ${JSON.stringify(w.product_names ?? {})}::jsonb,
         ${JSON.stringify(w.terms ?? {})}::jsonb,
         ${JSON.stringify(w.nav_overrides ?? {})}::jsonb,
@@ -266,7 +273,7 @@ export async function getBrandingByPublicKey(publicKey: string): Promise<(Brandi
   return withServiceTx(async (tx) => {
     const rows = (await tx.execute(sql`
       SELECT b.tenant_id, b.public_key, b.preset, b.seed_hex, b.font, b.default_mode, b.theme_locked,
-             b.assets, b.product_names, b.terms, b.nav_overrides, b.updated_at, t.name AS tenant_name
+             b.color_overrides, b.assets, b.product_names, b.terms, b.nav_overrides, b.updated_at, t.name AS tenant_name
       FROM entity.tenant_branding b
       JOIN entity.tenants t ON t.id = b.tenant_id AND t.is_active AND NOT t.is_deleted
       WHERE b.public_key = ${publicKey}::uuid

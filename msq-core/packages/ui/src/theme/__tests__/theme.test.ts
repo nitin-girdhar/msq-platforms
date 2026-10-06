@@ -69,7 +69,7 @@ describe('resolveTheme', () => {
 
   it('applies later layers over earlier ones', () => {
     const t = resolveTheme({ preset: 'teal-horizon', font: 'manrope' }, { mode: 'dark' });
-    expect(t).toEqual({ preset: 'teal-horizon', seed_hex: '#0d9488', font: 'manrope', mode: 'dark', font_size: 'md' });
+    expect(t).toEqual({ preset: 'teal-horizon', seed_hex: '#0d9488', font: 'manrope', mode: 'dark', font_size: 'md', color_overrides: {} });
   });
 
   it('takes the text size from the user layer and ignores unknown steps', () => {

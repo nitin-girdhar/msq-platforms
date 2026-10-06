@@ -18,6 +18,13 @@ import { hasCapability, hasCapabilityFresh } from '@platform/db';
 import { CAPABILITY, type CapabilityKey } from '@platform/rbac';
 import { logActivity } from '@platform/audit-log';
 import { blobKeys } from '@platform/blob-storage';
+import {
+  findUnreadablePairs,
+  mergeOverrides,
+  seedFor,
+  type ColorOverrides,
+  type ColorOverridesInput,
+} from '@platform/validation';
 import type {
   BrandAssetSlot,
   SaBrandingUpdateInput,
@@ -67,7 +74,34 @@ function assetUrls(b: BrandingRow | null): Record<string, string> {
 const THEME_KEYS = ['preset', 'seed_hex', 'font'] as const;
 
 function tenantThemeLayer(b: BrandingRow | null) {
-  return b ? { preset: b.preset, seed_hex: b.seed_hex, font: b.font, mode: b.default_mode } : null;
+  return b
+    ? { preset: b.preset, seed_hex: b.seed_hex, font: b.font, mode: b.default_mode, color_overrides: b.color_overrides }
+    : null;
+}
+
+/**
+ * The readability floor for hand-tuned colours (schema 1.75.0): text must keep 3:1 against its
+ * background (WCAG AA is 4.5; the editor warns below that, the server refuses below 3). Checked
+ * against the shades the seed really derives for every role the admin did not touch, so it needs
+ * the effective seed, not just the overrides. Applies to every writer (tenant admin, Super Admin,
+ * a user's own preference).
+ */
+function assertReadable(seed: string, overrides: ColorOverrides | null | undefined): void {
+  const bad = findUnreadablePairs(seed, overrides);
+  if (bad.length > 0) {
+    throw new ValidationError('Some text would be unreadable with these colours', { code: 'COLOR_CONTRAST', pairs: bad });
+  }
+}
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
+
+/** The seed a write will leave in force: the input's choice where given, else the stored one. */
+function effectiveSeed(
+  input: { preset?: string | null | undefined; seed_hex?: string | null | undefined },
+  current: { preset: string | null; seed_hex: string | null } | null,
+): string {
+  const touched = 'preset' in input || 'seed_hex' in input;
+  return seedFor(touched ? input : { preset: current?.preset ?? null, seed_hex: current?.seed_hex ?? null });
 }
 
 // ── /me ──────────────────────────────────────────────────────────────────────
@@ -104,9 +138,27 @@ export async function getMyBranding(a: Actor) {
 
 export async function updateMyTheme(a: Actor, input: UserThemeUpdateInput) {
   await requireCap(a, CAPABILITY.PLATFORM_APPEARANCE, false, 'Appearance settings are not enabled for your role');
+  const b = await repo.getOwnBranding(a.ctx);
+  let toStore: UserThemeUpdateInput = input;
+  if (b?.theme_locked) {
+    // Locked: the user's colours cannot change, so hand-tuned shades are kept exactly as
+    // stored whatever the body says (a forged body cannot sneak them in while locked).
+    const prev = await repo.getOwnPreferences(a.ctx);
+    toStore = { ...input, color_overrides: (prev?.['color_overrides'] as ColorOverridesInput | null | undefined) ?? null };
+  } else {
+    // Unlocked: the user may fine-tune. On their own colour the company's shades drop away;
+    // on the company's colour their shades sit on top of the company's. Either way the
+    // result must stay readable.
+    const ownSeed = Boolean(input.seed_hex || input.preset);
+    const seed = seedFor(ownSeed ? input : { preset: b?.preset ?? null, seed_hex: b?.seed_hex ?? null });
+    const effective = ownSeed
+      ? (input.color_overrides ?? {})
+      : mergeOverrides(b?.color_overrides, input.color_overrides);
+    assertReadable(seed, effective);
+  }
   // Stored as chosen even while locked — the lock is applied when the theme is
   // RESOLVED (getMyBranding), so unlocking later restores the user's choice.
-  await repo.setOwnTheme(a.ctx, a.tenant_id, input as Record<string, unknown>);
+  await repo.setOwnTheme(a.ctx, a.tenant_id, toStore as Record<string, unknown>);
   return getMyBranding(a);
 }
 
@@ -155,9 +207,13 @@ export async function updateTenantBranding(a: Actor, input: TenantBrandingUpdate
   if (current?.theme_locked) {
     const changesTheme =
       THEME_KEYS.some((k) => k in input && (input[k] ?? null) !== (current[k] ?? null))
-      || ('default_mode' in input && input.default_mode !== current.default_mode);
+      || ('default_mode' in input && input.default_mode !== current.default_mode)
+      || ('color_overrides' in input && !sameJson(input.color_overrides, current.color_overrides));
     if (changesTheme) throw new BrandingLockedError();
   }
+  // Saved shades are checked against the seed that will be in force: a seed change alone can
+  // make a kept override unreadable, so the stored overrides count when none were sent.
+  assertReadable(effectiveSeed(input, current), 'color_overrides' in input ? input.color_overrides : current?.color_overrides);
   let updated: BrandingRow | null;
   try {
     updated = await repo.upsertTenantBranding(a.ctx, a.tenant_id, input);
@@ -191,6 +247,8 @@ export async function saGetBranding(tenantId: string) {
 
 export async function saUpdateBranding(tenantId: string, a: Actor, input: SaBrandingUpdateInput) {
   const t = await requireTenant(tenantId);
+  const current = await repo.getBrandingAsService(tenantId);
+  assertReadable(effectiveSeed(input, current), 'color_overrides' in input ? input.color_overrides : current?.color_overrides);
   const updated = await repo.upsertBrandingAsService(tenantId, a.user_id, input);
   await logActivity({ action_type: 'branding_updated_sa', performed_by: a.user_id, org_id: a.org_id });
   return saView(updated, t.name);

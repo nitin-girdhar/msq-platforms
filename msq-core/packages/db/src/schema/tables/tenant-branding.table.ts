@@ -6,7 +6,7 @@ import { usersTable } from './users.table';
 
 // entity.tenant_branding (1.57.0) — one row per tenant; absent = platform default.
 // Ownership is enforced in the DB, not just here: since 1.73.0 application roles may
-// write ONLY preset / seed_hex / font / default_mode (while NOT theme_locked) — column
+// write ONLY preset / seed_hex / font / default_mode / color_overrides (while NOT theme_locked) — column
 // GRANTs in db_scripts/07, lock trigger in 04. assets / product_names / terms /
 // nav_overrides / locale_config / public_key / theme_locked are Super Admin's
 // (identity-service, withServiceTx).
@@ -19,6 +19,9 @@ export const tenantBrandingTable = entitySchema.table('tenant_branding', {
   seedHex:      text('seed_hex'),
   font:         text('font'),
   defaultMode:  text('default_mode').notNull().default('light'),
+  // Sparse hand-tuned colour roles (1.75.0): { light: { <role>: '#rrggbb' }, dark: {...} }. Part of
+  // the theme: tenant-writable while unlocked; a user's own override lives in user_preferences.theme.
+  colorOverrides: jsonb('color_overrides').notNull().default({}),
   themeLocked:  boolean('theme_locked').notNull().default(false),
   // { "<slot>": { key, content_type, bytes, updated_at } }, slot in BRAND_ASSET_SLOTS (13, 1.73.0);
   // key = tenant-first blob key `<tenantId>/branding/<slot>/<epochMs>.<ext>`.

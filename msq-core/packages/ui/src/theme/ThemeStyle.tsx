@@ -33,9 +33,9 @@ export default function ThemeStyle({ theme, supportsDark = false }: ThemeStylePr
     `--font-brand:var(${font?.cssVar ?? '--font-inter'});--font-brand-mono:var(--font-jetbrains-mono);`
     + `font-size:${fontSizeById(theme.font_size).pct}%`;
 
-  const css: string[] = [block(':root', buildScheme(theme.seed_hex, false), fontDecl)];
+  const css: string[] = [block(':root', buildScheme(theme.seed_hex, false, theme.color_overrides.light), fontDecl)];
   if (supportsDark && theme.mode !== 'light') {
-    const dark = buildScheme(theme.seed_hex, true);
+    const dark = buildScheme(theme.seed_hex, true, theme.color_overrides.dark);
     css.push(block('html[data-mode="dark"]', dark));
     css.push(`@media (prefers-color-scheme: dark){${block('html[data-mode="system"]', dark)}}`);
   }

@@ -7,6 +7,7 @@
 //   - next/font declarations in @platform/ui-kit/theme fonts.ts
 // (ui-kit's theme test asserts its lists equal these.)
 import { z } from 'zod';
+import { COLOR_ROLE_IDS } from './color-roles.js';
 
 export const BRAND_PRESET_IDS = [
   'indigo-kinetic', 'pacific-ocean', 'teal-horizon', 'sky-velocity',
@@ -43,6 +44,22 @@ const displayText = (max: number) =>
 const seedHex = z.string().trim().toLowerCase().regex(/^#[0-9a-f]{6}$/, 'Use a #rrggbb colour');
 
 /**
+ * Hand-fine-tuned colour roles (schema 1.75.0): `{ light: { primary: '#0d4668' }, dark: {...} }`.
+ * SPARSE — only roles that were changed; every other role keeps following the seed. Role names
+ * are the whitelist in color-roles.ts (error / status colours are not editable, so naming one is
+ * a 422), values are #rrggbb. The 3:1 readability floor is checked by the service against the
+ * derived shades (findUnreadablePairs in theme-colors.ts) because it needs the seed.
+ * An empty object clears every override.
+ */
+const roleHex = z.string().trim().toLowerCase().regex(/^#[0-9a-f]{6}$/, 'Use a #rrggbb colour');
+const roleMap = z.record(z.enum(COLOR_ROLE_IDS), roleHex);
+export const colorOverridesSchema = z.object({
+  light: roleMap.optional(),
+  dark: roleMap.optional(),
+}).strict();
+export type ColorOverridesInput = z.infer<typeof colorOverridesSchema>;
+
+/**
  * A user's own theme override. All optional (absent = unchanged / inherit).
  * `font_size` is personal-only — the tenant schemas below deliberately omit it.
  */
@@ -52,6 +69,7 @@ export const themeChoiceSchema = z.object({
   font: z.enum(BRAND_FONT_IDS).nullable().optional(),
   mode: z.enum(THEME_MODE_IDS).nullable().optional(),
   font_size: z.enum(FONT_SIZE_IDS).nullable().optional(),
+  color_overrides: colorOverridesSchema.nullable().optional(),
 }).strict();
 export type ThemeChoiceInput = z.infer<typeof themeChoiceSchema>;
 
@@ -127,7 +145,7 @@ export const localeConfigSchema = z.object({
 export type LocaleConfigInput = z.infer<typeof localeConfigSchema>;
 
 /**
- * PUT /tenant/branding — the tenant admin's whole remit: colour, font and the default
+ * PUT /tenant/branding — the tenant admin's whole remit: colour (seed and hand-tuned roles), font and the default
  * light/dark mode (and only while the theme is unlocked). Everything else — images,
  * names, renamed words, menu labels, regional formats — is Super Admin's (schema below),
  * so a forged body carrying any of them is a 422 (`.strict()`), not a silent write.
@@ -137,6 +155,7 @@ export const tenantBrandingUpdateSchema = z.object({
   seed_hex: seedHex.nullable().optional(),
   font: z.enum(BRAND_FONT_IDS).nullable().optional(),
   default_mode: z.enum(THEME_MODE_IDS).optional(),
+  color_overrides: colorOverridesSchema.optional(),
 }).strict();
 export type TenantBrandingUpdateInput = z.infer<typeof tenantBrandingUpdateSchema>;
 
@@ -146,6 +165,7 @@ export const saBrandingUpdateSchema = z.object({
   seed_hex: seedHex.nullable().optional(),
   font: z.enum(BRAND_FONT_IDS).nullable().optional(),
   default_mode: z.enum(THEME_MODE_IDS).optional(),
+  color_overrides: colorOverridesSchema.optional(),
   theme_locked: z.boolean().optional(),
   product_names: productNamesSchema.optional(),
   terms: brandTermsSchema.optional(),

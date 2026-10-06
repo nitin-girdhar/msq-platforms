@@ -979,7 +979,7 @@ GRANT SELECT ON ext.vw_meta_forms                TO app_user;
 -- ===================================================================
 -- entity.tenant_branding — column-level writes. Application roles (withRoleTx:
 -- tenant admins holding admin.branding.manage) may write ONLY the theme — preset,
--- seed_hex, font, default_mode — and only while unlocked (trigger in 04).
+-- seed_hex, font, default_mode, color_overrides (1.75.0) — and only while unlocked (trigger in 04).
 -- Since 1.73.0 everything else is Super Admin's, written by identity-service under
 -- root_service (withServiceTx): brand images (`assets`), product names, renamed
 -- terms, menu overrides, regional formats (`locale_config`), public_key and
@@ -988,9 +988,9 @@ GRANT SELECT ON ext.vw_meta_forms                TO app_user;
 -- tenant-writable before 1.73.0; one_time/apply_branding_locale.sql REVOKEs them.)
 REVOKE ALL ON entity.tenant_branding FROM app_user, tenant_admin;
 GRANT SELECT ON entity.tenant_branding TO app_user, tenant_admin;
-GRANT INSERT (tenant_id, preset, seed_hex, font, default_mode, updated_by)
+GRANT INSERT (tenant_id, preset, seed_hex, font, default_mode, color_overrides, updated_by)
   ON entity.tenant_branding TO app_user, tenant_admin;
-GRANT UPDATE (preset, seed_hex, font, default_mode, updated_by)
+GRANT UPDATE (preset, seed_hex, font, default_mode, color_overrides, updated_by)
   ON entity.tenant_branding TO app_user, tenant_admin;
 
 -- iam.user_preferences — personal rows; RLS pins every role to its own user_id.

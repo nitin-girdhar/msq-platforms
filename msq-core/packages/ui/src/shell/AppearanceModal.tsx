@@ -3,10 +3,13 @@
 import { useEffect, useState } from 'react';
 import Modal from '../components/Modal/Modal';
 import ThemePicker from '../components/ThemePicker/ThemePicker';
+import FineTuneColors from '../components/ThemePicker/FineTuneColors';
 import { applyThemePreview } from '../components/ThemePicker/preview';
 import { appearance } from '../api/resources';
 import { useBranding } from '../branding/BrandingProvider';
 import { resolveTheme, type ThemeChoice } from '../theme/presets';
+import { findUnreadablePairs } from '../theme/scheme';
+import type { ColorOverrides } from '../theme/roles';
 
 interface Props {
   open: boolean;
@@ -18,7 +21,10 @@ interface Props {
  * company theme until the user picks something; "Use company theme" deletes
  * the override. While Super Admin has locked the tenant's theme, colour and
  * font are read-only and only the mode and text size remain personal (the server
- * enforces the same rule when it resolves the theme).
+ * enforces the same rule when it resolves the theme). While it is unlocked the user
+ * may also fine-tune individual colour roles, stored in their own preference: on top of
+ * the company's shades when they keep the company colour, or on top of their own colour
+ * when they pick one (the company's shades were tuned for the company seed and drop away).
  *
  * Saved themes are rendered server-side (no flash), so a save reloads the
  * page; until then the choice is previewed live.
@@ -39,7 +45,8 @@ export default function AppearanceModal({ open, onClose }: Props) {
     setError(null);
   }, [open, branding.personal]);
 
-  const company = branding.theme;
+  // The company's own theme (tenant layer only) — what this panel inherits and Resets to.
+  const company = branding.companyTheme;
   // Locked: the company colours/font are what renders, whatever is stored.
   // Mode and text size are personal needs and stay editable under the lock.
   const personalOnly: ThemeChoice = { mode: draft.mode ?? null, font_size: draft.font_size ?? null };
@@ -50,6 +57,21 @@ export default function AppearanceModal({ open, onClose }: Props) {
     font: shown.font,
     mode: draft.mode ?? company.mode,
     font_size: shown.font_size,
+    color_overrides: shown.color_overrides,
+  };
+  // The user chose their own colour: the company's shades no longer apply to them.
+  const ownSeed = Boolean(!branding.locked && (draft.seed_hex || draft.preset));
+  const baseOverrides: ColorOverrides = ownSeed ? {} : company.color_overrides;
+  const unreadable = branding.locked ? [] : findUnreadablePairs(shown.seed_hex, shown.color_overrides);
+  const onFineTune = (next: ColorOverrides) => {
+    // Store only what differs from what sits beneath (the company's shades), per mode.
+    const delta: ColorOverrides = {};
+    for (const m of ['light', 'dark'] as const) {
+      const base = baseOverrides[m] ?? {};
+      const picked = Object.fromEntries(Object.entries(next[m] ?? {}).filter(([k, v]) => base[k as keyof typeof base] !== v));
+      if (Object.keys(picked).length) delta[m] = picked;
+    }
+    setDraft((d) => ({ ...d, color_overrides: Object.keys(delta).length ? delta : null }));
   };
   const onPick = (next: ThemeChoice) => {
     setDraft((d) => {
@@ -57,6 +79,8 @@ export default function AppearanceModal({ open, onClose }: Props) {
       if (next.preset !== display.preset || next.seed_hex !== display.seed_hex) {
         out.preset = next.preset ?? null;
         out.seed_hex = next.seed_hex ?? null;
+        // Shades tuned for the previous colour do not carry over to a new one.
+        out.color_overrides = null;
       }
       if (next.font !== display.font) out.font = next.font ?? null;
       if (next.mode !== display.mode) out.mode = next.mode ?? null;
@@ -134,7 +158,7 @@ export default function AppearanceModal({ open, onClose }: Props) {
             <button
               type="button"
               onClick={save}
-              disabled={saving}
+              disabled={saving || unreadable.length > 0}
               aria-busy={saving}
               className="rounded-lg bg-primary px-4 py-2 text-label-md font-semibold text-on-primary transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -155,6 +179,9 @@ export default function AppearanceModal({ open, onClose }: Props) {
           modeHint="Dark mode is applied as each product finishes its dark theme."
           disabled={saving}
         />
+        {!branding.locked && (
+          <FineTuneColors seedHex={shown.seed_hex} value={shown.color_overrides} base={baseOverrides} onChange={onFineTune} disabled={saving} />
+        )}
         {error && (
           <p role="alert" className="rounded-lg bg-error-container px-3 py-2 text-body-sm text-on-error-container">
             {error}

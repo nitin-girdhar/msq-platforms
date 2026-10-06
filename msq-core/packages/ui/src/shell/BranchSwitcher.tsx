@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionUser, TenantOption, UserOrgOption } from '@platform/types';
 import { RANKS, isTenantWideRole } from '@platform/authz';
 import { auth } from '../api/resources';
@@ -36,6 +36,7 @@ interface Props {
 // the reload every screen is fenced to it by RLS (withRoleTx runs super_admin as
 // tenant_admin pinned to the session tenant) — this control only picks which.
 const ALL_BRANCHES_KEY = '__all__';
+const REFRESH_MS = 30_000;
 
 export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
   const { open, setOpen, search, setSearch, rootRef, searchInputRef } = useDropdown();
@@ -50,24 +51,46 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
 
   const canSwitchBranch = user.rank < RANKS.TENANT_ADMIN || isTenantWideRole(user.role);
 
+  // Loaded on mount and again whenever the menu opens (a tenant or branch may have
+  // been added since), but at most once per REFRESH_MS and never concurrently.
+  const lastLoadedAt = useRef(0);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
   useEffect(() => {
-    if (!canSwitchBranch) return;
-    let cancelled = false;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const loadOrgs = useCallback(() => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     auth
       .myOrgs()
       .then((res) => {
-        if (cancelled) return;
+        if (!mounted.current) return;
+        lastLoadedAt.current = Date.now();
         setOrgs(res.data.orgs);
         setCanViewAll(res.data.can_view_all === true);
         setTenantOptions(res.data.tenants ?? null);
       })
       .catch(() => {
-        if (!cancelled) setOrgs([]);
+        // Keep the last good list on a refresh failure; only the first load falls back to empty.
+        if (mounted.current) setOrgs((prev) => prev ?? []);
+      })
+      .finally(() => {
+        inFlight.current = false;
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [canSwitchBranch]);
+  }, []);
+
+  useEffect(() => {
+    if (canSwitchBranch) loadOrgs();
+  }, [canSwitchBranch, loadOrgs]);
+
+  useEffect(() => {
+    if (open && canSwitchBranch && Date.now() - lastLoadedAt.current > REFRESH_MS) loadOrgs();
+  }, [open, canSwitchBranch, loadOrgs]);
 
   // A super_admin gets the tenant list straight from the server, so a tenant
   // with no branch yet (just onboarded) is still pickable. Branch-derived
@@ -278,7 +301,7 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
                   ? `No branches match "${search}"`
                   : pickedTenantHasBranches
                     ? 'No branches available'
-                    : `${pickedTenantName} has no branches yet. Add one from the tenant's setup.`}
+                    : `${pickedTenantName} has no branches yet. Add its first one from Super Admin → Organizations (choose the tenant in the New form).`}
               </p>
             )}
             {filteredOrgs.map((org) => {

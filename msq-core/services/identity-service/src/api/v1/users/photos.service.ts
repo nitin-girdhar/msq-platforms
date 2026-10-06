@@ -17,6 +17,7 @@ import type { RoleTxContext } from '@platform/db';
 import { canManageUser } from '@platform/authz';
 import { logActivity } from '@platform/audit-log';
 import { BadRequestError, ForbiddenError, NotFoundError, ValidationError } from '../../../lib/errors.js';
+import { assertOwnKey } from '../../../lib/blob.js';
 import { config } from '../../../config/index.js';
 import * as repo from './photos.repository.js';
 import * as usersRepo from './users.repository.js';
@@ -84,6 +85,7 @@ export async function getPhoto(
 ): Promise<{ key: string; content_type: string | null; bytes: Buffer } | null> {
   const ref = await repo.loadPhotoKey(ctx, targetUserId);
   if (!ref) return null;
+  assertOwnKey(ctx.tenant_id, ref.key);
   const bytes = await repo.readPhotoBytes(ref.key);
   if (!bytes) return null;
   return { key: ref.key, content_type: ref.content_type, bytes };

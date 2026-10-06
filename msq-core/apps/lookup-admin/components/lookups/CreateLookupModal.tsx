@@ -115,7 +115,7 @@ export default function CreateLookupModal({ open, onClose, table, config, tenant
       </Button>
       <Button variant="primary" type="submit" form={FORM_ID} disabled={pending} aria-busy={pending}>
         {pending && (
-          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-surface-container-lowest/40 border-t-white" aria-hidden />
         )}
         {pending ? 'Creating…' : 'Create'}
       </Button>

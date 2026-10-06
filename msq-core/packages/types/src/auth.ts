@@ -104,6 +104,14 @@ export interface UserOrgOption {
   tenant_name?: string;
 }
 
+// One active tenant in a platform super_admin's switcher. Listed from
+// entity.tenants, not derived from branches, so a freshly onboarded tenant with
+// no branch yet is still selectable.
+export interface TenantOption {
+  tenant_id: string;
+  tenant_name: string;
+}
+
 /**
  * The shrunk platform JWT (P1.3). Carries only identity, the coarse
  * `platform_role`, tenancy, and the tenant's licensed products — NO global

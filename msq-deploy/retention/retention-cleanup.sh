@@ -2,9 +2,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Attendance selfie retention cleanup.
 #
-# Deletes daily check-in/out selfies (blob keys `punch/<userId>/<YYYYMMDD>_*.jpg`)
+# Deletes daily check-in/out selfies (blob keys `<tenant>/<branch>/<employee>/punches/<YYYY>/<MM>/<YYYYMMDD>_*.jpg`,
+# and the legacy `punch/<userId>/<YYYYMMDD>_*.jpg` until the layout migration has run)
 # once they are older than the owning org's `hr.attendance_rules.image_retention_days`.
-# The enrolled reference photo (`avatar/**`) is NEVER touched.
+# The enrolled reference photo (`…/avatar/**`, legacy `avatar/**`) is NEVER touched.
 #
 # The cutoff is derived from the DATE ENCODED IN THE FILENAME, not the file mtime,
 # so a backup/restore or an rsync that rewrites mtimes cannot resurrect or
@@ -42,8 +43,11 @@ done
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
-if [[ ! -d "$PUNCH_DIR" ]]; then
-  log "No punch directory at $PUNCH_DIR — nothing to do."
+# Two layouts coexist until msq-deploy/storage/migrate-blob-layout.sh has moved the old files:
+#   legacy:  <root>/punch/<userId>/<YYYYMMDD>_<kind>_<n>.<ext>
+#   current: <root>/<tenantId>/<branchId>/<employeeId>/punches/<YYYY>/<MM>/<YYYYMMDD>_<kind>_<n>.<ext>
+if [[ ! -d "$PUNCH_DIR" ]] && ! compgen -G "${BLOB_DIR%/}/*/*/*/punches" >/dev/null; then
+  log "No punch folders under $BLOB_DIR — nothing to do."
   exit 0
 fi
 
@@ -68,38 +72,59 @@ today_epoch=$(date -u +%s)
 deleted=0
 scanned=0
 
-# Iterate each user's punch folder.
-for userdir in "$PUNCH_DIR"/*/; do
-  [[ -d "$userdir" ]] || continue
-  uid="$(basename "$userdir")"
+# Age-check one selfie. $1 = path, $2 = employee/user id. Only the LEADING date of the
+# file name matters (<YYYYMMDD>_chkin_<n>.jpg; a split shift punches several times a day).
+check_file() {
+  local f="$1" uid="$2" fname ymd file_epoch age_days days
+  [[ -f "$f" ]] || return 0
+  scanned=$((scanned + 1))
   days="${RETENTION[$uid]:-$DEFAULT_RETENTION_DAYS}"
+  fname="$(basename "$f")"
+  ymd="${fname%%_*}"
+  if [[ ! "$ymd" =~ ^[0-9]{8}$ ]]; then
+    log "SKIP (unrecognized name): $f"
+    return 0
+  fi
+  file_epoch=$(date -u -d "${ymd:0:4}-${ymd:4:2}-${ymd:6:2}" +%s 2>/dev/null || echo 0)
+  if [[ "$file_epoch" -eq 0 ]]; then log "SKIP (bad date): $f"; return 0; fi
+  age_days=$(( (today_epoch - file_epoch) / 86400 ))
+  if (( age_days > days )); then
+    if (( APPLY )); then
+      rm -f "$f" && deleted=$((deleted + 1))
+    else
+      log "WOULD DELETE (${age_days}d > ${days}d): $f"
+      deleted=$((deleted + 1))
+    fi
+  fi
+  return 0
+}
 
-  for f in "$userdir"*; do
-    [[ -f "$f" ]] || continue
-    scanned=$((scanned + 1))
-    fname="$(basename "$f")"
-    # Expect <YYYYMMDD>_chkin_<n>.jpg / <YYYYMMDD>_chkout_<n>.jpg (a split shift
-    # punches several times a day). Only the leading date matters here.
-    ymd="${fname%%_*}"
-    if [[ ! "$ymd" =~ ^[0-9]{8}$ ]]; then
-      log "SKIP (unrecognized name): $f"
-      continue
-    fi
-    file_epoch=$(date -u -d "${ymd:0:4}-${ymd:4:2}-${ymd:6:2}" +%s 2>/dev/null || echo 0)
-    [[ "$file_epoch" -eq 0 ]] && { log "SKIP (bad date): $f"; continue; }
-    age_days=$(( (today_epoch - file_epoch) / 86400 ))
-    if (( age_days > days )); then
-      if (( APPLY )); then
-        rm -f "$f" && deleted=$((deleted + 1))
-      else
-        log "WOULD DELETE (${age_days}d > ${days}d): $f"
-        deleted=$((deleted + 1))
-      fi
-    fi
+# Legacy layout: one folder per user.
+if [[ -d "$PUNCH_DIR" ]]; then
+  for userdir in "$PUNCH_DIR"/*/; do
+    [[ -d "$userdir" ]] || continue
+    uid="$(basename "$userdir")"
+    for f in "$userdir"*; do check_file "$f" "$uid"; done
+    # Remove the user folder if it is now empty (apply mode only).
+    if (( APPLY )); then rmdir "$userdir" 2>/dev/null || true; fi
   done
-  # Remove the user folder if it is now empty (apply mode only).
-  if (( APPLY )); then rmdir "$userdir" 2>/dev/null || true; fi
-done
+fi
+
+# Current layout. The path shape is matched strictly (UUID segments + 'punches'), so
+# nothing outside a person's punches folder — avatar/, documents/, leave/, branding/ —
+# can ever be reached by this script.
+UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+PATH_RE="^(${UUID_RE})/(${UUID_RE})/(${UUID_RE})/punches/[0-9]{4}/[0-9]{2}/[^/]+$"
+while IFS= read -r -d '' f; do
+  rel="${f#"${BLOB_DIR%/}/"}"
+  if [[ "$rel" =~ $PATH_RE ]]; then
+    check_file "$f" "${BASH_REMATCH[3]}"
+  fi
+done < <(find "${BLOB_DIR%/}" -mindepth 7 -maxdepth 7 -type f -path '*/punches/*' -print0 2>/dev/null)
+# Tidy empty month / year folders left behind (apply mode only).
+if (( APPLY )); then
+  find "${BLOB_DIR%/}" -mindepth 5 -maxdepth 6 -type d -empty -path '*/punches/*' -delete 2>/dev/null || true
+fi
 
 if (( APPLY )); then
   log "Done. Scanned ${scanned}, deleted ${deleted}."

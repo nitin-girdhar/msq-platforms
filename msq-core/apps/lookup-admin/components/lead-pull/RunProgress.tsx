@@ -23,8 +23,8 @@ export default function RunProgress({ run, onStartAnother }: Props) {
   return (
     <div className="space-y-3">
       {(run.status === 'running' || run.status === 'queued') && (
-        <div className="flex items-center gap-3 rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] px-4 py-3 text-sm text-[#0b6cbf]">
-          <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />
+        <div className="flex items-center gap-3 rounded-xl border border-status-info/30 bg-status-info-container px-4 py-3 text-sm text-primary">
+          <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary/30 border-t-primary" aria-hidden />
           <span>
             {run.status === 'queued'
               ? 'Queued — waiting for the pull to start…'
@@ -35,8 +35,8 @@ export default function RunProgress({ run, onStartAnother }: Props) {
       )}
 
       {(run.status === 'apply_queued' || run.status === 'applying') && (
-        <div className="flex items-center gap-3 rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] px-4 py-3 text-sm text-[#0b6cbf]">
-          <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />
+        <div className="flex items-center gap-3 rounded-xl border border-status-info/30 bg-status-info-container px-4 py-3 text-sm text-primary">
+          <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary/30 border-t-primary" aria-hidden />
           <span>
             {run.status === 'apply_queued'
               ? 'Apply queued — waiting for the worker to start…'
@@ -48,13 +48,13 @@ export default function RunProgress({ run, onStartAnother }: Props) {
       {/* An Apply that was interrupted returns the run to `completed` with the
           reason here — not a failure: pressing Apply again continues. */}
       {run.status === 'completed' && run.error_text && (
-        <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+        <div role="alert" className="rounded-xl border border-status-due/30 bg-status-due-container px-4 py-3 text-xs text-on-status-due-container">
           {run.error_text}
         </div>
       )}
 
       {run.status === 'failed' && (
-        <div className="space-y-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="space-y-2 rounded-xl border border-error/30 bg-error-container px-4 py-3 text-sm text-on-error-container">
           <p className="font-semibold">This run failed.</p>
           <p className="text-xs leading-relaxed">
             {run.error_text ?? 'No further detail was recorded — this can happen when the service restarted mid-run and the reaper timed the run out.'}
@@ -66,7 +66,7 @@ export default function RunProgress({ run, onStartAnother }: Props) {
       )}
 
       {(run.status === 'completed' || run.status === 'applied') && !inFlight && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <div className="rounded-xl border border-status-success/30 bg-status-success-container px-4 py-3 text-sm text-on-status-success-container">
           Pull complete — {formatCount(counts.pages_walked)} pages walked, {formatCount(counts.leads_staged)} leads
           staged for review.
           {(counts.out_of_scope ?? 0) > 0 && (
@@ -81,7 +81,7 @@ export default function RunProgress({ run, onStartAnother }: Props) {
       {/* Prominent, not a footnote: an admin who misses this believes the pull
           is complete when the page cap cut it off mid-form. */}
       {counts.truncated && (
-        <div className="rounded-xl border-2 border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="rounded-xl border-2 border-status-due/30 bg-status-due-container px-4 py-3 text-sm text-on-status-due-container">
           <p className="font-bold">⚠ Incomplete pull — the page cap was hit.</p>
           <p className="mt-1 text-xs leading-relaxed">
             {(counts.truncated_forms?.length ?? 0)} form{(counts.truncated_forms?.length ?? 0) === 1 ? '' : 's'} hit
@@ -92,7 +92,7 @@ export default function RunProgress({ run, onStartAnother }: Props) {
       )}
 
       {(counts.page_errors?.length ?? 0) > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+        <div className="rounded-xl border border-status-due/30 bg-status-due-container px-4 py-3 text-xs text-on-status-due-container">
           <p className="font-semibold">{counts.page_errors!.length} page{counts.page_errors!.length === 1 ? '' : 's'} could not be reached:</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-4">
             {counts.page_errors!.map((e) => (

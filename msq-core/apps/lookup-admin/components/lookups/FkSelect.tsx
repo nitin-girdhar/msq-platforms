@@ -164,7 +164,7 @@ export default function FkSelect({ field, value, onChange, formValues, tenantId,
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={`${idPrefix}-${field.key}`} className="text-xs font-semibold text-[#0F172A]">
+      <label htmlFor={`${idPrefix}-${field.key}`} className="text-xs font-semibold text-on-surface">
         {field.label}{field.required ? ' *' : ''}
       </label>
       <select
@@ -173,7 +173,7 @@ export default function FkSelect({ field, value, onChange, formValues, tenantId,
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled || parentPending || loading}
         required={field.required}
-        className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+        className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
       >
         <option value="">
           {parentPending
@@ -184,8 +184,8 @@ export default function FkSelect({ field, value, onChange, formValues, tenantId,
           <option key={opt.id} value={opt.id}>{opt.label}</option>
         ))}
       </select>
-      {hint && !error && <p className="text-[11px] text-[#94A3B8]">{hint}</p>}
-      {error && <p className="text-[11px] text-red-600">Couldn&apos;t load options — try again.</p>}
+      {hint && !error && <p className="text-[0.6875rem] text-outline">{hint}</p>}
+      {error && <p className="text-[0.6875rem] text-on-status-overdue-container">Couldn&apos;t load options — try again.</p>}
     </div>
   );
 }

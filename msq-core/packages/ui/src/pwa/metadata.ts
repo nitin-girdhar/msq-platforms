@@ -4,6 +4,7 @@
 // of the install story — this file only carries the per-page <meta>/<link> tags.
 
 import type { Metadata, Viewport } from 'next';
+import { DEFAULT_BRAND } from '../branding/defaults';
 
 // `viewport-fit=cover` lets content extend under the iOS notch/home-indicator
 // safe areas; pairs with `env(safe-area-inset-*)` CSS in the shared shell.
@@ -19,7 +20,7 @@ export const viewport: Viewport = {
 export const appleWebApp: Metadata['appleWebApp'] = {
   capable: true,
   statusBarStyle: 'default',
-  title: 'FitClass',
+  title: DEFAULT_BRAND.name,
 };
 
 // `appleWebApp.capable` above does NOT emit `apple-mobile-web-app-capable` on
@@ -44,8 +45,8 @@ export const appleCapableMeta: Metadata['other'] = {
 // (verified against lookup-admin's `/sa`), so one copy under the root origin
 // serves every product path.
 export const icons: Metadata['icons'] = {
-  icon: '/icons/favicon.png',
-  apple: '/icons/apple-touch-icon.png',
+  icon: DEFAULT_BRAND.icons.favicon,
+  apple: DEFAULT_BRAND.icons.appleTouch,
 };
 
 // Every product app must link the manifest, not just auth-web. auth-web's

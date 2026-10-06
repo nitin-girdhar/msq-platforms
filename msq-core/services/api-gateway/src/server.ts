@@ -897,6 +897,16 @@ app.get('/meta/pages', { ...withSuperAdmin }, async (req, reply) => {
 // The live leadgen forms on one page (1.51.0) — the mapping screen's form picker,
 // replacing hand-typed form ids. Refused by the service for a page mapped to
 // another tenant.
+// 1.70.0: stored token / subscription health per mapped page, and the on-demand re-check
+// (one Graph call per page, so it gets the long admin timeout).
+app.get('/meta/pages/health', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/pages/health', req, reply, req.userCtx);
+});
+app.post('/meta/pages/health/validate', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/pages/health/validate', req, reply, req.userCtx, {
+    timeoutMs: config.metaAdminLongTimeoutMs,
+  });
+});
 app.get('/meta/pages/:pageId/forms', { ...withSuperAdmin }, async (req, reply) => {
   const { pageId } = req.params as { pageId: string };
   return proxyTo(config.metaServiceUrl, `/api/v1/pages/${encodeURIComponent(pageId)}/forms`, req, reply, req.userCtx);
@@ -926,6 +936,10 @@ app.post('/meta/campaigns/sync', { ...withSuperAdmin }, async (req, reply) => {
     timeoutMs: config.metaAdminLongTimeoutMs,
   });
 });
+// 1.70.0: hide / restore campaigns from the working lists (visibility only).
+app.post('/meta/campaigns/archive', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/campaigns/archive', req, reply, req.userCtx);
+});
 app.patch('/meta/campaigns/:metaCampaignId', { ...withSuperAdmin }, async (req, reply) => {
   const { metaCampaignId } = req.params as { metaCampaignId: string };
   return proxyTo(config.metaServiceUrl, `/api/v1/campaigns/${metaCampaignId}`, req, reply, req.userCtx, {
@@ -944,6 +958,14 @@ app.get('/meta/ad-accounts', { ...withSuperAdmin }, async (req, reply) => {
 });
 app.post('/meta/ad-accounts/sync', { ...withSuperAdmin }, async (req, reply) => {
   return proxyTo(config.metaServiceUrl, '/api/v1/ad-accounts/sync', req, reply, req.userCtx, {
+    timeoutMs: config.metaAdminLongTimeoutMs,
+  });
+});
+app.post('/meta/ad-accounts/bulk', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/ad-accounts/bulk', req, reply, req.userCtx);
+});
+app.get('/meta/ad-accounts/token-permissions', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/ad-accounts/token-permissions', req, reply, req.userCtx, {
     timeoutMs: config.metaAdminLongTimeoutMs,
   });
 });
@@ -992,6 +1014,18 @@ app.post('/meta/lead-pull/runs/:runId/apply', { ...withSuperAdmin }, async (req,
 });
 // 1.51.0: after the admin maps a page/form inline, re-resolve the run's unmapped
 // rows and re-classify — one fast SQL pass, no Graph calls.
+// 1.70.0: tick / untick staged rows, discard a staged batch, and past runs.
+app.post('/meta/lead-pull/runs/:runId/selection', { ...withSuperAdmin }, async (req, reply) => {
+  const { runId } = req.params as { runId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/lead-pull/runs/${runId}/selection`, req, reply, req.userCtx);
+});
+app.post('/meta/lead-pull/runs/:runId/discard', { ...withSuperAdmin }, async (req, reply) => {
+  const { runId } = req.params as { runId: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/lead-pull/runs/${runId}/discard`, req, reply, req.userCtx);
+});
+app.get('/meta/lead-pull/history', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/lead-pull/history', req, reply, req.userCtx);
+});
 app.post('/meta/lead-pull/runs/:runId/remap', { ...withSuperAdmin }, async (req, reply) => {
   const { runId } = req.params as { runId: string };
   return proxyTo(config.metaServiceUrl, `/api/v1/lead-pull/runs/${runId}/remap`, req, reply, req.userCtx);
@@ -1105,6 +1139,11 @@ app.get('/hr/leave/requests/team', { ...withAuth }, async (req, reply) => {
 app.get('/hr/leave/requests/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}`, req, reply, req.userCtx);
+});
+// Approver-side chain + "may I decide this now" for the Review dialog (hr-service scopes it).
+app.get('/hr/leave/requests/:id/approvals', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/leave/requests/${id}/approvals`, req, reply, req.userCtx);
 });
 app.patch('/hr/leave/requests/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
@@ -1293,14 +1332,6 @@ app.get('/hr/documents/mine', { ...withAuth }, async (req, reply) => {
 app.post('/hr/documents/mine', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/documents/mine', req, reply, req.userCtx);
 });
-app.get('/hr/documents/admin/pending', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.hrServiceUrl, '/api/v1/documents/admin/pending', req, reply, req.userCtx);
-});
-app.get('/hr/documents/employee/:userId', { ...withAuth }, async (req, reply) => {
-  const { userId } = req.params as { userId: string };
-  return proxyTo(config.hrServiceUrl, `/api/v1/documents/employee/${userId}`, req, reply, req.userCtx);
-});
-app.get('/hr/documents/:id/file', { ...withAuth }, async (req, reply) => {
 app.get('/hr/attendance/me/shift', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, '/api/v1/attendance/me/shift', req, reply, req.userCtx);
 });
@@ -1314,6 +1345,14 @@ app.get('/hr/documents/employee/:userId/dossier', { ...withAuth }, async (req, r
   const { userId } = req.params as { userId: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/documents/employee/${userId}/dossier`, req, reply, req.userCtx);
 });
+app.get('/hr/documents/admin/pending', { ...withAuth }, async (req, reply) => {
+  return proxyTo(config.hrServiceUrl, '/api/v1/documents/admin/pending', req, reply, req.userCtx);
+});
+app.get('/hr/documents/employee/:userId', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/documents/employee/${userId}`, req, reply, req.userCtx);
+});
+app.get('/hr/documents/:id/file', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/documents/${id}/file`, req, reply, req.userCtx);
 });
@@ -1583,6 +1622,10 @@ app.get('/hr/attendance/regularizations/:id', { ...withAuth }, async (req, reply
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/attendance/regularizations/${id}`, req, reply, req.userCtx);
 });
+app.get('/hr/attendance/regularizations/:id/approvals', { ...withAuth }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/attendance/regularizations/${id}/approvals`, req, reply, req.userCtx);
+});
 app.patch('/hr/attendance/regularizations/:id', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.hrServiceUrl, `/api/v1/attendance/regularizations/${id}`, req, reply, req.userCtx);
@@ -1682,7 +1725,7 @@ app.delete('/task-lists/:id', { ...withAuth }, async (req, reply) => {
 app.get('/tasks/mine', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.tasksServiceUrl, '/api/v1/tasks/mine', req, reply, req.userCtx);
 });
-// KPI counts, CSV export and bulk update (schema 1.67.0). Static paths, so they
+// KPI counts, CSV export and bulk update (schema 1.68.0). Static paths, so they
 // never collide with '/tasks/:id'. Capabilities are enforced in tasks-service.
 app.get('/tasks/stats', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.tasksServiceUrl, '/api/v1/tasks/stats', req, reply, req.userCtx);

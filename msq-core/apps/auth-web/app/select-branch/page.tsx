@@ -1,14 +1,14 @@
 import type { Metadata } from 'next';
-import Image from 'next/image';
 import { redirect } from 'next/navigation';
-import { getServerSession } from '@platform/ui-kit/server';
+import { DEFAULT_BRAND, getEffectiveBranding, getServerSession } from '@platform/ui-kit/server';
 import { buildLoginUrl, InstallPrompt } from '@platform/ui-kit';
+import AuthCard, { BranchIcon } from '@/components/auth/AuthCard';
 import SelectBranchList from '@/components/auth/SelectBranchList';
 import { resolveCallback, sessionDestination } from '@/src/lib/callback';
 
 export const metadata: Metadata = {
-  title: 'Select branch · FitClass',
-  description: 'Choose which FitClass branch to work in',
+  title: `Select branch · ${DEFAULT_BRAND.name}`,
+  description: `Choose which ${DEFAULT_BRAND.name} branch to work in`,
 };
 
 export const dynamic = 'force-dynamic';
@@ -28,39 +28,23 @@ export default async function SelectBranchPage({ searchParams }: SelectBranchPag
   const destination =
     callbackUrl ?? sessionDestination(result.licensedProducts, result.session);
 
+  // Signed in: the session tenant's branding (the root layout already themed the
+  // page with it); only the logo/name are needed for the card header.
+  const b = await getEffectiveBranding();
+  const brand = { theme: b.theme, brandName: b.brandName, productLabels: [], assets: b.assets };
+
   return (
-    <div className="flex min-h-screen w-full items-center justify-center overflow-y-auto bg-[#F8FAFC] px-6 py-12">
-      <div className="w-full max-w-3xl">
-        <div className="mb-6 flex justify-center">
-          <div className="rounded-2xl bg-[#0b1f3a] px-6 py-4">
-            {/* Emblem, not the full lockup: the square fitclass-logo-white.webp
-                (emblem + FITCLASS wordmark + tagline) collapses to an illegible
-                smudge when squeezed to h-9 — see auth-web/app/login/page.tsx. */}
-            <Image
-              src="/fitclass-emblem.png"
-              alt="FitClass"
-              width={160}
-              height={160}
-              priority
-              className="h-9 w-auto object-contain"
-            />
-          </div>
-        </div>
-
-        <header className="mb-5 text-center">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Select your branch</h1>
-          <p className="mt-2 text-sm text-slate-500">
-            You have access to multiple branches. Choose one to continue — you can
-            switch anytime from the top bar.
-          </p>
-        </header>
-
-        <div className="mb-5">
-          <InstallPrompt />
-        </div>
-
-        <SelectBranchList callbackUrl={destination} />
+    <AuthCard
+      brand={brand}
+      width="lg"
+      icon={BranchIcon}
+      title="Select your branch"
+      subtitle="You have access to multiple branches. Choose one to continue — you can switch anytime from the top bar."
+    >
+      <div className="mb-4">
+        <InstallPrompt />
       </div>
-    </div>
+      <SelectBranchList callbackUrl={destination} />
+    </AuthCard>
   );
 }

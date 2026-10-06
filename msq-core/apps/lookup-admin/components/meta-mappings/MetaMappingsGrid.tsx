@@ -1,12 +1,12 @@
 'use client';
 
-import '@/components/lookups/ag-grid.css';
+import '@platform/ui-kit/ag-grid.css';
 import { useCallback, useMemo } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, GridReadyEvent, GridSizeChangedEvent, ICellRendererParams } from 'ag-grid-community';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
-import { GRID_DEFAULT_COL_DEF } from '@platform/ui-kit/grid';
-import type { MetaPageOrgMapRow, MetaPlatform } from '@/src/lib/api/client';
+import { GRID_DEFAULT_COL_DEF, scalePx } from '@platform/ui-kit/grid';
+import type { MetaPageHealthRow, MetaPageOrgMapRow, MetaPlatform } from '@/src/lib/api/client';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -17,9 +17,9 @@ const PLATFORM_LABELS: Record<MetaPlatform, string> = {
 };
 
 const PLATFORM_CLASSES: Record<MetaPlatform, string> = {
-  fb: 'bg-blue-50 text-blue-700',
-  ig: 'bg-pink-50 text-pink-700',
-  wa: 'bg-emerald-50 text-emerald-700',
+  fb: 'bg-status-info-container text-primary',
+  ig: 'bg-surface-container text-on-surface-variant',
+  wa: 'bg-status-success-container text-on-status-success-container',
 };
 
 // The whole point of the screen: a NULL form_id is a page-level catch-all, and
@@ -32,6 +32,20 @@ interface Props {
   pageNames: Record<string, string>;
   orgNames: Record<string, string>;
   onEdit: (row: MetaPageOrgMapRow) => void;
+  // 1.70.0: last stored token / subscription check per page_id.
+  health: Record<string, MetaPageHealthRow>;
+}
+
+// What the Token health cell says, and its colour. 'Not checked' is its own state: a page
+// nobody has validated yet is unknown, not healthy.
+export function healthView(h: MetaPageHealthRow | undefined): { label: string; className: string; title: string } {
+  if (!h) return { label: 'Not checked', className: 'bg-surface-container text-on-surface-variant', title: 'Press Validate Page Tokens to check' };
+  const when = `Checked ${new Date(h.checked_at).toLocaleString()}`;
+  if (h.token_status === 'ok' && h.is_subscribed) return { label: 'Subscribed', className: 'bg-status-success-container text-on-status-success-container', title: when };
+  if (h.token_status === 'ok') return { label: 'Not subscribed', className: 'bg-status-due-container text-on-status-due-container', title: `${h.error_text ?? ''} ${when}`.trim() };
+  if (h.token_status === 'expired') return { label: 'Token expired', className: 'bg-error-container text-on-error-container', title: `${h.error_text ?? ''} ${when}`.trim() };
+  if (h.token_status === 'missing') return { label: 'No page token', className: 'bg-error-container text-on-error-container', title: `${h.error_text ?? ''} ${when}`.trim() };
+  return { label: 'Check failed', className: 'bg-status-due-container text-on-status-due-container', title: `${h.error_text ?? ''} ${when}`.trim() };
 }
 
 function platformLabel(platform: MetaPlatform | undefined): string {
@@ -44,14 +58,14 @@ function formatSyncedAt(value: string | null | undefined): string {
   return Number.isNaN(parsed.getTime()) ? 'Never' : parsed.toLocaleString();
 }
 
-export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: Props) {
+export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit, health }: Props) {
   const pageCellRenderer = useCallback((p: ICellRendererParams<MetaPageOrgMapRow>) => {
     const id = p.data?.page_id ?? '';
     const name = pageNames[id];
     return (
       <div className="flex flex-col justify-center leading-tight">
-        <p className="truncate text-sm font-semibold leading-tight text-[#0F172A]">{name ?? id}</p>
-        {name ? <p className="truncate font-mono text-[11px] leading-tight text-[#64748B]">{id}</p> : null}
+        <p className="truncate text-sm font-semibold leading-tight text-on-surface">{name ?? id}</p>
+        {name ? <p className="truncate font-mono text-[0.6875rem] leading-tight text-on-surface-variant">{id}</p> : null}
       </div>
     );
   }, [pageNames]);
@@ -60,7 +74,7 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: 
     const platform = p.data?.platform;
     if (!platform) return null;
     return (
-      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${PLATFORM_CLASSES[platform] ?? 'bg-slate-100 text-slate-600'}`}>
+      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${PLATFORM_CLASSES[platform] ?? 'bg-surface-container text-on-surface-variant'}`}>
         {platformLabel(platform)}
       </span>
     );
@@ -69,13 +83,13 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: 
   const statusCellRenderer = useCallback((p: ICellRendererParams<MetaPageOrgMapRow>) => {
     if (!p.data) return null;
     return p.data.is_active ? (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-status-success-container px-2 py-0.5 text-xs font-medium text-on-status-success-container">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-success" />
         Active
       </span>
     ) : (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-container px-2 py-0.5 text-xs font-medium text-on-surface-variant">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-on-surface-variant" />
         Inactive
       </span>
     );
@@ -86,13 +100,23 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: 
     if (!row) return null;
     if (row.form_id === null) {
       return (
-        <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+        <span className="inline-flex items-center rounded-full bg-status-due-container px-2 py-0.5 text-xs font-medium text-on-status-due-container">
           {PAGE_LEVEL_LABEL}
         </span>
       );
     }
-    return <span className="font-mono text-xs text-[#0F172A]">{row.form_id}</span>;
+    return <span className="font-mono text-xs text-on-surface">{row.form_id}</span>;
   }, []);
+
+  const healthCellRenderer = useCallback((p: ICellRendererParams<MetaPageOrgMapRow>) => {
+    if (!p.data) return null;
+    const v = healthView(health[p.data.page_id]);
+    return (
+      <span title={v.title} className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${v.className}`}>
+        {v.label}
+      </span>
+    );
+  }, [health]);
 
   const actionsCellRenderer = useCallback((p: ICellRendererParams<MetaPageOrgMapRow>) => {
     const row = p.data;
@@ -101,7 +125,7 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: 
       <button
         type="button"
         onClick={() => onEdit(row)}
-        className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC]"
+        className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-low"
       >
         Edit
       </button>
@@ -147,6 +171,13 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: 
       cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
+      // 1.70.0: the last "Validate Page Tokens" result for this row's page.
+      colId: 'token_health', headerName: 'Token health', width: 150, minWidth: 130, sortable: true, filter: true,
+      valueGetter: (p) => healthView(health[p.data?.page_id ?? '']).label,
+      cellRenderer: healthCellRenderer,
+      cellStyle: { display: 'flex', alignItems: 'center' },
+    },
+    {
       colId: 'is_active', headerName: 'Status', width: 130, sortable: true, filter: true,
       valueGetter: (p) => (p.data?.is_active ? 'Active' : 'Inactive'),
       cellRenderer: statusCellRenderer,
@@ -162,7 +193,7 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: 
       cellRenderer: actionsCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end' },
     },
-  ], [pageNames, orgNames, pageCellRenderer, formCellRenderer, platformCellRenderer, statusCellRenderer, actionsCellRenderer]);
+  ], [pageNames, orgNames, health, pageCellRenderer, formCellRenderer, platformCellRenderer, statusCellRenderer, healthCellRenderer, actionsCellRenderer]);
 
   const onGridReady = useCallback((params: GridReadyEvent<MetaPageOrgMapRow>) => {
     params.api.sizeColumnsToFit();
@@ -178,7 +209,7 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: 
   const defaultColDef: ColDef = GRID_DEFAULT_COL_DEF;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-sm">
+    <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
       <div className="ag-theme-alpine" style={{ height: 600, width: '100%' }}>
         <AgGridReact<MetaPageOrgMapRow>
           rowData={rows}
@@ -187,8 +218,8 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit }: 
           pagination
           paginationPageSize={25}
           paginationPageSizeSelector={[25, 50, 100]}
-          rowHeight={44}
-          headerHeight={40}
+          rowHeight={scalePx(44)}
+          headerHeight={scalePx(40)}
           animateRows={false}
           suppressCellFocus={false}
           enableCellTextSelection

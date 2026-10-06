@@ -1,8 +1,7 @@
 import { getServerSession } from '@/src/lib/server-session';
-import { getSelectedTenantId } from '@/src/lib/tenant-scope';
+import { getSelectedTenantId, getSelectedTenantName } from '@/src/lib/tenant-scope';
 import { redirect } from 'next/navigation';
-import { PageHeader, PageBody } from '@platform/ui-kit';
-import CapabilityMatrixClient from '@/components/capabilities/CapabilityMatrixClient';
+import CapabilityMatrixShell from '@/components/capabilities/CapabilityMatrixShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,14 +14,8 @@ export default async function CapabilityMatrixPage() {
   const selectedTenantId = await getSelectedTenantId();
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader
-        title="Capability Matrix"
-        subtitle="Grant or revoke capabilities for a role, per tenant."
-      />
-      <PageBody>
-        <CapabilityMatrixClient selectedTenantId={selectedTenantId} />
-      </PageBody>
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <CapabilityMatrixShell selectedTenantId={selectedTenantId} tenantName={await getSelectedTenantName()} />
     </div>
   );
 }

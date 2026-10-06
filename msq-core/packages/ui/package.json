@@ -16,7 +16,8 @@
     "./ag-grid.css": "./src/styles/ag-grid.css",
     "./theme": "./src/theme/index.ts",
     "./theme.css": "./src/styles/theme.css",
-    "./branding": "./src/branding/index.ts"
+    "./branding": "./src/branding/index.ts",
+    "./locale": "./src/locale/index.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

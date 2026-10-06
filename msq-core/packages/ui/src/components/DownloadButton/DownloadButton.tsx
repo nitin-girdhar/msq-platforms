@@ -60,7 +60,7 @@ export default function DownloadButton({ onExport, rowCount, disabled, compact }
           role="menu"
           className="absolute right-0 z-50 mt-1 w-44 overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest py-1 shadow-lg"
         >
-          <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-outline">
+          <p className="px-3 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wide text-outline">
             Export {rowCount} row{rowCount === 1 ? '' : 's'}
           </p>
           <button
@@ -69,7 +69,7 @@ export default function DownloadButton({ onExport, rowCount, disabled, compact }
             onClick={() => choose('xlsx')}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-on-surface hover:bg-surface-container-low"
           >
-            <span className="flex h-5 w-5 items-center justify-center rounded bg-status-success-container text-[9px] font-bold text-on-status-success-container">XLS</span>
+            <span className="flex h-5 w-5 items-center justify-center rounded bg-status-success-container text-[0.5625rem] font-bold text-on-status-success-container">XLS</span>
             Excel (.xlsx)
           </button>
           <button
@@ -78,7 +78,7 @@ export default function DownloadButton({ onExport, rowCount, disabled, compact }
             onClick={() => choose('csv')}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-on-surface hover:bg-surface-container-low"
           >
-            <span className="flex h-5 w-5 items-center justify-center rounded bg-surface-container text-[9px] font-bold text-on-surface-variant">CSV</span>
+            <span className="flex h-5 w-5 items-center justify-center rounded bg-surface-container text-[0.5625rem] font-bold text-on-surface-variant">CSV</span>
             CSV (.csv)
           </button>
         </div>

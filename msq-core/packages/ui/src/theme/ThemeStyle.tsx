@@ -8,7 +8,7 @@
 // from a regex-validated seed, or a CSS variable NAME from the fixed
 // BRAND_FONTS list — never free text from a row.
 import { brandFontVariables } from './fonts';
-import { fontById, type EffectiveTheme } from './presets';
+import { fontById, fontSizeById, type EffectiveTheme } from './presets';
 import { buildScheme, type SchemeVars } from './scheme';
 
 function block(selector: string, vars: SchemeVars, extra = ''): string {
@@ -28,7 +28,10 @@ export interface ThemeStyleProps {
 
 export default function ThemeStyle({ theme, supportsDark = false }: ThemeStyleProps) {
   const font = fontById(theme.font) ?? fontById('inter');
-  const fontDecl = `--font-brand:var(${font?.cssVar ?? '--font-inter'});--font-brand-mono:var(--font-jetbrains-mono)`;
+  // Text size scales the root: every rem-based token, spacing and grid follows it.
+  const fontDecl =
+    `--font-brand:var(${font?.cssVar ?? '--font-inter'});--font-brand-mono:var(--font-jetbrains-mono);`
+    + `font-size:${fontSizeById(theme.font_size).pct}%`;
 
   const css: string[] = [block(':root', buildScheme(theme.seed_hex, false), fontDecl)];
   if (supportsDark && theme.mode !== 'light') {

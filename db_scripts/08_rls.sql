@@ -1679,7 +1679,7 @@ CREATE POLICY tenant_isolation_policy ON task.tasks AS PERMISSIVE FOR ALL TO ten
   USING (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted)
   WITH CHECK (org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted) AND NOT is_deleted);
 
--- 1.66.0: RLS on, deliberately NO policy and not FORCEd -- app_user / tenant_admin
+-- 1.68.0: RLS on, deliberately NO policy and not FORCEd -- app_user / tenant_admin
 -- see zero rows (and hold no grant); only the table owner, via the SECURITY DEFINER
 -- task.assign_task_no() trigger, and root_service touch it.
 ALTER TABLE task.task_counters ENABLE ROW LEVEL SECURITY;
@@ -2073,6 +2073,24 @@ CREATE POLICY admin_tenant_config_policy ON scratch.meta_pull_leads
               AND (org_id IS NULL
                    OR entity.fn_org_tenant(org_id)
                       = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid));
+
+-- ext.meta_page_health / ext.meta_pull_run_history (1.70.0): the N-6 admin policy, tenant-pinned.
+-- Placed BEFORE the widening block so the policies reach the NOINHERIT service logins too.
+ALTER TABLE ext.meta_page_health ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_page_health FORCE  ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON ext.meta_page_health;
+CREATE POLICY admin_tenant_config_policy ON ext.meta_page_health
+  AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+-- ENABLE but not FORCE: the owner-run snapshot trigger (04) writes here regardless of the writing login.
+ALTER TABLE ext.meta_pull_run_history ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON ext.meta_pull_run_history;
+CREATE POLICY admin_tenant_config_policy ON ext.meta_pull_run_history
+  AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
 
 -- ===================================================================

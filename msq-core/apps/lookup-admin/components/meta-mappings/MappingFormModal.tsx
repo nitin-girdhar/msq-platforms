@@ -187,15 +187,15 @@ export default function MappingFormModal({
       </Button>
       <Button variant="primary" type="submit" form={FORM_ID} disabled={pending} aria-busy={pending}>
         {pending && (
-          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-outline-variant/40 border-t-outline-variant" aria-hidden />
         )}
-        {pending ? 'Saving…' : isEdit ? 'Save' : 'Create'}
+        {pending ? 'Saving…' : isEdit ? 'Save' : 'Create Mapping'}
       </Button>
     </div>
   );
 
-  const labelClass = 'block text-xs font-semibold text-[#334155]';
-  const inputClass = 'mt-1 w-full rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:bg-[#F8FAFC] disabled:opacity-60';
+  const labelClass = 'block text-xs font-semibold text-on-surface-variant';
+  const inputClass = 'mt-1 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:bg-surface-container-low disabled:opacity-60';
 
   return (
     <Modal
@@ -207,13 +207,13 @@ export default function MappingFormModal({
     >
       <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
         {error && (
-          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <div role="alert" className="rounded-xl border border-error/30 bg-error-container px-3 py-2 text-xs text-on-error-container">
             {error}
           </div>
         )}
 
         <div>
-          <label htmlFor="mm-page" className={labelClass}>Page</label>
+          <label htmlFor="mm-page" className={labelClass}>Facebook Page</label>
           {isEdit ? (
             <input
               id="mm-page"
@@ -246,15 +246,15 @@ export default function MappingFormModal({
             </div>
           )}
           {isEdit ? (
-            <p className="mt-1 text-[11px] text-[#94A3B8]">
+            <p className="mt-1 text-[0.6875rem] text-on-surface-variant">
               Page and form identify the mapping and cannot be changed. Deactivate this row and create a new one instead.
             </p>
           ) : pagesUnavailable || pageOptions.length === 0 ? (
-            <p className="mt-1 text-[11px] text-[#94A3B8]">
+            <p className="mt-1 text-[0.6875rem] text-on-surface-variant">
               Pages could not be listed for this tenant — it may have no active Meta integration. Paste the numeric Page ID instead.
             </p>
           ) : foreignCount > 0 ? (
-            <p className="mt-1 text-[11px] text-[#94A3B8]">
+            <p className="mt-1 text-[0.6875rem] text-on-surface-variant">
               {foreignCount} page{foreignCount === 1 ? ' is' : 's are'} hidden because another tenant already maps{' '}
               {foreignCount === 1 ? 'it' : 'them'}.
             </p>
@@ -262,8 +262,8 @@ export default function MappingFormModal({
         </div>
 
         {!isEdit && (
-          <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5">
-            <label className="flex items-start gap-2 text-xs font-semibold text-[#334155]">
+          <div className="rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2.5">
+            <label className="flex items-start gap-2 text-xs font-semibold text-on-surface-variant">
               <input
                 type="checkbox"
                 checked={pageLevel}
@@ -273,7 +273,7 @@ export default function MappingFormModal({
               />
               <span>
                 Page-level (all forms)
-                <span className="mt-0.5 block font-normal text-[11px] text-[#64748B]">
+                <span className="mt-0.5 block font-normal text-[0.6875rem] text-on-surface-variant">
                   Routes every form on this page to the branch below. A page can have at most one
                   active page-level mapping, and a form-level row for the same page still wins over it.
                 </span>
@@ -313,7 +313,7 @@ export default function MappingFormModal({
                 className={`${inputClass} font-mono`}
               />
             )}
-            <p className="mt-1 text-[11px] text-[#94A3B8]">
+            <p className="mt-1 text-[0.6875rem] text-on-surface-variant">
               A form-level row overrides the page-level row for this one form — use it when one page serves several
               branches.
             </p>
@@ -334,7 +334,7 @@ export default function MappingFormModal({
         )}
 
         <div>
-          <span className={labelClass}>Branch</span>
+          <span className={labelClass}>Target Branch</span>
           <div className="mt-1">
             <SearchableSelect
               value={orgId}
@@ -347,7 +347,7 @@ export default function MappingFormModal({
             />
           </div>
           {orgOptions.length === 0 && (
-            <p className="mt-1 text-[11px] text-[#94A3B8]">
+            <p className="mt-1 text-[0.6875rem] text-on-surface-variant">
               No active branches found for the selected tenant.
             </p>
           )}
@@ -366,7 +366,7 @@ export default function MappingFormModal({
               className="w-full"
             />
           </div>
-          <p className="mt-1 text-[11px] text-[#94A3B8]">
+          <p className="mt-1 text-[0.6875rem] text-on-surface-variant">
             Used when the lead&apos;s campaign is not confirmed and no rule matches — and for organic leads with no
             campaign. E.g. set a hiring-only form to Hiring.
           </p>
@@ -388,7 +388,7 @@ export default function MappingFormModal({
         </div>
 
         {isEdit && (
-          <label className="flex items-center gap-2 text-xs font-semibold text-[#334155]">
+          <label className="flex items-center gap-2 text-xs font-semibold text-on-surface-variant">
             <input
               type="checkbox"
               checked={isActive}

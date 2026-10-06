@@ -27,7 +27,7 @@ export default function LogoutButton() {
       onClick={handleSignOut}
       disabled={pending}
       aria-busy={pending}
-      className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
+      className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-60"
     >
       {pending ? 'Signing out…' : 'Log out'}
     </button>

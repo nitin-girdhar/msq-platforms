@@ -1,5 +1,5 @@
 import { buildScheme, contrastRatio } from '../../theme/scheme';
-import { DEFAULT_THEME, fontById, type EffectiveTheme } from '../../theme/presets';
+import { DEFAULT_THEME, fontById, fontSizeById, type EffectiveTheme } from '../../theme/presets';
 
 const SAVED_ID = 'platform-theme'; // ThemeStyle's element
 const PREVIEW_ID = 'platform-theme-preview';
@@ -26,6 +26,7 @@ export function applyThemePreview(theme: EffectiveTheme | null): void {
     ...Object.entries(buildScheme(theme.seed_hex, false)).map(([k, v]) => `${k}:${v}`),
     `--font-brand:var(${font?.cssVar ?? '--font-inter'})`,
     '--font-brand-mono:var(--font-jetbrains-mono)',
+    `font-size:${fontSizeById(theme.font_size).pct}%`,
   ].join(';');
   const el = document.createElement('style');
   el.id = PREVIEW_ID;

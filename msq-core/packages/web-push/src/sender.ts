@@ -1,7 +1,13 @@
 import webpush, { WebPushError } from 'web-push';
 import { ensureVapidConfigured, isWebPushEnabled } from './config.js';
+import { isAllowedPushEndpoint } from './endpoint-policy.js';
 import { log } from './logger.js';
 import { deleteSubscription, findSubscriptions, touchLastUsed } from './repository.js';
+
+/** Host only, for logs: a push endpoint's path carries the device token. */
+function safeHost(endpoint: string): string {
+  try { return new URL(endpoint).hostname; } catch { return 'invalid-url'; }
+}
 
 /**
  * The whole payload. Kept to IDs and short strings on purpose:
@@ -17,7 +23,17 @@ export interface PushPayload {
   body: string;
   url: string;
   leadId?: string | undefined;
+  /**
+   * The tenant's own notification icon / badge (brand slots push_icon / push_badge) as a
+   * same-origin gateway path. Anything that is not exactly such a path is dropped, so a
+   * payload can never make the service worker load an arbitrary URL.
+   */
+  icon?: string | undefined;
+  badge?: string | undefined;
 }
+
+const BRAND_ASSET_PATH = /^\/api\/public\/branding\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/assets\/push_(icon|badge)(\?v=[A-Za-z0-9%._:+-]{1,80})?$/;
+const safeBrandAsset = (v: string | undefined): string | undefined => (v && BRAND_ASSET_PATH.test(v) ? v : undefined);
 
 export interface SendResult {
   sent: number;
@@ -35,6 +51,8 @@ function serializePayload(payload: PushPayload): string {
     body: payload.body.slice(0, MAX_BODY_CHARS),
     url: payload.url,
     ...(payload.leadId ? { leadId: payload.leadId } : {}),
+    ...(safeBrandAsset(payload.icon) ? { icon: safeBrandAsset(payload.icon) } : {}),
+    ...(safeBrandAsset(payload.badge) ? { badge: safeBrandAsset(payload.badge) } : {}),
   });
 }
 
@@ -82,6 +100,18 @@ export async function sendToUser(
   const delivered: string[] = [];
 
   for (const sub of subscriptions) {
+    // Never POST to a URL the policy would not have let in (rows stored before
+    // the policy existed, hand-edited rows): SSRF guard, see endpoint-policy.ts.
+    // The row is dropped so it is not retried on every poller tick.
+    if (!isAllowedPushEndpoint(sub.endpoint)) {
+      log().warn({ userId, orgId, host: safeHost(sub.endpoint) }, 'push endpoint is not a push-service host; dropping the subscription');
+      try {
+        pruned += await deleteSubscription(sub.endpoint);
+      } catch (pruneErr) {
+        log().error({ err: pruneErr, userId, orgId }, 'failed to prune disallowed push subscription');
+      }
+      continue;
+    }
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },

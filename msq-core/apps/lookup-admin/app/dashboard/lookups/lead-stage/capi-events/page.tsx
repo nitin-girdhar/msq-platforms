@@ -1,6 +1,7 @@
 import Link from 'next/link';
+import { PageBody, PageHeader } from '@platform/ui-kit';
 import { getServerSession, GATEWAY_URL } from '@/src/lib/server-session';
-import { getSelectedTenantId } from '@/src/lib/tenant-scope';
+import { getSelectedTenantId, getSelectedTenantName } from '@/src/lib/tenant-scope';
 import LookupLoadError from '@/components/lookups/LookupLoadError';
 import LeadStageCapiEventsClient from '@/components/lookups/LeadStageCapiEventsClient';
 import type { LeadStageCapiEventRow } from '@/src/lib/api/client';
@@ -28,14 +29,17 @@ export default async function LeadStageCapiEventsPage() {
 
   if (!selectedTenantId) {
     return (
-      <div className="space-y-4 p-4 sm:p-6">
-        <Link href="/dashboard/lookups/lead-stage" className="text-xs font-semibold text-[#0b6cbf] hover:underline">
-          ← Back to Lead Stages
-        </Link>
-        <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
-          Pick a tenant in the top bar to manage CAPI event mapping.
-        </p>
-      </div>
+      <>
+        <PageHeader
+          title="CAPI Event Mapping"
+          actions={<Link href="/dashboard/lookups/lead-stage" className="inline-flex min-h-[2.75rem] items-center text-xs font-semibold text-primary hover:underline sm:min-h-0">← Back to Lead Stages</Link>}
+        />
+        <PageBody>
+          <p className="rounded-xl border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant">
+            Pick a tenant in the top bar to manage CAPI event mapping.
+          </p>
+        </PageBody>
+      </>
     );
   }
 
@@ -63,6 +67,7 @@ export default async function LeadStageCapiEventsPage() {
   return (
     <LeadStageCapiEventsClient
       tenantId={selectedTenantId}
+      tenantName={await getSelectedTenantName()}
       initialRows={mappingsBody.data}
       eventTypes={eventTypes}
     />

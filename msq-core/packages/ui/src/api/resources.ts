@@ -14,7 +14,7 @@ export const auth = {
   // can_view_all: the server's answer to whether the switcher may offer
   // "All branches" — decided there, never inferred from the client.
   myOrgs: () =>
-    request<{ success: true; data: { orgs: import('@platform/types').UserOrgOption[]; can_view_all?: boolean } }>('/auth/my-orgs'),
+    request<{ success: true; data: { orgs: import('@platform/types').UserOrgOption[]; can_view_all?: boolean; tenants?: import('@platform/types').TenantOption[] } }>('/auth/my-orgs'),
 
   // `tenant_id` with all_branches: a platform super_admin's "All branches of
   // <tenant>" — refused server-side for everyone else.

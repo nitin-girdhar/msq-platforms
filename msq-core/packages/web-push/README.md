@@ -69,3 +69,7 @@ RLS could read — the reasoning `07_grants.sql` and `08_rls.sql` already record
 for this table. Because RLS is not the boundary here, **every statement carries
 its own explicit `user_id` / `org_id` predicate**. Those predicates are the
 boundary; do not remove one.
+
+## Endpoint policy (SSRF)
+
+A subscription's `endpoint` is a URL the server later POSTs to, chosen by the client. `isAllowedPushEndpoint()` (`src/endpoint-policy.ts`) accepts only `https` URLs on a push-service host (FCM, Mozilla, Apple, Windows WNS), with no credentials, no custom port and no IP literal. It runs twice: notifications-service rejects a bad endpoint at subscribe time (422), and `sendToUser` re-checks every stored row before sending, dropping any that fail (rows stored before the policy, hand-edited rows). To support another push service, add its host to `ALLOWED_HOSTS` and a case to `__tests__/endpoint-policy.test.ts`.

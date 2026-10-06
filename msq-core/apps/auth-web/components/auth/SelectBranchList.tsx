@@ -32,6 +32,8 @@ export default function SelectBranchList({ callbackUrl }: Props) {
   const [orgs, setOrgs] = useState<UserOrgOption[] | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Client-side filter over the already-fetched list (display only).
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -73,61 +75,95 @@ export default function SelectBranchList({ callbackUrl }: Props) {
   if (!orgs) {
     return (
       <div className="flex justify-center py-10" role="status" aria-label="Loading branches">
-        <span className="h-6 w-6 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />
+        <span className="h-6 w-6 animate-spin rounded-full border-2 border-primary/30 border-t-primary" aria-hidden />
       </div>
     );
   }
 
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? orgs.filter((o) =>
+        [o.org_name, o.role_label, o.tenant_name ?? ''].some((v) => v.toLowerCase().includes(q)),
+      )
+    : orgs;
+  const groups = groupByTenant(visible);
+
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       {error && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div role="alert" className="rounded-lg bg-error-container px-3 py-2 text-body-sm text-on-error-container">
           {error}
         </div>
       )}
 
-      {groupByTenant(orgs).map((group) => (
-      <section key={group.key} className="flex flex-col gap-2">
-        {group.name && (
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">{group.name}</h2>
-        )}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        {group.orgs.map((org) => {
-          const busy = switching === org.org_id;
-          return (
-            <button
-              key={org.org_id}
-              type="button"
-              onClick={() => handleSelect(org)}
-              disabled={!!switching}
-              aria-busy={busy}
-              className="flex h-full w-full flex-col items-start gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 py-3 text-left shadow-sm transition-all hover:border-[#0b6cbf] hover:shadow disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-            >
-              <span className="min-w-0 w-full">
-                <span className="block truncate text-sm font-semibold text-[#0F172A]">{org.org_name}</span>
-                <span className="mt-0.5 block truncate text-xs text-[#64748B]">
-                  {org.role_label}
-                  {org.is_home ? ' · Default' : ''}
-                </span>
-              </span>
-              <span className="mt-auto flex w-full items-center justify-end">
-                {busy ? (
-                  <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#0b6cbf]/30 border-t-[#0b6cbf]" aria-hidden />
-                ) : (
-                  <svg className="h-4 w-4 shrink-0 text-[#94A3B8]" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
-                    <path
-                      fillRule="evenodd"
-                      d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                )}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      </section>
+      {/* Worth having only when scanning is slow; harmless otherwise. */}
+      {orgs.length > 6 && (
+        <div className="relative">
+          <svg className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-outline" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search branches"
+            aria-label="Search branches"
+            autoComplete="off"
+            className="min-h-11 w-full rounded-lg border border-outline-variant bg-surface-container-lowest py-2.5 pl-10 pr-3.5 text-body-md text-on-surface transition-colors placeholder:text-outline focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+          />
+        </div>
+      )}
+
+      {visible.length === 0 && (
+        <p role="status" className="py-6 text-center text-body-sm text-on-surface-variant">
+          No branches match &ldquo;{query.trim()}&rdquo;.
+        </p>
+      )}
+
+      {groups.map((group) => (
+        <section key={group.key} className="flex flex-col gap-2">
+          {group.name && (
+            <h2 className="text-label-sm font-semibold uppercase tracking-wide text-on-surface-variant">{group.name}</h2>
+          )}
+          <div className="flex flex-col gap-2">
+            {group.orgs.map((org) => {
+              const busy = switching === org.org_id;
+              return (
+                <div key={org.org_id}>
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(org)}
+                    disabled={!!switching}
+                    aria-busy={busy}
+                    className={`flex min-h-14 w-full cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors hover:border-primary hover:bg-primary-fixed/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60 ${
+                      org.is_home ? 'border-primary/40 bg-primary-fixed/30' : 'border-outline-variant bg-surface-container-lowest'
+                    }`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-body-md font-semibold text-on-surface">{org.org_name}</span>
+                      <span className="mt-0.5 block truncate text-label-md text-on-surface-variant">
+                        {org.role_label}
+                        {org.is_home ? ' · Default' : ''}
+                      </span>
+                    </span>
+                    {busy ? (
+                      <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary/30 border-t-primary" aria-hidden />
+                    ) : (
+                      <svg className="h-4 w-4 shrink-0 text-outline" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                        <path
+                          fillRule="evenodd"
+                          d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       ))}
     </div>
   );

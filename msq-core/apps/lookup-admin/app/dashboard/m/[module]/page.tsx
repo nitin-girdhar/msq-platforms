@@ -1,6 +1,6 @@
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { PageHeader, PageBody } from '@platform/ui-kit';
+import ModuleConsole, { type ConsoleCard, type ConsoleSection } from '@/components/console/ModuleConsole';
 import { MODULES, tablesByModule, type ModuleKey } from '@/src/lib/lookupTableConfig';
 
 interface PageProps {
@@ -83,6 +83,30 @@ const EXTRA_CARDS: Partial<Record<ModuleKey, { slug: string; title: string; desc
   ],
 };
 
+// Stitch groups the cards into named sections. Anything not listed here lands in
+// the module's last section, so a new table or screen can never go missing.
+const SECTION_DEFS: Partial<Record<ModuleKey, { id: string; title: string; blurb?: string; slugs: string[] }[]>> = {
+  platform: [
+    {
+      id: 'tenants',
+      title: 'Tenant Management & Licensing',
+      blurb: 'Top-level tenant partitions, subscription tiers and corporate structure.',
+      slugs: ['tenants', 'tenant-plan-types', 'organizations'],
+    },
+    { id: 'lookups', title: 'Lookups & Taxonomy', blurb: 'Users, catalog versions and global reference keys.', slugs: [] },
+  ],
+  lms: [
+    {
+      id: 'meta',
+      title: 'Meta Lead Pipeline & Integrations',
+      blurb: 'Inbound automation.',
+      slugs: ['campaign-types', 'meta-ad-accounts', 'meta-lead-inbox', 'meta-mappings', 'meta-campaigns', 'lead-pull'],
+    },
+    { id: 'ops', title: 'Operations & Allocation', blurb: 'Queue recalibration.', slugs: ['lead-assignment-rerun'] },
+    { id: 'lookups', title: 'Pipeline Taxonomy & Lookups', blurb: 'Classification and signal dictionaries.', slugs: [] },
+  ],
+};
+
 export default async function ModulePage({ params }: PageProps) {
   const { module } = await params;
   if (!isModuleKey(module)) notFound();
@@ -92,37 +116,40 @@ export default async function ModulePage({ params }: PageProps) {
   const extraCards = EXTRA_CARDS[module] ?? [];
   const cardCount = tables.length + extraCards.length;
 
+  const cards: ConsoleCard[] = [
+    ...extraCards.map((c) => ({ key: c.slug, title: c.title, description: c.description, href: c.href })),
+    ...tables.map((t) => ({ key: t.slug, title: t.title, description: t.description, href: `/dashboard/lookups/${t.slug}` })),
+  ];
+
+  const defs = SECTION_DEFS[module];
+  let sections: ConsoleSection[];
+  if (!defs) {
+    sections = [{ id: 'all', title: '', cards }];
+  } else {
+    const claimed = new Set(defs.flatMap((d) => d.slugs));
+    sections = defs
+      .map((d, i) => ({
+        id: d.id,
+        title: d.title,
+        blurb: d.blurb,
+        cards:
+          i === defs.length - 1
+            ? cards.filter((c) => !claimed.has(c.key))
+            : d.slugs.flatMap((slug) => cards.filter((c) => c.key === slug)),
+      }))
+      .filter((s) => s.cards.length > 0);
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader title={def.label} subtitle={`${cardCount} table${cardCount === 1 ? '' : 's'} · ${def.description}`} />
       <PageBody>
         {cardCount === 0 ? (
-          <p className="rounded-xl border border-[#E2E8F0] bg-white px-4 py-3 text-sm text-[#64748B]">
+          <p className="rounded-xl border border-outline-variant bg-surface-container-lowest px-4 py-3 text-sm text-on-surface-variant">
             Nothing configured in this module yet.
           </p>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {extraCards.map((c) => (
-              <Link
-                key={c.slug}
-                href={c.href}
-                className="flex flex-col gap-2 rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-sm transition-colors hover:border-[#0b6cbf] hover:bg-[#F0F9FF]"
-              >
-                <h2 className="text-sm font-semibold text-[#0F172A]">{c.title}</h2>
-                <p className="text-xs text-[#64748B]">{c.description}</p>
-              </Link>
-            ))}
-            {tables.map((t) => (
-              <Link
-                key={t.slug}
-                href={`/dashboard/lookups/${t.slug}`}
-                className="flex flex-col gap-2 rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-sm transition-colors hover:border-[#0b6cbf] hover:bg-[#F0F9FF]"
-              >
-                <h2 className="text-sm font-semibold text-[#0F172A]">{t.title}</h2>
-                <p className="text-xs text-[#64748B]">{t.description}</p>
-              </Link>
-            ))}
-          </div>
+          <ModuleConsole sections={sections} />
         )}
       </PageBody>
     </div>

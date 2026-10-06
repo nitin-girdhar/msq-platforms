@@ -21,6 +21,7 @@
 // call `assertWebPushEnv()` from the service's startup. See README.md.
 
 export { assertWebPushEnv, vapidPublicKey } from './config.js';
+export { isAllowedPushEndpoint } from './endpoint-policy.js';
 export { setWebPushLogger } from './logger.js';
 export type { WebPushLogger } from './logger.js';
 export {

@@ -131,7 +131,7 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div>
         {isReserved ? (
-          <p className="max-w-xs text-[11px] text-[#94A3B8]">
+          <p className="max-w-xs text-[0.6875rem] text-outline">
             Required by the platform — cannot be renamed or deactivated.
           </p>
         ) : row.is_active ? (
@@ -149,7 +149,7 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
             onClick={handleToggleActive}
             disabled={locked}
             aria-busy={statusPending}
-            className="!border-emerald-200 !text-emerald-700 hover:!bg-emerald-50"
+            className="!border-status-success/30 !text-on-status-success-container hover:!bg-status-success-container"
           >
             {statusPending ? 'Reactivating…' : 'Reactivate'}
           </Button>
@@ -161,7 +161,7 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
         </Button>
         <Button variant="primary" type="submit" form={FORM_ID} disabled={locked} aria-busy={pending}>
           {pending && (
-            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-surface-container-lowest/40 border-t-white" aria-hidden />
           )}
           Save changes
         </Button>
@@ -178,7 +178,7 @@ export default function EditLookupModal({ open, onClose, table, config, row, ten
         // on the Lead Stages page.
         <Link
           href={`/dashboard/tenants/${row.id}/modules`}
-          className="mb-2 inline-block text-xs font-semibold text-[#0b6cbf] hover:underline"
+          className="mb-2 inline-block text-xs font-semibold text-primary hover:underline"
         >
           Manage modules →
         </Link>

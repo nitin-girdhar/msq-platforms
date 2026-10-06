@@ -304,6 +304,19 @@ export async function getAllTenantOrgs(
   });
 }
 
+// Every active tenant, branches or not, for the super_admin tenant picker.
+export async function getAllTenants(): Promise<Array<{ tenant_id: string; tenant_name: string }>> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT t.id AS tenant_id, t.name AS tenant_name
+      FROM entity.tenants t
+      WHERE t.is_active AND NOT t.is_deleted
+      ORDER BY t.name
+    `)) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({ tenant_id: String(r['tenant_id']), tenant_name: String(r['tenant_name']) }));
+  });
+}
+
 // Tenant of a branch, for deciding whether an id may be written into the
 // caller's own tenant's audit feed. Null for an unknown id.
 export async function getOrgTenantId(org_id: string): Promise<string | null> {

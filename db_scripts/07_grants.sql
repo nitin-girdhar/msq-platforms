@@ -289,7 +289,9 @@ GRANT SELECT, INSERT         ON ext.meta_lead_professional    TO app_user;
 GRANT SELECT, INSERT         ON ext.meta_lead_demographics    TO app_user;
 GRANT SELECT                 ON ext.view_meta_leads_complete   TO app_user;
 GRANT SELECT                       ON ext.meta_capi_event_types        TO app_user;
-GRANT SELECT, INSERT, UPDATE       ON ext.lead_stage_capi_event_map    TO app_user;
+-- DELETE added 1.71.0: clearing a stage's event is a real delete (no is_active column), and the
+-- admin_tenant_config_policy (FOR ALL) is dead for DELETE without the grant.
+GRANT SELECT, INSERT, UPDATE, DELETE ON ext.lead_stage_capi_event_map    TO app_user;
 GRANT SELECT                       ON ext.vw_meta_capi_event_types     TO app_user;
 GRANT SELECT                       ON ext.vw_lead_stage_capi_event_map TO app_user;
 
@@ -419,7 +421,8 @@ GRANT ALL PRIVILEGES         ON hr.attendance_regularization_approvals TO root_s
 
 GRANT EXECUTE ON FUNCTION hr.can_approve_leave(UUID,UUID,UUID) TO app_user, tenant_admin;
 
-GRANT SELECT ON hr.vw_leave_balances, hr.vw_leave_requests_enriched, hr.vw_team_leave_calendar
+GRANT SELECT ON hr.vw_leave_balances, hr.vw_leave_requests_enriched, hr.vw_team_leave_calendar,
+  hr.vw_leave_approval_summary, hr.vw_regularization_approval_summary
   TO app_user, tenant_admin, root_service;
 
 GRANT SELECT, INSERT, UPDATE ON hr.attendance_rules TO app_user;
@@ -537,7 +540,7 @@ GRANT SELECT, INSERT, UPDATE ON task.tasks TO tenant_admin;
 REVOKE DELETE                ON task.tasks FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON task.tasks TO root_service;
 
--- 1.67.0: counters are reachable only through the SECURITY DEFINER trigger.
+-- 1.68.0: counters are reachable only through the SECURITY DEFINER trigger.
 REVOKE ALL PRIVILEGES ON task.task_counters FROM app_user, tenant_admin, task_svc;
 GRANT ALL PRIVILEGES  ON task.task_counters TO root_service;
 
@@ -731,6 +734,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ext.meta_campaigns TO meta_svc;
 GRANT USAGE  ON SCHEMA marketing                        TO meta_svc;
 GRANT SELECT ON TABLE  marketing.campaign_types         TO meta_svc;
 GRANT SELECT, INSERT, UPDATE         ON TABLE ext.meta_campaigns TO lms_svc;
+
+-- 1.71.0: leads-service (lms_svc, NOINHERIT) serves GET/PUT /lookups/lead-stage-capi-events under
+-- withTenantConfigTx. The grants above name app_user only, which a NOINHERIT login does not inherit,
+-- so the list came back 'permission denied for table lead_stage_capi_event_map'. The policies already
+-- reach lms_svc (08_rls.sql widening block); only the privileges were missing.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ext.lead_stage_capi_event_map TO lms_svc;
+GRANT SELECT ON TABLE ext.meta_capi_event_types, ext.vw_meta_capi_event_types, ext.vw_lead_stage_capi_event_map TO lms_svc;
 GRANT SELECT                         ON TABLE ext.meta_campaigns TO lead_svc;
 GRANT SELECT                         ON TABLE ext.meta_campaigns TO app_user, tenant_admin;
 GRANT ALL PRIVILEGES                 ON TABLE ext.meta_campaigns TO root_service;
@@ -820,6 +830,12 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE scratch.meta_pull_runs,  scratch.m
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE scratch.meta_pull_runs,  scratch.meta_pull_leads TO app_user;
 GRANT ALL PRIVILEGES                 ON TABLE scratch.meta_pull_runs,  scratch.meta_pull_leads TO root_service;
 
+-- 1.70.0: page health + pull history. Same writers as the pull tables: lms_svc is the login
+-- meta-conversion-api actually runs as (withTenantConfigTx never does SET ROLE app_user).
+-- tenant_admin is deliberately not granted: this is a platform super_admin surface.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE ext.meta_page_health, ext.meta_pull_run_history TO lms_svc, meta_svc, app_user;
+GRANT ALL PRIVILEGES                 ON TABLE ext.meta_page_health, ext.meta_pull_run_history TO root_service;
+
 -- entity.fn_org_tenant is called from scratch.meta_pull_leads' WITH CHECK, so
 -- every role that inserts a staged row needs EXECUTE on it or the write fails
 -- with a permission error on the policy itself rather than a policy violation.
@@ -848,6 +864,7 @@ GRANT SELECT, INSERT         ON TABLE hr.attendance_events TO hr_svc;
 GRANT SELECT                 ON TABLE hr.attendance_days TO hr_svc;
 GRANT SELECT ON TABLE
   hr.vw_leave_balances, hr.vw_leave_requests_enriched, hr.vw_team_leave_calendar,
+  hr.vw_leave_approval_summary, hr.vw_regularization_approval_summary,
   hr.vw_attendance_monthly_summary, hr.vw_org_attendance_today
   TO hr_svc;
 
@@ -961,16 +978,19 @@ GRANT SELECT ON ext.vw_meta_forms                TO app_user;
 -- Branding & personal preferences (1.57.0)
 -- ===================================================================
 -- entity.tenant_branding — column-level writes. Application roles (withRoleTx:
--- tenant admins holding admin.branding.manage) may write ONLY the theme, terms
--- and menu overrides — and the theme only while unlocked (trigger in 04).
--- Assets, product names, public_key and theme_locked are Super Admin's, written
--- by admin-service under root_service; they are deliberately absent here, so a
--- forged API body cannot reach them even through a bug in the route.
+-- tenant admins holding admin.branding.manage) may write ONLY the theme — preset,
+-- seed_hex, font, default_mode — and only while unlocked (trigger in 04).
+-- Since 1.73.0 everything else is Super Admin's, written by identity-service under
+-- root_service (withServiceTx): brand images (`assets`), product names, renamed
+-- terms, menu overrides, regional formats (`locale_config`), public_key and
+-- theme_locked. They are deliberately absent here, so a forged API body cannot
+-- reach them even through a bug in the route. (terms / nav_overrides were
+-- tenant-writable before 1.73.0; one_time/apply_branding_locale.sql REVOKEs them.)
 REVOKE ALL ON entity.tenant_branding FROM app_user, tenant_admin;
 GRANT SELECT ON entity.tenant_branding TO app_user, tenant_admin;
-GRANT INSERT (tenant_id, preset, seed_hex, font, default_mode, terms, nav_overrides, updated_by)
+GRANT INSERT (tenant_id, preset, seed_hex, font, default_mode, updated_by)
   ON entity.tenant_branding TO app_user, tenant_admin;
-GRANT UPDATE (preset, seed_hex, font, default_mode, terms, nav_overrides, updated_by)
+GRANT UPDATE (preset, seed_hex, font, default_mode, updated_by)
   ON entity.tenant_branding TO app_user, tenant_admin;
 
 -- iam.user_preferences — personal rows; RLS pins every role to its own user_id.

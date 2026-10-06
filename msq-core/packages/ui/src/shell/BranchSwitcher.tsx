@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import type { SessionUser, UserOrgOption } from '@platform/types';
+import type { SessionUser, TenantOption, UserOrgOption } from '@platform/types';
 import { RANKS, isTenantWideRole } from '@platform/authz';
 import { auth } from '../api/resources';
 import { appBasePath, withBasePath } from '../api/base-path';
@@ -41,6 +41,7 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
   const { open, setOpen, search, setSearch, rootRef, searchInputRef } = useDropdown();
   const [orgs, setOrgs] = useState<UserOrgOption[] | null>(null);
   const [canViewAll, setCanViewAll] = useState(false);
+  const [tenantOptions, setTenantOptions] = useState<TenantOption[] | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Cross-tenant only: the tenant whose branches the menu is showing. Starts on
@@ -58,6 +59,7 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
         if (cancelled) return;
         setOrgs(res.data.orgs);
         setCanViewAll(res.data.can_view_all === true);
+        setTenantOptions(res.data.tenants ?? null);
       })
       .catch(() => {
         if (!cancelled) setOrgs([]);
@@ -67,12 +69,16 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
     };
   }, [canSwitchBranch]);
 
-  const isCrossTenant = (orgs ?? []).some((o) => Boolean(o.tenant_id));
+  // A super_admin gets the tenant list straight from the server, so a tenant
+  // with no branch yet (just onboarded) is still pickable. Branch-derived
+  // tenants are only a fallback for an older server that omits `tenants`.
+  const isCrossTenant = tenantOptions !== null || (orgs ?? []).some((o) => Boolean(o.tenant_id));
   const tenants = useMemo(() => {
     const byId = new Map<string, string>();
-    for (const o of orgs ?? []) if (o.tenant_id) byId.set(o.tenant_id, o.tenant_name ?? o.tenant_id);
+    for (const t of tenantOptions ?? []) byId.set(t.tenant_id, t.tenant_name);
+    for (const o of orgs ?? []) if (o.tenant_id && !byId.has(o.tenant_id)) byId.set(o.tenant_id, o.tenant_name ?? o.tenant_id);
     return [...byId].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [orgs]);
+  }, [orgs, tenantOptions]);
   const pickedTenantName = tenants.find((t) => t.id === pickedTenantId)?.name ?? user.tenant_name;
 
   const filteredOrgs = useMemo(() => {
@@ -102,7 +108,10 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
   const chipLabel = isCrossTenant && user.tenant_name && branchLabel.startsWith(user.tenant_name)
     ? branchLabel
     : fullLabel;
-  const showAllRow = canViewAll && !search.trim();
+  // A tenant with no branch can't be entered (a session needs a real org), so
+  // "All branches" is hidden for it and the list explains how to proceed.
+  const pickedTenantHasBranches = !isCrossTenant || (orgs ?? []).some((o) => o.tenant_id === pickedTenantId);
+  const showAllRow = canViewAll && !search.trim() && pickedTenantHasBranches;
 
   // null = "All branches".
   const handleSwitch = async (org: UserOrgOption | null) => {
@@ -151,7 +160,7 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
         />
       </svg>
       <span className="flex min-w-0 flex-col text-left">
-        <span className="hidden text-[10px] font-semibold uppercase leading-none tracking-wider text-outline sm:block">
+        <span className="hidden text-[0.625rem] font-semibold uppercase leading-none tracking-wider text-outline sm:block">
           {isCrossTenant ? 'Tenant · Branch' : 'Branch'}
         </span>
         <span className="truncate text-label-md font-semibold leading-tight text-on-surface">{chipLabel}</span>
@@ -265,7 +274,11 @@ export default function BranchSwitcher({ user, homeHref = '/' }: Props) {
             )}
             {filteredOrgs.length === 0 && (
               <p className="px-4 py-4 text-center text-xs text-on-surface-variant">
-                {search ? `No branches match "${search}"` : 'No branches available'}
+                {search
+                  ? `No branches match "${search}"`
+                  : pickedTenantHasBranches
+                    ? 'No branches available'
+                    : `${pickedTenantName} has no branches yet. Add one from the tenant's setup.`}
               </p>
             )}
             {filteredOrgs.map((org) => {

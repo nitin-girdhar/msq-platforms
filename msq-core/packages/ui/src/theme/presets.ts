@@ -39,6 +39,22 @@ export const THEME_MODES = ['light', 'dark', 'system'] as const;
 export type ThemeMode = (typeof THEME_MODES)[number];
 
 /**
+ * Text size steps. `pct` is the <html> font-size as a percentage of the
+ * browser default, so every rem-based size (type tokens, spacing, grids)
+ * scales together and a browser-level font preference still applies.
+ * Personal only: a tenant never sets it and the theme lock does not cover it.
+ */
+export const FONT_SIZES = [
+  { id: 'sm', label: 'Small', pct: 87.5 },
+  { id: 'md', label: 'Default', pct: 100 },
+  { id: 'lg', label: 'Large', pct: 112.5 },
+  { id: 'xl', label: 'Extra large', pct: 125 },
+] as const;
+
+export type FontSizeId = (typeof FONT_SIZES)[number]['id'];
+export const DEFAULT_FONT_SIZE_ID: FontSizeId = 'md';
+
+/**
  * A theme choice as stored (tenant branding or a user's override). Exactly one
  * of preset / seed_hex drives the colours; seed_hex wins when both are set.
  * snake_case: this shape crosses the API.
@@ -48,6 +64,7 @@ export interface ThemeChoice {
   seed_hex?: string | null;
   font?: BrandFontId | null;
   mode?: ThemeMode | null;
+  font_size?: FontSizeId | null;
 }
 
 /** Fully-resolved theme a layout renders with — no nulls. */
@@ -56,6 +73,7 @@ export interface EffectiveTheme {
   seed_hex: string;
   font: BrandFontId;
   mode: ThemeMode;
+  font_size: FontSizeId;
 }
 
 export const DEFAULT_THEME: EffectiveTheme = {
@@ -63,6 +81,7 @@ export const DEFAULT_THEME: EffectiveTheme = {
   seed_hex: '#4f46e5',
   font: DEFAULT_FONT_ID,
   mode: 'light',
+  font_size: DEFAULT_FONT_SIZE_ID,
 };
 
 export const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
@@ -73,6 +92,10 @@ export function presetById(id: string | null | undefined) {
 
 export function fontById(id: string | null | undefined) {
   return BRAND_FONTS.find((f) => f.id === id) ?? null;
+}
+
+export function fontSizeById(id: string | null | undefined) {
+  return FONT_SIZES.find((f) => f.id === id) ?? FONT_SIZES.find((f) => f.id === DEFAULT_FONT_SIZE_ID)!;
 }
 
 /**
@@ -96,6 +119,7 @@ export function resolveTheme(...layers: Array<ThemeChoice | null | undefined>): 
     }
     if (layer.font && fontById(layer.font)) out.font = layer.font;
     if (layer.mode && (THEME_MODES as readonly string[]).includes(layer.mode)) out.mode = layer.mode;
+    if (layer.font_size && FONT_SIZES.some((s) => s.id === layer.font_size)) out.font_size = layer.font_size;
   }
   return out;
 }

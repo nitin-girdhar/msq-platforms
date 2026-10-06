@@ -1,5 +1,5 @@
 /*
- * FitClass platform service worker — served at /sw.js, scope '/'.
+ * Platform service worker — served at /sw.js, scope '/'.
  *
  * ONE worker for all six Next apps behind the unified origin (auth-web at '/',
  * products under /lms, /hrms, /todo, /admin, /sa).
@@ -195,20 +195,23 @@ self.addEventListener('push', (event) => {
       // A malformed payload must still surface something. Showing nothing is
       // invisible to everyone: the user sees no notification and the server
       // sees a successful delivery.
-      const title = (payload && payload.title) || 'FitClass';
+      // The worker is a static file and cannot know the tenant: the brand arrives IN the
+      // payload (icon / badge are the tenant's own, validated by @platform/web-push).
+      // These fallbacks are generic on purpose and carry no tenant or brand name.
+      const title = (payload && payload.title) || 'Notification';
       const body = (payload && payload.body) || 'You have a follow-up due.';
       const url = (payload && payload.url) || '/';
 
       await self.registration.showNotification(title, {
         body,
-        icon: '/icons/icon-192.png',
-        badge: '/icons/icon-192.png',
+        icon: (payload && payload.icon) || '/icons/icon-192.png',
+        badge: (payload && payload.badge) || '/icons/icon-192.png',
         data: { url },
         // Keyed on the lead so a re-notification for the SAME lead replaces the
         // existing one instead of stacking. A rep with a tab open also receives
         // the SSE notification; without this the phone shows a growing pile for
         // a single follow-up.
-        tag: (payload && payload.leadId) || 'fitclass-followup',
+        tag: (payload && payload.leadId) || 'followup',
         // Without this, reusing `tag` makes the OS silently swap the
         // notification's content (e.g. a rescheduled follow-up time) with no
         // new alert, sound, or vibration - the user never notices it changed.

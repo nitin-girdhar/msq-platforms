@@ -8,6 +8,8 @@ import BranchSwitcher from './BranchSwitcher';
 import HamburgerButton from './HamburgerButton';
 import ProductSwitcher from './ProductSwitcher';
 import BrandMark from './BrandMark';
+import NavbarTitle from './NavbarTitle';
+import { DEFAULT_BRAND } from '../branding/defaults';
 
 interface Props {
   user: SessionUser;
@@ -27,6 +29,8 @@ interface Props {
   // This app's home (logo link + branch-switch landing) and navbar title.
   homeHref: string;
   title: string;
+  // Prefix the title with the tenant's brand name (product shells); admin consoles omit it.
+  titleWithBrand?: boolean;
   // LMS-only notification bell (imports @lms/web) is injected as a slot so the
   // shared navbar carries no product knowledge. Omitted by hr/todo.
   notificationSlot?: React.ReactNode;
@@ -84,7 +88,8 @@ export default function AppNavbar({
   adminWebUrl,
   lookupAdminUrl,
   brandInSidebar = false,
-  brandName = 'Fitclass',
+  brandName = DEFAULT_BRAND.name,
+  titleWithBrand = false,
 }: Props) {
   // Same question admin-web's own dashboard guard asks (a non-empty filtered
   // ADMIN_NAV): the pill must show for exactly the users that guard admits, or a
@@ -124,7 +129,7 @@ export default function AppNavbar({
         <div className={`flex min-w-0 shrink-0 items-center gap-3 ${brandInSidebar ? 'lg:hidden' : ''}`}>
           <BrandMark brand={{ homeHref, name: brandName }} compact />
           <span className="hidden h-5 w-px shrink-0 bg-outline-variant sm:block" />
-          <span className="hidden truncate text-headline-sm font-bold text-on-surface sm:block">{title}</span>
+          <NavbarTitle title={title} withBrand={titleWithBrand} brandName={brandName} />
         </div>
         <div className="flex-1" />
         {searchSlot}

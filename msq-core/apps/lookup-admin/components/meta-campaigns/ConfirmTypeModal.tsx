@@ -269,20 +269,20 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
     >
       <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
         {commitError && (
-          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <div role="alert" className="rounded-xl border border-error/30 bg-error-container px-3 py-2 text-xs text-on-error-container">
             {commitError}
           </div>
         )}
         {previewError && (
-          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <div role="alert" className="rounded-xl border border-error/30 bg-error-container px-3 py-2 text-xs text-on-error-container">
             {previewError}
           </div>
         )}
 
         {isSingleEditable ? (
           <div>
-            <span className="block text-xs font-semibold text-[#334155]">Campaign type</span>
-            <p className="mt-1 text-xs text-[#64748B]">
+            <span className="block text-xs font-semibold text-on-surface-variant">Campaign type</span>
+            <p className="mt-1 text-xs text-on-surface-variant">
               {target.campaigns[0]!.row.name ?? target.campaigns[0]!.row.meta_campaign_id}
             </p>
             <div className="mt-1">
@@ -298,9 +298,9 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
             </div>
           </div>
         ) : (
-          <div className="space-y-1 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2">
-            <p className="text-xs font-semibold text-[#334155]">{effectiveEntries.length} campaigns</p>
-            <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-[#64748B]">
+          <div className="space-y-1 rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2">
+            <p className="text-xs font-semibold text-on-surface-variant">{effectiveEntries.length} campaigns</p>
+            <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-on-surface-variant">
               {effectiveEntries.map((e) => (
                 <li key={e.row.meta_campaign_id}>
                   {e.row.name ?? e.row.meta_campaign_id} → {campaignTypeOptions.find((o) => o.id === e.campaignTypeId)?.label ?? '—'}
@@ -310,9 +310,9 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
           </div>
         )}
 
-        <div className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-xs text-[#334155]">
+        <div className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-xs text-on-surface-variant">
           {previewing || !previews || !aggregate ? (
-            <p className="text-[#64748B]">{missingType ? 'Pick a campaign type to see its impact.' : 'Calculating impact…'}</p>
+            <p className="text-on-surface-variant">{missingType ? 'Pick a campaign type to see its impact.' : 'Calculating impact…'}</p>
           ) : (
             <div className="space-y-1">
               <p>
@@ -321,12 +321,12 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
                 <strong>{aggregate.leads_reassigned}</strong> open lead{aggregate.leads_reassigned === 1 ? '' : 's'} to the new
                 team&apos;s pool · <strong>{aggregate.leads_left_unassigned}</strong> would be left unassigned.
               </p>
-              <p className="text-[11px] text-[#64748B]">
+              <p className="text-[0.6875rem] text-on-surface-variant">
                 Every OPEN lead of this campaign moves to the new type&apos;s pool in its branch, including leads someone has
                 already worked — unless its owner already works that pool.
               </p>
               {aggregate.by_branch.some((b) => b.leads_left_unassigned > 0) && (
-                <ul className="space-y-0.5 text-amber-700">
+                <ul className="space-y-0.5 text-on-status-due-container">
                   {aggregate.by_branch
                     .filter((b) => b.leads_left_unassigned > 0)
                     .map((b) => (
@@ -342,8 +342,8 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
         </div>
 
         {isSingleEditable && (
-          <div className="space-y-2 rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5">
-            <label className="flex items-start gap-2 text-xs font-semibold text-[#334155]">
+          <div className="space-y-2 rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5">
+            <label className="flex items-start gap-2 text-xs font-semibold text-on-surface-variant">
               <input
                 type="checkbox"
                 checked={addRule}
@@ -353,7 +353,7 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
               />
               <span>
                 Also add a rule for this type
-                <span className="mt-0.5 block font-normal text-[11px] text-[#64748B]">
+                <span className="mt-0.5 block font-normal text-[0.6875rem] text-on-surface-variant">
                   So the next similarly-named campaign is suggested correctly. Added at the END of the rule list —
                   reorder it on Campaign Types &amp; Rules.
                 </span>
@@ -368,14 +368,14 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
                   placeholder="Word or phrase, e.g. HIR or recruitment"
                   aria-label="Rule pattern"
                   disabled={committing}
-                  className="rounded-lg border border-[#CBD5E1] px-2.5 py-1.5 text-xs"
+                  className="rounded-lg border border-outline px-2.5 py-1.5 text-xs"
                 />
                 <select
                   value={ruleField}
                   onChange={(e) => setRuleField(e.target.value as RuleMatchField)}
                   aria-label="Rule matches on"
                   disabled={committing}
-                  className="rounded-lg border border-[#CBD5E1] px-2 py-1.5 text-xs"
+                  className="rounded-lg border border-outline px-2 py-1.5 text-xs"
                 >
                   {RULE_FIELD_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
@@ -384,7 +384,7 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
                   ))}
                 </select>
                 {!rulePatternValid && (
-                  <p className="text-[11px] text-red-600 sm:col-span-2">Enter at least 2 characters.</p>
+                  <p className="text-[0.6875rem] text-error sm:col-span-2">Enter at least 2 characters.</p>
                 )}
               </div>
             )}

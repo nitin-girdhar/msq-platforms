@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { SessionUser } from '@platform/types';
+import { Button, PageBody, PageHeader } from '@platform/ui-kit';
 import { RANKS } from '@platform/authz';
 import type { ApiTokenRow } from '@/src/lib/api/client';
 import ApiTokensTable from './ApiTokensTable';
@@ -30,31 +31,31 @@ export default function ApiTokensShell({ tokens, orgs, actor, canManage }: Props
   const isOrgAdmin = actor.rank < RANKS.TENANT_ADMIN;
 
   return (
-    <div className="space-y-4 p-4 sm:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">API Tokens</h1>
-          <p className="mt-1 text-xs text-[#64748B]">{tokens.length} total · machine credentials for integrations</p>
-        </div>
-        {canManage && (
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#095699]"
-          >
-            New token
-          </button>
-        )}
-      </div>
-
-      <ApiTokensTable
-        tokens={tokens}
-        orgs={orgs}
-        canManage={canManage}
-        onEdit={setEditTarget}
-        onRotate={setRotateTarget}
-        onRevoke={setRevokeTarget}
+    <>
+      <PageHeader
+        title="API Tokens"
+        subtitle={`${tokens.length} total · machine credentials for integrations`}
+        actions={
+          canManage ? (
+            <Button variant="primary" size="md" onClick={() => setCreateOpen(true)} className="min-h-[2.75rem] sm:min-h-0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round" aria-hidden="true" className="h-4 w-4">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              New token
+            </Button>
+          ) : undefined
+        }
       />
+      <PageBody>
+        <ApiTokensTable
+          tokens={tokens}
+          orgs={orgs}
+          canManage={canManage}
+          onEdit={setEditTarget}
+          onRotate={setRotateTarget}
+          onRevoke={setRevokeTarget}
+        />
+      </PageBody>
 
       {canManage && (
         <CreateApiTokenModal
@@ -93,6 +94,6 @@ export default function ApiTokensShell({ tokens, orgs, actor, canManage }: Props
           name={revokeTarget.name}
         />
       )}
-    </div>
+    </>
   );
 }

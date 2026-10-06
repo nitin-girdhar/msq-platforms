@@ -9,15 +9,18 @@
 // Bytes are NEVER served from a public static dir — each service re-serves them
 // through an authenticated route after an authority check.
 //
-// Keys are opaque, caller-chosen relative paths:
-//   avatar/<userId>/<epochMs>.jpg        — enrolled reference photo (immutable;
-//                                           newest key is the active one)
-//   punch/<userId>/<YYYYMMDD>_chkin_<n>.jpg  — check-in selfie, n-th of the day
-//   punch/<userId>/<YYYYMMDD>_chkout_<n>.jpg — check-out selfie, n-th of the day
+// Keys are tenant-first relative paths built ONLY by `blobKeys` (see keys.ts):
+//   <tenant>/branding/<slot>/<epochMs>.<ext>
+//   <tenant>/<branch>/<employee>/avatar/<epochMs>.<ext>   — enrolled reference photo
+//                                           (immutable; newest key is the active one)
+//   <tenant>/<branch>/<employee>/punches/<YYYY>/<MM>/<YYYYMMDD>_chkin|chkout_<n>.jpg
 // The <n> suffix exists because a split shift punches several times a day; a
 // fixed <YYYYMMDD>_chkin key overwrote the earlier session's selfie. YYYYMMDD
-// stays LEADING: msq-deploy/retention/retention-cleanup.sh ages selfies out by
-// taking the basename up to the first underscore.
+// stays LEADING in the file name: msq-deploy/retention/retention-cleanup.sh ages
+// selfies out from the name. Keys written before this layout (`avatar/…`,
+// `punch/…`, `brand/…`, `documents/…`, `leave/…`) still resolve — the DB holds the
+// full key — until msq-deploy/storage/migrate-blob-layout.sh has moved them.
+// Every authenticated read must call `assertKeyInTenant(key, tenantId)`.
 // The local driver refuses any key that escapes the base directory
 // (path-traversal guard) so a stored key can be echoed back into get() safely.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,3 +157,5 @@ export function createBlobStorage(cfg: BlobStorageConfig = {}): BlobStorage {
       throw new Error(`Unsupported BLOB_STORAGE_DRIVER: ${driver}`);
   }
 }
+
+export * from './keys.js';

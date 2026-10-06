@@ -9,6 +9,7 @@ import {
   type BrandProductKey,
   type PublicBranding,
 } from '../branding/types';
+import { DEFAULT_BRAND } from '../branding/defaults';
 import { getEffectiveBranding } from './theme';
 
 const GATEWAY_URL = process.env['API_GATEWAY_INTERNAL_URL'] ?? 'http://localhost:4000';
@@ -57,10 +58,11 @@ export async function brandedMetadata(base: Metadata, product: BrandProductKey):
   const title = names?.tab_title ?? names?.title;
   const out: Metadata = { ...base };
   if (title) out.title = title;
-  if (b.assets.favicon || b.assets.app_icon) {
+  const apple = b.assets.apple_touch_icon ?? b.assets.app_icon;
+  if (b.assets.favicon || apple) {
     out.icons = {
-      icon: b.assets.favicon ?? '/icons/favicon.png',
-      apple: b.assets.app_icon ?? '/icons/apple-touch-icon.png',
+      icon: b.assets.favicon ?? DEFAULT_BRAND.icons.favicon,
+      apple: apple ?? DEFAULT_BRAND.icons.appleTouch,
     };
   }
   if (b.publicKey && base.manifest) out.manifest = `/manifest.webmanifest?b=${b.publicKey}`;

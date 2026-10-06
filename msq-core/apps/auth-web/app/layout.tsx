@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { ServiceWorkerRegistrar, pwaViewport, pwaAppleWebApp, pwaIcons, pwaAppleCapableMeta, pwaManifest } from '@platform/ui-kit';
-import { getEffectiveBranding } from '@platform/ui-kit/server';
+import { DEFAULT_BRAND, getEffectiveBranding } from '@platform/ui-kit/server';
 import { BrandingProvider } from '@platform/ui-kit/branding';
 import { ThemeStyle, themeHtmlProps } from '@platform/ui-kit/theme';
 import './globals.css';
@@ -8,8 +8,8 @@ import './globals.css';
 export const viewport = pwaViewport;
 
 export const metadata: Metadata = {
-  title: 'Sign in · FitClass',
-  description: 'Single sign-on for the FitClass platform',
+  title: `Sign in · ${DEFAULT_BRAND.name}`,
+  description: `Single sign-on for the ${DEFAULT_BRAND.name} platform`,
   appleWebApp: pwaAppleWebApp,
   icons: pwaIcons,
   // Linked explicitly now that the manifest is a route handler (per-tenant ?b=).

@@ -46,7 +46,7 @@ export default function MobileTabBar({ actor, items: rawItems, tabs }: Props) {
 
   if (picked.length === 0) return null;
 
-  const base = 'relative flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 px-1 text-[11px] font-medium leading-tight transition-colors';
+  const base = 'relative flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 px-1 text-[0.6875rem] font-medium leading-tight transition-colors';
 
   return (
     <nav
@@ -72,7 +72,7 @@ export default function MobileTabBar({ actor, items: rawItems, tabs }: Props) {
             >
               {item.icon && <NavIcon name={item.icon} className="h-5 w-5" />}
               {showBadge && (
-                <span className="absolute -right-0.5 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-status-overdue px-1 font-mono text-[10px] font-bold leading-none text-on-status-overdue">
+                <span className="absolute -right-0.5 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-status-overdue px-1 font-mono text-[0.625rem] font-bold leading-none text-on-status-overdue">
                   {badgeText(count)}
                 </span>
               )}

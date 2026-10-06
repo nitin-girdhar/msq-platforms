@@ -10,9 +10,11 @@ import { auth } from '@/src/lib/api/client';
 interface Props {
   // Resolved server-side via buildLoginUrl() — see the note in UserMenu.
   loginUrl: string;
+  /** 'subtle' sits under a primary action; 'primary' is the sole action. */
+  variant?: 'primary' | 'subtle';
 }
 
-export default function SignOutButton({ loginUrl }: Props) {
+export default function SignOutButton({ loginUrl, variant = 'primary' }: Props) {
   const [busy, setBusy] = useState(false);
 
   const handleClick = async () => {
@@ -27,12 +29,17 @@ export default function SignOutButton({ loginUrl }: Props) {
     window.location.assign(loginUrl);
   };
 
+  const tone =
+    variant === 'primary'
+      ? 'bg-primary text-on-primary hover:bg-primary-container'
+      : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest';
+
   return (
     <button
       type="button"
       onClick={handleClick}
       disabled={busy}
-      className="w-full rounded-lg bg-[#0b6cbf] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#0a5ca3] disabled:opacity-60"
+      className={`min-h-11 w-full rounded-lg px-4 py-2.5 text-label-md font-semibold transition-colors disabled:opacity-60 ${tone}`}
     >
       {busy ? 'Signing out…' : 'Sign out'}
     </button>

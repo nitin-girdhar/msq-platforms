@@ -51,3 +51,5 @@ Run every item before marking a frontend task complete or opening a PR.
 - [ ] Form modals leave backdrop-click disabled (the default); `closeOnBackdropClick` is set only on read-only viewers
 - [ ] Icon-only buttons have `aria-label`
 - [ ] New free-text notes/reason/comment fields have a `SpeechInputButton` (appends via `appendDictation`, `disabled` while submitting)
+
+- [ ] `pnpm check:theme` passes — no hex, raw palette class or px font size in UI code (text size is user-selectable; see SKILL.md §6).

@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
+import { Button, PageBody, PageHeader } from '@platform/ui-kit';
 import { RANKS } from '@platform/authz';
 import { resolveScope, CAPABILITY } from '@platform/rbac';
 import { canCreateUser, canManageTeam, canNotifyUser } from '../../lib/permissions';
@@ -30,11 +31,17 @@ interface Props {
   scope: TeamScope;
   /** Page heading. lookup-admin mounts this as "Users". */
   title?: string;
-  /** Replaces the scope label under the heading (lookup-admin names the tenant /
-   *  branch its navbar selected) and hides the My team / My branch / All
-   *  switcher, whose rungs describe the ACTOR's own roster, not a tenant being
-   *  administered from outside. */
+  /** Replaces the scope label under the heading (lookup-admin names the branch
+   *  its navbar selected) and hides the My team / My branch / All switcher, whose
+   *  rungs describe the ACTOR's own roster, not a tenant being administered from
+   *  outside. */
   scopeLabel?: string;
+  /** The administered tenant, named as a chip beside the heading. lookup-admin
+   *  passes it because a super admin's tenant is set by the navbar switcher and
+   *  reset to their home tenant on every login — a roster that never says whose
+   *  it is reads as if users had vanished. Products leave it unset: their actors
+   *  only ever see their own tenant. */
+  tenantName?: string | undefined;
 }
 
 const SCOPE_LABEL: Record<TeamScope, string> = {
@@ -51,6 +58,7 @@ const SCOPE_EMPTY: Record<TeamScope, string> = {
 
 export default function TeamShell({
   users, actor, total, orgs, myOrgs, branchesFailed, scope, leadProduct = 'lms', title = 'Team', scopeLabel,
+  tenantName,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SessionUser | null>(null);
@@ -103,67 +111,69 @@ export default function TeamShell({
   // server enforces the same grant regardless of what the form sends.
   const canNotify = canNotifyUser(actor);
 
+  const scopeText = scopeLabel ?? SCOPE_LABEL[scope].toLowerCase();
+
   return (
-    <div className="space-y-4 p-4 sm:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">{title}</h1>
-          {/* Names the slice, not just the count. "12 total" on a subtree reads
-              as the whole company to someone who has never seen the wider one. */}
-          <p className="mt-1 text-xs text-[#64748B]">
-            {total} {total === 1 ? 'person' : 'people'} · {scopeLabel ?? SCOPE_LABEL[scope].toLowerCase()}
-          </p>
-        </div>
-
-        {/* Only rendered when there is a real choice — a single-rung actor gets
-            a label above, not a control that cannot change anything. */}
-        {scopeOptions.length > 1 && (
-          <div
-            role="group"
-            aria-label="Roster scope"
-            className="flex gap-1 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-1"
-          >
-            {scopeOptions.map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => switchScope(opt)}
-                disabled={switching}
-                aria-pressed={opt === scope}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                  opt === scope ? 'bg-white text-[#0b6cbf] shadow-sm' : 'text-[#64748B] hover:text-[#0F172A]'
-                }`}
+    <>
+      {/* Names the slice, not just the count. "12 total" on a subtree reads
+          as the whole company to someone who has never seen the wider one. */}
+      <PageHeader
+        title={title}
+        scope={tenantName}
+        subtitle={`${total} ${total === 1 ? 'person' : 'people'} · ${scopeText}`}
+        actions={
+          <>
+            {/* Only rendered when there is a real choice — a single-rung actor gets
+                a label above, not a control that cannot change anything. */}
+            {scopeOptions.length > 1 && (
+              <div
+                role="group"
+                aria-label="Roster scope"
+                className="flex gap-1 rounded-xl border border-outline-variant bg-surface-container-low p-1"
               >
-                {SCOPE_LABEL[opt]}
-              </button>
-            ))}
-          </div>
-        )}
-        {canCreate && (
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#095699]"
-          >
-            New user
-          </button>
-        )}
-      </div>
-
-      {users.length === 0 ? (
-        <div className="rounded-xl border border-[#E2E8F0] bg-white p-8 text-center text-sm text-[#64748B]">
-          {SCOPE_EMPTY[scope]}
-        </div>
-      ) : (
-      <TeamTable
-        users={users}
-        currentUserId={actor.id}
-        actorRank={actor.rank}
-        orgs={orgs}
-        canManage={canManage}
-        onEdit={setEditTarget}
+                {scopeOptions.map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => switchScope(opt)}
+                    disabled={switching}
+                    aria-pressed={opt === scope}
+                    className={`min-h-[2.75rem] rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0 ${
+                      opt === scope ? 'bg-surface-container-lowest text-primary shadow-sm' : 'text-on-surface-variant hover:text-on-surface'
+                    }`}
+                  >
+                    {SCOPE_LABEL[opt]}
+                  </button>
+                ))}
+              </div>
+            )}
+            {canCreate && (
+              <Button variant="primary" size="md" onClick={() => setCreateOpen(true)} className="min-h-[2.75rem] sm:min-h-0">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} strokeLinecap="round" aria-hidden="true" className="h-4 w-4">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                New user
+              </Button>
+            )}
+          </>
+        }
       />
-      )}
+      <PageBody>
+        {users.length === 0 ? (
+          <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-8 text-center text-sm text-on-surface-variant">
+            {SCOPE_EMPTY[scope]}
+          </div>
+        ) : (
+          <TeamTable
+            users={users}
+            currentUserId={actor.id}
+            actorRank={actor.rank}
+            orgs={orgs}
+            canManage={canManage}
+            onEdit={setEditTarget}
+          />
+        )}
+      </PageBody>
 
       {canCreate && (
         <CreateUserModal
@@ -195,6 +205,6 @@ export default function TeamShell({
           canNotify={canNotify}
         />
       )}
-    </div>
+    </>
   );
 }

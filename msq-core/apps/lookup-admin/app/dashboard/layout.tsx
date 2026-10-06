@@ -27,15 +27,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // render-then-403 shape the capability tree exists to remove.
   if (!canOpenLookupAdmin(session)) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] px-6">
-        <div className="w-full max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8 text-center shadow-sm">
-          <h1 className="text-xl font-bold tracking-tight text-[#0F172A]">Access restricted</h1>
-          <p className="mt-3 text-sm leading-relaxed text-[#64748B]">
+      <div className="flex min-h-screen items-center justify-center bg-surface-container-low px-6">
+        <div className="w-full max-w-md rounded-2xl border border-outline-variant bg-surface-container-lowest p-8 text-center shadow-sm">
+          <h1 className="text-xl font-bold tracking-tight text-on-surface">Access restricted</h1>
+          <p className="mt-3 text-sm leading-relaxed text-on-surface-variant">
             Lookup Admin is available to super admin accounts only. You are signed
-            in as <span className="font-medium text-[#0F172A]">{session.name || session.email}</span>,
+            in as <span className="font-medium text-on-surface">{session.name || session.email}</span>,
             which does not have access.
           </p>
-          <p className="mt-2 text-sm text-[#64748B]">
+          <p className="mt-2 text-sm text-on-surface-variant">
             Sign out and sign back in with a super admin account to continue.
           </p>
           <div className="mt-6 flex justify-center">

@@ -36,12 +36,13 @@ CREATE TABLE IF NOT EXISTS entity.tenant_modules (
 -- One row per tenant (PK = tenant_id). Absent row = platform default (MSquare).
 --
 -- Two owners, enforced at the DB as well as in the API (07_grants.sql):
---   Super Admin (admin-service, withServiceTx, rank-gated) — everything:
---     brand assets, product names, public_key, theme + theme_locked.
+--   Super Admin (identity-service, withServiceTx, rank-gated) — everything:
+--     brand images, product names, terms, nav_overrides, locale_config, public_key,
+--     theme + theme_locked.
 --   Tenant admin (admin.branding.manage, withRoleTx) — UPDATE is column-GRANTed
---     to theme (only while NOT theme_locked — trigger below), terms and
---     nav_overrides only. Assets / names / public_key / theme_locked are not
---     grantable to app_user / tenant_admin at all.
+--     to the theme ONLY (preset, seed_hex, font, default_mode; and only while NOT
+--     theme_locked — trigger below). Everything else is not grantable to
+--     app_user / tenant_admin at all (terms and nav_overrides were, before 1.73.0).
 --
 -- preset / font / default_mode are TEXT + CHECK rather than lookup FKs: they
 -- are a code-owned registry (@platform/ui-kit/theme presets.ts — fonts must
@@ -67,14 +68,29 @@ CREATE TABLE IF NOT EXISTS entity.tenant_branding (
   default_mode   TEXT    NOT NULL DEFAULT 'light'
                          CONSTRAINT chk_tenant_branding_mode CHECK (default_mode IN ('light','dark','system')),
   theme_locked   BOOLEAN NOT NULL DEFAULT FALSE,
-  -- identity (Super Admin only). assets: { "<slot>": { "key", "content_type",
-  -- "bytes", "updated_at" } } with slot in logo | logo_dark | mark | favicon |
-  -- app_icon; blob bytes live in @platform/blob-storage like iam.users.photo_key.
+  -- identity images. assets: { "<slot>": { "key", "content_type", "bytes",
+  -- "updated_at" } } with slot in logo | logo_dark | mark | favicon | app_icon |
+  -- app_icon_maskable | apple_touch_icon | icon_192 | push_icon | push_badge |
+  -- email_logo | login_hero | splash (13, 1.73.0; BRAND_ASSET_SLOTS). Super Admin
+  -- uploads them (service transaction); `key` is a
+  -- tenant-first blob key `<tenant_id>/branding/<slot>/<epochMs>.<ext>` (legacy
+  -- `brand/<tenant_id>/…` keys still resolve until migrate-blob-layout runs).
+  -- Bytes live in @platform/blob-storage like iam.users.photo_key.
   assets         JSONB   NOT NULL DEFAULT '{}',
   product_names  JSONB   NOT NULL DEFAULT '{}',
-  -- tenant-admin managed
+  -- Super Admin managed (tenant-admin writable before 1.73.0)
   terms          JSONB   NOT NULL DEFAULT '{}',
   nav_overrides  JSONB   NOT NULL DEFAULT '{}',
+  -- Regional formats (1.73.0), Super Admin managed. Display only — stored data
+  -- stays UTC / ISO / NUMERIC. Whitelisted keys, validated in the API
+  -- (locale_config in @platform/validation, mirrored by @platform/ui-kit locale):
+  -- locale, date_format, time_format, timezone, week_start, currency,
+  -- currency_display, number_grouping, fiscal_year_start, phone_country_code.
+  -- Empty {} = platform default (en-IN, DD/MM/YYYY, 12h, Asia/Kolkata, INR, Monday).
+  -- A branch's own entity.organizations.timezone still overrides `timezone`.
+  locale_config  JSONB   NOT NULL DEFAULT '{}',
+  -- Bumped by trigger on every UPDATE; cache key for the public JSON / manifest.
+  branding_version INTEGER NOT NULL DEFAULT 1,
   updated_by     UUID    REFERENCES iam.users(id) ON DELETE SET NULL,
   metadata       JSONB   NOT NULL DEFAULT '{}',
   created_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
@@ -82,7 +98,8 @@ CREATE TABLE IF NOT EXISTS entity.tenant_branding (
   CONSTRAINT uq_tenant_branding_public_key UNIQUE (public_key),
   CONSTRAINT chk_tenant_branding_json_objects CHECK (
     jsonb_typeof(assets) = 'object' AND jsonb_typeof(product_names) = 'object'
-    AND jsonb_typeof(terms) = 'object' AND jsonb_typeof(nav_overrides) = 'object')
+    AND jsonb_typeof(terms) = 'object' AND jsonb_typeof(nav_overrides) = 'object'
+    AND jsonb_typeof(locale_config) = 'object')
 );
 
 
@@ -442,6 +459,13 @@ CREATE TABLE IF NOT EXISTS hr.leave_request_approvals (
                               CHECK (action IN ('pending','approved','rejected')),
   acted_at          TIMESTAMPTZ,
   comment           TEXT,
+  -- 1.72.0: who actually decided. approver_id is the DESIGNATED approver for the level; an
+  -- hr_admin/org_admin override acts without being it. A user may never approve two levels of
+  -- the same request, and that check reads COALESCE(acted_by, approver_id).
+  acted_by          UUID    REFERENCES iam.users(id)                      ON DELETE RESTRICT,
+  -- 1.72.0: set when this level was handed to a new approver because the designated one covered
+  -- a lower level and so cannot also approve their own; holds who it was reassigned FROM.
+  reassigned_from   UUID    REFERENCES iam.users(id)                      ON DELETE RESTRICT,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   CONSTRAINT uq_leave_request_approvals_request_level UNIQUE (leave_request_id, level)
 );
@@ -798,6 +822,9 @@ CREATE TABLE IF NOT EXISTS hr.attendance_regularization_approvals (
                               CHECK (action IN ('pending','approved','rejected')),
   acted_at          TIMESTAMPTZ,
   comment           TEXT,
+  -- 1.72.0: who actually decided (see hr.leave_request_approvals.acted_by).
+  acted_by          UUID    REFERENCES iam.users(id)                      ON DELETE RESTRICT,
+  reassigned_from   UUID    REFERENCES iam.users(id)                      ON DELETE RESTRICT,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   CONSTRAINT uq_reg_approvals_request_level UNIQUE (regularization_id, level)
 );
@@ -948,7 +975,7 @@ CREATE TABLE IF NOT EXISTS task.tasks (
 
 
 -- ===================================================================
--- 3b. task.task_counters — last task_no handed out per org (schema 1.67.0)
+-- 3b. task.task_counters — last task_no handed out per org (schema 1.68.0)
 --     Touched only by the SECURITY DEFINER trigger task.assign_task_no(); no
 --     app_user / tenant_admin policy or grant, so it is unreachable from a request.
 -- ===================================================================

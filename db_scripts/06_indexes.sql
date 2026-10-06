@@ -93,6 +93,11 @@ CREATE INDEX IF NOT EXISTS idx_lead_links_source_lead  ON lms.lead_links (source
 CREATE INDEX IF NOT EXISTS idx_lead_links_dest_lead    ON lms.lead_links (dest_lead_id) WHERE dest_lead_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_lead_links_source_org   ON lms.lead_links (source_org_id);
 CREATE INDEX IF NOT EXISTS idx_lead_links_dest_org     ON lms.lead_links (dest_org_id);
+-- 1.74.0: a lead can be transferred out exactly once. Backstop for the transfer
+-- race (two simultaneous transfers both copied the lead); the service row-locks
+-- first, this makes the second writer fail with 23505 -> 409 even if it did not.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_lead_links_transfer_source
+  ON lms.lead_links (source_lead_id) WHERE link_type = 'transfer';
 
 CREATE INDEX IF NOT EXISTS idx_api_clients_tenant   ON iam.api_clients (tenant_id);
 CREATE INDEX IF NOT EXISTS idx_api_clients_key_hash ON iam.api_clients (key_hash) WHERE is_active;
@@ -422,6 +427,11 @@ CREATE INDEX IF NOT EXISTS idx_leave_ledger_org
   ON hr.leave_ledger (org_id);
 CREATE INDEX IF NOT EXISTS idx_leave_ledger_request
   ON hr.leave_ledger (leave_request_id) WHERE leave_request_id IS NOT NULL;
+-- 1.74.0: one leave request consumes the balance exactly once. Backstop for the
+-- approval race (approve + approve wrote two 'consumption' rows, debiting twice);
+-- the service row-locks the request first, this makes a second writer fail (23505 -> 409).
+CREATE UNIQUE INDEX IF NOT EXISTS uix_leave_ledger_consumption
+  ON hr.leave_ledger (leave_request_id) WHERE entry_type = 'consumption' AND leave_request_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_leave_request_approvals_request
   ON hr.leave_request_approvals (leave_request_id, level);
@@ -527,7 +537,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_created_by
   ON task.tasks (org_id, created_by) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_tasks_parent
   ON task.tasks (parent_task_id) WHERE parent_task_id IS NOT NULL;
--- 1.67.0: the TASK-<n> code is unique within a branch (soft-deleted rows keep theirs).
+-- 1.68.0: the TASK-<n> code is unique within a branch (soft-deleted rows keep theirs).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_org_task_no
   ON task.tasks (org_id, task_no);
 
@@ -792,3 +802,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_roster_publications_org_week
   ON hr.roster_publications (org_id, week_start) WHERE NOT is_deleted;
 
 COMMIT;
+
+-- 1.70.0: Super Admin Meta console.
+CREATE INDEX IF NOT EXISTS idx_meta_campaigns_tenant_archived
+  ON ext.meta_campaigns (tenant_id) WHERE is_archived;
+CREATE INDEX IF NOT EXISTS idx_meta_lead_inbox_tenant_status_reason
+  ON ext.meta_lead_inbox (tenant_id, status, reason) WHERE tenant_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_meta_pull_run_history_tenant
+  ON ext.meta_pull_run_history (tenant_id, created_at DESC);

@@ -342,6 +342,9 @@ export interface MetaCampaignRow {
   page_ids: string[];
   // Set when the campaign's pages map to more than one tenant.
   conflict_reason: string | null;
+  // 1.70.0: hidden from the working lists. Visibility only — routing is unchanged.
+  is_archived: boolean;
+  archived_at: string | null;
   confirmed_by: string | null;
   confirmed_by_name: string | null;
   confirmed_at: string | null;
@@ -425,6 +428,13 @@ export const metaCampaigns = {
     request<{ success: true; data: CampaignSyncResult }>(
       `/meta/campaigns/sync?tenant_id=${encodeURIComponent(tenantId)}`,
       { method: 'POST' },
+    ),
+
+  // 1.70.0: hide / restore campaigns from the working lists (visibility only).
+  archive: (tenantId: string, metaCampaignIds: string[], archived: boolean) =>
+    request<{ success: true; data: { updated: number } }>(
+      `/meta/campaigns/archive?tenant_id=${encodeURIComponent(tenantId)}`,
+      { method: 'POST', body: JSON.stringify({ meta_campaign_ids: metaCampaignIds, archived }) },
     ),
 
   // dry_run=true previews the mapping change and the lead fan-out and WRITES
@@ -561,6 +571,15 @@ export interface MetaAdAccountRow {
   is_enabled: boolean;
   last_synced_at: string | null;
   last_seen_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+}
+
+export interface MetaTokenPermissions {
+  is_valid: boolean;
+  expires_at: string | null;
+  scopes: string[];
+  missing: string[];
 }
 
 export const metaAdAccounts = {
@@ -569,6 +588,12 @@ export const metaAdAccounts = {
     request<{ success: true; data: { seen: number; added: number; accounts: MetaAdAccountRow[] } }>(
       '/meta/ad-accounts/sync', { method: 'POST' },
     ),
+  setEnabledBulk: (adAccountIds: string[], isEnabled: boolean) =>
+    request<{ success: true; data: MetaAdAccountRow[] }>('/meta/ad-accounts/bulk', {
+      method: 'POST', body: JSON.stringify({ ad_account_ids: adAccountIds, is_enabled: isEnabled }),
+    }),
+  tokenPermissions: () =>
+    request<{ success: true; data: MetaTokenPermissions }>('/meta/ad-accounts/token-permissions'),
   setEnabled: (adAccountId: string, isEnabled: boolean) =>
     request<{ success: true; data: MetaAdAccountRow }>(`/meta/ad-accounts/${encodeURIComponent(adAccountId)}`, {
       method: 'PATCH', body: JSON.stringify({ is_enabled: isEnabled }),
@@ -610,6 +635,29 @@ function inboxQuery(tenantId: string | null, extra: Record<string, string | unde
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }
+
+// ── Meta page token health (1.70.0) ─────────────────────────────────────────
+export type PageTokenStatus = 'ok' | 'missing' | 'expired' | 'error';
+
+export interface MetaPageHealthRow {
+  page_id: string;
+  token_status: PageTokenStatus;
+  // null = could not be determined.
+  is_subscribed: boolean | null;
+  error_text: string | null;
+  checked_at: string;
+}
+
+export const metaPageHealth = {
+  list: (tenantId: string) =>
+    request<{ success: true; data: MetaPageHealthRow[] }>(`/meta/pages/health?tenant_id=${encodeURIComponent(tenantId)}`),
+  // One Graph call per mapped page, so it can take a while.
+  validate: (tenantId: string) =>
+    request<{ success: true; data: MetaPageHealthRow[] }>(
+      `/meta/pages/health/validate?tenant_id=${encodeURIComponent(tenantId)}`,
+      { method: 'POST' },
+    ),
+};
 
 export const metaLeadInbox = {
   list: (tenantId: string | null, status: InboxStatus = 'open', reason?: InboxReason) =>
@@ -721,7 +769,7 @@ export interface PullRunCounts {
 // runs in the background like the pull itself, so both it and `applying` are
 // in-flight states the screen keeps polling through.
 export type PullRunLifecycleStatus =
-  | 'queued' | 'running' | 'completed' | 'failed' | 'apply_queued' | 'applying' | 'applied';
+  | 'queued' | 'running' | 'completed' | 'failed' | 'apply_queued' | 'applying' | 'applied' | 'discarded';
 
 export interface PullRunStatus {
   id: string;
@@ -748,7 +796,11 @@ export interface PullRunStatus {
   // summary renders, not `counts.verdicts`.
   verdict_summary: Partial<Record<PullVerdict | 'unclassified', number>>;
   apply_summary: Partial<Record<'pending' | 'applied' | 'skipped' | 'failed', number>>;
+  // Rows Apply would import right now (importable AND ticked).
   importable: number;
+  // 1.70.0: importable rows regardless of the ticks.
+  importable_total: number;
+  discarded_at: string | null;
   // Distinct pages behind the unmapped_form verdict, over every staged row —
   // each one links to Meta Page Mapping filtered to that page.
   unmapped_page_ids: string[];
@@ -774,6 +826,8 @@ export interface StagedLeadRow {
   applied_status: 'pending' | 'applied' | 'skipped' | 'failed';
   applied_lead_id: string | null;
   applied_error: string | null;
+  // 1.70.0: whether Apply will import this row.
+  apply_selected: boolean;
 }
 
 export interface PullApplyResult {
@@ -790,6 +844,22 @@ export interface PullApplyResult {
 export interface PullRunConflictDetails {
   run_id: string;
   status: string;
+}
+
+export interface PullHistoryRow {
+  run_id: string;
+  trigger_kind: PullTriggerKind;
+  status: PullRunLifecycleStatus;
+  filters: Record<string, unknown>;
+  counts: Record<string, unknown>;
+  created_by: string | null;
+  created_by_name: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  applied_at: string | null;
+  discarded_at: string | null;
+  error_text: string | null;
+  created_at: string;
 }
 
 export const leadPull = {
@@ -850,6 +920,27 @@ export const leadPull = {
   // server's worker does the work. Poll getRun until `applied`, then read
   // `counts.apply` / `apply_summary`. A second press gets 409 (the run is no
   // longer `completed`), and the write path is idempotent regardless.
+  // 1.70.0: tick / untick staged rows so Apply imports only the chosen ones. `ids`
+  // omitted = every importable row (narrowed by `verdict` when given).
+  setSelection: (tenantId: string, runId: string, body: { selected: boolean; ids?: string[]; verdict?: PullVerdict }) =>
+    request<{ success: true; data: { updated: number; selected: number; importable_total: number } }>(
+      `/meta/lead-pull/runs/${runId}/selection?tenant_id=${encodeURIComponent(tenantId)}`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
+  // 1.70.0: throw a finished batch away without applying it (staged leads deleted).
+  discard: (tenantId: string, runId: string) =>
+    request<{ success: true; data: { run_id: string } }>(
+      `/meta/lead-pull/runs/${runId}/discard?tenant_id=${encodeURIComponent(tenantId)}`,
+      { method: 'POST' },
+    ),
+
+  // 1.70.0: summary of the tenant's past pulls (no lead data).
+  history: (tenantId: string, limit = 50) =>
+    request<{ success: true; data: PullHistoryRow[] }>(
+      `/meta/lead-pull/history?tenant_id=${encodeURIComponent(tenantId)}&limit=${limit}`,
+    ),
+
   apply: (tenantId: string, runId: string) =>
     request<{ success: true; data: { run_id: string; status: 'apply_queued' } }>(
       `/meta/lead-pull/runs/${runId}/apply?tenant_id=${encodeURIComponent(tenantId)}`,
@@ -943,7 +1034,10 @@ export const orgs = {
 // server; cross-tenant by design (this is the platform operator's screen).
 // Assets go up as base64 and are sniffed/sanitised server-side.
 
-export type BrandAssetSlot = 'logo' | 'logo_dark' | 'mark' | 'favicon' | 'app_icon';
+export type BrandAssetSlot =
+  | 'logo' | 'logo_dark' | 'mark' | 'favicon' | 'app_icon'
+  | 'app_icon_maskable' | 'apple_touch_icon' | 'icon_192' | 'push_icon' | 'push_badge'
+  | 'email_logo' | 'login_hero' | 'splash';
 
 export interface SaBrandingView {
   tenant_name: string;
@@ -951,6 +1045,7 @@ export interface SaBrandingView {
   theme_locked: boolean;
   terms: Record<string, string>;
   nav_overrides: Record<string, { label?: string; icon?: string }>;
+  locale_config: Record<string, string | number>;
   product_names: Record<string, Record<string, string>>;
   assets: Record<string, string>;
   asset_meta: Record<string, { content_type: string; bytes: number; updated_at: string }>;
@@ -965,6 +1060,9 @@ export interface SaBrandingUpdate {
   default_mode?: string;
   theme_locked?: boolean;
   product_names?: Record<string, Record<string, string>>;
+  terms?: Record<string, string>;
+  nav_overrides?: Record<string, { label?: string; icon?: string }>;
+  locale_config?: Record<string, string | number>;
 }
 
 export const saBranding = {

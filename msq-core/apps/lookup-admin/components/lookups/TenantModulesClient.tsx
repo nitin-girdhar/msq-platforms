@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { tenantModules, type ModuleKey, type TenantModuleRow } from '@/src/lib/api/client';
-import { Button } from '@platform/ui-kit';
+import { Button, PageBody, PageHeader } from '@platform/ui-kit';
 
 interface Props {
   tenantId: string;
@@ -66,17 +66,24 @@ export default function TenantModulesClient({ tenantId, tenantName, initialModul
   };
 
   return (
-    <div className="space-y-4 p-4 sm:p-6">
-      <div>
-        <Link href="/dashboard/lookups/tenants" className="text-xs font-semibold text-[#0b6cbf] hover:underline">
-          ← Back to Tenants
-        </Link>
-        <h1 className="mt-1 text-2xl font-bold text-[#0F172A]">Modules{tenantName ? ` — ${tenantName}` : ''}</h1>
-        <p className="mt-1 text-xs text-[#64748B]">Which products this tenant is entitled to use.</p>
-      </div>
-
+    <>
+      <PageHeader
+        title={`Modules${tenantName ? ` — ${tenantName}` : ''}`}
+        subtitle={`Which products this tenant is entitled to use · ${active.size} / ${Object.keys(MODULE_LABELS).length} active`}
+        actions={
+          <>
+            <Link href="/dashboard/lookups/tenants" className="inline-flex min-h-[2.75rem] items-center px-1 text-xs font-semibold text-primary hover:underline sm:min-h-0">
+              ← Back to Tenants
+            </Link>
+            <Button variant="primary" className="min-h-[2.75rem] sm:min-h-0" onClick={handleSave} disabled={pending || !isDirty} aria-busy={pending}>
+              {pending ? 'Saving…' : 'Save changes'}
+            </Button>
+          </>
+        }
+      />
+      <PageBody>
       {error && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+        <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">
           {error}
         </div>
       )}
@@ -85,41 +92,37 @@ export default function TenantModulesClient({ tenantId, tenantName, initialModul
         {(Object.keys(MODULE_LABELS) as ModuleKey[]).map((module) => (
           <label
             key={module}
-            className="flex cursor-pointer items-start gap-3 rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-sm"
+            className="flex min-h-[2.75rem] cursor-pointer items-start gap-3 rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm"
           >
             <input
               type="checkbox"
               checked={active.has(module)}
               onChange={() => toggle(module)}
               disabled={pending}
-              className="mt-0.5 h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+              className="mt-0.5 h-5 w-5 shrink-0 rounded border-outline-variant accent-primary focus:ring-primary/20"
             />
             <span>
-              <span className="block text-sm font-semibold text-[#0F172A]">{MODULE_LABELS[module].label}</span>
-              <span className="block text-xs text-[#64748B]">{MODULE_LABELS[module].description}</span>
+              <span className="block text-sm font-semibold text-on-surface">{MODULE_LABELS[module].label}</span>
+              <span className="block text-xs text-on-surface-variant">{MODULE_LABELS[module].description}</span>
             </span>
           </label>
         ))}
       </div>
 
       {confirmDisable && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="rounded-xl border border-status-due/30 bg-status-due-container px-4 py-3 text-sm text-on-status-due-container">
           <p>
             Disable <strong>{MODULE_LABELS[confirmDisable].label}</strong>? Its nav hides for this tenant; nothing is
             deleted, and re-enabling restores access to the same data.
           </p>
           <div className="mt-2 flex gap-2">
-            <Button variant="danger" onClick={confirmToggleOff}>Disable</Button>
-            <Button variant="secondary" onClick={() => setConfirmDisable(null)}>Cancel</Button>
+            <Button variant="danger" className="min-h-[2.75rem] sm:min-h-0" onClick={confirmToggleOff}>Disable</Button>
+            <Button variant="secondary" className="min-h-[2.75rem] sm:min-h-0" onClick={() => setConfirmDisable(null)}>Cancel</Button>
           </div>
         </div>
       )}
 
-      <div className="flex justify-end">
-        <Button variant="primary" onClick={handleSave} disabled={pending || !isDirty} aria-busy={pending}>
-          {pending ? 'Saving…' : 'Save changes'}
-        </Button>
-      </div>
-    </div>
+      </PageBody>
+    </>
   );
 }

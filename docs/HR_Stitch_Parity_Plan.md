@@ -195,3 +195,22 @@ KYC "L4 verified", DigiLocker links, SHA-256 / HSM / KMS / ISO 27001 badges, "Bi
 Found along the way: the directory and the payroll draft picker both fetched only the default 20 employees (fixed); the dashboard greeting caused a hydration warning (fixed).
 
 H12 (2026-10-05, no schema): dashboard Recent activity and Today's slots, sidebar working-time/shift cards, Timesheet Slot log and Shift regularization tabs, own-shift endpoint. Still open (needs schema review): slot-specific regularization/leave, persistent HR notifications.
+
+**2026-10-06 - approved Stitch designs: Org chart and Roster planner (no schema, no new endpoints):**
+- Org chart (`OrgChartShell`): desktop is now a top-down chart (avatar, name, title, department chip, direct-report count, expand/collapse per node, Expand all / Collapse all); phone (<768px) is an indented list with 44px rows. Search focuses a person (opens their ancestors, scrolls to and rings the card, clears a department filter that would hide them); department filter keeps the managers above matches (dimmed) so the tree stays connected. Headcount / levels / widest team are derived from the same org-chart rows. Same endpoint (`GET /hr/employees/org-chart`), same `hr.employees.view` page gate, profile links still behind `hr.employees.profile360.view`. "branch" goes through `useTerm`.
+- Roster planner (`PlannerShell`): restyle only. Headcount card uses `StatCard`, shift cards show times and "Click to set number needed", avatars in the staff column, "Showing N staff members" footer, percentages in the capacity legend. Phone (<768px) week view is a day strip plus a tappable staff list for the picked day (the capacity cards follow the picked day); the table stays on desktop so e2e selectors (`tr`, `button[title="Change this day"]`, `#cm-to`, `#pm-*`, `#ra-*`, `#pb-note`) are unchanged. 44px taps on phone.
+- Not built (needs a decision): org chart zoom/fit/fullscreen/minimap, Tabular view, Assign Report (changing a manager has no endpoint on this screen), Export Hierarchy, status dots, employee codes on cards (not in the org-chart payload, which is deliberately name/title/manager only), legend and "span-of-control" policy text. Planner: drag-and-drop assignment, conflict highlighting beyond the existing 11 h skip list, filter popover button, "view requirements" and "swap log" links, weekly-off requests (see above).
+
+**2026-10-06 - Leave / Attendance administration (the two admin-web screens that render `@hr/web` shells):**
+These two routes live in admin-web (`/admin/dashboard/leave/admin`, `/admin/dashboard/attendance/admin`) but render
+`LeaveAdminShell` / `AttendanceAdminShell` from this package, so the Admin Stitch pass could not touch them.
+Brought up to the same bar here (no schema, no endpoint, no capability change):
+- Both section strips are now a real segmented control (`role="tablist"` + `aria-selected`) with 44px targets and
+  `flex-1` on phones, dropping to auto width from `sm`. They were 26px high, below the audit's tap minimum.
+- Leave > Policies: three derived counters (policies / active / tenant-wide) computed from the rows already loaded,
+  and a card list under `lg` in place of the 860px table — on a 390px screen the Active chip, the column people scan
+  for, sat off the right edge. The desktop table, `Create / revise policy` and `PolicyFormModal` are unchanged.
+- Still on the old pattern (table with a `min-w` and sideways scroll under `lg`), in rough order of width:
+  `GeoExceptionsManager` (820px), `ShiftsManager` (720px), `ShiftAssignmentsManager` (680px), `HolidaysManager`
+  (480px). The container scrolls rather than the page, so the responsive audit passes; they are a design gap, not a
+  defect.

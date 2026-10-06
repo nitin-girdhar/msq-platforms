@@ -1,16 +1,16 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ThemePicker, applyThemePreview } from '@platform/ui-kit';
+import { PageBody, PageHeader, ThemePicker, applyThemePreview } from '@platform/ui-kit';
 import { DEFAULT_FONT_ID, DEFAULT_PRESET_ID, resolveTheme, type ThemeChoice } from '@platform/ui-kit/theme';
 import {
   BRANDABLE_NAV,
+  BRAND_ASSET_CATALOG,
+  BRAND_ASSET_DARK_PREVIEW,
+  BRAND_ASSET_GROUPS,
   BRAND_TERM_ROWS,
-  NAV_ICON_NAMES,
-  NavIcon,
-  isNavIconName,
-  type NavOverride,
 } from '@platform/ui-kit/branding';
+import { DEFAULT_LOCALE_CONFIG, createFormatters, localeFromApi } from '@platform/ui-kit/locale';
 import { branding as brandingApi, type TenantBrandingView, type TenantBrandingUpdate } from '@/src/lib/api/client';
 
 interface Props {
@@ -18,23 +18,12 @@ interface Props {
   canManage: boolean;
 }
 
-const ASSET_SLOTS: ReadonlyArray<{ slot: string; label: string; hint: string }> = [
-  { slot: 'logo', label: 'Full logo', hint: 'Navbar & login' },
-  { slot: 'mark', label: 'Logo mark', hint: 'Sidebar & collapsed rail' },
-  { slot: 'favicon', label: 'Favicon', hint: 'Browser tab' },
-  { slot: 'app_icon', label: 'App icon', hint: 'Home screen (PWA)' },
-];
-
 const PRODUCT_ROWS: ReadonlyArray<{ key: string; label: string }> = [
   { key: 'lms', label: 'Lead Management' },
   { key: 'hr', label: 'People & Attendance' },
   { key: 'task', label: 'Tasks' },
   { key: 'admin', label: 'Admin Console' },
 ];
-
-const TERM_MAX = 24;
-const LABEL_MAX = 30;
-const MARKUP_RE = /[<>{}]/;
 
 // Unset fields are shown (and saved) as the platform default they inherit,
 // so the active swatch / font is always highlighted.
@@ -49,23 +38,6 @@ function themeOf(v: TenantBrandingView): ThemeChoice {
     font: (t?.font as ThemeChoice['font']) ?? DEFAULT_FONT_ID,
     mode: (t?.mode as ThemeChoice['mode']) ?? 'light',
   };
-}
-
-function cleanRecord(r: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(r)) if (v.trim()) out[k] = v.trim();
-  return out;
-}
-
-function cleanNav(r: Record<string, NavOverride>): Record<string, NavOverride> {
-  const out: Record<string, NavOverride> = {};
-  for (const [id, o] of Object.entries(r)) {
-    const e: NavOverride = {};
-    if (o.label?.trim()) e.label = o.label.trim();
-    if (o.icon && isNavIconName(o.icon)) e.icon = o.icon;
-    if (e.label || e.icon) out[id] = e;
-  }
-  return out;
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -99,13 +71,11 @@ function ManagedChip({ text = 'Managed by platform administrator' }: { text?: st
 }
 
 const inputCls =
-  'h-9 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-2.5 text-body-sm text-on-surface placeholder:text-outline focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:bg-surface-container-low disabled:text-on-surface-variant';
+  'h-11 w-full sm:h-9 rounded-lg border border-outline-variant bg-surface-container-lowest px-2.5 text-body-sm text-on-surface placeholder:text-outline focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:bg-surface-container-low disabled:text-on-surface-variant';
 
 export default function BrandingSettings({ initial, canManage }: Props) {
   const [saved, setSaved] = useState(initial);
   const [theme, setTheme] = useState<ThemeChoice>(() => themeOf(initial));
-  const [terms, setTerms] = useState<Record<string, string>>(() => ({ ...initial.terms }));
-  const [nav, setNav] = useState<Record<string, NavOverride>>(() => ({ ...initial.nav_overrides }));
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -116,30 +86,13 @@ export default function BrandingSettings({ initial, canManage }: Props) {
   const locked = saved.theme_locked;
   const themeEditable = canManage && !locked;
 
+  // The tenant admin's whole remit is colour, font and the default mode. Images,
+  // names, words, menu labels and regional formats below are read-only: the
+  // platform administrator sets them (the API and the database refuse any other
+  // write from this screen).
   const savedTheme = themeOf(saved);
   const themeDirty = themeEditable && !same(theme, savedTheme);
-  const termsDirty = !same(cleanRecord(terms), cleanRecord(saved.terms));
-  const navDirty = !same(cleanNav(nav), cleanNav(saved.nav_overrides));
-  const dirty = canManage && (themeDirty || termsDirty || navDirty);
-
-  const termErrors = useMemo(() => {
-    const e: Record<string, string> = {};
-    for (const [k, v] of Object.entries(terms)) {
-      if (v.trim().length > TERM_MAX) e[k] = `Max ${TERM_MAX} characters`;
-      else if (MARKUP_RE.test(v)) e[k] = 'Must not contain < > { }';
-    }
-    return e;
-  }, [terms]);
-  const navErrors = useMemo(() => {
-    const e: Record<string, string> = {};
-    for (const [k, o] of Object.entries(nav)) {
-      const v = o.label ?? '';
-      if (v.trim().length > LABEL_MAX) e[k] = `Max ${LABEL_MAX} characters`;
-      else if (MARKUP_RE.test(v)) e[k] = 'Must not contain < > { }';
-    }
-    return e;
-  }, [nav]);
-  const invalid = Object.keys(termErrors).length > 0 || Object.keys(navErrors).length > 0;
+  const dirty = canManage && themeDirty;
 
   // Live preview of an unsaved colour / font on this page.
   useEffect(() => {
@@ -155,44 +108,32 @@ export default function BrandingSettings({ initial, canManage }: Props) {
 
   const discard = () => {
     setTheme(themeOf(saved));
-    setTerms({ ...saved.terms });
-    setNav({ ...saved.nav_overrides });
     setNotice(null);
   };
 
   const save = async () => {
-    if (!dirty || invalid) return;
+    if (!dirty) return;
     setSaving(true);
     setNotice(null);
-    const body: TenantBrandingUpdate = {};
-    if (themeDirty) {
-      body.preset = theme.seed_hex ? null : (theme.preset ?? null);
-      body.seed_hex = theme.seed_hex ?? null;
-      body.font = theme.font ?? null;
-      body.default_mode = theme.mode ?? 'light';
-    }
-    if (termsDirty) body.terms = cleanRecord(terms);
-    if (navDirty) body.nav_overrides = cleanNav(nav);
+    const body: TenantBrandingUpdate = {
+      preset: theme.seed_hex ? null : (theme.preset ?? null),
+      seed_hex: theme.seed_hex ?? null,
+      font: theme.font ?? null,
+      default_mode: theme.mode ?? 'light',
+    };
     try {
-      const res = await brandingApi.update(body);
-      // Theme / names / menus are rendered server-side in every product: reload
-      // so this console shows the saved result too.
-      if (themeDirty || navDirty) {
-        window.location.reload();
-        return;
-      }
-      setSaved(res.data);
-      setTerms({ ...res.data.terms });
-      setNotice({ kind: 'ok', text: 'Branding saved. Users see the changes on their next page load.' });
+      await brandingApi.update(body);
+      // The theme is rendered server-side in every product: reload so this
+      // console shows the saved result too.
+      window.location.reload();
     } catch (e) {
       const msg = e instanceof Error ? e.message : '';
       setNotice({
         kind: 'error',
         text: /locked/i.test(msg)
-          ? 'Colours and font were locked by your platform administrator. Your other changes were not saved — discard the colour change and try again.'
+          ? 'Colours and font were locked by your platform administrator. Discard the colour change and try again.'
           : msg || 'Could not save branding. Please try again.',
       });
-    } finally {
       setSaving(false);
     }
   };
@@ -212,18 +153,20 @@ export default function BrandingSettings({ initial, canManage }: Props) {
     ? new Date(saved.updated_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
     : null;
 
+  const termsSet = BRAND_TERM_ROWS.filter((r) => saved.terms[r.singular] || saved.terms[r.plural]);
+  const navSet = BRANDABLE_NAV.flatMap((g) => g.items).filter((i) => saved.nav_overrides[i.id]);
+  const loc = localeFromApi(saved.locale_config);
+  const fmt = useMemo(() => createFormatters(loc), [loc]);
+  const regionalIsDefault = same(loc, DEFAULT_LOCALE_CONFIG);
+
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4 pb-28 sm:p-6 sm:pb-28">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-label-sm uppercase tracking-wider text-outline">Settings</p>
-          <h1 className="text-headline-md font-bold text-on-surface">Branding</h1>
-          <p className="mt-1 max-w-2xl text-body-sm text-on-surface-variant">
-            Customise how your team sees the platform. Logos and product names are managed by the platform administrator.
-          </p>
-        </div>
-        {updatedLabel && <p className="text-label-sm text-outline">Last saved {updatedLabel}</p>}
-      </header>
+    <>
+      <PageHeader
+        title="Branding"
+        subtitle="Choose your colours and font. Logos, names, wording, menus and regional formats are set by the platform administrator."
+        actions={updatedLabel ? <p className="text-label-sm text-on-surface-variant">Last saved {updatedLabel}</p> : undefined}
+      />
+      <PageBody className="mx-auto flex max-w-5xl flex-col gap-4 !space-y-0 pb-28 sm:pb-28">
 
       {!canManage && (
         <p className="rounded-lg bg-surface-container px-3 py-2 text-body-sm text-on-surface-variant">
@@ -231,76 +174,8 @@ export default function BrandingSettings({ initial, canManage }: Props) {
         </p>
       )}
 
-      <Section n={1} title="Brand identity" subtitle="Logos, product names and your login link." aside={<ManagedChip />}>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {ASSET_SLOTS.map(({ slot, label, hint }) => {
-            const src = saved.assets[slot];
-            const meta = saved.asset_meta[slot];
-            return (
-              <div key={slot} className="flex flex-col gap-2 rounded-lg border border-outline-variant p-3">
-                <div className="flex h-20 items-center justify-center rounded-md bg-surface-container-low">
-                  {src ? (
-                    // Gateway-served tenant asset (/api/public/branding/...); plain
-                    // <img> so no basePath / optimizer rewriting applies.
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={`/api${src}`} alt={`${label} preview`} className="max-h-16 max-w-full object-contain" />
-                  ) : (
-                    <span className="text-label-sm text-outline">Platform default</span>
-                  )}
-                </div>
-                <div>
-                  <p className="text-label-md font-semibold text-on-surface">{label}</p>
-                  <p className="text-label-sm text-outline">
-                    {meta ? `${meta.content_type?.replace('image/', '').toUpperCase()} · ${Math.max(1, Math.round((meta.bytes ?? 0) / 1024))} KB` : hint}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="mt-5">
-          <h3 className="mb-2 text-label-md font-semibold text-on-surface">Product names</h3>
-          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {saved.product_names['brand']?.['name'] && (
-              <li className="flex items-center justify-between gap-3 rounded-lg bg-surface-container-low px-3 py-2 text-body-sm sm:col-span-2">
-                <span className="text-on-surface-variant">Brand name</span>
-                <span className="truncate font-semibold text-on-surface">{saved.product_names['brand']['name']}</span>
-              </li>
-            )}
-            {PRODUCT_ROWS.map(({ key, label }) => (
-              <li key={key} className="flex items-center justify-between gap-3 rounded-lg bg-surface-container-low px-3 py-2 text-body-sm">
-                <span className="text-on-surface-variant">{label}</span>
-                <span className="truncate font-semibold text-on-surface">{saved.product_names[key]?.['title'] ?? 'Platform default'}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="mt-5">
-          <h3 className="mb-1 text-label-md font-semibold text-on-surface">Login link</h3>
-          <p className="mb-2 text-body-sm text-on-surface-variant">
-            Share this link so your team sees your branding on the sign-in page. It is managed and rotated by the platform administrator.
-          </p>
-          {loginLink ? (
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input readOnly value={loginLink} aria-label="Login link" className={`${inputCls} font-mono`} onFocus={(e) => e.currentTarget.select()} />
-              <button
-                type="button"
-                onClick={copyLink}
-                className="h-9 shrink-0 rounded-lg border border-outline-variant px-3 text-label-md font-semibold text-primary hover:bg-surface-container-low"
-              >
-                {copied ? 'Copied' : 'Copy link'}
-              </button>
-            </div>
-          ) : (
-            <p className="text-body-sm text-outline">Your login link is created when branding is first saved.</p>
-          )}
-        </div>
-      </Section>
-
       <Section
-        n={2}
+        n={1}
         title="Colours & font"
         subtitle="Accent colour, typeface and the default light/dark mode for everyone in your company."
         aside={locked ? <ManagedChip text="Locked by platform administrator" /> : undefined}
@@ -332,146 +207,138 @@ export default function BrandingSettings({ initial, canManage }: Props) {
       </Section>
 
       <Section
-        n={3}
-        title="Terms"
-        subtitle="Rename everyday words in menus and screens. Reports, exports, API fields and permissions are unaffected."
-        aside={
-          canManage && Object.keys(cleanRecord(terms)).length > 0 ? (
-            <button type="button" onClick={() => setTerms({})} className="rounded-lg px-3 py-1.5 text-label-md text-on-surface-variant hover:bg-surface-container">
-              Reset all terms
-            </button>
-          ) : undefined
-        }
+        n={2}
+        title="Brand identity"
+        subtitle="Your logos and icons, product names and login link. Set by the platform administrator — ask them to change any of these."
+        aside={<ManagedChip />}
       >
-        <div className="hidden grid-cols-[1.2fr_1fr_1fr_auto] gap-3 px-1 pb-2 text-label-sm uppercase tracking-wider text-outline md:grid">
-          <span>Default</span>
-          <span>Singular</span>
-          <span>Plural</span>
-          <span className="w-16" />
-        </div>
-        <ul className="flex flex-col divide-y divide-outline-variant/60">
-          {BRAND_TERM_ROWS.map((row) => {
-            const custom = Boolean(terms[row.singular]?.trim() || terms[row.plural]?.trim());
-            return (
-              <li key={row.singular} className="grid grid-cols-2 items-start gap-3 py-3 md:grid-cols-[1.2fr_1fr_1fr_auto]">
-                <div className="col-span-2 md:col-span-1">
-                  <p className="text-body-md font-semibold text-on-surface">{row.label} / {row.pluralLabel}</p>
-                  <p className="text-label-sm text-outline">e.g. {row.example}</p>
-                </div>
-                {([['singular', row.label], ['plural', row.pluralLabel]] as const).map(([which, ph]) => {
-                  const key = which === 'singular' ? row.singular : row.plural;
-                  return (
-                    <label key={key} className="flex flex-col gap-1">
-                      <span className="text-label-sm text-on-surface-variant md:sr-only">{which === 'singular' ? 'Singular' : 'Plural'}</span>
-                      <input
-                        value={terms[key] ?? ''}
-                        placeholder={ph}
-                        maxLength={TERM_MAX + 8}
-                        disabled={!canManage || saving}
-                        aria-invalid={Boolean(termErrors[key])}
-                        onChange={(e) => setTerms((t) => ({ ...t, [key]: e.target.value }))}
-                        className={inputCls}
-                      />
-                      {termErrors[key] && <span className="text-label-sm text-error">{termErrors[key]}</span>}
-                    </label>
-                  );
-                })}
-                <div className="col-span-2 flex justify-end md:col-span-1 md:w-16 md:pt-1.5">
-                  {canManage && custom ? (
-                    <button
-                      type="button"
-                      onClick={() => setTerms((t) => {
-                        const n = { ...t };
-                        delete n[row.singular];
-                        delete n[row.plural];
-                        return n;
-                      })}
-                      className="text-label-md text-primary hover:underline"
-                    >
-                      Reset
-                    </button>
-                  ) : (
-                    <span className="text-label-sm text-outline">{custom ? 'Custom' : 'Default'}</span>
-                  )}
-                </div>
+        {BRAND_ASSET_GROUPS.map((g) => (
+          <div key={g.id} className="mb-5 last:mb-0">
+            <h3 className="mb-2 text-label-md font-semibold uppercase tracking-wide text-on-surface-variant">{g.title}</h3>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {BRAND_ASSET_CATALOG.filter((a) => a.group === g.id).map((a) => {
+                const src = saved.assets[a.slot];
+                const meta = saved.asset_meta[a.slot];
+                const dark = BRAND_ASSET_DARK_PREVIEW.has(a.slot);
+                return (
+                  <div key={a.slot} className="flex flex-col gap-2 rounded-lg border border-outline-variant p-3">
+                    <div className={`flex h-20 items-center justify-center rounded-md ${dark ? 'bg-inverse-surface' : 'bg-surface-container-low'}`}>
+                      {src ? (
+                        // Gateway-served tenant asset (/api/public/branding/...); plain
+                        // <img> so no basePath / optimizer rewriting applies.
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={`/api${src}`} alt={`${a.label} preview`} className="max-h-16 max-w-full object-contain" />
+                      ) : (
+                        <span className={`text-label-sm ${dark ? 'text-inverse-on-surface' : 'text-outline'}`}>Platform default</span>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-label-md font-semibold text-on-surface">{a.label}</p>
+                      <p className="text-label-sm text-outline">
+                        {meta ? `${meta.content_type?.replace('image/', '').toUpperCase()} · ${Math.max(1, Math.round((meta.bytes ?? 0) / 1024))} KB` : 'Not set'}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+
+        <div className="mt-5">
+          <h3 className="mb-2 text-label-md font-semibold text-on-surface">Product names</h3>
+          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {saved.product_names['brand']?.['name'] && (
+              <li className="flex items-center justify-between gap-3 rounded-lg bg-surface-container-low px-3 py-2 text-body-sm sm:col-span-2">
+                <span className="text-on-surface-variant">Brand name</span>
+                <span className="truncate font-semibold text-on-surface">{saved.product_names['brand']['name']}</span>
               </li>
-            );
-          })}
-        </ul>
+            )}
+            {PRODUCT_ROWS.map(({ key, label }) => (
+              <li key={key} className="flex items-center justify-between gap-3 rounded-lg bg-surface-container-low px-3 py-2 text-body-sm">
+                <span className="text-on-surface-variant">{label}</span>
+                <span className="truncate font-semibold text-on-surface">{saved.product_names[key]?.['title'] ?? 'Platform default'}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="mt-5">
+          <h3 className="mb-1 text-label-md font-semibold text-on-surface">Login link</h3>
+          <p className="mb-2 text-body-sm text-on-surface-variant">
+            Share this link so your team sees your branding on the sign-in page. It is managed and rotated by the platform administrator.
+          </p>
+          {loginLink ? (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input readOnly value={loginLink} aria-label="Login link" className={`${inputCls} font-mono`} onFocus={(e) => e.currentTarget.select()} />
+              <button
+                type="button"
+                onClick={copyLink}
+                className="h-11 shrink-0 rounded-lg border border-outline-variant px-3 text-label-md font-semibold text-primary hover:bg-surface-container-low sm:h-9"
+              >
+                {copied ? 'Copied' : 'Copy link'}
+              </button>
+            </div>
+          ) : (
+            <p className="text-body-sm text-outline">Your login link is created when branding is first set up by the platform administrator.</p>
+          )}
+        </div>
       </Section>
 
       <Section
-        n={4}
-        title="Menu labels & icons"
-        subtitle="Rename menu items or pick a different icon. Menu order, pages and who can open them do not change."
+        n={3}
+        title="Wording, menus & regional formats"
+        subtitle="How words, menu items, dates and money appear for everyone in your organisation. Set by the platform administrator."
+        aside={<ManagedChip />}
       >
-        <div className="flex flex-col gap-5">
-          {BRANDABLE_NAV.map((group) => (
-            <div key={group.product}>
-              <h3 className="mb-2 text-label-md font-semibold text-on-surface">{group.label}</h3>
-              <ul className="flex flex-col divide-y divide-outline-variant/60 rounded-lg border border-outline-variant">
-                {group.items.map((item) => {
-                  const o = nav[item.id] ?? {};
-                  const icon = o.icon && isNavIconName(o.icon) ? o.icon : item.icon;
-                  const custom = Boolean(o.label?.trim() || o.icon);
-                  return (
-                    <li key={item.id} className="grid grid-cols-[auto_1fr] items-center gap-3 px-3 py-2.5 sm:grid-cols-[auto_1fr_12rem_auto]">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-container text-on-surface-variant">
-                        <NavIcon name={icon} className="h-5 w-5" />
-                      </span>
-                      <label className="flex min-w-0 flex-col gap-1">
-                        <span className="sr-only">Label for {item.label}</span>
-                        <input
-                          value={o.label ?? ''}
-                          placeholder={item.label}
-                          maxLength={LABEL_MAX + 8}
-                          disabled={!canManage || saving}
-                          aria-invalid={Boolean(navErrors[item.id])}
-                          onChange={(e) => setNav((n) => ({ ...n, [item.id]: { ...n[item.id], label: e.target.value } }))}
-                          className={inputCls}
-                        />
-                        {navErrors[item.id] && <span className="text-label-sm text-error">{navErrors[item.id]}</span>}
-                      </label>
-                      <label className="col-span-2 flex flex-col gap-1 sm:col-span-1">
-                        <span className="sr-only">Icon for {item.label}</span>
-                        <select
-                          value={o.icon ?? ''}
-                          disabled={!canManage || saving}
-                          onChange={(e) => setNav((n) => {
-                            const next: NavOverride = { ...n[item.id] };
-                            if (e.target.value) next.icon = e.target.value;
-                            else delete next.icon;
-                            return { ...n, [item.id]: next };
-                          })}
-                          className={inputCls}
-                        >
-                          <option value="">Default icon ({item.icon})</option>
-                          {NAV_ICON_NAMES.map((name) => (
-                            <option key={name} value={name}>{name.replace(/-/g, ' ')}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <div className="col-span-2 flex justify-end sm:col-span-1 sm:w-14">
-                        {canManage && custom && (
-                          <button
-                            type="button"
-                            onClick={() => setNav((n) => {
-                              const next = { ...n };
-                              delete next[item.id];
-                              return next;
-                            })}
-                            className="text-label-md text-primary hover:underline"
-                          >
-                            Reset
-                          </button>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <h3 className="mb-2 text-label-md font-semibold text-on-surface">Terms</h3>
+            {termsSet.length ? (
+              <ul className="flex flex-col gap-1 text-body-sm">
+                {termsSet.map((r) => (
+                  <li key={r.singular} className="flex justify-between gap-3 rounded-md bg-surface-container-low px-3 py-1.5">
+                    <span className="text-on-surface-variant">{r.label} / {r.pluralLabel}</span>
+                    <span className="truncate font-semibold text-on-surface">
+                      {saved.terms[r.singular] ?? r.label} / {saved.terms[r.plural] ?? r.pluralLabel}
+                    </span>
+                  </li>
+                ))}
               </ul>
-            </div>
-          ))}
+            ) : (
+              <p className="text-body-sm text-outline">Platform terms.</p>
+            )}
+          </div>
+          <div>
+            <h3 className="mb-2 text-label-md font-semibold text-on-surface">Menu</h3>
+            {navSet.length ? (
+              <ul className="flex flex-col gap-1 text-body-sm">
+                {navSet.map((i) => (
+                  <li key={i.id} className="flex justify-between gap-3 rounded-md bg-surface-container-low px-3 py-1.5">
+                    <span className="text-on-surface-variant">{i.label}</span>
+                    <span className="truncate font-semibold text-on-surface">
+                      {saved.nav_overrides[i.id]?.label ?? i.label}
+                      {saved.nav_overrides[i.id]?.icon ? ` · ${saved.nav_overrides[i.id]?.icon}` : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-body-sm text-outline">Platform menu.</p>
+            )}
+          </div>
+        </div>
+        <div className="mt-4">
+          <h3 className="mb-2 text-label-md font-semibold text-on-surface">Regional formats</h3>
+          {regionalIsDefault ? (
+            <p className="text-body-sm text-outline">Platform defaults.</p>
+          ) : null}
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-lg bg-surface-container-low px-3 py-2 text-body-sm sm:grid-cols-4">
+            <div><dt className="text-label-sm text-outline">Date</dt><dd className="font-semibold text-on-surface">{fmt.formatDate('2026-07-05')}</dd></div>
+            <div><dt className="text-label-sm text-outline">Time</dt><dd className="font-semibold text-on-surface">{fmt.formatTime('2026-07-05T04:00:00Z')}</dd></div>
+            <div><dt className="text-label-sm text-outline">Amount</dt><dd className="font-semibold text-on-surface">{fmt.formatMoney(1234567.5)}</dd></div>
+            <div><dt className="text-label-sm text-outline">Time zone</dt><dd className="font-semibold text-on-surface">{loc.timezone}</dd></div>
+          </dl>
         </div>
       </Section>
 
@@ -492,16 +359,16 @@ export default function BrandingSettings({ initial, canManage }: Props) {
                   type="button"
                   onClick={discard}
                   disabled={saving}
-                  className="rounded-lg px-3 py-2 text-label-md text-on-surface-variant hover:bg-surface-container disabled:opacity-50"
+                  className="min-h-[2.75rem] rounded-lg px-3 py-2 text-label-md text-on-surface-variant hover:bg-surface-container disabled:opacity-50 sm:min-h-0"
                 >
                   Discard
                 </button>
                 <button
                   type="button"
                   onClick={save}
-                  disabled={saving || invalid}
+                  disabled={saving}
                   aria-busy={saving}
-                  className="rounded-lg bg-primary px-4 py-2 text-label-md font-semibold text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="min-h-[2.75rem] rounded-lg bg-primary px-4 py-2 text-label-md font-semibold text-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0"
                 >
                   {saving ? 'Saving…' : 'Save changes'}
                 </button>
@@ -510,6 +377,7 @@ export default function BrandingSettings({ initial, canManage }: Props) {
           </div>
         </div>
       )}
-    </div>
+      </PageBody>
+    </>
   );
 }

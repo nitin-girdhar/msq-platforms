@@ -1493,6 +1493,11 @@ CREATE TABLE IF NOT EXISTS ext.meta_campaigns (
   -- (a campaign must never span tenants). Such a campaign is skipped by routing
   -- decisions made from this row until an admin resolves the page mappings.
   conflict_reason    TEXT,
+  -- Hidden from the Campaign Mapping working lists (1.70.0). Visibility only: an archived
+  -- campaign keeps routing its leads by whatever type it holds.
+  is_archived        BOOLEAN     NOT NULL DEFAULT FALSE,
+  archived_at        TIMESTAMPTZ,
+  archived_by        UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
   confirmed_by       UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
   confirmed_at       TIMESTAMPTZ,
   first_seen_source  TEXT        CONSTRAINT chk_meta_campaigns_first_seen_source
@@ -1524,6 +1529,8 @@ CREATE TABLE IF NOT EXISTS ext.meta_ad_accounts (
   is_enabled       BOOLEAN     NOT NULL DEFAULT FALSE,
   last_synced_at   TIMESTAMPTZ,              -- last campaign fetch of this account
   last_seen_at     TIMESTAMPTZ,              -- last /me/adaccounts listing that returned it
+  last_error       TEXT,                     -- why the last campaign fetch of this account failed (NULL = clean) (1.69.0)
+  last_error_at    TIMESTAMPTZ,              -- when that failure happened (1.69.0)
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_meta_ad_accounts_account UNIQUE (ad_account_id),
@@ -1783,7 +1790,7 @@ CREATE TABLE IF NOT EXISTS scratch.meta_pull_runs (
   created_by   UUID        REFERENCES iam.users(id)      ON DELETE CASCADE,
   status       TEXT        NOT NULL DEFAULT 'queued'
                CONSTRAINT chk_meta_pull_runs_status
-               CHECK (status IN ('queued','running','completed','failed','apply_queued','applying','applied')),
+               CHECK (status IN ('queued','running','completed','failed','apply_queued','applying','applied','discarded')),
   -- The request as submitted: org_ids, page_ids, campaign_ids, since, until.
   -- Kept verbatim so the summary screen can say what was actually asked for,
   -- including that a campaign filter was applied POST-FETCH.
@@ -1805,6 +1812,9 @@ CREATE TABLE IF NOT EXISTS scratch.meta_pull_runs (
   applied_at   TIMESTAMPTZ,
   applied_by   UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
   error_text   TEXT,
+  -- 'discarded' (1.70.0): an admin threw the staged batch away without applying it.
+  discarded_by UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
+  discarded_at TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1860,10 +1870,53 @@ CREATE TABLE IF NOT EXISTS scratch.meta_pull_leads (
                   CHECK (applied_status IN ('pending','applied','skipped','failed')),
   applied_lead_id UUID        REFERENCES lms.marketing_leads(id) ON DELETE SET NULL,
   applied_error   TEXT,
+  -- Whether Apply should import this row (1.70.0). Defaults TRUE so a plain Apply is unchanged;
+  -- the review screen can untick rows, and the apply worker marks unticked ones 'skipped'.
+  apply_selected  BOOLEAN     NOT NULL DEFAULT TRUE,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   -- Meta pages the same lead across cursor pages more often than its docs
   -- admit, so the staging insert is ON CONFLICT DO NOTHING against this.
   CONSTRAINT uq_meta_pull_leads_run_lead UNIQUE (run_id, meta_lead_id)
+);
+
+-- ── META_PAGE_HEALTH: last token / subscription check per mapped page (1.70.0) ──
+-- One row per (tenant, page). The check is a live Graph call per page, so its result is
+-- stored and the mapping screen reads this instead of calling Meta on every load.
+-- Written only by "Validate page tokens"; nothing here is a credential.
+CREATE TABLE IF NOT EXISTS ext.meta_page_health (
+  id            UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id     UUID        NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  page_id       BIGINT      NOT NULL,
+  token_status  TEXT        NOT NULL
+                CONSTRAINT chk_meta_page_health_status
+                CHECK (token_status IN ('ok','missing','expired','error')),
+  is_subscribed BOOLEAN,                 -- NULL = could not be determined
+  error_text    TEXT,
+  checked_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  checked_by    UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
+  CONSTRAINT uq_meta_page_health_tenant_page UNIQUE (tenant_id, page_id)
+);
+
+-- ── META_PULL_RUN_HISTORY: one summary row per lead-pull run (1.70.0) ──
+-- scratch.meta_pull_runs keeps only the tenant's LATEST run (a new pull deletes the previous
+-- one, staged leads and all), so there was no record of earlier pulls. This keeps the
+-- summary -- who, when, what was asked, the tallies, how it ended -- and none of the lead
+-- details (no names, phones or emails). Rows are upserted by run_id as the run progresses.
+CREATE TABLE IF NOT EXISTS ext.meta_pull_run_history (
+  run_id        UUID        PRIMARY KEY,
+  tenant_id     UUID        NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  trigger_kind  TEXT        NOT NULL DEFAULT 'manual',
+  status        TEXT        NOT NULL,
+  filters       JSONB       NOT NULL DEFAULT '{}',
+  counts        JSONB       NOT NULL DEFAULT '{}',
+  created_by    UUID        REFERENCES iam.users(id) ON DELETE SET NULL,
+  started_at    TIMESTAMPTZ,
+  finished_at   TIMESTAMPTZ,
+  applied_at    TIMESTAMPTZ,
+  discarded_at  TIMESTAMPTZ,
+  error_text    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 COMMIT;

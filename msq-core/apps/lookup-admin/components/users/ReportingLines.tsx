@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { users as usersApi } from '@platform/ui-kit';
+import { PageBody, PageHeader, users as usersApi } from '@platform/ui-kit';
 
 interface Props {
   tenantId: string;
@@ -68,11 +68,14 @@ export default function ReportingLines({ tenantId, orgId, branchName }: Props) {
 
   if (!orgId) {
     return (
-      <div className="p-4 sm:p-6">
-        <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
-          Reporting lines are per branch. Pick an org in the top bar to see who reports to whom there.
-        </p>
-      </div>
+      <>
+        <PageHeader title="Reporting lines" />
+        <PageBody>
+          <p className="rounded-xl border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant">
+            Reporting lines are per branch. Pick an org in the top bar to see who reports to whom there.
+          </p>
+        </PageBody>
+      </>
     );
   }
 
@@ -83,16 +86,16 @@ export default function ReportingLines({ tenantId, orgId, branchName }: Props) {
     const children = reportsOf.get(r.userId) ?? [];
     return (
       <li key={r.userId}>
-        <div className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-[#F8FAFC]" style={{ marginLeft: depth * 20 }}>
+        <div className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-surface-container-low" style={{ marginLeft: depth * 20 }}>
           <span className="min-w-0">
-            <span className="block truncate text-sm font-medium text-[#0F172A]">{r.fullName || r.email}</span>
-            <span className="block truncate text-xs text-[#64748B]">
+            <span className="block truncate text-sm font-medium text-on-surface">{r.fullName || r.email}</span>
+            <span className="block truncate text-xs text-on-surface-variant">
               {r.roleName ?? '—'}
               {depth === 0 && r.managerFullName ? ` · reports to ${r.managerFullName} (outside this branch)` : ''}
             </span>
           </span>
           {children.length > 0 && (
-            <span className="shrink-0 rounded-full bg-[#F1F5F9] px-2 py-0.5 text-[11px] font-semibold text-[#475569]">
+            <span className="shrink-0 rounded-full bg-surface-container px-2 py-0.5 text-[0.6875rem] font-semibold text-on-surface-variant">
               {children.length} direct
             </span>
           )}
@@ -103,27 +106,27 @@ export default function ReportingLines({ tenantId, orgId, branchName }: Props) {
   };
 
   return (
-    <div className="space-y-4 p-4 sm:p-6">
-      <div>
-        <h1 className="text-2xl font-bold text-[#0F172A]">Reporting lines</h1>
-        <p className="mt-1 text-xs text-[#64748B]">
-          {branchName} · change someone&apos;s manager from their Edit form on the People tab.
-        </p>
-      </div>
+    <>
+      <PageHeader
+        title="Reporting lines"
+        subtitle={`${branchName} · ${rows.length} ${rows.length === 1 ? 'person' : 'people'} · change someone's manager from their Edit form on the People tab`}
+      />
+      <PageBody>
       {error && (
-        <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+        <p role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-4 py-3 text-sm text-on-status-overdue-container">{error}</p>
       )}
       {loading ? (
-        <p className="text-sm text-[#64748B]">Loading…</p>
+        <p className="text-sm text-on-surface-variant">Loading…</p>
       ) : !error && rows.length === 0 ? (
-        <p className="rounded-xl border border-[#E2E8F0] bg-white p-8 text-center text-sm text-[#64748B]">
+        <p className="rounded-xl border border-outline-variant bg-surface-container-lowest p-8 text-center text-sm text-on-surface-variant">
           No one in this branch yet.
         </p>
       ) : (
-        <ul className="rounded-xl border border-[#E2E8F0] bg-white p-2">
+        <ul className="rounded-xl border border-outline-variant bg-surface-container-lowest p-2">
           {roots.map((r) => renderNode(r, 0, new Set()))}
         </ul>
       )}
-    </div>
+      </PageBody>
+    </>
   );
 }

@@ -53,8 +53,8 @@ export class AuthController {
 
   myOrgs = async (request: FastifyRequest, reply: FastifyReply) => {
     const token = request.cookies[config.authCookieName];
-    const { orgs, can_view_all } = await service.getMyOrgs(token);
-    return reply.status(200).send({ success: true, data: { orgs, can_view_all } });
+    const { orgs, can_view_all, tenants } = await service.getMyOrgs(token);
+    return reply.status(200).send({ success: true, data: { orgs, can_view_all, ...(tenants ? { tenants } : {}) } });
   };
 
   switchOrg = async (request: FastifyRequest, reply: FastifyReply) => {

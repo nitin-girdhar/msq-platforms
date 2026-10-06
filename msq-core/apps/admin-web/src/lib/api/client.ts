@@ -105,6 +105,7 @@ export interface TenantBrandingView {
   theme_locked: boolean;
   terms: Record<string, string>;
   nav_overrides: Record<string, { label?: string; icon?: string }>;
+  locale_config: Record<string, string | number>;
   product_names: Record<string, Record<string, string>>;
   assets: Record<string, string>;
   asset_meta: Record<string, { content_type?: string; bytes?: number; width?: number; height?: number }>;
@@ -117,8 +118,6 @@ export interface TenantBrandingUpdate {
   seed_hex?: string | null;
   font?: string | null;
   default_mode?: string;
-  terms?: Record<string, string>;
-  nav_overrides?: Record<string, { label?: string; icon?: string }>;
 }
 
 export const branding = {

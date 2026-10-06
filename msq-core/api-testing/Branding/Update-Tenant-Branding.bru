@@ -1,0 +1,31 @@
+meta {
+  name: Update Tenant Branding (colour, font, mode)
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/tenant/branding
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "preset": "emerald-fit",
+    "font": "manrope",
+    "default_mode": "light"
+  }
+}
+
+docs {
+  admin.branding.manage. The tenant admin's WHOLE remit: preset OR seed_hex, font and
+  default_mode (and only while the theme is not locked: 403 BRANDING_THEME_LOCKED).
+  The body is strict — images, product names, terms, nav_overrides and locale_config are
+  Super Admin's, so sending any of them is a 422, and the database column GRANTs would
+  refuse them anyway.
+}

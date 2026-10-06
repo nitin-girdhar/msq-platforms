@@ -108,7 +108,7 @@ export default function MonthGrid({ year, month, bars = [], markers = [], onMont
 
       <div className="grid grid-cols-7 gap-1">
         {WEEKDAYS.map((w) => (
-          <div key={w} className="pb-1 text-center text-[11px] font-semibold uppercase tracking-wide text-outline">
+          <div key={w} className="pb-1 text-center text-[0.6875rem] font-semibold uppercase tracking-wide text-outline">
             {w}
           </div>
         ))}
@@ -128,9 +128,9 @@ export default function MonthGrid({ year, month, bars = [], markers = [], onMont
                 isHoliday ? 'border-status-due/40 bg-status-due-container' : 'border-outline-variant bg-surface-container-lowest'
               } ${onDayClick ? 'cursor-pointer transition-colors hover:border-primary' : ''}`}
             >
-              <div className="mb-1 text-[11px] font-medium text-on-surface-variant">{day}</div>
+              <div className="mb-1 text-[0.6875rem] font-medium text-on-surface-variant">{day}</div>
               {dayMarkers.map((mk, i) => (
-                <div key={`mk-${i}`} className="truncate text-[10px] font-medium text-on-status-due-container" title={mk.label}>
+                <div key={`mk-${i}`} className="truncate text-[0.625rem] font-medium text-on-status-due-container" title={mk.label}>
                   {mk.label}
                 </div>
               ))}
@@ -138,7 +138,7 @@ export default function MonthGrid({ year, month, bars = [], markers = [], onMont
                 <div
                   key={`bar-${i}`}
                   title={bar.title ?? bar.label}
-                  className="mb-0.5 truncate rounded px-1 py-0.5 text-[10px] font-medium text-on-primary"
+                  className="mb-0.5 truncate rounded px-1 py-0.5 text-[0.625rem] font-medium text-on-primary"
                   style={{ backgroundColor: bar.color }}
                 >
                   {bar.label}

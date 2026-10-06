@@ -15,7 +15,7 @@ export default function PageSection({ title, action, children }: Props) {
   return (
     <section className="space-y-2">
       <div className="flex min-h-[26px] items-center justify-between gap-3">
-        <h2 className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant">
+        <h2 className="text-[0.6875rem] font-semibold uppercase tracking-widest text-on-surface-variant">
           {title}
         </h2>
         {action}

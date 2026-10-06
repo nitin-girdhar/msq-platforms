@@ -1,6 +1,7 @@
 import Link from 'next/link';
+import { PageBody, PageHeader } from '@platform/ui-kit';
 import { getServerSession } from '@/src/lib/server-session';
-import { getSelectedTenantId } from '@/src/lib/tenant-scope';
+import { getSelectedTenantId, getSelectedTenantName } from '@/src/lib/tenant-scope';
 import CampaignTypesClient from '@/components/campaign-types/CampaignTypesClient';
 
 export const dynamic = 'force-dynamic';
@@ -16,17 +17,26 @@ export default async function CampaignTypesPage() {
   const selectedTenantId = await getSelectedTenantId();
   if (!selectedTenantId) {
     return (
-      <div className="space-y-4 p-4 sm:p-6">
-        <Link href="/dashboard/m/lms" className="text-xs font-semibold text-[#0b6cbf] hover:underline">
-          ← Back to LMS
-        </Link>
-        <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
-          Pick a tenant in the top bar to manage campaign types and rules.
-        </p>
-      </div>
+      <>
+        <PageHeader
+          title="Campaign Types & Rules"
+          actions={<Link href="/dashboard/m/lms" className="inline-flex min-h-[2.75rem] items-center text-xs font-semibold text-primary hover:underline sm:min-h-0">← Back to LMS</Link>}
+        />
+        <PageBody>
+          <p className="rounded-xl border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant">
+            Pick a tenant in the top bar to manage campaign types and rules.
+          </p>
+        </PageBody>
+      </>
     );
   }
 
   // Keyed by tenant so switching tenant drops the previous tenant's state.
-  return <CampaignTypesClient key={selectedTenantId} tenantId={selectedTenantId} />;
+  return (
+    <CampaignTypesClient
+      key={selectedTenantId}
+      tenantId={selectedTenantId}
+      tenantName={await getSelectedTenantName()}
+    />
+  );
 }

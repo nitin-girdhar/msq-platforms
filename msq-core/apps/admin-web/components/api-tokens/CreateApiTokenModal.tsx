@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { API_SCOPES, type ApiScope } from '@platform/auth-constants';
-import { Modal, Button } from '@platform/ui-kit';
+import { Sheet, Button } from '@platform/ui-kit';
 import { apiTokens } from '@/src/lib/api/client';
 import SecretRevealPanel from './SecretRevealPanel';
 
@@ -99,31 +99,31 @@ export default function CreateApiTokenModal({ open, onClose, orgs, isOrgAdmin, a
 
   const footer = success ? (
     <div className="flex justify-end">
-      <Button variant="primary" onClick={handleClose}>Done</Button>
+      <Button className="min-h-[2.75rem] sm:min-h-0" variant="primary" onClick={handleClose}>Done</Button>
     </div>
   ) : (
     <div className="flex justify-end gap-2">
-      <Button variant="secondary" onClick={handleClose} disabled={pending}>Cancel</Button>
-      <Button variant="primary" type="submit" form={FORM_ID} disabled={pending} aria-busy={pending}>
+      <Button className="min-h-[2.75rem] sm:min-h-0" variant="secondary" onClick={handleClose} disabled={pending}>Cancel</Button>
+      <Button className="min-h-[2.75rem] sm:min-h-0" variant="primary" type="submit" form={FORM_ID} disabled={pending} aria-busy={pending}>
         {pending ? 'Creating…' : 'Create token'}
       </Button>
     </div>
   );
 
   return (
-    <Modal open={open} onClose={handleClose} title={success ? 'Token created' : 'New API token'} locked={pending} footer={footer}>
+    <Sheet open={open} onClose={handleClose} title={success ? 'Token created' : 'New API token'} locked={pending} footer={footer}>
       {success ? (
         <SecretRevealPanel apiKey={success.apiKey} name={success.name} />
       ) : (
         <form id={FORM_ID} onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
           {error && (
-            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">
               {error}
             </div>
           )}
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="at-name" className="text-xs font-semibold text-[#0F172A]">Name *</label>
+            <label htmlFor="at-name" className="text-xs font-semibold text-on-surface">Name *</label>
             <input
               id="at-name"
               value={name}
@@ -131,21 +131,21 @@ export default function CreateApiTokenModal({ open, onClose, orgs, isOrgAdmin, a
               disabled={pending}
               required
               placeholder="e.g. Zapier integration"
-              className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+              className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
             />
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-semibold text-[#0F172A]">Scopes *</span>
-            <div className="flex flex-col gap-1.5 rounded-xl border border-[#E2E8F0] p-3">
+            <span className="text-xs font-semibold text-on-surface">Scopes *</span>
+            <div className="flex flex-col gap-1.5 rounded-xl border border-outline-variant p-3">
               {API_SCOPES.map((scope) => (
-                <label key={scope} className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+                <label key={scope} className="flex cursor-pointer items-center gap-2 text-xs text-on-surface">
                   <input
                     type="checkbox"
                     checked={scopes.includes(scope)}
                     onChange={() => toggleScope(scope)}
                     disabled={pending}
-                    className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                    className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary/20"
                   />
                   <span className="font-mono">{scope}</span>
                 </label>
@@ -154,34 +154,34 @@ export default function CreateApiTokenModal({ open, onClose, orgs, isOrgAdmin, a
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-semibold text-[#0F172A]">Branches</span>
+            <span className="text-xs font-semibold text-on-surface">Branches</span>
             {isOrgAdmin ? (
-              <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-xs text-[#475569]">
+              <p className="rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2.5 text-xs text-on-surface-variant">
                 Scoped to your branch{orgs.find((o) => o.id === actorOrgId)?.name ? ` (${orgs.find((o) => o.id === actorOrgId)?.name})` : ''} only.
               </p>
             ) : (
               <>
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-on-surface">
                   <input
                     type="checkbox"
                     checked={scopeAllOrgs}
                     onChange={(e) => setScopeAllOrgs(e.target.checked)}
                     disabled={pending}
-                    className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                    className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary/20"
                   />
                   <span>All branches (tenant-wide)</span>
                 </label>
                 {!scopeAllOrgs && (
-                  <div className="mt-1 flex max-h-40 flex-col gap-1.5 overflow-y-auto rounded-xl border border-[#E2E8F0] p-3">
-                    {orgs.length === 0 && <span className="text-xs text-[#94A3B8]">No branches found.</span>}
+                  <div className="mt-1 flex max-h-40 flex-col gap-1.5 overflow-y-auto rounded-xl border border-outline-variant p-3">
+                    {orgs.length === 0 && <span className="text-xs text-outline">No branches found.</span>}
                     {orgs.map((org) => (
-                      <label key={org.id} className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+                      <label key={org.id} className="flex cursor-pointer items-center gap-2 text-xs text-on-surface">
                         <input
                           type="checkbox"
                           checked={orgIds.includes(org.id)}
                           onChange={() => toggleOrg(org.id)}
                           disabled={pending}
-                          className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                          className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary/20"
                         />
                         <span>{org.name}</span>
                       </label>
@@ -192,9 +192,9 @@ export default function CreateApiTokenModal({ open, onClose, orgs, isOrgAdmin, a
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="at-rate-limit" className="text-xs font-semibold text-[#0F172A]">Rate limit / min</label>
+              <label htmlFor="at-rate-limit" className="text-xs font-semibold text-on-surface">Rate limit / min</label>
               <input
                 id="at-rate-limit"
                 type="number"
@@ -203,11 +203,11 @@ export default function CreateApiTokenModal({ open, onClose, orgs, isOrgAdmin, a
                 value={rateLimit}
                 onChange={(e) => setRateLimit(e.target.value)}
                 disabled={pending}
-                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+                className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="at-expires" className="text-xs font-semibold text-[#0F172A]">Expires</label>
+              <label htmlFor="at-expires" className="text-xs font-semibold text-on-surface">Expires</label>
               <input
                 id="at-expires"
                 type="date"
@@ -216,13 +216,13 @@ export default function CreateApiTokenModal({ open, onClose, orgs, isOrgAdmin, a
                 onChange={(e) => setExpiresAt(e.target.value)}
                 disabled={pending}
                 min={new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)}
-                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+                className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
               />
             </div>
           </div>
-          <p className="-mt-2 text-[11px] text-[#64748B]">Leave Expires blank for a token that never expires.</p>
+          <p className="-mt-2 text-[0.6875rem] text-on-surface-variant">Leave Expires blank for a token that never expires.</p>
         </form>
       )}
-    </Modal>
+    </Sheet>
   );
 }

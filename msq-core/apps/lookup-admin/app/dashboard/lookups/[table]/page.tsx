@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { TABLE_CONFIG } from '@/src/lib/lookupTableConfig';
 import { getServerSession, GATEWAY_URL } from '@/src/lib/server-session';
-import { getSelectedTenantId, getSelectedOrgId } from '@/src/lib/tenant-scope';
+import { getSelectedTenantId, getSelectedOrgId, getSelectedTenantName } from '@/src/lib/tenant-scope';
 import LookupTableShell from '@/components/lookups/LookupTableShell';
 import LookupLoadError from '@/components/lookups/LookupLoadError';
 
@@ -27,6 +27,11 @@ export default async function LookupTablePage({ params }: PageProps) {
   // Scope comes from the app-wide selectors in the navbar (dashboard/layout.tsx).
   const selectedTenantId = await getSelectedTenantId();
   const selectedOrgId = config.scope === 'org' ? await getSelectedOrgId() : undefined;
+  // Only the tenant- and org-scoped tables have a tenant to name. Every other
+  // scope (including an unset one) falls through to the platform-wide fetch
+  // below, where a tenant chip would claim an ownership the rows do not have.
+  const tenantName =
+    config.scope === 'tenant' || config.scope === 'org' ? await getSelectedTenantName() : undefined;
 
   let rows: Record<string, unknown>[] = [];
 
@@ -76,6 +81,7 @@ export default async function LookupTablePage({ params }: PageProps) {
       rows={rows}
       selectedTenantId={selectedTenantId}
       selectedOrgId={selectedOrgId}
+      tenantName={tenantName}
     />
   );
 }

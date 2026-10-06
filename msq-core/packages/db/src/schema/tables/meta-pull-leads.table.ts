@@ -69,6 +69,8 @@ export const metaPullLeadsTable = scratchSchema.table('meta_pull_leads', {
   appliedStatus:   text('applied_status').notNull().default('pending'),
   appliedLeadId:   uuid('applied_lead_id').references(() => marketingLeadsTable.id, { onDelete: 'set null' }),
   appliedError:    text('applied_error'),
+  /** 1.70.0: whether Apply imports this row; the worker marks unticked rows 'skipped'. */
+  applySelected:   boolean('apply_selected').notNull().default(true),
   createdAt:       timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   // Meta pages the same lead across cursor pages more often than its docs

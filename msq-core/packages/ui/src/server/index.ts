@@ -9,3 +9,4 @@ export { requireSession, type AuthenticatedSession } from './require-session';
 export { getEnabledModules, type PlatformModule } from './modules';
 export { getEffectiveTheme, getEffectiveBranding } from './theme';
 export { getPublicBranding, resolveBrandKey, brandedMetadata } from './branding';
+export { DEFAULT_BRAND, platformName } from '../branding/defaults';

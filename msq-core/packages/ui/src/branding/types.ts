@@ -1,12 +1,16 @@
 import { isNavIconName, type NavIconName } from '../shell/NavIcon';
 import { DEFAULT_THEME, resolveTheme, type EffectiveTheme, type ThemeChoice } from '../theme/presets';
+import { DEFAULT_LOCALE_CONFIG, localeFromApi, type LocaleConfig } from '../locale/config';
 
 // Tenant identity branding as the UI consumes it (GET /me/branding, schema
 // 1.57.0). Labels and images only — routes, nav ids, capabilities and API
 // field names never change with branding.
 
 export type BrandProductKey = 'lms' | 'hr' | 'task' | 'admin' | 'sa';
-export type BrandAssetSlot = 'logo' | 'logo_dark' | 'mark' | 'favicon' | 'app_icon';
+export type BrandAssetSlot =
+  | 'logo' | 'logo_dark' | 'mark' | 'favicon' | 'app_icon'
+  | 'app_icon_maskable' | 'apple_touch_icon' | 'icon_192' | 'push_icon' | 'push_badge'
+  | 'email_logo' | 'login_hero' | 'splash';
 export type BrandTermKey =
   | 'lead' | 'leads' | 'counselor' | 'counselors' | 'follow_up' | 'follow_ups'
   | 'branch' | 'branches' | 'assignment' | 'assignments' | 'walk_in' | 'walk_ins';
@@ -33,6 +37,8 @@ export interface Branding {
   productNames: Partial<Record<BrandProductKey, ProductNames>>;
   terms: Partial<Record<BrandTermKey, string>>;
   navOverrides: Record<string, NavOverride>;
+  /** Tenant regional formats (date, time, number, currency, week, fiscal year). */
+  locale: LocaleConfig;
   /** Browser-reachable URLs (single origin: the gateway lives under /api). */
   assets: Partial<Record<BrandAssetSlot, string>>;
   publicKey: string | null;
@@ -46,6 +52,7 @@ export const DEFAULT_BRANDING: Branding = {
   productNames: {},
   terms: {},
   navOverrides: {},
+  locale: DEFAULT_LOCALE_CONFIG,
   assets: {},
   publicKey: null,
 };
@@ -110,6 +117,7 @@ export function brandingFromApi(data: unknown): Branding {
     productNames,
     terms: stringRecord(data['terms']) as Branding['terms'],
     navOverrides,
+    locale: localeFromApi(data['locale']),
     assets: assetUrls(data['assets']),
     publicKey: str(data['public_key']) ?? null,
   };

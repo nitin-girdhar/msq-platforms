@@ -22,6 +22,9 @@ export const metaAdAccountsTable = extSchema.table('meta_ad_accounts', {
   isEnabled:     boolean('is_enabled').notNull().default(false),
   lastSyncedAt:  timestamp('last_synced_at', { withTimezone: true }),
   lastSeenAt:    timestamp('last_seen_at', { withTimezone: true }),
+  /** Why the last campaign fetch of this account failed; NULL = clean (1.69.0). */
+  lastError:     text('last_error'),
+  lastErrorAt:   timestamp('last_error_at', { withTimezone: true }),
   createdAt:     timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt:     timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({

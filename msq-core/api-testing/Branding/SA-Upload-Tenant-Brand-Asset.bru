@@ -1,0 +1,30 @@
+meta {
+  name: SA - Upload Tenant Brand Asset
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/sa/tenants/{{tenantId}}/branding/assets/{{brandSlot}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "data": "data:image/png;base64,{{brandAssetBase64}}"
+  }
+}
+
+docs {
+  Super Admin only. {{brandSlot}} is one of: logo, logo_dark, mark, favicon, app_icon,
+  app_icon_maskable, apple_touch_icon, icon_192, push_icon, push_badge, email_logo,
+  login_hero, splash. The type is read from the bytes (never the client's claim); each slot
+  has its own size cap and pixel rules, e.g. apple_touch_icon must be exactly 180x180
+  (422 ASSET_WRONG_SIZE otherwise) and app_icon a square PNG >= 512. Stored at
+  <tenant_id>/branding/<slot>/<epochMs>.<ext>. The tenant admin cannot upload images.
+}

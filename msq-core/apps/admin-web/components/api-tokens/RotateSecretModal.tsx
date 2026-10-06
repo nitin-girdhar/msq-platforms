@@ -42,12 +42,12 @@ export default function RotateSecretModal({ open, onClose, tokenId, name }: Prop
 
   const footer = apiKey ? (
     <div className="flex justify-end">
-      <Button variant="primary" onClick={handleClose}>Done</Button>
+      <Button className="min-h-[2.75rem] sm:min-h-0" variant="primary" onClick={handleClose}>Done</Button>
     </div>
   ) : (
     <div className="flex justify-end gap-2">
-      <Button variant="secondary" onClick={handleClose} disabled={pending}>Cancel</Button>
-      <Button variant="primary" onClick={handleRotate} disabled={pending} aria-busy={pending}>
+      <Button className="min-h-[2.75rem] sm:min-h-0" variant="secondary" onClick={handleClose} disabled={pending}>Cancel</Button>
+      <Button className="min-h-[2.75rem] sm:min-h-0" variant="primary" onClick={handleRotate} disabled={pending} aria-busy={pending}>
         {pending ? 'Rotating…' : 'Rotate secret'}
       </Button>
     </div>
@@ -60,11 +60,11 @@ export default function RotateSecretModal({ open, onClose, tokenId, name }: Prop
       ) : (
         <div className="flex flex-col gap-3">
           {error && (
-            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">
               {error}
             </div>
           )}
-          <p className="text-sm text-[#0F172A]">
+          <p className="text-sm text-on-surface">
             The current key for <span className="font-semibold">{name}</span> will stop working immediately.
             Any integration using it must be updated with the new key.
           </p>

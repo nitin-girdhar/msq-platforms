@@ -25,7 +25,7 @@ interface Props {
 }
 
 const INPUT_CLASS =
-  'rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]';
+  'rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low';
 
 // Field renderer shared by Create/EditLookupModal — the ~150 lines of field
 // JSX used to be duplicated between them near-verbatim. Owns nothing but
@@ -35,7 +35,7 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
   return (
     <form id={formId} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       {error && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+        <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">
           {error}
         </div>
       )}
@@ -68,7 +68,7 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
         return (
           <div key={field.key} className="flex flex-col gap-1.5">
             {field.type !== 'boolean' && (
-              <label htmlFor={`${idPrefix}-${field.key}`} className="text-xs font-semibold text-[#0F172A]">
+              <label htmlFor={`${idPrefix}-${field.key}`} className="text-xs font-semibold text-on-surface">
                 {field.label}{field.required ? ' *' : ''}
               </label>
             )}
@@ -133,19 +133,19 @@ export default function LookupForm({ formId, idPrefix, config, values, setField,
             )}
 
             {field.type === 'boolean' && (
-              <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-on-surface">
                 <input
                   type="checkbox"
                   checked={values[field.key] as boolean}
                   onChange={(e) => setField(field.key, e.target.checked)}
                   disabled={disabled}
-                  className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                  className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary/20"
                 />
                 <span>{field.label}</span>
               </label>
             )}
 
-            {lockedHint && <p className="text-[11px] text-[#94A3B8]">{lockedHint}</p>}
+            {lockedHint && <p className="text-[0.6875rem] text-outline">{lockedHint}</p>}
           </div>
         );
       })}

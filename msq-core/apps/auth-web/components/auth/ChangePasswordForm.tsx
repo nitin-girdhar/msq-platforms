@@ -100,6 +100,13 @@ export default function ChangePasswordForm({ forced, destination }: Props) {
       <SubmitButton busy={submitting} disabled={!canSubmit}>
         Update password
       </SubmitButton>
+
+      {/* Voluntary change only: a forced change has nowhere to go back to. */}
+      {!forced && (
+        <a href={destination} className="inline-flex min-h-11 items-center justify-center text-label-md font-semibold text-primary hover:underline">
+          ← Cancel and go back
+        </a>
+      )}
     </form>
   );
 }

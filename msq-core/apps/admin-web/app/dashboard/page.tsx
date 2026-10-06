@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { filterNavGroups } from '@platform/ui-kit/shell';
+import { PageBody, PageHeader } from '@platform/ui-kit';
+import { NavIcon, filterNavGroups } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { ADMIN_NAV } from '@/src/config/navigation';
 
@@ -28,23 +29,39 @@ export default async function DashboardPage() {
   const cards = filterNavGroups(ADMIN_NAV, result.session).flatMap((group) => group.items);
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6">
-      <h1 className="text-xl font-bold tracking-tight text-[#0F172A]">Admin</h1>
-      <p className="mt-1 text-sm text-[#64748B]">
-        Manage your team, API tokens, and HR admin settings.
-      </p>
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {cards.map((card) => (
-          <Link
-            key={card.href}
-            href={card.href}
-            className="rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-sm transition-colors hover:border-[#0b6cbf]/40 hover:bg-[#F8FAFC]"
-          >
-            <h2 className="text-sm font-semibold text-[#0F172A]">{card.label}</h2>
-            <p className="mt-1 text-xs leading-relaxed text-[#64748B]">{DESCRIPTIONS[card.id]}</p>
-          </Link>
-        ))}
-      </div>
-    </div>
+    <>
+      <PageHeader title="Admin" subtitle="Manage your team, API tokens, and HR admin settings." />
+      <PageBody>
+        <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2">
+          {cards.map((card) => (
+            <Link
+              key={card.href}
+              href={card.href}
+              className="group flex min-h-[4.5rem] items-center gap-4 rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-container-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:p-5"
+            >
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary-fixed text-on-primary-container">
+                {card.icon && <NavIcon name={card.icon} className="h-5 w-5" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <h2 className="text-body-lg font-semibold text-on-surface">{card.label}</h2>
+                <p className="mt-0.5 text-body-sm leading-relaxed text-on-surface-variant">{DESCRIPTIONS[card.id]}</p>
+              </span>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                className="h-5 w-5 shrink-0 text-on-surface-variant transition-transform group-hover:translate-x-0.5"
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            </Link>
+          ))}
+        </div>
+      </PageBody>
+    </>
   );
 }

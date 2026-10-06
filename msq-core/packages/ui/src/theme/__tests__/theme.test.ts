@@ -1,7 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { Hct, argbFromHex } from '@material/material-color-utilities';
 import { buildScheme, contrastRatio } from '../scheme';
-import { DEFAULT_THEME, resolveTheme, THEME_PRESETS } from '../presets';
+import { DEFAULT_THEME, FONT_SIZES, fontSizeById, resolveTheme, THEME_PRESETS } from '../presets';
+
+describe('FONT_SIZES', () => {
+  it('has four steps, ascending, with Default at 100%', () => {
+    expect(FONT_SIZES.map((s) => s.id)).toEqual(['sm', 'md', 'lg', 'xl']);
+    const pcts = FONT_SIZES.map((s) => s.pct);
+    expect([...pcts].sort((a, b) => a - b)).toEqual(pcts);
+    expect(fontSizeById('md').pct).toBe(100);
+    expect(fontSizeById('nope').id).toBe('md');
+  });
+});
 
 describe('buildScheme', () => {
   it('emits nothing for the platform default in light mode (theme.css carries it)', () => {
@@ -59,7 +69,12 @@ describe('resolveTheme', () => {
 
   it('applies later layers over earlier ones', () => {
     const t = resolveTheme({ preset: 'teal-horizon', font: 'manrope' }, { mode: 'dark' });
-    expect(t).toEqual({ preset: 'teal-horizon', seed_hex: '#0d9488', font: 'manrope', mode: 'dark' });
+    expect(t).toEqual({ preset: 'teal-horizon', seed_hex: '#0d9488', font: 'manrope', mode: 'dark', font_size: 'md' });
+  });
+
+  it('takes the text size from the user layer and ignores unknown steps', () => {
+    expect(resolveTheme({ preset: 'teal-horizon' }, { font_size: 'xl' }).font_size).toBe('xl');
+    expect(resolveTheme({ font_size: 'huge' as never }).font_size).toBe('md');
   });
 
   it('prefers a custom seed over a preset and lowercases it', () => {

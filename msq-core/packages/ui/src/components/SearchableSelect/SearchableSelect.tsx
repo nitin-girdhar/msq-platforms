@@ -160,7 +160,7 @@ export default function SearchableSelect({
                   >
                     <span className="block truncate text-sm font-medium">{o.label}</span>
                     {o.hint && (
-                      <span className="block truncate text-[11px] text-on-surface-variant">{o.hint}</span>
+                      <span className="block truncate text-[0.6875rem] text-on-surface-variant">{o.hint}</span>
                     )}
                   </li>
                 );

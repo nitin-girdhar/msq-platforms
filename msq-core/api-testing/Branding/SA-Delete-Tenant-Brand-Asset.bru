@@ -1,0 +1,20 @@
+meta {
+  name: SA - Delete Tenant Brand Asset
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/sa/tenants/{{tenantId}}/branding/assets/{{brandSlot}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Super Admin only. Clears the slot (the surface falls back to the platform default). The
+  stored file is left on disk as an audit trail.
+}

@@ -6,6 +6,7 @@
 // not this client-safe barrel.
 
 export { Modal } from './components/Modal';
+export { Sheet, type SheetProps } from './components/Modal';
 export { Pagination } from './components/Pagination';
 export { DownloadButton, type ExportFormat } from './components/DownloadButton';
 export { Placeholder } from './components/Placeholder';

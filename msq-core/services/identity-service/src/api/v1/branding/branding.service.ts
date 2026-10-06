@@ -3,10 +3,13 @@
 // branding.repository, bytes via @platform/blob-storage.
 //
 // Who may do what (user decisions, 2026-10-02/03):
-//   Super Admin — logos/icons, product names, login link, theme + theme lock.
-//   Tenant admin (admin.branding.manage) — theme only while unlocked, terms, menu.
+//   Super Admin — everything: logos/icons (13 image slots), product names, login link,
+//     renamed words, menu labels/icons, regional formats, theme + theme lock.
+//   Tenant admin (admin.branding.manage) — colour, font and default light/dark mode only,
+//     and only while the theme is unlocked (2026-10-06: images, words, menu and regional
+//     settings moved to Super Admin).
 //   Everyone (platform.appearance) — a personal theme; while the tenant's theme
-//     is locked only their light/dark/system choice is honoured.
+//     is locked only their light/dark/system choice and text size are honoured.
 // The DB enforces the same split (column grants + lock trigger + RLS), so a bug
 // here degrades to an error, never to a write that should not have happened.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -14,7 +17,7 @@ import type { RoleTxContext } from '@platform/db';
 import { hasCapability, hasCapabilityFresh } from '@platform/db';
 import { CAPABILITY, type CapabilityKey } from '@platform/rbac';
 import { logActivity } from '@platform/audit-log';
-import { createBlobStorage } from '@platform/blob-storage';
+import { blobKeys } from '@platform/blob-storage';
 import type {
   BrandAssetSlot,
   SaBrandingUpdateInput,
@@ -23,7 +26,9 @@ import type {
 } from '@platform/validation';
 import { AppError, ForbiddenError, HttpStatus, NotFoundError, ValidationError } from '../../../lib/errors.js';
 import { BrandAssetError, EXT_FOR_TYPE, decodeAsset, validateBrandAsset } from '../../../lib/brand-assets.js';
+import { blobStore, assertOwnKey } from '../../../lib/blob.js';
 import { config } from '../../../config/index.js';
+import type { EmailBrand } from '../users/user-emails.js';
 import * as repo from './branding.repository.js';
 import type { BrandingRow } from './branding.repository.js';
 
@@ -33,12 +38,6 @@ export interface Actor {
   role_name: string | null;
   org_id: string;
   user_id: string;
-}
-
-let store: ReturnType<typeof createBlobStorage> | null = null;
-function blobStore() {
-  if (!store) store = createBlobStorage({ driver: config.blobStorageDriver, dir: config.blobStorageDir });
-  return store;
 }
 
 class BrandingLockedError extends AppError {
@@ -82,7 +81,11 @@ export async function getMyBranding(a: Actor) {
   const [b, prefs] = await Promise.all([repo.getOwnBranding(a.ctx), repo.getOwnPreferences(a.ctx)]);
   const userLayer = prefs
     ? b?.theme_locked
-      ? { mode: (prefs['mode'] as string | null | undefined) ?? null }
+      // Mode and text size are personal needs, not brand: they survive the lock.
+      ? {
+          mode: (prefs['mode'] as string | null | undefined) ?? null,
+          font_size: (prefs['font_size'] as string | null | undefined) ?? null,
+        }
       : prefs
     : null;
   return {
@@ -91,6 +94,9 @@ export async function getMyBranding(a: Actor) {
     product_names: b?.product_names ?? {},
     terms: b?.terms ?? {},
     nav_overrides: b?.nav_overrides ?? {},
+    // Regional formats: tenant-wide, display only ({} = platform default).
+    locale: b?.locale_config ?? {},
+    branding_version: b?.branding_version ?? 0,
     assets: assetUrls(b),
     public_key: b?.public_key ?? null,
   };
@@ -125,9 +131,11 @@ function tenantView(b: BrandingRow | null) {
   return {
     theme: tenantThemeLayer(b),
     theme_locked: Boolean(b?.theme_locked),
+    // Read-only for the tenant admin (Super Admin owns all of these):
     terms: b?.terms ?? {},
     nav_overrides: b?.nav_overrides ?? {},
-    // Read-only for the tenant admin (Super Admin owns them):
+    locale_config: b?.locale_config ?? {},
+    // Read-only for the tenant admin (Super Admin owns all of these):
     product_names: b?.product_names ?? {},
     assets: assetUrls(b),
     asset_meta: assetMeta(b),
@@ -188,8 +196,11 @@ export async function saUpdateBranding(tenantId: string, a: Actor, input: SaBran
   return saView(updated, t.name);
 }
 
-export async function saUploadAsset(tenantId: string, a: Actor, slot: BrandAssetSlot, data: string) {
-  const t = await requireTenant(tenantId);
+// Validate + store one brand image and repoint the tenant's row at it. Super Admin
+// only (the controller's rank gate): the tenant admin has no image upload. The
+// `assets` column is not grantable to application roles, so the row write is a
+// documented service-tx system operation (setAssetAsService).
+async function storeAsset(tenantId: string, a: Actor, slot: BrandAssetSlot, data: string): Promise<BrandingRow | null> {
   let type;
   let bytes: Buffer;
   try {
@@ -201,18 +212,29 @@ export async function saUploadAsset(tenantId: string, a: Actor, slot: BrandAsset
   }
   // Immutable, time-stamped key (same convention as avatars): replacing an asset
   // writes a new file and repoints the row, so cached URLs never show stale bytes.
-  const key = `brand/${tenantId}/${slot}/${Date.now()}.${EXT_FOR_TYPE[type]}`;
+  // `<tenant>/branding/<slot>/<ts>.<ext>` — the tenant id is the route's tenant,
+  // which the controller already restricted to the Super Admin's chosen tenant.
+  const key = blobKeys.brand(tenantId, slot, EXT_FOR_TYPE[type]);
   await blobStore().putAt(key, bytes);
   const updated = await repo.setAssetAsService(tenantId, a.user_id, slot, { key, content_type: type, bytes: bytes.length });
   await logActivity({ action_type: 'branding_asset_uploaded', performed_by: a.user_id, org_id: a.org_id });
-  return saView(updated, t.name);
+  return updated;
+}
+
+async function clearAsset(tenantId: string, a: Actor, slot: BrandAssetSlot): Promise<BrandingRow | null> {
+  const updated = await repo.setAssetAsService(tenantId, a.user_id, slot, null);
+  await logActivity({ action_type: 'branding_asset_removed', performed_by: a.user_id, org_id: a.org_id });
+  return updated ?? (await repo.getBrandingAsService(tenantId));
+}
+
+export async function saUploadAsset(tenantId: string, a: Actor, slot: BrandAssetSlot, data: string) {
+  const t = await requireTenant(tenantId);
+  return saView(await storeAsset(tenantId, a, slot, data), t.name);
 }
 
 export async function saDeleteAsset(tenantId: string, a: Actor, slot: BrandAssetSlot) {
   const t = await requireTenant(tenantId);
-  const updated = await repo.setAssetAsService(tenantId, a.user_id, slot, null);
-  await logActivity({ action_type: 'branding_asset_removed', performed_by: a.user_id, org_id: a.org_id });
-  return saView(updated ?? (await repo.getBrandingAsService(tenantId)), t.name);
+  return saView(await clearAsset(tenantId, a, slot), t.name);
 }
 
 export async function saRotateKey(tenantId: string, a: Actor) {
@@ -220,6 +242,33 @@ export async function saRotateKey(tenantId: string, a: Actor) {
   const updated = await repo.rotatePublicKeyAsService(tenantId, a.user_id);
   await logActivity({ action_type: 'branding_login_link_rotated', performed_by: a.user_id, org_id: a.org_id });
   return saView(updated, t.name);
+}
+
+// ── Email identity ───────────────────────────────────────────────────────────
+
+/**
+ * The tenant's brand name + email_logo for a notification email. Display only and
+ * fail-open: any error (or an unbranded tenant) yields {} and the email uses the
+ * platform fallback. System read (no user context — also used by the pre-session
+ * "forgot password" mail), keyed by a tenant id the CALLER resolved server-side.
+ * The logo URL is absolute and public (the same rate-limited gateway route the login
+ * page uses), because a mail client cannot send a session cookie.
+ */
+export async function loadEmailBrand(tenantId: string): Promise<EmailBrand> {
+  try {
+    const b = await repo.getBrandingAsService(tenantId);
+    if (!b) return {};
+    const names = b.product_names as Record<string, { name?: string } | undefined>;
+    const name = names['brand']?.name;
+    const logo = b.assets['email_logo'];
+    const base = config.authWebUrl.replace(/\/+$/, '');
+    return {
+      ...(name ? { name } : {}),
+      ...(logo ? { logoUrl: `${base}/api/public/branding/${b.public_key}/assets/email_logo?v=${encodeURIComponent(String(logo.updated_at))}` } : {}),
+    };
+  } catch {
+    return {};
+  }
 }
 
 // ── Public (pre-login) ───────────────────────────────────────────────────────
@@ -249,7 +298,10 @@ export async function getPublicBranding(publicKey: string) {
 export async function getPublicAsset(publicKey: string, slot: string) {
   const b = await repo.getBrandingByPublicKey(publicKey);
   const meta = b?.assets[slot];
-  if (!meta) return null;
+  if (!meta || !b) return null;
+  // The pointer must live inside the row's own tenant folder (defence in depth
+  // against a tampered/stale `assets` JSON naming another tenant's file).
+  assertOwnKey(b.tenant_id, meta.key);
   const bytes = await blobStore().get(meta.key);
   if (!bytes) return null;
   return { bytes, content_type: meta.content_type, key: meta.key };

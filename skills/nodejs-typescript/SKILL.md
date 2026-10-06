@@ -416,6 +416,13 @@ Keys are `snake_case` (`page_size`). Never return naked arrays/objects; never va
 - Join multiple tables ad hoc in TypeScript for a read — query the `vw_*` view instead.
 - Omit the ESM `.js` suffix on relative imports.
 - Log tokens, passwords, or PII.
+- Build a blob-storage key by hand, or serve/delete a stored key without checking it belongs to the
+  caller's tenant. Keys come only from `blobKeys` (`@platform/blob-storage`: `<tenant>/<branch>/<employee>/…`,
+  `<tenant>/branding/<slot>/…`) and every authenticated read/serve/delete calls
+  `assertKeyInTenant(key, tenantId)` (`assertOwnKey` helpers in identity-service `lib/blob.ts` and
+  hr-service `lib/storage/photo-storage.ts`) with the tenant from `request.auth`, never the request. The DB
+  column that stores the key is the source of truth — never re-derive a path from ids. A key handed to the
+  client as a token (leave attachments) must be re-validated against the caller's own folder when it comes back.
 
 ---
 

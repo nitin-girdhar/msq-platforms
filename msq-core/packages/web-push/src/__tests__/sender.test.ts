@@ -27,7 +27,7 @@ vi.mock('../repository.js', () => ({ findSubscriptions, deleteSubscription, touc
 
 const { sendToUser } = await import('../sender.js');
 
-const SUB = { id: 'sub-1', endpoint: 'https://push.example/abc', p256dh: 'p', auth: 'a' };
+const SUB = { id: 'sub-1', endpoint: 'https://fcm.googleapis.com/fcm/send/abc', p256dh: 'p', auth: 'a' };
 const PAYLOAD = { title: 'Follow-up due', body: 'Follow-up due for Asha', url: '/lms/dashboard/follow-ups' };
 
 beforeEach(() => {
@@ -115,7 +115,7 @@ describe('sendToUser', () => {
   });
 
   it('stamps last_used_at only for the devices that actually received it', async () => {
-    findSubscriptions.mockResolvedValue([SUB, { ...SUB, id: 'sub-2', endpoint: 'https://push.example/dead' }]);
+    findSubscriptions.mockResolvedValue([SUB, { ...SUB, id: 'sub-2', endpoint: 'https://fcm.googleapis.com/fcm/send/dead' }]);
     sendNotification
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new FakeWebPushError(410));
@@ -126,6 +126,19 @@ describe('sendToUser', () => {
     expect(touchLastUsed).toHaveBeenCalledWith(['sub-1']);
   });
 
+  it('never POSTs to a stored endpoint outside the push services, and drops the row', async () => {
+    const poisoned = { ...SUB, id: 'sub-x', endpoint: 'http://169.254.169.254/latest/meta-data/x' };
+    findSubscriptions.mockResolvedValue([poisoned, SUB]);
+    sendNotification.mockResolvedValue(undefined);
+
+    const result = await sendToUser('user-1', 'org-1', PAYLOAD);
+
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect(sendNotification.mock.calls[0]![0]).toMatchObject({ endpoint: SUB.endpoint });
+    expect(deleteSubscription).toHaveBeenCalledWith(poisoned.endpoint);
+    expect(result).toEqual({ sent: 1, pruned: 1 });
+  });
+
   it('truncates an oversized body instead of letting the send throw', async () => {
     sendNotification.mockResolvedValue(undefined);
 
@@ -133,5 +146,32 @@ describe('sendToUser', () => {
 
     const [, body] = sendNotification.mock.calls[0] as [unknown, string];
     expect(JSON.parse(body).body).toHaveLength(400);
+  });
+});
+
+describe('tenant brand icon / badge in the payload', () => {
+  const KEY = '0198f3a0-0000-7000-8000-000000000001';
+  const sentBody = () => JSON.parse(String(sendNotification.mock.calls[0]![1])) as Record<string, unknown>;
+
+  it('passes a same-origin brand asset path through', async () => {
+    sendNotification.mockResolvedValue({});
+    await sendToUser('u', 'o', {
+      ...PAYLOAD,
+      icon: `/api/public/branding/${KEY}/assets/push_icon?v=2026-10-06T00%3A00%3A00Z`,
+      badge: `/api/public/branding/${KEY}/assets/push_badge`,
+    });
+    expect(sentBody()['icon']).toBe(`/api/public/branding/${KEY}/assets/push_icon?v=2026-10-06T00%3A00%3A00Z`);
+    expect(sentBody()['badge']).toBe(`/api/public/branding/${KEY}/assets/push_badge`);
+  });
+
+  it('drops anything that is not exactly a brand asset path', async () => {
+    sendNotification.mockResolvedValue({});
+    await sendToUser('u', 'o', {
+      ...PAYLOAD,
+      icon: 'https://evil.example/x.png',
+      badge: `/api/public/branding/${KEY}/assets/logo`,
+    });
+    expect(sentBody()).not.toHaveProperty('icon');
+    expect(sentBody()).not.toHaveProperty('badge');
   });
 });

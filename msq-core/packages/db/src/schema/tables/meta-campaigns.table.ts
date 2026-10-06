@@ -1,4 +1,4 @@
-import { uuid, text, bigint, timestamp, unique } from 'drizzle-orm/pg-core';
+import { uuid, text, bigint, boolean, timestamp, unique } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { extSchema } from '../pg-schemas';
 import { tenantsTable } from './tenants.table';
@@ -55,6 +55,10 @@ export const metaCampaignsTable = extSchema.table('meta_campaigns', {
   pageIds:          bigint('page_ids', { mode: 'bigint' }).array().notNull().default(sql`'{}'`),
   /** Set when the campaign's pages map to more than one tenant; such a campaign is skipped. */
   conflictReason:   text('conflict_reason'),
+  /** Hidden from the Campaign Mapping lists (1.70.0). Visibility only — routing is unchanged. */
+  isArchived:       boolean('is_archived').notNull().default(false),
+  archivedAt:       timestamp('archived_at', { withTimezone: true }),
+  archivedBy:       uuid('archived_by').references(() => usersTable.id, { onDelete: 'set null' }),
   confirmedBy:      uuid('confirmed_by').references(() => usersTable.id, { onDelete: 'set null' }),
   confirmedAt:      timestamp('confirmed_at', { withTimezone: true }),
   /** 'fetch' | 'lead' */

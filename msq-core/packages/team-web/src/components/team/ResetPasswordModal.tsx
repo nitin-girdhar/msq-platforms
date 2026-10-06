@@ -124,7 +124,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
         aria-busy={submitting}
       >
         {submitting && (
-          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-surface-container-lowest/40 border-t-white" aria-hidden />
         )}
         {mode === 'generate' ? 'Generate password' : 'Set password'}
       </Button>
@@ -142,7 +142,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
     >
       {result ? (
         <div className="flex flex-col gap-4">
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <div className="rounded-xl border border-status-success/30 bg-status-success-container px-4 py-3 text-sm text-on-status-success-container">
             Password updated. The user&apos;s existing sessions have been signed out
             {forcePasswordChange
               ? " and they'll be asked to choose a new password on next login."
@@ -153,18 +153,18 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
       ) : (
         <form id={FORM_ID} onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
           {error && (
-            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">
               {error}
             </div>
           )}
 
-          <div className="flex gap-2 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-1">
+          <div className="flex gap-2 rounded-xl border border-outline-variant bg-surface-container-low p-1">
             <button
               type="button"
               onClick={() => setMode('generate')}
               disabled={submitting}
               className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-                mode === 'generate' ? 'bg-white text-[#0b6cbf] shadow-sm' : 'text-[#64748B] hover:text-[#0F172A]'
+                mode === 'generate' ? 'bg-surface-container-lowest text-primary shadow-sm' : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
               Generate random password
@@ -174,7 +174,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
               onClick={() => setMode('specific')}
               disabled={submitting}
               className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-                mode === 'specific' ? 'bg-white text-[#0b6cbf] shadow-sm' : 'text-[#64748B] hover:text-[#0F172A]'
+                mode === 'specific' ? 'bg-surface-container-lowest text-primary shadow-sm' : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
               Set specific password
@@ -182,13 +182,13 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
           </div>
 
           {mode === 'generate' ? (
-            <p className="text-xs text-[#64748B]">
+            <p className="text-xs text-on-surface-variant">
               A secure random password will be generated and shown once after you confirm.
             </p>
           ) : (
             <>
               <div className="flex flex-col gap-1.5">
-                <label htmlFor="reset-pw" className="text-xs font-semibold text-[#0F172A]">New password</label>
+                <label htmlFor="reset-pw" className="text-xs font-semibold text-on-surface">New password</label>
                 <div className="relative">
                   <input
                     id="reset-pw"
@@ -197,12 +197,12 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
                     onChange={(e) => setPassword(e.target.value)}
                     disabled={submitting}
                     autoComplete="new-password"
-                    className="w-full rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 pr-16 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+                    className="w-full rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 pr-16 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
                   />
                   <button
                     type="button"
                     onClick={() => setShow((s) => !s)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] font-semibold text-[#64748B] hover:bg-[#F1F5F9]"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[0.6875rem] font-semibold text-on-surface-variant hover:bg-surface-container"
                     tabIndex={-1}
                   >
                     {show ? 'Hide' : 'Show'}
@@ -211,7 +211,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label htmlFor="reset-pw-confirm" className="text-xs font-semibold text-[#0F172A]">Confirm password</label>
+                <label htmlFor="reset-pw-confirm" className="text-xs font-semibold text-on-surface">Confirm password</label>
                 <input
                   id="reset-pw-confirm"
                   type={show ? 'text' : 'password'}
@@ -219,21 +219,21 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
                   onChange={(e) => setConfirm(e.target.value)}
                   disabled={submitting}
                   autoComplete="new-password"
-                  className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+                  className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
                 />
                 {confirm.length > 0 && !matches && (
-                  <p className="text-xs text-red-600">Passwords do not match.</p>
+                  <p className="text-xs text-on-status-overdue-container">Passwords do not match.</p>
                 )}
               </div>
 
               {canOverride && (
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-on-surface">
                   <input
                     type="checkbox"
                     checked={overridePolicy}
                     onChange={(e) => setOverridePolicy(e.target.checked)}
                     disabled={submitting}
-                    className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                    className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary/20"
                   />
                   <span>Override password policy (allow a weaker password, min {OVERRIDE_MIN_LENGTH} characters)</span>
                 </label>
@@ -241,7 +241,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
 
               {useOverrideFloor ? (
                 <ul className="flex flex-col gap-1">
-                  <li className={`flex items-center gap-1.5 text-[11px] ${password.length >= OVERRIDE_MIN_LENGTH ? 'text-emerald-600' : 'text-[#94A3B8]'}`}>
+                  <li className={`flex items-center gap-1.5 text-[0.6875rem] ${password.length >= OVERRIDE_MIN_LENGTH ? 'text-on-status-success-container' : 'text-outline'}`}>
                     <span aria-hidden>{password.length >= OVERRIDE_MIN_LENGTH ? '✓' : '○'}</span>
                     At least {OVERRIDE_MIN_LENGTH} characters
                   </li>
@@ -251,26 +251,26 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
                   {RULES.map((r) => {
                     const ok = r.test(password);
                     return (
-                      <li key={r.label} className={`flex items-center gap-1.5 text-[11px] ${ok ? 'text-emerald-600' : 'text-[#94A3B8]'}`}>
+                      <li key={r.label} className={`flex items-center gap-1.5 text-[0.6875rem] ${ok ? 'text-on-status-success-container' : 'text-outline'}`}>
                         <span aria-hidden>{ok ? '✓' : '○'}</span>
                         {r.label}
                       </li>
                     );
                   })}
-                  <li className="text-[11px] text-[#94A3B8]">Special characters allowed (optional)</li>
+                  <li className="text-[0.6875rem] text-outline">Special characters allowed (optional)</li>
                 </ul>
               )}
             </>
           )}
 
           {canNotify && (
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-on-surface">
               <input
                 type="checkbox"
                 checked={sendEmailNotification}
                 onChange={(e) => setSendEmailNotification(e.target.checked)}
                 disabled={submitting}
-                className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary/20"
               />
               <span>
                 Email the user that their password was reset

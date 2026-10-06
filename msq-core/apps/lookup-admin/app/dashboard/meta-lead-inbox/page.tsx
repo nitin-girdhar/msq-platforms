@@ -1,5 +1,5 @@
 import { getServerSession } from '@/src/lib/server-session';
-import { getSelectedTenantId } from '@/src/lib/tenant-scope';
+import { getSelectedTenantId, getSelectedTenantName } from '@/src/lib/tenant-scope';
 import MetaLeadInboxClient from '@/components/meta-lead-inbox/MetaLeadInboxClient';
 
 export const dynamic = 'force-dynamic';
@@ -11,5 +11,13 @@ export default async function MetaLeadInboxPage() {
   const result = await getServerSession();
   if (!result) return null;
   const selectedTenantId = await getSelectedTenantId();
-  return <MetaLeadInboxClient key={selectedTenantId ?? 'none'} tenantId={selectedTenantId ?? null} />;
+  // No tenant selected = the tenant-less rows only, so there is no tenant to
+  // name — the chip would otherwise read as the home tenant and mislead.
+  return (
+    <MetaLeadInboxClient
+      key={selectedTenantId ?? 'none'}
+      tenantId={selectedTenantId ?? null}
+      tenantName={selectedTenantId ? await getSelectedTenantName() : undefined}
+    />
+  );
 }

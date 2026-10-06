@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Button from '../components/page/Button';
+import { useBranding } from '../branding/BrandingProvider';
+import { DEFAULT_BRAND } from '../branding/defaults';
 
 const DISMISSED_KEY = 'fc-install-prompt-dismissed';
 
@@ -35,6 +37,7 @@ function isStandalone(): boolean {
  * "install our app". See docs/PWA_User_Guide.md for user-facing details.
  */
 export function InstallPrompt(): React.ReactNode {
+  const appName = useBranding().brandName ?? DEFAULT_BRAND.name;
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [iosHint, setIosHint] = useState(false);
   const [dismissed, setDismissed] = useState(true);
@@ -84,13 +87,13 @@ export function InstallPrompt(): React.ReactNode {
         <p className="font-semibold text-on-surface">Get notified when a follow-up is due</p>
         {iosHint ? (
           <p className="mt-0.5 text-xs text-on-surface-variant">
-            Install FitClass to your Home Screen for push alerts even when the app is
+            Install {appName} to your Home Screen for push alerts even when the app is
             closed: tap <span className="font-medium">Share</span>, then{' '}
             <span className="font-medium">Add to Home Screen</span>.
           </p>
         ) : (
           <p className="mt-0.5 text-xs text-on-surface-variant">
-            Install FitClass for push alerts even when the app is closed.
+            Install {appName} for push alerts even when the app is closed.
           </p>
         )}
       </div>

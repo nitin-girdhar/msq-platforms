@@ -1,10 +1,10 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { UserAdminScopeProvider } from '@platform/ui-kit';
+import { PageBody, PageHeader, UserAdminScopeProvider } from '@platform/ui-kit';
 import { TeamShell } from '@platform/team-web';
 import { loadTeamData } from '@platform/team-web/server';
 import { getServerSession } from '@/src/lib/server-session';
-import { getSelectedTenantId, getSelectedOrgId, fetchTenants } from '@/src/lib/tenant-scope';
+import { getSelectedTenantId, getSelectedTenantName, getSelectedOrgId } from '@/src/lib/tenant-scope';
 import LookupLoadError from '@/components/lookups/LookupLoadError';
 import ReportingLines from '@/components/users/ReportingLines';
 
@@ -33,33 +33,34 @@ export default async function UsersPage({
   const tenantId = await getSelectedTenantId();
   if (!tenantId) {
     return (
-      <div className="space-y-4 p-4 sm:p-6">
-        <h1 className="text-2xl font-bold text-[#0F172A]">Users</h1>
-        <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
-          Pick a tenant in the top bar to see its users. Pick an org as well to narrow to one branch.
-        </p>
-      </div>
+      <>
+        <PageHeader title="Users" />
+        <PageBody>
+          <p className="rounded-xl border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant">
+            Pick a tenant in the top bar to see its users. Pick an org as well to narrow to one branch.
+          </p>
+        </PageBody>
+      </>
     );
   }
   const orgId = await getSelectedOrgId();
   const { view: rawView } = await searchParams;
   const view: View = rawView === 'lines' ? 'lines' : 'people';
 
-  const [data, tenants] = await Promise.all([
-    loadTeamData(cookieHeader, 'tenant', { tenantId, orgId }),
-    fetchTenants(cookieHeader),
-  ]);
+  const data = await loadTeamData(cookieHeader, 'tenant', { tenantId, orgId });
   if (!data.ok) return <LookupLoadError title="Users" status={data.status} />;
 
-  const tenantName = tenants.find((t) => t.id === tenantId)?.name ?? 'Selected tenant';
+  // Straight off the session, which is where the tenant scope comes from in the
+  // first place — no /lookups/tenants round-trip just to name what we selected.
+  const tenantName = (await getSelectedTenantName()) ?? 'Selected tenant';
   const branchName = orgId ? (data.orgs.find((o) => o.id === orgId)?.name ?? 'selected branch') : 'all branches';
 
   const tab = (v: View, label: string) => (
     <Link
       href={v === 'people' ? '/dashboard/users' : '/dashboard/users?view=lines'}
       aria-current={view === v ? 'page' : undefined}
-      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-        view === v ? 'bg-white text-[#0b6cbf] shadow-sm' : 'text-[#64748B] hover:text-[#0F172A]'
+      className={`inline-flex min-h-[2.75rem] items-center rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors sm:min-h-0 ${
+        view === v ? 'bg-surface-container-lowest text-primary shadow-sm' : 'text-on-surface-variant hover:text-on-surface'
       }`}
     >
       {label}
@@ -70,7 +71,7 @@ export default async function UsersPage({
     // Keyed by scope so switching tenant/branch drops the previous scope's modal state.
     <UserAdminScopeProvider key={`${tenantId}:${orgId ?? ''}`} tenantId={tenantId} orgId={orgId}>
       <div className="px-4 pt-4 sm:px-6 sm:pt-6">
-        <nav aria-label="Users view" className="inline-flex gap-1 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-1">
+        <nav aria-label="Users view" className="inline-flex gap-1 rounded-xl border border-outline-variant bg-surface-container-low p-1">
           {tab('people', 'People')}
           {tab('lines', 'Reporting lines')}
         </nav>
@@ -78,7 +79,8 @@ export default async function UsersPage({
       {view === 'people' ? (
         <TeamShell
           title="Users"
-          scopeLabel={`${tenantName} · ${branchName}`}
+          tenantName={tenantName}
+          scopeLabel={branchName}
           users={data.users}
           actor={session}
           total={data.total}

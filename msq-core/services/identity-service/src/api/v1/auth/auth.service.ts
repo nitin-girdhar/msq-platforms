@@ -1,5 +1,5 @@
 import { UnauthorizedError, BadRequestError, ForbiddenError } from '../../../lib/errors.js';
-import type { JwtPayload, UserOrgOption, PlatformRole, ProductKey } from '@platform/types';
+import type { JwtPayload, UserOrgOption, TenantOption,PlatformRole, ProductKey } from '@platform/types';
 import { getActiveTenantModulesByTenantId } from '@platform/db';
 import { modulesToProducts, isTenantWideRole } from '@platform/authz';
 import { normalizeEmail, normalizeMobile, isMobileLike } from '@platform/validation';
@@ -14,6 +14,7 @@ import { config } from '../../../config/index.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { sendUserEmail } from '../../../lib/communication-service-client.js';
 import { buildPasswordResetLinkEmail } from '../users/user-emails.js';
+import { loadEmailBrand } from '../branding/branding.service.js';
 
 export interface LoginResult {
   token: string;
@@ -251,10 +252,14 @@ export interface MyOrgsResult {
   orgs: UserOrgOption[];
   /** Whether the switcher may offer "All branches" (see canViewAllBranches). */
   can_view_all: boolean;
+  /** Platform super_admin only: every active tenant, including ones with no branch yet. */
+  tenants?: TenantOption[];
 }
 
 export async function getMyOrgs(token: string | undefined): Promise<MyOrgsResult> {
   const { payload, db_user } = await resolveSession(token);
+  const isSuperAdmin = platformRoleOf(db_user) === 'super_admin';
+  const tenants = isSuperAdmin ? await repo.getAllTenants() : undefined;
   // Tenant-wide roles aren't individually mapped to every branch via
   // iam.user_org_mapping (that mapping is for actors scoped to specific
   // branches) -- getUserOrgs would only surface their home org, so list every
@@ -279,6 +284,7 @@ export async function getMyOrgs(token: string | undefined): Promise<MyOrgsResult
       ...(r.tenant_id ? { tenant_id: r.tenant_id, tenant_name: r.tenant_name ?? '' } : {}),
     })),
     can_view_all: canViewAllBranches(payload.platform_role),
+    ...(tenants ? { tenants } : {}),
   };
 }
 
@@ -537,6 +543,8 @@ export async function requestPasswordReset(email: string): Promise<void> {
 
   const resetUrl = `${config.authWebUrl.replace(/\/+$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
   const mail = buildPasswordResetLinkEmail({
+    // The tenant comes from the account the email matched (resolved server-side).
+    brand: await loadEmailBrand(db_user.tenant_id),
     firstName: db_user.first_name ?? null,
     resetUrl,
     ttlMinutes: RESET_TOKEN_TTL_MINUTES,

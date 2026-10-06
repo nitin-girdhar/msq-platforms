@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Button } from '@platform/ui-kit';
+import { Alert, Button, PageBody, PageHeader } from '@platform/ui-kit';
 import {
   campaignTypes as campaignTypesApi,
   leadAssignmentRerun,
@@ -14,6 +14,9 @@ import {
 
 interface Props {
   tenantId: string;
+  /** Named in the header so a login-time tenant reset is visible here, not
+   *  mistaken for an edit that did not save. See getSelectedTenantName(). */
+  tenantName: string | undefined;
 }
 
 const REASON_LABELS: Record<RerunSkipReason, string> = {
@@ -27,7 +30,7 @@ const REASON_LABELS: Record<RerunSkipReason, string> = {
 // Always previews first: the Run button acts on exactly the batch the preview
 // described (same filters, same cursor), and a new filter change discards the
 // preview so a stale one can never be committed.
-export default function RerunAssignmentClient({ tenantId }: Props) {
+export default function RerunAssignmentClient({ tenantId, tenantName }: Props) {
   const [orgs, setOrgs] = useState<Array<{ id: string; name: string }>>([]);
   const [types, setTypes] = useState<CampaignTypeRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -106,126 +109,174 @@ export default function RerunAssignmentClient({ tenantId }: Props) {
 
   const shown = preview ?? lastRun;
 
+  const card = 'rounded-xl border border-outline-variant bg-surface-container-lowest';
+  const optionRow = 'flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm text-on-surface hover:bg-surface-container-low sm:min-h-8 sm:text-xs';
+  const stepBadge = 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[0.6875rem] font-bold text-on-primary';
+
   return (
-    <div className="space-y-4 p-4 sm:p-6">
-      <div>
-        <Link href="/dashboard/m/lms" className="text-xs font-semibold text-[#0b6cbf] hover:underline">
-          ← Back to LMS
-        </Link>
-        <h1 className="mt-1 text-2xl font-bold text-[#0F172A]">Re-run Auto-Assignment</h1>
-        <p className="mt-1 text-xs text-[#64748B]">
-          Assigns leads that arrived unassigned because their pool had nobody eligible — run it after fixing
-          lead weights or a role&apos;s department. Only fills gaps: leads that have an owner or have been worked are
-          never touched.
-        </p>
-      </div>
-
-      {(loadError || error) && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {loadError ?? error}
-        </div>
-      )}
-
-      <div className="grid gap-4 rounded-xl border border-[#E2E8F0] bg-white p-4 sm:grid-cols-2">
-        <fieldset className="space-y-1.5">
-          <legend className="text-xs font-semibold text-[#334155]">Branches (none selected = all)</legend>
-          <div className="max-h-48 space-y-1 overflow-y-auto">
-            {orgs.map((o) => (
-              <label key={o.id} className="flex items-center gap-2 text-xs text-[#0F172A]">
-                <input
-                  type="checkbox"
-                  checked={orgIds.has(o.id)}
-                  disabled={pending !== null}
-                  onChange={() => toggle(orgIds, o.id, setOrgIds)}
-                  className="h-3.5 w-3.5"
-                />
-                {o.name}
-              </label>
-            ))}
-            {orgs.length === 0 && !loadError && <p className="text-xs text-[#94A3B8]">Loading branches…</p>}
-          </div>
-        </fieldset>
-        <fieldset className="space-y-1.5">
-          <legend className="text-xs font-semibold text-[#334155]">Campaign types (none selected = all)</legend>
-          <div className="space-y-1">
-            {types.map((t) => (
-              <label key={t.id} className="flex items-center gap-2 text-xs text-[#0F172A]">
-                <input
-                  type="checkbox"
-                  checked={typeIds.has(t.id)}
-                  disabled={pending !== null}
-                  onChange={() => toggle(typeIds, t.id, setTypeIds)}
-                  className="h-3.5 w-3.5"
-                />
-                {t.label}
-              </label>
-            ))}
-            {types.length === 0 && <p className="text-xs text-[#94A3B8]">No campaign types loaded.</p>}
-          </div>
-        </fieldset>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" onClick={runPreview} disabled={pending !== null} aria-busy={pending === 'preview'}>
-          {pending === 'preview' ? 'Previewing…' : cursor ? 'Preview next batch' : 'Preview'}
-        </Button>
-        <Button
-          variant="primary"
-          onClick={runForReal}
-          disabled={pending !== null || !preview || preview.assigned === 0}
-          aria-busy={pending === 'run'}
-        >
-          {pending === 'run' ? 'Assigning…' : preview ? `Assign ${preview.assigned} lead${preview.assigned === 1 ? '' : 's'}` : 'Assign'}
-        </Button>
-        {cursor && (
-          <Button variant="secondary" onClick={resetBatches} disabled={pending !== null}>
-            Start over
-          </Button>
-        )}
-      </div>
-
-      {shown && (
-        <div className="space-y-3 rounded-xl border border-[#E2E8F0] bg-white p-4">
-          <p className="text-sm text-[#0F172A]">
-            {shown.dry_run ? 'Preview: ' : 'Done: '}
-            <strong>{shown.candidates}</strong> unassigned lead{shown.candidates === 1 ? '' : 's'} examined ·{' '}
-            <strong>{shown.assigned}</strong> {shown.dry_run ? 'would be' : ''} assigned ·{' '}
-            <strong>{shown.left_unassigned}</strong> {shown.dry_run ? 'would stay' : 'still'} unassigned
-            {shown.remaining > 0 ? ` · ${shown.remaining} more beyond this batch` : ''}
+    <>
+      <PageHeader title="Re-run Auto-Assignment" scope={tenantName} subtitle="Assign leads that arrived unassigned" />
+      <PageBody>
+        <div>
+          <Link href="/dashboard/m/lms" className="inline-flex min-h-11 items-center text-xs font-semibold text-primary hover:underline sm:min-h-0">
+            ← Back to LMS
+          </Link>
+          <p className="max-w-3xl text-xs text-on-surface-variant">
+            Assigns leads that arrived unassigned because their pool had nobody eligible — run it after fixing
+            lead weights or a role&apos;s department. <strong className="text-on-surface">Only fills gaps:</strong> leads that have an owner or have been worked are
+            never touched.
           </p>
-          {shown.by_branch.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="text-[#64748B]">
-                  <tr>
-                    <th className="py-1 pr-3 font-semibold">Branch</th>
-                    <th className="py-1 pr-3 font-semibold">Campaign type</th>
-                    <th className="py-1 pr-3 font-semibold">Assigned</th>
-                    <th className="py-1 pr-3 font-semibold">Unassigned</th>
-                    <th className="py-1 font-semibold">Why unassigned</th>
-                  </tr>
-                </thead>
-                <tbody className="text-[#0F172A]">
-                  {shown.by_branch.map((b) => (
-                    <tr key={`${b.org_id}:${b.campaign_type_id}`} className="border-t border-[#F1F5F9]">
-                      <td className="py-1 pr-3">{b.org_name}</td>
-                      <td className="py-1 pr-3">{b.campaign_type_label}</td>
-                      <td className="py-1 pr-3 tabular-nums">{b.assigned}</td>
-                      <td className="py-1 pr-3 tabular-nums">{b.left_unassigned}</td>
-                      <td className="py-1 text-[#92400E]">
-                        {(Object.keys(b.reasons) as RerunSkipReason[])
-                          .filter((r) => b.reasons[r] > 0)
-                          .map((r) => `${b.reasons[r]} — ${REASON_LABELS[r]}`)
-                          .join('; ') || '—'}
-                      </td>
-                    </tr>
+        </div>
+
+        {(loadError || error) && <Alert tone="error">{loadError ?? error}</Alert>}
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          {/* 1 — Scope */}
+          <section className={`${card} p-4 lg:col-start-1`} aria-label="Scope and filters">
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-on-surface">
+              <span className={stepBadge}>1</span> Scope &amp; Filters
+            </h2>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <fieldset className="space-y-1.5">
+                <legend className="text-xs font-semibold text-on-surface-variant">Branches (none selected = all)</legend>
+                <div className="max-h-56 space-y-0.5 overflow-y-auto">
+                  {orgs.map((o) => (
+                    <label key={o.id} className={optionRow}>
+                      <input
+                        type="checkbox"
+                        checked={orgIds.has(o.id)}
+                        disabled={pending !== null}
+                        onChange={() => toggle(orgIds, o.id, setOrgIds)}
+                        className="h-4 w-4 accent-primary"
+                      />
+                      {o.name}
+                    </label>
                   ))}
-                </tbody>
-              </table>
+                  {orgs.length === 0 && !loadError && <p className="text-xs text-outline">Loading branches…</p>}
+                </div>
+              </fieldset>
+              <fieldset className="space-y-1.5">
+                <legend className="text-xs font-semibold text-on-surface-variant">Campaign types (none selected = all)</legend>
+                <div className="space-y-0.5">
+                  {types.map((t) => (
+                    <label key={t.id} className={optionRow}>
+                      <input
+                        type="checkbox"
+                        checked={typeIds.has(t.id)}
+                        disabled={pending !== null}
+                        onChange={() => toggle(typeIds, t.id, setTypeIds)}
+                        className="h-4 w-4 accent-primary"
+                      />
+                      {t.label}
+                    </label>
+                  ))}
+                  {types.length === 0 && <p className="text-xs text-outline">No campaign types loaded.</p>}
+                </div>
+              </fieldset>
             </div>
+          </section>
+
+          {/* 3 — Confirm. Sits right of the scope on desktop, between scope and results on a phone. */}
+          <section
+            className={`${card} space-y-3 p-4 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start`}
+            aria-label="Confirmation and execution"
+          >
+            <h2 className="flex items-center gap-2 text-sm font-bold text-on-surface">
+              <span className={stepBadge}>3</span> Confirm &amp; Execute
+            </h2>
+            <ul className="list-disc space-y-1 pl-4 text-xs text-on-surface-variant">
+              <li>Preview first: Assign acts on exactly the batch the preview described.</li>
+              <li>Leads that have an owner or have been worked are never touched.</li>
+              <li>Changing a filter discards the preview.</li>
+            </ul>
+            {preview && (
+              <p className="rounded-lg bg-surface-container-low px-3 py-2 text-xs text-on-surface">
+                Target batch: <strong>{preview.candidates}</strong> unassigned lead{preview.candidates === 1 ? '' : 's'}
+              </p>
+            )}
+            <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
+              <Button
+                variant="secondary"
+                size="md"
+                className="min-h-11 flex-1"
+                onClick={runPreview}
+                disabled={pending !== null}
+                aria-busy={pending === 'preview'}
+              >
+                {pending === 'preview' ? 'Previewing…' : cursor ? 'Preview next batch' : 'Preview'}
+              </Button>
+              <Button
+                variant="primary"
+                size="md"
+                className="min-h-11 flex-1"
+                onClick={runForReal}
+                disabled={pending !== null || !preview || preview.assigned === 0}
+                aria-busy={pending === 'run'}
+              >
+                {pending === 'run' ? 'Assigning…' : preview ? `Assign ${preview.assigned} lead${preview.assigned === 1 ? '' : 's'}` : 'Assign'}
+              </Button>
+              {cursor && (
+                <Button variant="secondary" size="md" className="min-h-11" onClick={resetBatches} disabled={pending !== null}>
+                  Start over
+                </Button>
+              )}
+            </div>
+          </section>
+
+          {/* 2 — Impact */}
+          {shown && (
+            <section className={`${card} space-y-3 p-4 lg:col-start-1`} aria-label="Impact analysis">
+              <h2 className="flex items-center gap-2 text-sm font-bold text-on-surface">
+                <span className={stepBadge}>2</span> {shown.dry_run ? 'Impact Preview' : 'Result'}
+              </h2>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  ['Unassigned examined', shown.candidates],
+                  [shown.dry_run ? 'Would be assigned' : 'Assigned', shown.assigned],
+                  [shown.dry_run ? 'Would stay unassigned' : 'Still unassigned', shown.left_unassigned],
+                  ['More beyond this batch', shown.remaining],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-lg bg-surface-container-low px-3 py-2">
+                    <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-on-surface-variant">{label}</p>
+                    <p className="font-mono text-xl font-bold tabular-nums text-on-surface">{value}</p>
+                  </div>
+                ))}
+              </div>
+              {shown.by_branch.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="text-on-surface-variant">
+                      <tr>
+                        <th className="py-1 pr-3 font-semibold">Branch</th>
+                        <th className="py-1 pr-3 font-semibold">Campaign type</th>
+                        <th className="py-1 pr-3 font-semibold">Assigned</th>
+                        <th className="py-1 pr-3 font-semibold">Unassigned</th>
+                        <th className="py-1 font-semibold">Why unassigned</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-on-surface">
+                      {shown.by_branch.map((b) => (
+                        <tr key={`${b.org_id}:${b.campaign_type_id}`} className="border-t border-outline-variant">
+                          <td className="py-1.5 pr-3">{b.org_name}</td>
+                          <td className="py-1.5 pr-3">{b.campaign_type_label}</td>
+                          <td className="py-1.5 pr-3 tabular-nums">{b.assigned}</td>
+                          <td className="py-1.5 pr-3 tabular-nums">{b.left_unassigned}</td>
+                          <td className="py-1.5 text-on-status-due-container">
+                            {(Object.keys(b.reasons) as RerunSkipReason[])
+                              .filter((r) => b.reasons[r] > 0)
+                              .map((r) => `${b.reasons[r]} — ${REASON_LABELS[r]}`)
+                              .join('; ') || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
           )}
         </div>
-      )}
-    </div>
+      </PageBody>
+    </>
   );
 }

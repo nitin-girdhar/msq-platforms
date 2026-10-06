@@ -77,7 +77,7 @@ export default function SpeechInputButton({ onText, disabled = false, compact = 
       {status && (
         <span
           role="status"
-          className={`truncate text-[11px] ${error ? 'text-error' : 'italic text-on-surface-variant'} ${
+          className={`truncate text-[0.6875rem] ${error ? 'text-error' : 'italic text-on-surface-variant'} ${
             compact
               ? 'absolute right-0 top-full z-10 mt-1 max-w-[16rem] rounded-md border border-outline-variant bg-surface-container-lowest px-2 py-1 shadow-sm'
               : 'min-w-0 max-w-[14rem]'
@@ -87,7 +87,7 @@ export default function SpeechInputButton({ onText, disabled = false, compact = 
           {status}
         </span>
       )}
-      <span className="inline-flex shrink-0 overflow-hidden rounded-md border border-outline-variant text-[10px] font-semibold">
+      <span className="inline-flex shrink-0 overflow-hidden rounded-md border border-outline-variant text-[0.625rem] font-semibold">
         {(['en-IN', 'hi-IN'] as const).map((code) => (
           <button
             key={code}

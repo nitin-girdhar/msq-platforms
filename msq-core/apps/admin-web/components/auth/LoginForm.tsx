@@ -52,7 +52,7 @@ export default function LoginForm({ callbackUrl }: Props) {
       {serverError && (
         <div
           role="alert"
-          className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          className="flex items-start gap-2.5 rounded-xl border border-status-overdue/30 bg-status-overdue-container px-4 py-3 text-sm text-on-status-overdue-container"
         >
           <svg className="mt-0.5 h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
             <path
@@ -93,11 +93,11 @@ export default function LoginForm({ callbackUrl }: Props) {
         type="submit"
         disabled={busy}
         aria-busy={busy}
-        className="mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-[#0b6cbf] px-5 py-3 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:bg-[#095699] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b6cbf] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+        className="mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-on-primary shadow-sm transition-all duration-150 hover:bg-primary-container focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
       >
         {busy ? (
           <>
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-surface-container-lowest/40 border-t-white" aria-hidden />
             Signing in…
           </>
         ) : (
@@ -127,7 +127,7 @@ function Field({ id, label, type, autoComplete, value, onChange, disabled, error
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-xs font-semibold text-[#0F172A]">
+      <label htmlFor={id} className="text-xs font-semibold text-on-surface">
         {label}
       </label>
       <div className="relative">
@@ -142,7 +142,7 @@ function Field({ id, label, type, autoComplete, value, onChange, disabled, error
           disabled={disabled}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? errorId : undefined}
-          className={`w-full rounded-xl border border-[#E2E8F0] bg-white px-3.5 py-2.5 ${isPassword ? 'pr-16' : ''} text-sm text-[#0F172A] shadow-sm transition-colors placeholder:text-[#94A3B8] focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC] disabled:text-[#64748B] aria-invalid:border-red-300 aria-invalid:focus:border-red-400 aria-invalid:focus:ring-red-200`}
+          className={`w-full rounded-xl border border-outline-variant bg-surface-container-lowest px-3.5 py-2.5 ${isPassword ? 'pr-16' : ''} text-sm text-on-surface shadow-sm transition-colors placeholder:text-outline focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low disabled:text-on-surface-variant aria-invalid:border-status-overdue/30 aria-invalid:focus:border-status-overdue aria-invalid:focus:ring-status-overdue/30`}
         />
         {isPassword && (
           <button
@@ -151,14 +151,14 @@ function Field({ id, label, type, autoComplete, value, onChange, disabled, error
             disabled={disabled}
             tabIndex={-1}
             aria-label={show ? 'Hide password' : 'Show password'}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] font-semibold text-[#64748B] hover:bg-[#F1F5F9] disabled:cursor-not-allowed"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[0.6875rem] font-semibold text-on-surface-variant hover:bg-surface-container disabled:cursor-not-allowed"
           >
             {show ? 'Hide' : 'Show'}
           </button>
         )}
       </div>
       {error && (
-        <p id={errorId} className="text-xs text-red-600">{error}</p>
+        <p id={errorId} className="text-xs text-on-status-overdue-container">{error}</p>
       )}
     </div>
   );

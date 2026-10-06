@@ -16,5 +16,9 @@ export const leaveRequestApprovalsTable = hrSchema.table('leave_request_approval
   action:          text('action').notNull().default('pending'),
   actedAt:         timestamp('acted_at', { withTimezone: true }),
   comment:         text('comment'),
-  createdAt:       timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  // Who actually decided; approverId stays the designated approver (an override acts as itself).
+  actedBy:         uuid('acted_by').references(() => usersTable.id, { onDelete: 'restrict' }),
+  // Set when this level was handed on because its approver covered a lower level.
+  reassignedFrom:  uuid('reassigned_from').references(() => usersTable.id, { onDelete: 'restrict' }),
+  createdAt:      timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

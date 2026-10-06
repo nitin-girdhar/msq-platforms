@@ -4,4 +4,5 @@ export {
   GRID_DEFAULT_COL_DEF,
   TEXT_FILTER_PARAMS,
   normalizeFilterText,
+  scalePx,
 } from './gridDefaults';

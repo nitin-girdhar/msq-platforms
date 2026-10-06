@@ -61,5 +61,17 @@ export const GRID_DEFAULT_COL_DEF = {
   resizable: true,
   suppressMovable: false,
   filterParams: TEXT_FILTER_PARAMS,
-  cellStyle: { fontSize: '13px', color: '#0F172A' },
+  cellStyle: { fontSize: '0.8125rem', color: 'var(--color-on-surface)' },
 };
+
+/**
+ * Scale a design-time pixel size (grid rowHeight / headerHeight, which AG Grid
+ * takes as numbers) by the user's text size, so rows grow with the type inside
+ * them. Reads the live <html> font-size; the grid mounts client-side after the
+ * theme has applied, and a text-size change reloads the page.
+ */
+export function scalePx(px: number): number {
+  if (typeof document === 'undefined') return px;
+  const root = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+  return Number.isFinite(root) && root > 0 ? Math.round((px * root) / 16) : px;
+}

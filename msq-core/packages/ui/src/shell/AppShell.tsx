@@ -6,13 +6,14 @@ import MobileSidebar from './MobileSidebar';
 import MobileTabBar from './MobileTabBar';
 import type { NavItem, NavGroup } from './nav';
 import type { BrandProductKey } from '../branding/types';
+import { DEFAULT_BRAND } from '../branding/defaults';
 
 type NavbarProps = ComponentProps<typeof AppNavbar>;
 
 interface Props extends Omit<NavbarProps, 'brandInSidebar' | 'brandName'> {
   // The product's nav (flat or grouped) — filtered per actor inside.
   nav: readonly NavItem[] | readonly NavGroup[];
-  // Brand block at the top of the rail / drawer. Defaults to FitClass; tenant
+  // Brand block at the top of the rail / drawer. Defaults to the platform brand (DEFAULT_BRAND); tenant
   // branding (logos & product names, Super Admin) will feed these.
   brandName?: string;
   // Short product line under the brand name in the rail, e.g. "Lead Management".
@@ -45,7 +46,7 @@ interface Props extends Omit<NavbarProps, 'brandInSidebar' | 'brandName'> {
  * body is pinned to 100dvh (globals.css) and only <main> scrolls; below that
  * the page scrolls normally.
  */
-export default function AppShell({ nav, brandName = 'Fitclass', productLine, productKey, sidebar, mobileTabs, sidebarFooter, children, ...navbar }: Props) {
+export default function AppShell({ nav, brandName = DEFAULT_BRAND.name, productLine, productKey, sidebar, mobileTabs, sidebarFooter, children, ...navbar }: Props) {
   const brand = {
     homeHref: navbar.homeHref,
     name: brandName,

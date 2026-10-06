@@ -27,7 +27,7 @@ export const metaPullRunsTable = scratchSchema.table('meta_pull_runs', {
   tenantId:    uuid('tenant_id').notNull().references(() => tenantsTable.id, { onDelete: 'cascade' }),
   /** NULL for a scheduled catch-up run (1.51.0). */
   createdBy:   uuid('created_by').references(() => usersTable.id, { onDelete: 'cascade' }),
-  /** 'queued' | 'running' | 'completed' | 'failed' | 'applying' | 'applied' */
+  /** 'queued' | 'running' | 'completed' | 'failed' | 'apply_queued' | 'applying' | 'applied' | 'discarded' */
   status:      text('status').notNull().default('queued'),
   /**
    * The request as submitted (org_ids, page_ids, campaign_ids, since, until),

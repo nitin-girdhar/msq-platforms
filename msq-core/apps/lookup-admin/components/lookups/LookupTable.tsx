@@ -1,12 +1,12 @@
 'use client';
 
-import './ag-grid.css';
+import '@platform/ui-kit/ag-grid.css';
 import { useCallback, useMemo } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, GridReadyEvent, GridSizeChangedEvent, ICellRendererParams } from 'ag-grid-community';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
 import type { LookupTableDef } from '@/src/lib/lookupTableConfig';
-import { GRID_DEFAULT_COL_DEF } from '@platform/ui-kit/grid';
+import { GRID_DEFAULT_COL_DEF, scalePx } from '@platform/ui-kit/grid';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -25,13 +25,13 @@ interface Props {
 
 function StatusBadge({ active }: { active: boolean }) {
   return active ? (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-status-success-container px-2 py-0.5 text-xs font-medium text-on-status-success-container">
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-success" />
       Active
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-container px-2 py-0.5 text-xs font-medium text-on-surface-variant">
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-outline-variant" />
       Inactive
     </span>
   );
@@ -53,14 +53,14 @@ export default function LookupTable({ config, rows, onEdit }: Props) {
     if (!hasLabelField) {
       return (
         <div className="flex flex-col justify-center leading-tight">
-          <p className="truncate text-sm font-semibold leading-tight text-[#0F172A]">{r.name ?? '—'}</p>
+          <p className="truncate text-sm font-semibold leading-tight text-on-surface">{r.name ?? '—'}</p>
         </div>
       );
     }
     return (
       <div className="flex flex-col justify-center leading-tight">
-        <p className="truncate text-sm font-semibold leading-tight text-[#0F172A]">{r.label ?? r.name ?? '—'}</p>
-        <p className="truncate text-[11px] leading-tight text-[#64748B]">{r.name ?? ''}</p>
+        <p className="truncate text-sm font-semibold leading-tight text-on-surface">{r.label ?? r.name ?? '—'}</p>
+        <p className="truncate text-[0.6875rem] leading-tight text-on-surface-variant">{r.name ?? ''}</p>
       </div>
     );
   }, [hasLabelField]);
@@ -77,7 +77,7 @@ export default function LookupTable({ config, rows, onEdit }: Props) {
       <button
         type="button"
         onClick={() => onEdit(r)}
-        className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC]"
+        className="min-h-[2.75rem] rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-low sm:min-h-0"
       >
         Edit
       </button>
@@ -101,7 +101,7 @@ export default function LookupTable({ config, rows, onEdit }: Props) {
           colId: field.key, headerName: field.label, width: 150, sortable: true, filter: true, editable: false,
           valueGetter: (p) => (p.data?.[field.key] ? 'Yes' : 'No'),
           cellRenderer: (p: ICellRendererParams<LookupRow>) => (
-            <span className={p.data?.[field.key] ? 'text-emerald-600' : 'text-[#94A3B8]'}>
+            <span className={p.data?.[field.key] ? 'text-on-status-success-container' : 'text-outline'}>
               {p.data?.[field.key] ? '✓' : '—'}
             </span>
           ),
@@ -157,7 +157,7 @@ export default function LookupTable({ config, rows, onEdit }: Props) {
   const defaultColDef: ColDef = GRID_DEFAULT_COL_DEF;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-sm">
+    <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
       <div className="ag-theme-alpine" style={{ height: 600, width: '100%' }}>
         <AgGridReact<LookupRow>
           rowData={rows}
@@ -166,8 +166,8 @@ export default function LookupTable({ config, rows, onEdit }: Props) {
           pagination
           paginationPageSize={25}
           paginationPageSizeSelector={[25, 50, 100]}
-          rowHeight={44}
-          headerHeight={40}
+          rowHeight={scalePx(44)}
+          headerHeight={scalePx(40)}
           animateRows={false}
           suppressCellFocus={false}
           enableCellTextSelection

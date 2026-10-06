@@ -3,26 +3,42 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Button, type SearchableOption } from '@platform/ui-kit';
-import { type MetaCampaignRow, type CampaignTypeRow } from '@/src/lib/api/client';
+import { Alert, Button, PageBody, PageHeader, type SearchableOption } from '@platform/ui-kit';
+import { metaCampaigns, type CampaignSyncResult, type MetaCampaignRow, type CampaignTypeRow } from '@/src/lib/api/client';
 import FetchCampaignsButton from './FetchCampaignsButton';
+import FetchResultPanel from './FetchResultPanel';
+import RuleEngineDrawer from './RuleEngineDrawer';
+import MetaTabs from '@/components/meta-nav/MetaTabs';
+
+type Tab = 'suggested' | 'unmapped' | 'confirmed' | 'archived';
 import CampaignMappingGrid from './CampaignMappingGrid';
 import ConfirmTypeModal, { type ConfirmTarget } from './ConfirmTypeModal';
 
 interface Props {
   tenantId: string;
+  /** Named in the header so a login-time tenant reset is visible here, not
+   *  mistaken for an edit that did not save. See getSelectedTenantName(). */
+  tenantName: string | undefined;
   rows: MetaCampaignRow[];
   campaignTypes: CampaignTypeRow[];
   campaignTypesUnavailable: boolean;
 }
 
-export default function MetaCampaignsClient({ tenantId, rows, campaignTypes, campaignTypesUnavailable }: Props) {
+export default function MetaCampaignsClient({ tenantId, tenantName, rows, campaignTypes, campaignTypesUnavailable }: Props) {
   const router = useRouter();
   // Keyed by meta_campaign_id -> chosen campaign_type_id. Seeded per row below
   // and otherwise left alone across re-renders so an admin's in-progress picks
   // in the grid survive unrelated state changes.
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
+  const [tab, setTab] = useState<Tab>('suggested');
+  const [fetchResult, setFetchResult] = useState<CampaignSyncResult | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [ticked, setTicked] = useState<string[]>([]);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
 
   // Seed a default for every row not already represented: a suggested row
   // starts on the RULE ENGINE's suggestion, an unmapped row starts EMPTY. Rows
@@ -62,15 +78,30 @@ export default function MetaCampaignsClient({ tenantId, rows, campaignTypes, cam
     () => [...new Set(rows.flatMap((r) => r.page_ids ?? []))].sort(),
     [rows],
   );
-  const visible = useMemo(
-    () => (pageFilter ? rows.filter((r) => (r.page_ids ?? []).includes(pageFilter)) : rows),
-    [rows, pageFilter],
-  );
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (pageFilter && !(r.page_ids ?? []).includes(pageFilter)) return false;
+      if (!q) return true;
+      return [r.name, r.meta_campaign_id, r.ad_account_id, r.objective, r.matched_keyword]
+        .some((v) => v?.toLowerCase().includes(q));
+    });
+  }, [rows, pageFilter, search]);
+
+  const adAccountCount = useMemo(() => new Set(rows.map((r) => r.ad_account_id).filter(Boolean)).size, [rows]);
+  const lastSynced = useMemo(() => {
+    const times = rows.map((r) => (r.last_synced_at ? new Date(r.last_synced_at).getTime() : 0));
+    const latest = Math.max(0, ...times);
+    return latest ? new Date(latest).toLocaleString() : 'Never';
+  }, [rows]);
   const conflicted = useMemo(() => rows.filter((r) => r.conflict_reason), [rows]);
 
-  const suggested = useMemo(() => visible.filter((r) => r.mapping_status === 'suggested'), [visible]);
-  const unmapped = useMemo(() => visible.filter((r) => r.mapping_status === 'unmapped'), [visible]);
-  const confirmed = useMemo(() => visible.filter((r) => r.mapping_status === 'confirmed'), [visible]);
+  // Archived campaigns leave the three working lists (they keep routing; only the view changes).
+  const live = useMemo(() => visible.filter((r) => !r.is_archived), [visible]);
+  const suggested = useMemo(() => live.filter((r) => r.mapping_status === 'suggested'), [live]);
+  const unmapped = useMemo(() => live.filter((r) => r.mapping_status === 'unmapped'), [live]);
+  const confirmed = useMemo(() => live.filter((r) => r.mapping_status === 'confirmed'), [live]);
+  const archived = useMemo(() => visible.filter((r) => r.is_archived), [visible]);
 
   // Confirm-all on Needs mapping requires an explicit pick on EVERY row. A
   // partial batch would silently confirm some and leave the rest, which reads as
@@ -103,128 +134,271 @@ export default function MetaCampaignsClient({ tenantId, rows, campaignTypes, cam
   // types) under the current tenant cookie.
   const handleRefresh = () => router.refresh();
 
+  const archive = async (ids: string[], value: boolean) => {
+    if (ids.length === 0) return;
+    setArchiveBusy(true);
+    setArchiveError(null);
+    try {
+      await metaCampaigns.archive(tenantId, ids, value);
+      setTicked([]);
+      handleRefresh();
+    } catch (err) {
+      setArchiveError(err instanceof Error ? err.message : 'Could not change the hidden state.');
+    } finally {
+      setArchiveBusy(false);
+    }
+  };
+
+  const changeTab = (next: Tab) => {
+    setTab(next);
+    setTicked([]);
+  };
+
+  const tickedRows = useMemo(() => rows.filter((r) => ticked.includes(r.meta_campaign_id)), [rows, ticked]);
+
+  const TABS: ReadonlyArray<{ id: Tab; label: string; count: number }> = [
+    { id: 'suggested', label: 'Needs Confirmation', count: suggested.length },
+    { id: 'unmapped', label: 'Needs Mapping', count: unmapped.length },
+    { id: 'confirmed', label: 'Confirmed & Routed', count: confirmed.length },
+    { id: 'archived', label: 'Archived', count: archived.length },
+  ];
+
   return (
-    <div className="space-y-6 p-4 sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <Link href="/dashboard/m/lms" className="text-xs font-semibold text-[#0b6cbf] hover:underline">
-            ← Back to LMS
-          </Link>
-          <h1 className="mt-1 text-2xl font-bold text-[#0F172A]">Meta Campaign Mapping</h1>
-          <p className="mt-1 text-xs text-[#64748B]">
-            Which type — sales, hiring, or otherwise — each Meta campaign is, and therefore which department&apos;s
-            pool its leads route to. Unconfirmed campaigns route on the{' '}
-            <Link href="/dashboard/campaign-types" className="font-semibold text-[#0b6cbf] hover:underline">
-              ordered rules
-            </Link>{' '}
-            until you confirm them. Campaigns are fetched from the{' '}
-            <Link href="/dashboard/meta-ad-accounts" className="font-semibold text-[#0b6cbf] hover:underline">
-              enabled ad accounts
-            </Link>{' '}
-            and land in the tenant their pages are mapped to.
-          </p>
+    <>
+      <PageHeader
+        title="Meta Campaign Mapping & Classification"
+        scope={tenantName}
+        subtitle="Classify campaigns into departmental pipelines. Unconfirmed campaigns route on ordered keyword rules until you confirm them."
+        tabs={<MetaTabs />}
+        actions={
+          <>
+            <Button onClick={() => setRulesOpen(true)}>Rule Engine Settings</Button>
+            <FetchCampaignsButton
+              tenantId={tenantId}
+              onSynced={handleRefresh}
+              onResult={(result, error) => { setFetchResult(result); setFetchError(error); }}
+            />
+          </>
+        }
+      />
+      <PageBody>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          {[
+            { label: 'Ad accounts', value: adAccountCount, note: 'With campaigns here' },
+            { label: 'Campaigns', value: rows.length, note: 'Known to this tenant' },
+            { label: 'Need confirmation', value: rows.filter((r) => r.mapping_status === 'suggested' && !r.is_archived).length, note: 'Rule engine has a guess' },
+            { label: 'Need mapping', value: rows.filter((r) => r.mapping_status === 'unmapped' && !r.is_archived).length, note: 'No rule matched' },
+            { label: 'Confirmed', value: rows.filter((r) => r.mapping_status === 'confirmed' && !r.is_archived).length, note: 'Routed by your choice' },
+          ].map((c) => (
+            <div key={c.label} className="rounded-xl border border-outline-variant bg-surface-container-lowest p-3">
+              <p className="text-[0.6875rem] font-semibold uppercase tracking-widest text-on-surface-variant">{c.label}</p>
+              <p className="mt-1 font-mono text-2xl font-bold text-on-surface">{c.value}</p>
+              <p className="text-[0.6875rem] text-on-surface-variant">{c.note}</p>
+            </div>
+          ))}
         </div>
-        <FetchCampaignsButton tenantId={tenantId} onSynced={handleRefresh} />
-      </div>
+        <p className="text-xs text-on-surface-variant">
+          Last campaign sync: {lastSynced}. Campaigns are fetched from the{' '}
+          <Link href="/dashboard/meta-ad-accounts" className="font-semibold text-primary hover:underline">enabled ad accounts</Link>{' '}
+          and land in the tenant their pages are mapped to.
+        </p>
 
-      {conflicted.length > 0 && (
-        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          <p className="font-semibold">
-            {conflicted.length} campaign{conflicted.length === 1 ? '' : 's'} promote pages mapped to more than one tenant.
-          </p>
-          <p className="mt-0.5">
-            A campaign must belong to one tenant. Their confirmed type is not applied to another tenant&apos;s leads until
-            the page mappings are fixed: {conflicted.slice(0, 5).map((r) => r.name ?? r.meta_campaign_id).join(', ')}
-            {conflicted.length > 5 ? '…' : ''}
-          </p>
-        </div>
-      )}
+        <FetchResultPanel result={fetchResult} error={fetchError} />
+        {archiveError && <Alert tone="error">{archiveError}</Alert>}
 
-      {pageOptions.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <label htmlFor="campaign-page-filter" className="font-semibold text-[#334155]">Page</label>
-          <select
-            id="campaign-page-filter"
-            value={pageFilter}
-            onChange={(e) => setPageFilter(e.target.value)}
-            className="rounded-lg border border-[#E2E8F0] bg-white px-2 py-1 text-xs"
-          >
-            <option value="">All pages</option>
-            {pageOptions.map((p) => (
-              <option key={p} value={p}>{p}</option>
+        {conflicted.length > 0 && (
+          <div role="alert" className="rounded-xl border border-status-due/30 bg-status-due-container px-3 py-2 text-xs text-on-status-due-container">
+            <p className="font-semibold">
+              {conflicted.length} campaign{conflicted.length === 1 ? '' : 's'} promote pages mapped to more than one tenant.
+            </p>
+            <p className="mt-0.5">
+              A campaign must belong to one tenant. Their confirmed type is not applied to another tenant&apos;s leads until
+              the page mappings are fixed: {conflicted.slice(0, 5).map((r) => r.name ?? r.meta_campaign_id).join(', ')}
+              {conflicted.length > 5 ? '…' : ''}.{' '}
+              <Link href="/dashboard/meta-mappings" className="font-semibold underline">Resolve in Page Mapping</Link>
+            </p>
+          </div>
+        )}
+
+        {campaignTypesUnavailable && (
+          <Alert tone="error">
+            Campaign types could not be loaded, so nothing can be confirmed right now. The campaigns below are otherwise up to date.
+          </Alert>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Campaign status">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.id}
+                onClick={() => changeTab(t.id)}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                  tab === t.id ? 'border-primary bg-primary-fixed text-primary' : 'border-outline-variant text-on-surface-variant hover:bg-surface-container'
+                }`}
+              >
+                {t.label} ({t.count})
+              </button>
             ))}
-          </select>
-        </div>
-      )}
-
-      {campaignTypesUnavailable && (
-        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Campaign types could not be loaded, so nothing can be confirmed right now. The campaigns below are
-          otherwise up to date.
-        </div>
-      )}
-
-      <section className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-[#0F172A]">
-            Needs confirmation <span className="font-normal text-[#64748B]">({suggested.length})</span>
-          </h2>
-          {suggested.length > 0 && (
-            <Button variant="secondary" onClick={() => openConfirmAll(suggested)}>
-              Confirm all
-            </Button>
-          )}
-        </div>
-        <CampaignMappingGrid
-          mode="suggested"
-          rows={suggested}
-          campaignTypeOptions={campaignTypeOptions}
-          selections={selections}
-          onSelectionChange={handleSelectionChange}
-          onConfirmOne={openConfirmOne}
-        />
-      </section>
-
-      <section className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-[#0F172A]">
-            Needs mapping <span className="font-normal text-[#64748B]">({unmapped.length})</span>
-          </h2>
-          {unmapped.length > 0 && (
-            <Button
-              variant="secondary"
-              onClick={() => openConfirmAll(unmapped)}
-              disabled={!unmappedAllPicked}
-              title={unmappedAllPicked ? undefined : 'Pick a type for every campaign first'}
+          </div>
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search campaign, ID or ad account…"
+            aria-label="Search campaigns"
+            className="min-w-0 flex-1 rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 text-xs text-on-surface placeholder:text-on-surface-variant focus:border-primary focus:outline-none sm:max-w-xs"
+          />
+          {pageOptions.length > 0 && (
+            <select
+              id="campaign-page-filter"
+              aria-label="Filter by promoted page"
+              value={pageFilter}
+              onChange={(e) => setPageFilter(e.target.value)}
+              className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 text-xs text-on-surface focus:border-primary focus:outline-none"
             >
-              Confirm all
-            </Button>
+              <option value="">All pages ({pageOptions.length} promoted)</option>
+              {pageOptions.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
           )}
         </div>
-        <CampaignMappingGrid
-          mode="unmapped"
-          rows={unmapped}
-          campaignTypeOptions={campaignTypeOptions}
-          selections={selections}
-          onSelectionChange={handleSelectionChange}
-          onConfirmOne={openConfirmOne}
-        />
-      </section>
 
-      <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-[#0F172A]">
-          Confirmed <span className="font-normal text-[#64748B]">({confirmed.length})</span>
-        </h2>
-        <CampaignMappingGrid
-          mode="confirmed"
-          rows={confirmed}
-          campaignTypeOptions={campaignTypeOptions}
-          selections={selections}
-          onSelectionChange={handleSelectionChange}
-          onConfirmOne={openConfirmOne}
-          onEdit={openEdit}
-        />
-      </section>
+        {tab === 'suggested' && (
+          <section className="space-y-2" aria-label="Needs confirmation">
+            <CampaignMappingGrid
+              key="suggested"
+              mode="suggested"
+              rows={suggested}
+              campaignTypeOptions={campaignTypeOptions}
+              selections={selections}
+              onSelectionChange={handleSelectionChange}
+              onConfirmOne={openConfirmOne}
+              onToggleArchive={(row) => void archive([row.meta_campaign_id], true)}
+              onSelectionChanged={setTicked}
+            />
+          </section>
+        )}
+        {tab === 'unmapped' && (
+          <section className="space-y-2" aria-label="Needs mapping">
+            <CampaignMappingGrid
+              key="unmapped"
+              mode="unmapped"
+              rows={unmapped}
+              campaignTypeOptions={campaignTypeOptions}
+              selections={selections}
+              onSelectionChange={handleSelectionChange}
+              onConfirmOne={openConfirmOne}
+              onToggleArchive={(row) => void archive([row.meta_campaign_id], true)}
+              onSelectionChanged={setTicked}
+            />
+          </section>
+        )}
+        {tab === 'confirmed' && (
+          <section className="space-y-2" aria-label="Confirmed and routed">
+            <CampaignMappingGrid
+              key="confirmed"
+              mode="confirmed"
+              rows={confirmed}
+              campaignTypeOptions={campaignTypeOptions}
+              selections={selections}
+              onSelectionChange={handleSelectionChange}
+              onConfirmOne={openConfirmOne}
+              onEdit={openEdit}
+              onToggleArchive={(row) => void archive([row.meta_campaign_id], true)}
+              onSelectionChanged={setTicked}
+            />
+          </section>
+        )}
+        {tab === 'archived' && (
+          <section className="space-y-2" aria-label="Archived campaigns">
+            <p className="text-xs text-on-surface-variant">
+              Hidden from the working lists. They keep routing leads by the type they hold — restoring only changes the view.
+            </p>
+            <CampaignMappingGrid
+              key="archived"
+              mode="archived"
+              rows={archived}
+              campaignTypeOptions={campaignTypeOptions}
+              selections={selections}
+              onSelectionChange={handleSelectionChange}
+              onConfirmOne={openConfirmOne}
+              onToggleArchive={(row) => void archive([row.meta_campaign_id], false)}
+              onSelectionChanged={setTicked}
+            />
+          </section>
+        )}
+
+        {/* Ticked-rows bar (1.70.0). */}
+        {ticked.length > 0 && (
+          <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary-fixed px-3 py-2 text-xs">
+            <span className="font-semibold text-primary">{ticked.length} campaign{ticked.length === 1 ? '' : 's'} selected</span>
+            {tab !== 'confirmed' && tab !== 'archived' && (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => openConfirmAll(tickedRows)}
+                disabled={tickedRows.some((r) => !selections[r.meta_campaign_id])}
+                title={tickedRows.some((r) => !selections[r.meta_campaign_id]) ? 'Pick a type for every selected campaign first' : undefined}
+              >
+                Confirm Selected
+              </Button>
+            )}
+            {tab === 'archived' ? (
+              <Button size="sm" disabled={archiveBusy} onClick={() => void archive(ticked, false)}>Restore Selected</Button>
+            ) : (
+              <Button size="sm" disabled={archiveBusy} onClick={() => void archive(ticked, true)}>Hide Selected</Button>
+            )}
+          </div>
+        )}
+
+        {/* Bulk bar. "Confirm all" keeps its guard: Needs mapping needs an explicit
+            pick on EVERY row, so one click can never put every unmatched campaign
+            into a single pool. */}
+        {(tab === 'suggested' || tab === 'unmapped') && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-outline-variant bg-surface-container-lowest p-3">
+            <p className="text-xs text-on-surface-variant">
+              {tab === 'suggested'
+                ? `${suggested.length} campaign${suggested.length === 1 ? '' : 's'} waiting on the rule engine's suggestion.`
+                : `${unmapped.length} campaign${unmapped.length === 1 ? '' : 's'} with no matching rule — pick a type for each.`}
+              {' '}Batch changes apply to the tenant's lead stream.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {tab === 'suggested' ? (
+                <Button variant="primary" onClick={() => openConfirmAll(suggested)} disabled={suggested.length === 0}>
+                  Confirm All Filtered ({suggested.length})
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  onClick={() => openConfirmAll(unmapped)}
+                  disabled={unmapped.length === 0 || !unmappedAllPicked}
+                  title={unmappedAllPicked ? undefined : 'Pick a type for every campaign first'}
+                >
+                  Confirm All Filtered ({unmapped.length})
+                </Button>
+              )}
+              <Link href="/dashboard/lead-pull" className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs font-medium text-on-surface-variant hover:bg-surface-container">
+                Jump to Lead Pull →
+              </Link>
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <Link href="/dashboard/meta-mappings" className="rounded-lg border border-outline-variant px-3 py-1.5 font-medium text-on-surface-variant hover:bg-surface-container">
+            ← Previous: Page Mapping
+          </Link>
+          <Link href="/dashboard/lead-pull" className="rounded-lg bg-primary px-3 py-1.5 font-medium text-on-primary hover:bg-primary/90">
+            Next: Meta Lead Pull →
+          </Link>
+        </div>
+      </PageBody>
+
+      {rulesOpen && <RuleEngineDrawer tenantId={tenantId} onClose={() => setRulesOpen(false)} />}
 
       <ConfirmTypeModal
         target={confirmTarget}
@@ -233,6 +407,6 @@ export default function MetaCampaignsClient({ tenantId, rows, campaignTypes, cam
         onClose={() => setConfirmTarget(null)}
         onConfirmed={handleRefresh}
       />
-    </div>
+    </>
   );
 }

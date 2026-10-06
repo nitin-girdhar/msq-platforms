@@ -17,6 +17,7 @@ import { config } from '../../../config/index.js';
 import { sendUserEmail } from '../../../lib/communication-service-client.js';
 import { syncEmployeeProfileViaHrService } from '../../../lib/hr-service-client.js';
 import { buildAccountCreatedEmail, buildPasswordResetEmail, buildBranchChangedEmail } from './user-emails.js';
+import { loadEmailBrand } from '../branding/branding.service.js';
 import * as repo from './users.repository.js';
 import type { UpdateUserFields } from './users.repository.js';
 
@@ -805,6 +806,7 @@ export async function createUser(
     // the controller; `notify` is already the ANDed decision.
     if (notify) {
       const mail = buildAccountCreatedEmail({
+        brand: await loadEmailBrand(ctx.tenant_id),
         firstName: data.first_name,
         email: data.email,
         tempPassword: temporaryPassword,
@@ -863,10 +865,11 @@ export async function updateUser(
     }
   };
 
-  const notifyBranchChange = (added: string[], removed: string[], newHomeBranch: string | null) => {
+  const notifyBranchChange = async (added: string[], removed: string[], newHomeBranch: string | null): Promise<void> => {
     if (!notify || !targetEmail) return;
     if (added.length === 0 && removed.length === 0 && !newHomeBranch) return;
     const mail = buildBranchChangedEmail({
+      brand: await loadEmailBrand(ctx.tenant_id),
       firstName: targetFirstName ?? null,
       added,
       removed,
@@ -1066,7 +1069,7 @@ export async function updateUser(
         branchNames(reconcile.removed),
         homeMoved ? branchNames([newHomeOrgId]) : Promise.resolve([]),
       ]);
-      notifyBranchChange(addedNames, removedNames, homeNames[0] ?? null);
+      void notifyBranchChange(addedNames, removedNames, homeNames[0] ?? null);
     }
 
     // Same contract as the legacy path: rank and org_id are baked into the JWT,
@@ -1154,7 +1157,7 @@ export async function updateUser(
 
     const [fromNames] = await Promise.all([branchNames([targetOrgId])]);
     const toName = branchMove?.newOrgName ?? null;
-    notifyBranchChange(toName ? [toName] : [], fromNames, toName);
+    void notifyBranchChange(toName ? [toName] : [], fromNames, toName);
   }
 
   return {
@@ -1241,6 +1244,7 @@ export async function resetPassword(
     const to = (target as Record<string, unknown> | null)?.['email'] as string | undefined;
     if (to) {
       const mail = buildPasswordResetEmail({
+        brand: await loadEmailBrand(ctx.tenant_id),
         firstName: ((target as Record<string, unknown>)['first_name'] as string | undefined) ?? null,
         tempPassword: data.new_password ? null : temporaryPassword,
       });

@@ -21,21 +21,21 @@ export default function SecretRevealPanel({ apiKey, name }: Props) {
   };
 
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+    <div className="rounded-xl border border-status-due/30 bg-status-due-container p-4">
+      <p className="text-xs font-semibold uppercase tracking-wide text-on-status-due-container">
         API key — shown once
       </p>
-      <p className="mt-1 text-xs text-amber-700">
+      <p className="mt-1 text-xs text-on-status-due-container">
         Store this for <span className="font-semibold">{name}</span> now. It will not be retrievable again — only its prefix is kept.
       </p>
-      <div className="mt-3 flex items-center gap-2">
-        <code className="flex-1 select-all overflow-x-auto rounded-lg border border-amber-300 bg-white px-3 py-2 font-mono text-xs text-[#0F172A]">
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <code className="flex-1 select-all overflow-x-auto rounded-lg border border-status-due/30 bg-surface-container-lowest px-3 py-2 font-mono text-xs text-on-surface">
           {apiKey}
         </code>
         <button
           type="button"
           onClick={copy}
-          className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100"
+          className="min-h-[2.75rem] shrink-0 rounded-lg border border-status-due/30 bg-surface-container-lowest px-3 py-2 text-xs font-semibold text-on-status-due-container transition-colors hover:bg-status-due-container"
         >
           {copied ? 'Copied' : 'Copy'}
         </button>

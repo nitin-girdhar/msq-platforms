@@ -28,6 +28,8 @@ export interface BrandingRow {
   product_names: Record<string, unknown>;
   terms: Record<string, string>;
   nav_overrides: Record<string, { label?: string; icon?: string }>;
+  locale_config: Record<string, unknown>;
+  branding_version: number;
   updated_at: string;
 }
 
@@ -47,12 +49,14 @@ function toBranding(r: Row | undefined): BrandingRow | null {
     product_names: (r['product_names'] as Record<string, unknown>) ?? {},
     terms: (r['terms'] as Record<string, string>) ?? {},
     nav_overrides: (r['nav_overrides'] as BrandingRow['nav_overrides']) ?? {},
+    locale_config: (r['locale_config'] as Record<string, unknown>) ?? {},
+    branding_version: Number(r['branding_version'] ?? 1),
     updated_at: String(r['updated_at']),
   };
 }
 
 const COLS = sql`tenant_id, public_key, preset, seed_hex, font, default_mode, theme_locked,
-  assets, product_names, terms, nav_overrides, updated_at`;
+  assets, product_names, terms, nav_overrides, locale_config, branding_version, updated_at`;
 
 // ── Session-scoped (RLS) ──────────────────────────────────────────────────────
 
@@ -64,13 +68,12 @@ export async function getOwnBranding(ctx: RoleTxContext): Promise<BrandingRow | 
   });
 }
 
+/** The tenant admin's columns: theme only (the DB column GRANTs allow exactly these). */
 export interface TenantBrandingWrite {
   preset?: string | null | undefined;
   seed_hex?: string | null | undefined;
   font?: string | null | undefined;
   default_mode?: string | undefined;
-  terms?: Record<string, string> | undefined;
-  nav_overrides?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -90,19 +93,15 @@ export async function upsertTenantBranding(
       has('seed_hex') ? sql`seed_hex = EXCLUDED.seed_hex` : null,
       has('font') ? sql`font = EXCLUDED.font` : null,
       has('default_mode') ? sql`default_mode = EXCLUDED.default_mode` : null,
-      has('terms') ? sql`terms = EXCLUDED.terms` : null,
-      has('nav_overrides') ? sql`nav_overrides = EXCLUDED.nav_overrides` : null,
       sql`updated_by = EXCLUDED.updated_by`,
     ].filter((x): x is ReturnType<typeof sql> => x !== null);
     const rows = (await tx.execute(sql`
       INSERT INTO entity.tenant_branding
-        (tenant_id, preset, seed_hex, font, default_mode, terms, nav_overrides, updated_by)
+        (tenant_id, preset, seed_hex, font, default_mode, updated_by)
       VALUES (
         ${tenantId}::uuid,
         ${w.preset ?? null}, ${w.seed_hex ?? null}, ${w.font ?? null},
         ${w.default_mode ?? 'light'},
-        ${JSON.stringify(w.terms ?? {})}::jsonb,
-        ${JSON.stringify(w.nav_overrides ?? {})}::jsonb,
         ${ctx.user_id}::uuid
       )
       ON CONFLICT (tenant_id) DO UPDATE SET ${sql.join(sets, sql`, `)}
@@ -164,12 +163,15 @@ export async function tenantExistsAsService(tenantId: string): Promise<{ name: s
   });
 }
 
-export interface SaBrandingWrite extends Omit<TenantBrandingWrite, 'terms' | 'nav_overrides'> {
+export interface SaBrandingWrite extends TenantBrandingWrite {
   theme_locked?: boolean | undefined;
   product_names?: Record<string, unknown> | undefined;
+  terms?: Record<string, string> | undefined;
+  nav_overrides?: Record<string, unknown> | undefined;
+  locale_config?: Record<string, unknown> | undefined;
 }
 
-/** SYSTEM: Super Admin upsert (theme, lock, product names) for a chosen tenant. */
+/** SYSTEM: Super Admin upsert (theme, lock, names, words, menu labels, regional formats) for a chosen tenant. */
 export async function upsertBrandingAsService(
   tenantId: string,
   actorUserId: string,
@@ -184,16 +186,23 @@ export async function upsertBrandingAsService(
       has('default_mode') ? sql`default_mode = EXCLUDED.default_mode` : null,
       has('theme_locked') ? sql`theme_locked = EXCLUDED.theme_locked` : null,
       has('product_names') ? sql`product_names = EXCLUDED.product_names` : null,
+      has('terms') ? sql`terms = EXCLUDED.terms` : null,
+      has('nav_overrides') ? sql`nav_overrides = EXCLUDED.nav_overrides` : null,
+      has('locale_config') ? sql`locale_config = EXCLUDED.locale_config` : null,
       sql`updated_by = EXCLUDED.updated_by`,
     ].filter((x): x is ReturnType<typeof sql> => x !== null);
     const rows = (await tx.execute(sql`
       INSERT INTO entity.tenant_branding
-        (tenant_id, preset, seed_hex, font, default_mode, theme_locked, product_names, updated_by)
+        (tenant_id, preset, seed_hex, font, default_mode, theme_locked, product_names,
+         terms, nav_overrides, locale_config, updated_by)
       VALUES (
         ${tenantId}::uuid,
         ${w.preset ?? null}, ${w.seed_hex ?? null}, ${w.font ?? null},
         ${w.default_mode ?? 'light'}, ${w.theme_locked ?? false},
         ${JSON.stringify(w.product_names ?? {})}::jsonb,
+        ${JSON.stringify(w.terms ?? {})}::jsonb,
+        ${JSON.stringify(w.nav_overrides ?? {})}::jsonb,
+        ${JSON.stringify(w.locale_config ?? {})}::jsonb,
         ${actorUserId}::uuid
       )
       ON CONFLICT (tenant_id) DO UPDATE SET ${sql.join(sets, sql`, `)}

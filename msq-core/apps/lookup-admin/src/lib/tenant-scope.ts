@@ -21,6 +21,20 @@ export async function getSelectedTenantId(): Promise<string | undefined> {
   return (await scopeSession())?.session.tenant_id || undefined;
 }
 
+// The acting tenant's NAME, for the PageHeader `scope` chip every tenant-scoped
+// screen carries. Free — it rides the same cached /auth/me as the id above, and
+// is always consistent with it: /auth/me resolves both from the TARGET org's
+// tenant (auth.repository.ts findUser: `tgt.tenant_id`, `t.name`), not the
+// user's home tenant, so a cross-tenant switch moves them together.
+//
+// Why screens show this at all: login always re-mints the session into the
+// user's HOME tenant, so a super admin who switched tenant, edited, and logged
+// back in lands on a different tenant's rows — indistinguishable from an edit
+// that failed to save unless the page names its tenant.
+export async function getSelectedTenantName(): Promise<string | undefined> {
+  return (await scopeSession())?.session.tenant_name || undefined;
+}
+
 // "All branches" (session.all_branches) means no single branch is selected —
 // tenant-level screens then span the tenant, and branch-level lookups ask for
 // a branch. The token still carries a real org_id in that state, which is why

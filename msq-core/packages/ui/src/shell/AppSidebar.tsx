@@ -49,11 +49,11 @@ function monogram(label: string): string {
 function NavBadge({ count, collapsed }: { count: number; collapsed: boolean }) {
   const text = badgeText(count);
   return collapsed ? (
-    <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-status-overdue px-1 font-mono text-[10px] font-bold leading-none text-on-status-overdue">
+    <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-status-overdue px-1 font-mono text-[0.625rem] font-bold leading-none text-on-status-overdue">
       {text}
     </span>
   ) : (
-    <span className="ml-auto rounded-full bg-status-overdue-container px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-on-status-overdue-container">
+    <span className="ml-auto rounded-full bg-status-overdue-container px-1.5 py-0.5 font-mono text-[0.6875rem] font-bold leading-none text-on-status-overdue-container">
       {text}
     </span>
   );

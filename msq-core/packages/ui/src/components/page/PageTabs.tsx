@@ -47,7 +47,7 @@ export default function PageTabs({ tabs, label }: Props) {
               <span
                 // Amber rather than the active blue: this is "something needs
                 // you", which must read the same whether the tab is selected.
-                className="ml-1.5 inline-flex min-w-[1.25rem] justify-center rounded-full bg-status-due-container px-1.5 py-0.5 text-[10px] font-semibold leading-none text-on-status-due-container"
+                className="ml-1.5 inline-flex min-w-[1.25rem] justify-center rounded-full bg-status-due-container px-1.5 py-0.5 text-[0.625rem] font-semibold leading-none text-on-status-due-container"
                 // Without this the tab announces as "Team 3", which says nothing
                 // about what the 3 is.
                 aria-label={`${tab.badge} awaiting your attention`}

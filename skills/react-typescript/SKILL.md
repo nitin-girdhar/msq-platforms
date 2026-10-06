@@ -322,6 +322,17 @@ key, `revalidateOnFocus: false`, and return the same named-object shape.
   so default tenants and e2e see no change. Labels only — routes, API fields, exports and
   capabilities never change with branding. Theme controls are the shared `<ThemePicker>`
   (+ `applyThemePreview()` for live preview); don't build another.
+  **Never spell the default brand name or its image paths** ("FitClass", `/fitclass-emblem.png`,
+  `/icons/*`, manifest colours) — import `DEFAULT_BRAND` (`@platform/ui-kit/branding`, or `/server`
+  in a Server Component) and show `useBranding().brandName ?? DEFAULT_BRAND.name`. `pnpm check:brand`
+  enforces it. Brand images (13 slots, `branding.assets[slot]`) are uploaded by the tenant; render the
+  slot that fits the surface and fall back to the platform default when it is empty.
+- **Regional formats** (date, time, number, currency, week start, fiscal year) are set per tenant by
+  Super Admin (`branding.locale`; the tenant admin only sees them). Format every displayed date/time/number/amount with `useLocale()` /
+  `createFormatters()` from `@platform/ui-kit/locale` — **not** `toLocale*String` / `Intl.*` /
+  hard-coded `en-IN` or `Asia/Kolkata`. Display only: stored values and API payloads stay UTC / ISO /
+  NUMERIC; pass `{ timeZone }` for a branch's own zone. `node scripts/check-brand-hardcoding.mjs --locale`
+  lists the call sites still to move.
 - **Dark mode** is a token swap under `html[data-mode="dark"]`, not Tailwind `dark:` classes. An
   app opts in with `supportsDark` only once **all** its screens use tokens; until then the theme
   helper forces light for that app (otherwise a dark shell sits next to light hex-styled pages).
@@ -329,6 +340,11 @@ key, `revalidateOnFocus: false`, and return the same named-object shape.
   classes.** Existing untouched screens keep theirs until they are redesigned; when you touch a
   component, migrate the classes you touch. Charts (recharts) and AG Grid read the same tokens
   (`var(--color-…)`), never a local palette constant.
+- **Text size is user-selectable (4 steps, 87.5–125 % of the root).** All sizes must therefore
+  be rem-based: use the `text-*` tokens, or `text-[0.6875rem]` (px ÷ 16) when no token fits —
+  **never `text-[Npx]`**, `font-size: Npx`, or numeric SVG/chart `fontSize`. AG Grid
+  `rowHeight`/`headerHeight` go through `scalePx()` (`@platform/ui-kit/grid`). Don't add a
+  second font-size control; it lives in `<ThemePicker showFontSize>` (user Appearance only).
 - Write utilities **inline** in JSX. Compose conditional classes with template strings
   (`` `... ${cond ? 'a' : 'b'}` ``); there is no `clsx` dependency.
 - `*.module.css` is reserved for the few widgets that already use it. Do not add new CSS modules.
@@ -440,6 +456,8 @@ Flag and redesign if a requirement demands any of these:
 - Introduce a new CSS module, a second token file, or any per-tenant styling outside the
   `@platform/theme` → `getEffectiveTheme()` → `<ThemeStyle>` path (§6).
 - Add a hex/arbitrary colour or raw `slate-*` class in new or changed code (use theme tokens).
+- Hard-code the default brand name / image path, or format a date or amount with a bare
+  `toLocale*` / `Intl.*` instead of `useLocale()` (see §6).
 - Use `any` / `as any` / `@ts-ignore`.
 - Treat a frontend role check as a security boundary.
 

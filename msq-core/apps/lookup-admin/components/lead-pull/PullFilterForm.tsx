@@ -141,14 +141,14 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
   const fieldsDisabled = disabled || pending;
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-[#E2E8F0] bg-white p-4">
+    <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-outline-variant bg-surface-container-lowest p-4">
       {orgsError && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+        <div role="alert" className="rounded-xl border border-error/30 bg-error-container px-3 py-2 text-xs text-on-error-container">
           {orgsError}
         </div>
       )}
       {formError && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+        <div role="alert" className="rounded-xl border border-error/30 bg-error-container px-3 py-2 text-xs text-on-error-container">
           {formError}
         </div>
       )}
@@ -178,15 +178,15 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
           />
         ) : (
           <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">Pages</span>
+            <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-on-surface-variant">Pages</span>
             <input
               value={manualPageIds}
               onChange={(e) => setManualPageIds(e.target.value)}
               disabled={fieldsDisabled}
               placeholder="All pages, or numeric ids (comma-separated)"
-              className="w-full rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs text-[#0F172A] focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:opacity-60"
+              className="w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-2.5 py-1.5 text-xs text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
             />
-            <p className="text-[11px] text-[#94A3B8]">
+            <p className="text-[0.6875rem] text-on-surface-variant">
               Pages could not be listed for this tenant — paste numeric Page IDs instead, or leave blank for all.
             </p>
           </div>
@@ -204,7 +204,7 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
             allLabel="All campaigns"
             selectAllLabel="Select all"
           />
-          <p className="text-[11px] leading-snug text-[#94A3B8]">
+          <p className="text-[0.6875rem] leading-snug text-on-surface-variant">
             {mode === 'campaign'
               ? 'Campaign mode: only these campaigns\u2019 ads are read, so the pull is as small as the selection.'
               : 'Pages mode reads every form on the selected pages and keeps only these campaigns — narrowing focuses the review, not the pull.'}
@@ -212,7 +212,7 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
         </div>
       </div>
 
-      <fieldset className="flex flex-wrap items-center gap-4 text-xs text-[#334155]" disabled={fieldsDisabled}>
+      <fieldset className="flex flex-wrap items-center gap-4 text-xs text-on-surface-variant" disabled={fieldsDisabled}>
         <legend className="sr-only">Pull mode</legend>
         <label className="flex items-center gap-1.5">
           <input type="radio" name="lp-mode" checked={mode === 'pages'} onChange={() => setMode('pages')} />
@@ -226,8 +226,8 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="flex flex-col gap-1">
-          <label htmlFor="lp-since" className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
-            Since <span className="text-red-500">*</span>
+          <label htmlFor="lp-since" className="text-[0.625rem] font-semibold uppercase tracking-wide text-on-surface-variant">
+            Since <span className="text-error">*</span>
           </label>
           <input
             id="lp-since"
@@ -236,15 +236,15 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
             onChange={(e) => setSince(e.target.value)}
             disabled={fieldsDisabled}
             required
-            className="rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs text-[#0F172A] focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:opacity-60"
+            className="rounded-lg border border-outline-variant bg-surface-container-lowest px-2.5 py-1.5 text-xs text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
           />
-          <p className="text-[11px] text-[#94A3B8]">
+          <p className="text-[0.6875rem] text-on-surface-variant">
             Required — an unbounded pull across every page is exactly the operation that triggers Meta throttling.
           </p>
         </div>
 
         <div className="flex flex-col gap-1">
-          <label htmlFor="lp-until" className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
+          <label htmlFor="lp-until" className="text-[0.625rem] font-semibold uppercase tracking-wide text-on-surface-variant">
             Until
           </label>
           <input
@@ -253,9 +253,9 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
             value={until}
             onChange={(e) => setUntil(e.target.value)}
             disabled={fieldsDisabled}
-            className="rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs text-[#0F172A] focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:opacity-60"
+            className="rounded-lg border border-outline-variant bg-surface-container-lowest px-2.5 py-1.5 text-xs text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
           />
-          <p className="text-[11px] text-[#94A3B8]">Optional — omit for up to now.</p>
+          <p className="text-[0.6875rem] text-on-surface-variant">Optional — omit for up to now.</p>
         </div>
 
         <div className="flex items-end">

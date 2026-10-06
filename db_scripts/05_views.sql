@@ -1061,6 +1061,44 @@ JOIN hr.leave_request_statuses lrs ON lrs.id = lr.status_id   AND lrs.tenant_id 
 WHERE lrs.name = 'approved'
   AND NOT lr.is_deleted;
 
+-- 1.72.0: where a leave request stands in its approval chain, one row per request — how many
+-- levels, how many signed off, who it is waiting on and who has approved (the person who
+-- actually acted, not the designated approver an override stood in for).
+CREATE OR REPLACE VIEW hr.vw_leave_approval_summary WITH (security_invoker = true) AS
+SELECT
+  a.leave_request_id,
+  COUNT(*)::int                                                          AS levels_total,
+  COUNT(*) FILTER (WHERE a.action = 'approved')::int                     AS levels_approved,
+  MIN(a.level) FILTER (WHERE a.action = 'pending')                       AS pending_level,
+  (ARRAY_AGG(a.approver_id ORDER BY a.level)
+     FILTER (WHERE a.action = 'pending'))[1]                             AS pending_approver_id,
+  (ARRAY_AGG(pu.full_name ORDER BY a.level)
+     FILTER (WHERE a.action = 'pending'))[1]                             AS pending_approver_name,
+  ARRAY_AGG(COALESCE(au.full_name, pu.full_name) ORDER BY a.level)
+     FILTER (WHERE a.action = 'approved')                                AS approved_by_names
+FROM hr.leave_request_approvals a
+JOIN      iam.users pu ON pu.id = a.approver_id
+LEFT JOIN iam.users au ON au.id = a.acted_by
+GROUP BY a.leave_request_id;
+
+-- Same shape for attendance regularizations.
+CREATE OR REPLACE VIEW hr.vw_regularization_approval_summary WITH (security_invoker = true) AS
+SELECT
+  a.regularization_id,
+  COUNT(*)::int                                                          AS levels_total,
+  COUNT(*) FILTER (WHERE a.action = 'approved')::int                     AS levels_approved,
+  MIN(a.level) FILTER (WHERE a.action = 'pending')                       AS pending_level,
+  (ARRAY_AGG(a.approver_id ORDER BY a.level)
+     FILTER (WHERE a.action = 'pending'))[1]                             AS pending_approver_id,
+  (ARRAY_AGG(pu.full_name ORDER BY a.level)
+     FILTER (WHERE a.action = 'pending'))[1]                             AS pending_approver_name,
+  ARRAY_AGG(COALESCE(au.full_name, pu.full_name) ORDER BY a.level)
+     FILTER (WHERE a.action = 'approved')                                AS approved_by_names
+FROM hr.attendance_regularization_approvals a
+JOIN      iam.users pu ON pu.id = a.approver_id
+LEFT JOIN iam.users au ON au.id = a.acted_by
+GROUP BY a.regularization_id;
+
 
 -- ===================================================================
 -- 8. Views (security_invoker — underlying-table RLS applies to the caller)
@@ -1173,7 +1211,7 @@ SELECT
   t.recurrence_rule,
   t.created_at,
   t.updated_at,
-  -- 1.67.0: appended (CREATE OR REPLACE VIEW can only add columns at the end).
+  -- 1.68.0: appended (CREATE OR REPLACE VIEW can only add columns at the end).
   t.task_no,
   o.name         AS org_name,
   -- SLA chip: derived from due_at, no policy table. Finished tasks never breach.

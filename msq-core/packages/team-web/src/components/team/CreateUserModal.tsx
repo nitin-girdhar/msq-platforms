@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
 import { RANKS } from '@platform/authz';
 import {
-  Modal,
+  Sheet,
   DepartmentSelect,
   OrgAssignmentsField,
   ManagerSelect,
@@ -189,7 +189,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
       <button
         type="button"
         onClick={handleClose}
-        className="rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white hover:bg-[#095699]"
+        className="rounded-xl bg-primary px-4 py-2 min-h-[2.75rem] sm:min-h-0 text-sm font-semibold text-on-primary hover:bg-primary-container"
       >
         Done
       </button>
@@ -197,13 +197,13 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
   ) : (
     <div className="flex justify-end gap-2">
       <button type="button" onClick={handleClose} disabled={pending}
-        className="rounded-xl border border-[#E2E8F0] bg-white px-4 py-2 text-sm font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60">
+        className="rounded-xl border border-outline-variant bg-surface-container-lowest px-4 py-2 min-h-[2.75rem] sm:min-h-0 text-sm font-semibold text-on-surface-variant hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-60">
         Cancel
       </button>
       <button type="submit" form={FORM_ID} disabled={pending} aria-busy={pending}
-        className="inline-flex items-center gap-2 rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white hover:bg-[#095699] disabled:cursor-not-allowed disabled:opacity-70">
+        className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 min-h-[2.75rem] sm:min-h-0 text-sm font-semibold text-on-primary hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-70">
         {pending && (
-          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-surface-container-lowest/40 border-t-white" aria-hidden />
         )}
         {pending ? 'Creating…' : 'Create user'}
       </button>
@@ -211,15 +211,15 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
   );
 
   return (
-    <Modal open={open} onClose={handleClose} title={success ? 'User created' : 'New user'} locked={pending} maxWidth="max-w-2xl" footer={footer}>
+    <Sheet open={open} onClose={handleClose} title={success ? 'User created' : 'New user'} locked={pending} maxWidth="sm:max-w-2xl" footer={footer}>
       {success ? (
         <div className="space-y-4">
-          <p className="text-sm text-[#0F172A]">
+          <p className="text-sm text-on-surface">
             <span className="font-semibold">{success.email}</span> can now sign in.
           </p>
           <TemporaryPasswordPanel password={success.temporaryPassword} email={success.email} />
           {!success.hrProfileSynced && (
-            <p role="alert" className="rounded-lg border border-[#FDE68A] bg-[#FFFBEB] px-2.5 py-1.5 text-[11.5px] leading-snug text-[#92400E]">
+            <p role="alert" className="rounded-lg border border-status-due/30 bg-status-due-container px-2.5 py-1.5 text-[0.71875rem] leading-snug text-on-status-due-container">
               Their HR profile could not be created, so they won&apos;t appear in HRMS attendance or leave yet.
               Open and save this member again to retry.
             </p>
@@ -228,19 +228,19 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
       ) : (
         <form id={FORM_ID} onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
           {error && (
-            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">
               {error}
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field id="cu-first-name" label="First name *" value={firstName} onChange={setFirstName} disabled={pending} required autoComplete="given-name" />
             <Field id="cu-last-name" label="Last name" value={lastName} onChange={setLastName} disabled={pending} autoComplete="family-name" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field id="cu-middle-name" label="Middle name" value={middleName} onChange={setMiddleName} disabled={pending} autoComplete="additional-name" />
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="cu-joining" className="text-xs font-semibold text-[#0F172A]">Date of joining *</label>
+              <label htmlFor="cu-joining" className="text-xs font-semibold text-on-surface">Date of joining *</label>
               <input
                 id="cu-joining"
                 type="date"
@@ -248,15 +248,15 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
                 onChange={(e) => setDateOfJoining(e.target.value)}
                 disabled={pending}
                 required
-                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+                className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
               />
-              <p className="text-[11px] text-[#64748B]">Used for leave accrual. HR can change it later.</p>
+              <p className="text-[0.6875rem] text-on-surface-variant">Used for leave accrual. HR can change it later.</p>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field id="cu-email" label="Email *" type="email" value={email} onChange={setEmail} disabled={pending} required autoComplete="off" />
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="cu-mobile" className="text-xs font-semibold text-[#0F172A]">Mobile</label>
+              <label htmlFor="cu-mobile" className="text-xs font-semibold text-on-surface">Mobile</label>
               <input
                 id="cu-mobile"
                 type="tel"
@@ -265,25 +265,25 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
                 disabled={pending}
                 placeholder="+91 98XXXXXXXX"
                 autoComplete="tel"
-                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+                className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
               />
-              {mobileError && <p className="text-[11px] text-red-600">{mobileError}</p>}
+              {mobileError && <p className="text-[0.6875rem] text-on-status-overdue-container">{mobileError}</p>}
             </div>
           </div>
 
           {rolesError && (
-            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div role="alert" className="rounded-xl border border-status-due/30 bg-status-due-container px-3 py-2 text-xs text-on-status-due-container">
               {rolesError}
             </div>
           )}
 
           {branchesFailed && (
-            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div role="alert" className="rounded-xl border border-status-due/30 bg-status-due-container px-3 py-2 text-xs text-on-status-due-container">
               Branches could not be loaded — only your own branch is available.
             </div>
           )}
 
-          <hr className="border-0 border-t border-[#F1F5F9]" />
+          <hr className="border-0 border-t border-surface-container" />
 
           <DepartmentSelect
             departmentId={a.departmentId}
@@ -315,25 +315,25 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
             disabled={pending}
           />
 
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-on-surface">
             <input
               type="checkbox"
               checked={forcePasswordChange}
               onChange={(e) => setForcePasswordChange(e.target.checked)}
               disabled={pending}
-              className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+              className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary/20"
             />
             <span>Require password change on first login</span>
           </label>
 
           {canNotify && (
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-on-surface">
               <input
                 type="checkbox"
                 checked={sendEmailNotification}
                 onChange={(e) => setSendEmailNotification(e.target.checked)}
                 disabled={pending}
-                className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary/20"
               />
               <span>Email the new user their login details and temporary password</span>
             </label>
@@ -341,7 +341,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
 
         </form>
       )}
-    </Modal>
+    </Sheet>
   );
 }
 
@@ -359,7 +359,7 @@ interface FieldProps {
 function Field({ id, label, value, onChange, type = 'text', disabled, required, autoComplete }: FieldProps) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-xs font-semibold text-[#0F172A]">{label}</label>
+      <label htmlFor={id} className="text-xs font-semibold text-on-surface">{label}</label>
       <input
         id={id}
         type={type}
@@ -368,7 +368,7 @@ function Field({ id, label, value, onChange, type = 'text', disabled, required, 
         disabled={disabled}
         autoComplete={autoComplete}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+        className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
       />
     </div>
   );

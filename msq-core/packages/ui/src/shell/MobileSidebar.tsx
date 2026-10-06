@@ -50,7 +50,7 @@ function MobileNavLink({ item, pathname, badge, all }: { item: NavItem; pathname
       {item.icon && <NavIcon name={item.icon} className="h-5 w-5 shrink-0" />}
       <span className="truncate">{item.label}</span>
       {showBadge && (
-        <span className="ml-auto rounded-full bg-status-overdue-container px-1.5 py-0.5 font-mono text-[11px] font-bold leading-none text-on-status-overdue-container">
+        <span className="ml-auto rounded-full bg-status-overdue-container px-1.5 py-0.5 font-mono text-[0.6875rem] font-bold leading-none text-on-status-overdue-container">
           {badgeText(badge)}
         </span>
       )}

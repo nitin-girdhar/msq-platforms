@@ -3,9 +3,11 @@
 import { useId } from 'react';
 import {
   BRAND_FONTS,
+  FONT_SIZES,
   HEX_COLOR_RE,
   THEME_PRESETS,
   type BrandFontId,
+  type FontSizeId,
   type ThemeChoice,
   type ThemeMode,
   type ThemePresetId,
@@ -26,6 +28,11 @@ export interface ThemePickerProps {
   modeLabel?: string;
   /** Note under the mode control (e.g. dark mode not yet enabled). */
   modeHint?: string;
+  /**
+   * Show the 4-step text size control. Personal only (user Appearance panel):
+   * the tenant branding pages leave it off, and the theme lock never greys it.
+   */
+  showFontSize?: boolean;
   disabled?: boolean;
 }
 
@@ -51,6 +58,7 @@ export default function ThemePicker({
   showMode = false,
   modeLabel = 'Mode',
   modeHint,
+  showFontSize = false,
   disabled = false,
 }: ThemePickerProps) {
   const uid = useId();
@@ -161,6 +169,34 @@ export default function ThemePicker({
           })}
         </div>
       </fieldset>
+
+      {showFontSize && (
+        <fieldset disabled={disabled} className="flex flex-col gap-2">
+          <legend className="mb-2 text-label-md font-semibold text-on-surface">Text size</legend>
+          <div role="radiogroup" aria-label="Text size" className="grid grid-cols-2 gap-1 rounded-lg bg-surface-container p-1 sm:grid-cols-4">
+            {FONT_SIZES.map((s) => {
+              const active = (value.font_size ?? 'md') === s.id;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => onChange({ ...value, font_size: s.id as FontSizeId })}
+                  className={`flex flex-col items-center gap-0.5 rounded-md px-2 py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    active ? 'bg-surface-container-lowest font-semibold text-primary shadow-card' : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  {/* Fixed px on purpose: the sample letter shows each step's size
+                      regardless of the size currently applied to the page. */}
+                  <span aria-hidden style={{ fontSize: `${Math.round((16 * s.pct) / 100)}px`, lineHeight: 1.2 }}>Aa</span>
+                  <span className="text-label-sm">{s.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+      )}
 
       {showMode && (
         <fieldset disabled={disabled} className="flex flex-col gap-2">

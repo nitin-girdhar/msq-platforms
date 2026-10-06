@@ -1,5 +1,5 @@
 import Image from 'next/image';
-import type { PublicBranding } from '@platform/ui-kit/branding';
+import { DEFAULT_BRAND, type PublicBranding } from '@platform/ui-kit/branding';
 
 const DEFAULT_PRODUCTS = ['LMS', 'HRMS', 'Tasks', 'Admin Console'];
 
@@ -9,11 +9,21 @@ const DEFAULT_PRODUCTS = ['LMS', 'HRMS', 'Tasks', 'Admin Console'];
  * this device remembered; otherwise the platform default. Display only.
  */
 export default function BrandPanel({ brand }: { brand: PublicBranding }) {
-  const name = brand.brandName ?? 'FitClass';
+  const name = brand.brandName ?? DEFAULT_BRAND.name;
+  const hero = brand.assets.login_hero;
   const logo = brand.assets.logo_dark ?? brand.assets.mark;
   const products = brand.productLabels.length ? brand.productLabels : DEFAULT_PRODUCTS;
   return (
     <aside className="relative hidden flex-col justify-between overflow-hidden bg-inverse-surface p-12 text-inverse-on-surface lg:flex">
+      {hero && (
+        // Tenant background (login_hero slot), gateway-served — plain <img>. A dark
+        // scrim keeps the white copy readable over any photo the tenant uploads.
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={hero} alt="" className="pointer-events-none absolute inset-0 h-full w-full object-cover" />
+          <div className="pointer-events-none absolute inset-0 bg-inverse-surface/70" aria-hidden />
+        </>
+      )}
       <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-primary opacity-30 blur-3xl" aria-hidden />
       <div className="pointer-events-none absolute -bottom-32 -left-20 h-96 w-96 rounded-full bg-primary-container opacity-20 blur-3xl" aria-hidden />
 
@@ -24,7 +34,7 @@ export default function BrandPanel({ brand }: { brand: PublicBranding }) {
           // eslint-disable-next-line @next/next/no-img-element
           <img src={logo} alt={name} className="h-11 max-w-[200px] object-contain" />
         ) : (
-          <Image src="/fitclass-emblem.png" alt="" width={160} height={160} priority className="h-11 w-11 object-contain" />
+          <Image src={DEFAULT_BRAND.emblem} alt="" width={160} height={160} priority className="h-11 w-11 object-contain" />
         )}
         {!brand.assets.logo_dark && <span className="text-headline-sm font-bold">{name}</span>}
       </div>

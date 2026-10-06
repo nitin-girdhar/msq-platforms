@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Button } from '@platform/ui-kit';
+import { Button, PageBody, PageHeader } from '@platform/ui-kit';
 import {
   campaignTypes as campaignTypesApi,
   departmentsApi,
@@ -23,6 +23,9 @@ const FIELDS = Object.keys(FIELD_LABELS) as RuleMatchField[];
 
 interface Props {
   tenantId: string;
+  /** Named in the header so a login-time tenant reset is visible here, not
+   *  mistaken for an edit that did not save. See getSelectedTenantName(). */
+  tenantName: string | undefined;
 }
 
 // Campaign types (which department a lead belongs to) and the ORDERED rules
@@ -30,7 +33,7 @@ interface Props {
 // (schema 1.51.0). First matching rule wins, top to bottom. The full ladder a
 // lead goes through: confirmed campaign type -> these rules -> the page's
 // default type (Meta Page Mapping) -> the tenant's default type.
-export default function CampaignTypesClient({ tenantId }: Props) {
+export default function CampaignTypesClient({ tenantId, tenantName }: Props) {
   const [types, setTypes] = useState<CampaignTypeRow[]>([]);
   const [rules, setRules] = useState<CampaignTypeRuleRow[]>([]);
   const [departments, setDepartments] = useState<DepartmentRow[]>([]);
@@ -130,35 +133,40 @@ export default function CampaignTypesClient({ tenantId }: Props) {
     }
   };
 
-  const input = 'rounded-lg border border-[#CBD5E1] bg-white px-2.5 py-1.5 text-xs';
-  const iconBtn = 'rounded border border-[#E2E8F0] px-1.5 py-0.5 text-xs text-[#475569] hover:bg-[#F8FAFC] disabled:opacity-40';
+  const input = 'min-h-[2.75rem] rounded-lg border border-outline bg-surface-container-lowest px-2.5 py-1.5 text-xs text-on-surface sm:min-h-0';
+  const iconBtn = 'min-h-[2.75rem] min-w-[2.75rem] rounded border border-outline-variant px-1.5 py-0.5 text-xs text-on-surface-variant hover:bg-surface-container-low disabled:opacity-40 sm:min-h-0 sm:min-w-0';
 
-  if (loading) return <p className="p-6 text-sm text-[#64748B]">Loading…</p>;
+  if (loading) return <PageBody><p className="text-sm text-on-surface-variant">Loading…</p></PageBody>;
 
   return (
-    <div className="space-y-6 p-4 sm:p-6">
-      <div>
-        <Link href="/dashboard/m/lms" className="text-xs font-semibold text-[#0b6cbf] hover:underline">← Back to LMS</Link>
-        <h1 className="mt-1 text-2xl font-bold text-[#0F172A]">Campaign Types &amp; Rules</h1>
-        <p className="mt-1 max-w-3xl text-xs text-[#64748B]">
-          A lead&apos;s type decides which department&apos;s pool it is assigned from. Order of decision:{' '}
-          <strong>confirmed campaign type</strong> (Meta Campaign Mapping) → <strong>first matching rule below</strong> →{' '}
-          <strong>page default type</strong> (Meta Page Mapping) → <strong>tenant default type</strong>. Rules match a
-          whole word or phrase, case-insensitive: <code>HIR</code> matches <code>HIR_Gurugram_Sep</code> but not{' '}
-          <code>Hiring</code>.
-        </p>
-      </div>
+    <>
+      <PageHeader
+        title="Campaign Types & Rules"
+        scope={tenantName}
+        subtitle="Which department's pool a lead is assigned from"
+        actions={<Link href="/dashboard/m/lms" className="inline-flex min-h-[2.75rem] items-center text-xs font-semibold text-primary hover:underline sm:min-h-0">← Back to LMS</Link>}
+      />
+      <PageBody>
+      <p className="max-w-3xl text-xs text-on-surface-variant">
+        A lead&apos;s type decides which department&apos;s pool it is assigned from. Order of decision:{' '}
+        <strong>confirmed campaign type</strong> (Meta Campaign Mapping) → <strong>first matching rule below</strong> →{' '}
+        <strong>page default type</strong> (Meta Page Mapping) → <strong>tenant default type</strong>. Rules match a
+        whole word or phrase, case-insensitive: <code>HIR</code> matches <code>HIR_Gurugram_Sep</code> but not{' '}
+        <code>Hiring</code>.
+      </p>
 
       {error && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
+        <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">{error}</div>
       )}
 
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="space-y-5">
       {/* ── Rules ── */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-[#0F172A]">Rules <span className="font-normal text-[#64748B]">— first match wins, top to bottom</span></h2>
-        <div className="overflow-x-auto rounded-xl border border-[#E2E8F0] bg-white">
+        <h2 className="text-sm font-semibold text-on-surface">Rules <span className="font-normal text-on-surface-variant">— first match wins, top to bottom</span></h2>
+        <div className="overflow-x-auto rounded-xl border border-outline-variant bg-surface-container-lowest">
           <table className="w-full text-xs">
-            <thead className="bg-[#F8FAFC] text-left text-[#475569]">
+            <thead className="bg-surface-container-low text-left text-on-surface-variant">
               <tr>
                 <th className="px-3 py-2">#</th>
                 <th className="px-3 py-2">If the…</th>
@@ -170,11 +178,11 @@ export default function CampaignTypesClient({ tenantId }: Props) {
             </thead>
             <tbody>
               {rules.length === 0 && (
-                <tr><td colSpan={6} className="px-3 py-4 text-center text-[#64748B]">No rules yet — every unconfirmed campaign falls through to the page or tenant default.</td></tr>
+                <tr><td colSpan={6} className="px-3 py-4 text-center text-on-surface-variant">No rules yet — every unconfirmed campaign falls through to the page or tenant default.</td></tr>
               )}
               {rules.map((r, i) => (
-                <tr key={r.id} className="border-t border-[#F1F5F9]">
-                  <td className="px-3 py-2 text-[#64748B]">{i + 1}</td>
+                <tr key={r.id} className="border-t border-surface-container">
+                  <td className="px-3 py-2 text-on-surface-variant">{i + 1}</td>
                   <td className="px-3 py-2">{FIELD_LABELS[r.match_field]}</td>
                   <td className="px-3 py-2 font-mono">{r.pattern}</td>
                   <td className="px-3 py-2">
@@ -197,6 +205,7 @@ export default function CampaignTypesClient({ tenantId }: Props) {
                       disabled={busy}
                       onChange={(e) => void act(() => campaignTypesApi.updateRule(tenantId, r.id, { is_active: e.target.checked }))}
                       aria-label={`Rule ${r.pattern} active`}
+                      className="h-5 w-5 accent-primary"
                     />
                   </td>
                   <td className="space-x-1 px-3 py-2 text-right">
@@ -204,7 +213,7 @@ export default function CampaignTypesClient({ tenantId }: Props) {
                     <button type="button" className={iconBtn} disabled={busy || i === rules.length - 1} onClick={() => move(i, 1)} aria-label="Move rule down">↓</button>
                     <button
                       type="button"
-                      className={`${iconBtn} text-red-600`}
+                      className={`${iconBtn} text-on-status-overdue-container`}
                       disabled={busy}
                       onClick={() => { if (window.confirm(`Remove the rule "${r.pattern}"?`)) void act(() => campaignTypesApi.deleteRule(tenantId, r.id)); }}
                       aria-label={`Remove rule ${r.pattern}`}
@@ -218,7 +227,7 @@ export default function CampaignTypesClient({ tenantId }: Props) {
           </table>
         </div>
 
-        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3">
+        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-outline-variant bg-surface-container-low p-3">
           <select value={newField} onChange={(e) => setNewField(e.target.value as RuleMatchField)} aria-label="New rule matches on" className={input}>
             {FIELDS.map((f) => <option key={f} value={f}>{FIELD_LABELS[f]}</option>)}
           </select>
@@ -231,14 +240,14 @@ export default function CampaignTypesClient({ tenantId }: Props) {
             <option value="end">at the end</option>
             <option value="top">at the top</option>
           </select>
-          <Button variant="primary" onClick={addRule} disabled={busy || newPattern.trim().length < 2 || !newRuleType}>Add rule</Button>
+          <Button variant="primary" className="min-h-[2.75rem] sm:min-h-0" onClick={addRule} disabled={busy || newPattern.trim().length < 2 || !newRuleType}>Add rule</Button>
         </div>
       </section>
 
       {/* ── Test ── */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-[#0F172A]">Test the rules</h2>
-        <div className="grid gap-2 rounded-xl border border-[#E2E8F0] bg-white p-3 sm:grid-cols-2 lg:grid-cols-4">
+        <h2 className="text-sm font-semibold text-on-surface">Test the rules</h2>
+        <div className="grid gap-2 rounded-xl border border-outline-variant bg-surface-container-lowest p-3 sm:grid-cols-2 lg:grid-cols-4">
           {FIELDS.map((f) => (
             <input
               key={f}
@@ -250,9 +259,9 @@ export default function CampaignTypesClient({ tenantId }: Props) {
             />
           ))}
           <div className="flex items-center gap-3 sm:col-span-2 lg:col-span-4">
-            <Button variant="secondary" onClick={runTest}>Which rule matches?</Button>
+            <Button variant="secondary" className="min-h-[2.75rem] sm:min-h-0" onClick={runTest}>Which rule matches?</Button>
             {testResult && (
-              <span className="text-xs text-[#334155]">
+              <span className="text-xs text-on-surface-variant">
                 {testResult.rule_id
                   ? <>Rule <code>{testResult.pattern}</code> on {FIELD_LABELS[testResult.match_field!]} → <strong>{testResult.campaign_type_label}</strong></>
                   : 'No rule matches — the lead would fall through to the page default, then the tenant default.'}
@@ -262,16 +271,17 @@ export default function CampaignTypesClient({ tenantId }: Props) {
         </div>
       </section>
 
+      </div>
       {/* ── Types ── */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-[#0F172A]">Campaign types</h2>
-        <p className="text-xs text-[#64748B]">
+        <h2 className="text-sm font-semibold text-on-surface">Campaign types</h2>
+        <p className="text-xs text-on-surface-variant">
           Each type routes to one department. A lead of that type is assigned only to users whose role is in that
           department, hold LMS access, and have a weight for the type in the lead&apos;s branch (Users → Org access).
         </p>
-        <div className="overflow-x-auto rounded-xl border border-[#E2E8F0] bg-white">
+        <div className="overflow-x-auto rounded-xl border border-outline-variant bg-surface-container-lowest">
           <table className="w-full text-xs">
-            <thead className="bg-[#F8FAFC] text-left text-[#475569]">
+            <thead className="bg-surface-container-low text-left text-on-surface-variant">
               <tr>
                 <th className="px-3 py-2">Type</th>
                 <th className="px-3 py-2">Key</th>
@@ -281,11 +291,11 @@ export default function CampaignTypesClient({ tenantId }: Props) {
             </thead>
             <tbody>
               {types.map((t) => (
-                <tr key={t.id} className="border-t border-[#F1F5F9]">
-                  <td className="px-3 py-2 font-semibold text-[#0F172A]">
-                    {t.label} {t.is_default && <span className="ml-1 rounded bg-slate-100 px-1 text-[10px] font-semibold text-slate-600">DEFAULT</span>}
+                <tr key={t.id} className="border-t border-surface-container">
+                  <td className="px-3 py-2 font-semibold text-on-surface">
+                    {t.label} {t.is_default && <span className="ml-1 rounded bg-surface-container px-1 text-[0.625rem] font-semibold text-on-surface-variant">DEFAULT</span>}
                   </td>
-                  <td className="px-3 py-2 font-mono text-[#64748B]">{t.name}</td>
+                  <td className="px-3 py-2 font-mono text-on-surface-variant">{t.name}</td>
                   <td className="px-3 py-2">
                     <select
                       value={t.department_id ?? ''}
@@ -297,7 +307,7 @@ export default function CampaignTypesClient({ tenantId }: Props) {
                       <option value="">— none (visible to all, routes nowhere) —</option>
                       {departments.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
                     </select>
-                    {!t.department_id && <span className="ml-2 text-amber-700">leads of this type can never be auto-assigned</span>}
+                    {!t.department_id && <span className="ml-2 text-on-status-due-container">leads of this type can never be auto-assigned</span>}
                   </td>
                   <td className="px-3 py-2">
                     <input
@@ -307,6 +317,7 @@ export default function CampaignTypesClient({ tenantId }: Props) {
                       title={t.is_default ? 'The default type cannot be deactivated' : undefined}
                       onChange={(e) => void act(() => campaignTypesApi.update(tenantId, t.id, { is_active: e.target.checked }))}
                       aria-label={`${t.label} active`}
+                      className="h-5 w-5 accent-primary"
                     />
                   </td>
                 </tr>
@@ -314,7 +325,7 @@ export default function CampaignTypesClient({ tenantId }: Props) {
             </tbody>
           </table>
         </div>
-        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3">
+        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-outline-variant bg-surface-container-low p-3">
           <input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value.toLowerCase())} placeholder="key, e.g. franchise" aria-label="New type key" className={input} />
           <input value={newTypeLabel} onChange={(e) => setNewTypeLabel(e.target.value)} placeholder="Label, e.g. Franchise" aria-label="New type label" className={input} />
           <select value={newTypeDept} onChange={(e) => setNewTypeDept(e.target.value)} aria-label="New type department" className={input}>
@@ -323,6 +334,7 @@ export default function CampaignTypesClient({ tenantId }: Props) {
           </select>
           <Button
             variant="secondary"
+            className="min-h-[2.75rem] sm:min-h-0"
             onClick={addType}
             disabled={busy || !/^[a-z][a-z0-9_]{1,79}$/.test(newTypeName) || !newTypeLabel.trim() || !newTypeDept}
           >
@@ -330,6 +342,8 @@ export default function CampaignTypesClient({ tenantId }: Props) {
           </Button>
         </div>
       </section>
-    </div>
+      </div>
+      </PageBody>
+    </>
   );
 }

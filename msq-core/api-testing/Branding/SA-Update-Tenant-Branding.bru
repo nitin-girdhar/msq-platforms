@@ -1,0 +1,39 @@
+meta {
+  name: SA - Update Tenant Branding (names, words, menu, regional, lock)
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/sa/tenants/{{tenantId}}/branding
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "terms": { "lead": "Enquiry", "leads": "Enquiries" },
+    "nav_overrides": { "leads": { "label": "Enquiries" } },
+    "locale_config": {
+      "date_format": "DD MMM YYYY",
+      "time_format": "24h",
+      "currency": "AED",
+      "number_grouping": "international",
+      "week_start": "sunday",
+      "fiscal_year_start": 1,
+      "timezone": "Asia/Dubai"
+    },
+    "product_names": { "brand": { "name": "Acme" } }
+  }
+}
+
+docs {
+  Super Admin only (rank-gated). Besides theme + theme_locked + product_names this now also
+  sets terms, nav_overrides and locale_config for the chosen tenant. locale_config is a
+  whitelisted object (422 on an unknown key/value; timezone must be a real IANA id) and is
+  stored as the deviation from the platform default. branding_version bumps on every write.
+}

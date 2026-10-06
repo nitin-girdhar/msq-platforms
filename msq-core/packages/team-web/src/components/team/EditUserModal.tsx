@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
 import { RANKS } from '@platform/authz';
 import {
-  Modal,
+  Sheet,
   UserPicker,
   DepartmentSelect,
   OrgAssignmentsField,
@@ -369,7 +369,7 @@ export default function EditUserModal({
       <div className="flex gap-2">
         {canSetPassword && (
           <button type="button" onClick={() => setResetOpen(true)} disabled={locked}
-            className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60">
+            className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2 min-h-[2.75rem] sm:min-h-0 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-60">
             Set password
           </button>
         )}
@@ -380,8 +380,8 @@ export default function EditUserModal({
             disabled={locked || deactivating}
             className={
               user.is_active
-                ? 'rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60'
-                : 'rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60'
+                ? 'rounded-xl border border-status-overdue/30 bg-surface-container-lowest px-3 py-2 min-h-[2.75rem] sm:min-h-0 text-xs font-semibold text-on-status-overdue-container hover:bg-status-overdue-container disabled:cursor-not-allowed disabled:opacity-60'
+                : 'rounded-xl border border-status-success/30 bg-surface-container-lowest px-3 py-2 min-h-[2.75rem] sm:min-h-0 text-xs font-semibold text-on-status-success-container hover:bg-status-success-container disabled:cursor-not-allowed disabled:opacity-60'
             }
           >
             {user.is_active ? 'Deactivate' : 'Reactivate'}
@@ -390,13 +390,13 @@ export default function EditUserModal({
       </div>
       <div className="flex gap-2">
         <button type="button" onClick={handleClose} disabled={locked}
-          className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60">
+          className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2 min-h-[2.75rem] sm:min-h-0 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-60">
           Cancel
         </button>
         <button type="submit" form={FORM_ID} disabled={locked} aria-busy={pending}
-          className="inline-flex items-center gap-2 rounded-xl bg-[#0b6cbf] px-3 py-2 text-xs font-semibold text-white hover:bg-[#095699] disabled:cursor-not-allowed disabled:opacity-70">
+          className="inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 min-h-[2.75rem] sm:min-h-0 text-xs font-semibold text-on-primary hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-70">
           {pending && (
-            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-surface-container-lowest/40 border-t-white" aria-hidden />
           )}
           Save changes
         </button>
@@ -406,15 +406,15 @@ export default function EditUserModal({
 
   return (
     <>
-      <Modal open={open} onClose={handleClose} title={`Edit ${user.name || user.email}`} locked={locked} maxWidth="max-w-2xl" footer={footer}>
+      <Sheet open={open} onClose={handleClose} title={`Edit ${user.name || user.email}`} locked={locked} maxWidth="sm:max-w-2xl" footer={footer}>
         <form id={FORM_ID} onSubmit={handleSave} className="flex flex-col gap-4" noValidate>
           {error && (
-            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">
               {error}
             </div>
           )}
           {hrNotice && (
-            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div role="alert" className="rounded-xl border border-status-due/30 bg-status-due-container px-3 py-2 text-xs text-on-status-due-container">
               {hrNotice}
             </div>
           )}
@@ -422,54 +422,54 @@ export default function EditUserModal({
           {/* Shown for reference only — the login identity is not editable here,
               and the PATCH below never carries it. */}
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="eu-email" className="text-xs font-semibold text-[#0F172A]">Email</label>
+            <label htmlFor="eu-email" className="text-xs font-semibold text-on-surface">Email</label>
             <input
               id="eu-email"
               type="email"
               value={user.email}
               readOnly
               disabled
-              className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-sm text-[#64748B] shadow-sm disabled:cursor-not-allowed"
+              className="rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2.5 text-sm text-on-surface-variant shadow-sm disabled:cursor-not-allowed"
             />
-            <p className="text-[11px] text-[#64748B]">Email can&apos;t be changed.</p>
+            <p className="text-[0.6875rem] text-on-surface-variant">Email can&apos;t be changed.</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="eu-first-name" className="text-xs font-semibold text-[#0F172A]">First name</label>
+              <label htmlFor="eu-first-name" className="text-xs font-semibold text-on-surface">First name</label>
               <input
                 id="eu-first-name"
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 disabled={locked}
-                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+                className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="eu-last-name" className="text-xs font-semibold text-[#0F172A]">Last name</label>
+              <label htmlFor="eu-last-name" className="text-xs font-semibold text-on-surface">Last name</label>
               <input
                 id="eu-last-name"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 disabled={locked}
-                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+                className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="eu-middle-name" className="text-xs font-semibold text-[#0F172A]">Middle name</label>
+              <label htmlFor="eu-middle-name" className="text-xs font-semibold text-on-surface">Middle name</label>
               <input
                 id="eu-middle-name"
                 value={middleName}
                 onChange={(e) => setMiddleName(e.target.value)}
                 disabled={locked}
-                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+                className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="eu-mobile" className="text-xs font-semibold text-[#0F172A]">Mobile</label>
+              <label htmlFor="eu-mobile" className="text-xs font-semibold text-on-surface">Mobile</label>
               <input
                 id="eu-mobile"
                 type="tel"
@@ -477,25 +477,25 @@ export default function EditUserModal({
                 onChange={(e) => { setMobile(e.target.value); setMobileError(null); }}
                 disabled={locked}
                 placeholder="+91 98XXXXXXXX"
-                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+                className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
               />
-              {mobileError && <p className="text-[11px] text-red-600">{mobileError}</p>}
+              {mobileError && <p className="text-[0.6875rem] text-on-status-overdue-container">{mobileError}</p>}
             </div>
           </div>
 
           {(rolesError || mappingsError) && (
-            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div role="alert" className="rounded-xl border border-status-due/30 bg-status-due-container px-3 py-2 text-xs text-on-status-due-container">
               {rolesError ?? mappingsError}
             </div>
           )}
 
           {branchesFailed && (
-            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div role="alert" className="rounded-xl border border-status-due/30 bg-status-due-container px-3 py-2 text-xs text-on-status-due-container">
               Branches could not be loaded — only this user&apos;s current branch is available.
             </div>
           )}
 
-          <hr className="border-0 border-t border-[#F1F5F9]" />
+          <hr className="border-0 border-t border-surface-container" />
 
           <DepartmentSelect
             departmentId={a.departmentId}
@@ -506,11 +506,11 @@ export default function EditUserModal({
             disabled={locked || isSelf}
           />
           {isSelf && (
-            <p className="-mt-2 text-[11px] text-[#64748B]">You can&apos;t change your own role.</p>
+            <p className="-mt-2 text-[0.6875rem] text-on-surface-variant">You can&apos;t change your own role.</p>
           )}
 
           {existing === null && !mappingsError ? (
-            <p className="text-[11px] text-[#64748B]">Loading branches…</p>
+            <p className="text-[0.6875rem] text-on-surface-variant">Loading branches…</p>
           ) : (
             <OrgAssignmentsField
               branches={branchOptions}
@@ -529,12 +529,12 @@ export default function EditUserModal({
           )}
 
           {leavingHomeBranch && (
-            <div className="flex flex-col gap-2 rounded-xl border border-l-4 border-[#93C5FD] border-l-[#0b6cbf] bg-[#EFF6FF] px-3 py-2.5">
-              <p className="text-[12.5px] font-medium leading-snug text-[#1E3A8A]">
+            <div className="flex flex-col gap-2 rounded-xl border border-l-4 border-primary-fixed-dim border-l-primary bg-primary-fixed px-3 py-2.5">
+              <p className="text-[0.78125rem] font-medium leading-snug text-primary">
                 Home branch is moving and they are leaving their current one. Their open leads there need a
                 new owner.
               </p>
-              <label className="text-xs font-bold text-[#0F172A]">Reassign their leads to</label>
+              <label className="text-xs font-bold text-on-surface">Reassign their leads to</label>
               <UserPicker
                 value={reassignLeadsTo}
                 onChange={setReassignLeadsTo}
@@ -545,7 +545,7 @@ export default function EditUserModal({
                 placeholder={lmsUsersLoading ? 'Loading…' : 'Select a user…'}
               />
               {!lmsUsersLoading && leadCandidates.length === 0 && (
-                <p className="text-[11px] text-[#1E3A8A]">
+                <p className="text-[0.6875rem] text-primary">
                   No one else in this branch works on leads, so these leads will be left unassigned
                   and can be picked up later.
                 </p>
@@ -563,42 +563,42 @@ export default function EditUserModal({
           />
 
           {(homeMoved || roleChanged) && (
-            <p className="rounded-lg border border-[#FDE68A] bg-[#FFFBEB] px-2.5 py-1.5 text-[11.5px] leading-snug text-[#92400E]">
+            <p className="rounded-lg border border-status-due/30 bg-status-due-container px-2.5 py-1.5 text-[0.71875rem] leading-snug text-on-status-due-container">
               Changing role or home branch signs this user out of all devices.
             </p>
           )}
 
           {canNotify && (
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-on-surface">
               <input
                 type="checkbox"
                 checked={sendEmailNotification}
                 onChange={(e) => setSendEmailNotification(e.target.checked)}
                 disabled={locked}
-                className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+                className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary/20"
               />
               <span>Email the user if their branch access changes</span>
             </label>
           )}
 
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-on-surface">
             <input
               type="checkbox"
               checked={forcePasswordChange}
               onChange={(e) => setForcePasswordChange(e.target.checked)}
               disabled={locked}
-              className="h-4 w-4 rounded border-[#E2E8F0] text-[#0b6cbf] focus:ring-[#0b6cbf]/20"
+              className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary/20"
             />
             <span>Require password change on next login</span>
           </label>
 
           {deactivating && leadProduct && (
-            <div ref={deactivatePanelRef} className="flex flex-col gap-2 rounded-xl border border-l-4 border-red-300 border-l-red-600 bg-[#FEF2F2] px-3 py-2.5">
-              <p className="text-[12.5px] font-medium leading-snug text-red-900">
+            <div ref={deactivatePanelRef} className="flex flex-col gap-2 rounded-xl border border-l-4 border-status-overdue/30 border-l-status-overdue bg-status-overdue-container px-3 py-2.5">
+              <p className="text-[0.78125rem] font-medium leading-snug text-on-status-overdue-container">
                 Deactivating removes their access immediately. Their open leads in {user.org_name || 'their branch'}{' '}
                 need a new owner.
               </p>
-              <label className="text-xs font-bold text-[#0F172A]">Reassign their leads to</label>
+              <label className="text-xs font-bold text-on-surface">Reassign their leads to</label>
               <UserPicker
                 value={deactivateReassignTo}
                 onChange={setDeactivateReassignTo}
@@ -609,7 +609,7 @@ export default function EditUserModal({
                 placeholder={lmsUsersLoading ? 'Loading…' : 'Select a user…'}
               />
               {!lmsUsersLoading && leadCandidates.length === 0 && (
-                <p className="text-[11px] text-[#334155]">
+                <p className="text-[0.6875rem] text-on-surface-variant">
                   No one else in this branch works on leads, so these leads will be left unassigned
                   and can be picked up later.
                 </p>
@@ -619,7 +619,7 @@ export default function EditUserModal({
                   type="button"
                   onClick={() => { setDeactivating(false); setDeactivateReassignTo(''); }}
                   disabled={locked}
-                  className="rounded-lg border border-[#CBD5E1] bg-white px-3 py-1.5 text-xs font-semibold text-[#1E293B] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-lg border border-outline bg-surface-container-lowest px-3 py-1.5 text-xs font-semibold text-on-surface hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Cancel
                 </button>
@@ -627,7 +627,7 @@ export default function EditUserModal({
                   type="button"
                   onClick={confirmDeactivate}
                   disabled={locked || lmsUsersLoading || (leadCandidates.length > 0 && !deactivateReassignTo)}
-                  className="rounded-lg border border-red-300 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:border-red-300 disabled:bg-red-300 disabled:text-white"
+                  className="rounded-lg border border-status-overdue/30 bg-status-overdue px-3 py-1.5 text-xs font-semibold text-on-primary hover:bg-status-overdue disabled:cursor-not-allowed disabled:border-status-overdue/30 disabled:bg-status-overdue disabled:text-on-primary"
                 >
                   Confirm deactivation
                 </button>
@@ -635,7 +635,7 @@ export default function EditUserModal({
             </div>
           )}
         </form>
-      </Modal>
+      </Sheet>
 
       {canSetPassword && (
         <ResetPasswordModal

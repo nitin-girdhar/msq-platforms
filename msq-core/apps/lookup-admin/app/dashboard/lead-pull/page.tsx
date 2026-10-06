@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { getServerSession, GATEWAY_URL } from '@/src/lib/server-session';
-import { getSelectedTenantId } from '@/src/lib/tenant-scope';
+import { getSelectedTenantId, getSelectedTenantName } from '@/src/lib/tenant-scope';
 import LeadPullClient from '@/components/lead-pull/LeadPullClient';
 import type { MetaPageOption } from '@/src/lib/api/client';
 
@@ -24,10 +24,10 @@ export default async function LeadPullPage() {
   if (!selectedTenantId) {
     return (
       <div className="space-y-4 p-4 sm:p-6">
-        <Link href="/dashboard/m/lms" className="text-xs font-semibold text-[#0b6cbf] hover:underline">
+        <Link href="/dashboard/m/lms" className="text-xs font-semibold text-primary hover:underline">
           ← Back to LMS
         </Link>
-        <p className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-sm text-[#64748B]">
+        <p className="rounded-xl border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant">
           Pick a tenant in the top bar to pull Meta leads.
         </p>
       </div>
@@ -79,6 +79,7 @@ export default async function LeadPullPage() {
     <LeadPullClient
       key={selectedTenantId}
       tenantId={selectedTenantId}
+      tenantName={await getSelectedTenantName()}
       pages={pages}
       pagesUnavailable={pagesUnavailable}
       initialRunId={initialRunId}

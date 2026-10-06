@@ -37,11 +37,6 @@ export default async function ChangePasswordPage({ searchParams }: ChangePasswor
           ? 'Your password was reset by an administrator. Choose a new one to continue.'
           : 'Update the password for your account.'
       }
-      footer={
-        forced ? undefined : (
-          <a href={destination} className="font-semibold text-primary hover:underline">← Cancel and go back</a>
-        )
-      }
     >
       <ChangePasswordForm forced={forced} destination={destination} />
     </AuthCard>

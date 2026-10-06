@@ -2544,7 +2544,7 @@ BEGIN
   RETURN NEW;
 END; $$;
 
--- Per-org running task number (schema 1.67.0). SECURITY DEFINER: app_user has no
+-- Per-org running task number (schema 1.68.0). SECURITY DEFINER: app_user has no
 -- access to task.task_counters. The upsert row-locks the org's counter, so two
 -- concurrent inserts into one org serialise and can never draw the same number.
 -- Runs after trg_00_tasks_set_org_id, so NEW.org_id is already populated. A
@@ -2933,6 +2933,33 @@ CREATE TRIGGER trg_campaign_type_rules_soft_delete
 
 -- updated_at on the 1.51.0 ext.* discovery caches and the lead inbox. No soft
 -- delete, same as ext.meta_campaigns: cached facts about Meta, not our records.
+-- ── scratch.meta_pull_runs -> ext.meta_pull_run_history (1.70.0) ─────────
+-- Keeps a summary row per run, because a new pull deletes the tenant's previous run. SECURITY
+-- DEFINER so it never depends on which login (or whether a tenant is pinned) wrote the run, and
+-- the history table is deliberately NOT FORCE-RLS for the same reason. Fires only when the
+-- run's outcome columns change, not on heartbeats.
+CREATE OR REPLACE FUNCTION scratch.fn_snapshot_pull_run() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $fn$
+BEGIN
+  INSERT INTO ext.meta_pull_run_history
+    (run_id, tenant_id, trigger_kind, status, filters, counts, created_by,
+     started_at, finished_at, applied_at, discarded_at, error_text, created_at, updated_at)
+  VALUES
+    (NEW.id, NEW.tenant_id, NEW.trigger_kind, NEW.status, NEW.filters, NEW.counts, NEW.created_by,
+     NEW.started_at, NEW.finished_at, NEW.applied_at, NEW.discarded_at, NEW.error_text, NEW.created_at, NOW())
+  ON CONFLICT (run_id) DO UPDATE
+    SET status = EXCLUDED.status, counts = EXCLUDED.counts, started_at = EXCLUDED.started_at,
+        finished_at = EXCLUDED.finished_at, applied_at = EXCLUDED.applied_at,
+        discarded_at = EXCLUDED.discarded_at, error_text = EXCLUDED.error_text, updated_at = NOW();
+  RETURN NEW;
+END
+$fn$;
+
+DROP TRIGGER IF EXISTS trg_meta_pull_runs_history ON scratch.meta_pull_runs;
+CREATE TRIGGER trg_meta_pull_runs_history
+  AFTER INSERT OR UPDATE OF status, counts, started_at, finished_at, applied_at, discarded_at, error_text
+  ON scratch.meta_pull_runs FOR EACH ROW EXECUTE FUNCTION scratch.fn_snapshot_pull_run();
+
 DROP TRIGGER IF EXISTS trg_meta_ad_accounts_updated_at ON ext.meta_ad_accounts;
 CREATE TRIGGER trg_meta_ad_accounts_updated_at
   BEFORE UPDATE ON ext.meta_ad_accounts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
@@ -3148,6 +3175,20 @@ CREATE TRIGGER trg_marketing_leads_sync_campaign_type
 DROP TRIGGER IF EXISTS trg_tenant_branding_updated_at ON entity.tenant_branding;
 CREATE TRIGGER trg_tenant_branding_updated_at
   BEFORE UPDATE ON entity.tenant_branding FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- branding_version: monotonically bumped on every change (any role, any column),
+-- so a cache that keys on it can never serve a stale brand. Application roles
+-- have no column grant on it (07) — only this trigger moves it.
+CREATE OR REPLACE FUNCTION entity.bump_tenant_branding_version()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.branding_version := COALESCE(OLD.branding_version, 0) + 1;
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS trg_tenant_branding_version ON entity.tenant_branding;
+CREATE TRIGGER trg_tenant_branding_version
+  BEFORE UPDATE ON entity.tenant_branding FOR EACH ROW EXECUTE FUNCTION entity.bump_tenant_branding_version();
 
 DROP TRIGGER IF EXISTS trg_user_preferences_updated_at ON iam.user_preferences;
 CREATE TRIGGER trg_user_preferences_updated_at

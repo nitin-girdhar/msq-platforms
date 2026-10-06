@@ -5,7 +5,7 @@
  * --color-* custom properties that theme.css / <ThemeStyle> put on :root.
  */
 .ag-theme-alpine {
-  --ag-font-size: 13px;
+  --ag-font-size: 0.8125rem;
   --ag-font-family: var(--font-sans);
   --ag-foreground-color: var(--color-on-surface);
   --ag-data-color: var(--color-on-surface);
@@ -30,7 +30,7 @@
 
 .ag-theme-alpine .ag-header-cell-text {
   font-weight: 600;
-  font-size: 11px;
+  font-size: 0.6875rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--color-on-surface-variant);
@@ -46,10 +46,10 @@
 
 .ag-theme-alpine .ag-paging-panel {
   border-top: 1px solid var(--color-outline-variant);
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--color-on-surface-variant);
   background: var(--color-surface-container-low);
-  padding: 8px 16px;
+  padding: 0.5rem 1rem;
 }
 
 .ag-theme-alpine .ag-body-viewport,

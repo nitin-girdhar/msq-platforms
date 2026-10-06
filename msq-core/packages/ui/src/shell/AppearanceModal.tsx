@@ -17,7 +17,7 @@ interface Props {
  * The user's own Appearance override (UserMenu → Appearance). Shows the
  * company theme until the user picks something; "Use company theme" deletes
  * the override. While Super Admin has locked the tenant's theme, colour and
- * font are read-only and only the mode remains a personal choice (the server
+ * font are read-only and only the mode and text size remain personal (the server
  * enforces the same rule when it resolves the theme).
  *
  * Saved themes are rendered server-side (no flash), so a save reloads the
@@ -41,12 +41,15 @@ export default function AppearanceModal({ open, onClose }: Props) {
 
   const company = branding.theme;
   // Locked: the company colours/font are what renders, whatever is stored.
-  const shown = resolveTheme(company, branding.locked ? { mode: draft.mode ?? null } : draft);
+  // Mode and text size are personal needs and stay editable under the lock.
+  const personalOnly: ThemeChoice = { mode: draft.mode ?? null, font_size: draft.font_size ?? null };
+  const shown = resolveTheme(company, branding.locked ? personalOnly : draft);
   const display: ThemeChoice = {
     preset: shown.preset,
     seed_hex: shown.preset ? null : shown.seed_hex,
     font: shown.font,
     mode: draft.mode ?? company.mode,
+    font_size: shown.font_size,
   };
   const onPick = (next: ThemeChoice) => {
     setDraft((d) => {
@@ -57,14 +60,16 @@ export default function AppearanceModal({ open, onClose }: Props) {
       }
       if (next.font !== display.font) out.font = next.font ?? null;
       if (next.mode !== display.mode) out.mode = next.mode ?? null;
+      if (next.font_size !== display.font_size) out.font_size = next.font_size ?? null;
       return out;
     });
   };
 
-  // Live preview of colour + font; dropped on close.
+  // Live preview of colour + font + text size; dropped on close. Under the lock
+  // only the text size is previewed (colours/font are the company's).
   useEffect(() => {
-    if (!open || branding.locked) return;
-    applyThemePreview(resolveTheme(company, draft));
+    if (!open) return;
+    applyThemePreview(resolveTheme(company, branding.locked ? { font_size: draft.font_size ?? null } : draft));
     return () => applyThemePreview(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- company is stable per page
   }, [open, draft, branding.locked]);
@@ -73,9 +78,13 @@ export default function AppearanceModal({ open, onClose }: Props) {
     setSaving(true);
     setError(null);
     try {
-      // Locked: only the mode can change here; the stored colour/font are
-      // kept so unlocking later restores the user's own choice.
-      await appearance.save(branding.locked ? { ...(branding.personal ?? {}), mode: draft.mode ?? null } : draft);
+      // Locked: only mode and text size can change here; the stored colour/font
+      // are kept so unlocking later restores the user's own choice.
+      await appearance.save(
+        branding.locked
+          ? { ...(branding.personal ?? {}), mode: draft.mode ?? null, font_size: draft.font_size ?? null }
+          : draft,
+      );
       window.location.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save your appearance settings.');
@@ -101,7 +110,7 @@ export default function AppearanceModal({ open, onClose }: Props) {
       onClose={onClose}
       locked={saving}
       title="Appearance"
-      subtitle="Personalise colours and font for your account on this platform."
+      subtitle="Personalise colours, font and text size for your account on this platform."
       maxWidth="max-w-xl"
       footer={
         <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -140,8 +149,9 @@ export default function AppearanceModal({ open, onClose }: Props) {
           value={display}
           onChange={onPick}
           locked={branding.locked}
-          lockedReason="Your company's colours and font are set by the platform admin. You can still choose light or dark."
+          lockedReason="Your company's colours and font are set by the platform admin. You can still choose light or dark and your text size."
           showMode
+          showFontSize
           modeHint="Dark mode is applied as each product finishes its dark theme."
           disabled={saving}
         />

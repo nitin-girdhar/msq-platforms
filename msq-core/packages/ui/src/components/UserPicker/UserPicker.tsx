@@ -183,12 +183,12 @@ export default function UserPicker({
                       {u.name || u.email}
                     </span>
                     {u.name && (
-                      <span className="block truncate text-[11px] text-on-surface-variant">
+                      <span className="block truncate text-[0.6875rem] text-on-surface-variant">
                         {u.email}
                       </span>
                     )}
                     {u.role_label && (
-                      <span className="block truncate text-[11px] text-on-surface-variant">
+                      <span className="block truncate text-[0.6875rem] text-on-surface-variant">
                         {u.role_label}
                       </span>
                     )}

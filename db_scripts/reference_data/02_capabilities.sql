@@ -456,7 +456,7 @@ INSERT INTO iam.capabilities (key, kind, parent_key, label, description, sort_or
 ('admin.branding.view',   'operation', 'admin.branding', 'View branding',
  'See the company branding settings.', 1),
 ('admin.branding.manage', 'operation', 'admin.branding', 'Manage branding',
- 'Change colours and font, terms and menu labels.', 2),
+ 'Change colours, font and the default light/dark mode.', 2),
 
 -- ── SUPERADMIN — the PLATFORM OPERATOR console (lookup-admin) ───────
 -- Never assignable to a tenant role: admin-service's putGrants refuses it below

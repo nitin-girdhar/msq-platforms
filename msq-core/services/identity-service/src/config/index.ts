@@ -96,6 +96,9 @@ export const config = {
   // MUST resolve to the same directory — see @platform/blob-storage.
   blobStorageDriver: process.env['BLOB_STORAGE_DRIVER'] ?? 'local',
   blobStorageDir: process.env['BLOB_STORAGE_DIR'] ?? '/data/blobs',
+  // Accept keys written before the tenant-first layout (`avatar/…`, `brand/…`).
+  // Turn off ('false') in an environment once migrate-blob-layout has moved them.
+  blobAllowLegacyKeys: (process.env['BLOB_ALLOW_LEGACY_KEYS'] ?? 'true') !== 'false',
   // Decoded avatar byte ceiling (default 2 MiB), matched to hr-service's punch
   // photo cap so an enrolled avatar is always a valid face-verification probe.
   photoMaxBytes: parseInt(process.env['PHOTO_MAX_BYTES'] ?? String(2 * 1024 * 1024), 10),

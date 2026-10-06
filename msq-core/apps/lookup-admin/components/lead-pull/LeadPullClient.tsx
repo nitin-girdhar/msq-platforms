@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, type ApiRequestError, type SearchableOption } from '@platform/ui-kit';
+import { Alert, Button, Modal, PageBody, PageHeader, type ApiRequestError, type SearchableOption } from '@platform/ui-kit';
 import {
   leadPull,
   orgs as orgsApi,
@@ -18,10 +18,15 @@ import PullFilterForm from './PullFilterForm';
 import RunProgress from './RunProgress';
 import DeltaSummary from './DeltaSummary';
 import StagedLeadsGrid from './StagedLeadsGrid';
+import PullHistoryModal from './PullHistoryModal';
 import MappingFormModal from '@/components/meta-mappings/MappingFormModal';
+import MetaTabs from '@/components/meta-nav/MetaTabs';
 
 interface Props {
   tenantId: string;
+  /** Named in the header so a login-time tenant reset is visible here, not
+   *  mistaken for an edit that did not save. See getSelectedTenantName(). */
+  tenantName: string | undefined;
   pages: MetaPageOption[];
   pagesUnavailable: boolean;
   /** The tenant's current run, fetched server-side, so the screen reopens it. */
@@ -31,9 +36,9 @@ interface Props {
 // Statuses the poller stops on. `apply_queued` and `applying` keep polling:
 // Apply runs on the server's worker, and the run status is the only way this
 // screen learns when it finishes.
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'applied']);
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'applied', 'discarded']);
 
-export default function LeadPullClient({ tenantId, pages, pagesUnavailable, initialRunId }: Props) {
+export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnavailable, initialRunId }: Props) {
   const [runId, setRunId] = useState<string | null>(initialRunId);
   const [run, setRun] = useState<PullRunStatus | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -58,6 +63,10 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
   const [mapPageId, setMapPageId] = useState<string | null>(null);
   const [remapNotice, setRemapNotice] = useState<string | null>(null);
   const [scheduledError, setScheduledError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -221,44 +230,58 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
       })
       .catch((err: unknown) => setScheduledError(err instanceof Error ? err.message : 'Could not load the scheduled run.'));
   }, [tenantId]);
+  const handleDiscard = useCallback(() => {
+    if (!runId) return;
+    setDiscarding(true);
+    setDiscardError(null);
+    leadPull.discard(tenantId, runId)
+      .then(() => {
+        setDiscardOpen(false);
+        setGrid(null);
+        setPollNonce((n) => n + 1);
+      })
+      .catch((err: unknown) => setDiscardError(err instanceof Error ? err.message : 'Could not discard the batch.'))
+      .finally(() => setDiscarding(false));
+  }, [tenantId, runId]);
+
+  const canReview = run?.status === 'completed' || (run?.status === 'applied' && run.importable_total > 0);
+  const canDiscard = run?.status === 'completed' || run?.status === 'failed';
   const applyInFlight = queueingApply || run?.status === 'apply_queued' || run?.status === 'applying';
   const runIsLive = run ? !TERMINAL_STATUSES.has(run.status) : creating;
   // The last Apply pass's tallies, written onto the run by the server's worker.
   const applyResult: PullApplyResult | null = run?.status === 'applied' ? (run.counts.apply ?? null) : null;
 
   return (
-    <div className="space-y-4 p-4 sm:p-6">
-      <div>
-        <Link href="/dashboard/m/lms" className="text-xs font-semibold text-[#0b6cbf] hover:underline">
-          ← Back to LMS
-        </Link>
-        <h1 className="mt-1 text-2xl font-bold text-[#0F172A]">Meta Lead Pull</h1>
-        <p className="mt-1 text-xs text-[#64748B]">
-          Backfill leads the live webhook missed. Choose what to pull and from when, review what is genuinely missing
-          from LMS — and which branch and team each lead will go to — and apply only that. A scheduled catch-up run
-          also stages the last few days automatically; it is never applied without you.
-        </p>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Button variant="secondary" onClick={openScheduledRun}>Open latest scheduled catch-up</Button>
-          {scheduledError && <span className="text-xs text-[#64748B]">{scheduledError}</span>}
-        </div>
-      </div>
+    <>
+      <PageHeader
+        title="Meta Lead Ingestion & Pull Engine"
+        scope={tenantName}
+        subtitle="Backfill leads the live webhook missed, review what is genuinely missing from LMS and where each lead will go, then apply only that."
+        tabs={<MetaTabs />}
+        actions={
+          <>
+            <Button onClick={() => setHistoryOpen(true)}>Pull History Logs</Button>
+            <Button onClick={openScheduledRun}>Open latest scheduled catch-up</Button>
+          </>
+        }
+      />
+      <PageBody>
+      <p className="max-w-3xl text-xs text-on-surface-variant">
+        A scheduled catch-up run also stages the last few days automatically; it is never applied without you.
+        {scheduledError && <span className="ml-2 font-medium text-on-surface">{scheduledError}</span>}
+      </p>
 
       {run?.trigger_kind === 'scheduled' && (
-        <div role="status" className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+        <div role="status" className="rounded-xl border border-status-info/30 bg-status-info-container px-3 py-2 text-xs text-primary">
           You are looking at a <strong>scheduled catch-up</strong> run (last few days, every mapped page). Review it and
           press Apply to import what the webhook missed.
         </div>
       )}
 
-      {createError && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {createError}
-        </div>
-      )}
+      {createError && <Alert tone="error">{createError}</Alert>}
 
       {conflict && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-status-due/30 bg-status-due-container px-4 py-3 text-sm text-on-status-due-container">
           <span>
             A pull is already <strong>{conflict.status}</strong> for this tenant. Wait for it to finish, or jump to it below.
           </span>
@@ -271,7 +294,7 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
       {/* A new Pull deletes this tenant's previous run, staged rows and all. Say
           so before an admin discards importable leads they meant to apply. */}
       {run?.status === 'completed' && run.importable > 0 && (
-        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <div role="status" className="rounded-xl border border-status-due/30 bg-status-due-container px-3 py-2 text-xs text-on-status-due-container">
           This run has {run.importable.toLocaleString()} importable row{run.importable === 1 ? '' : 's'} not yet
           applied. Starting a new pull discards them — apply first if you want them.
         </div>
@@ -286,11 +309,7 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
         onSubmit={startRun}
       />
 
-      {pollError && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {pollError}
-        </div>
-      )}
+      {pollError && <Alert tone="error">{pollError}</Alert>}
 
       {run && <RunProgress run={run} onStartAnother={startAnother} />}
 
@@ -305,34 +324,46 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
       )}
 
       {remapNotice && (
-        <div role="status" className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-xs text-[#334155]">
+        <div role="status" className="rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2 text-xs text-on-surface-variant">
           {remapNotice}
         </div>
       )}
 
-      {run && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#E2E8F0] bg-white p-4">
-          <Button variant="primary" onClick={handleApply} disabled={!canApply || applyInFlight} aria-busy={applyInFlight}>
-            {applyInFlight ? 'Applying…' : run.status === 'applied' && run.importable === 0 ? 'Applied' : 'Apply'}
+      {run?.status === 'discarded' && (
+        <div role="status" className="rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2 text-xs text-on-surface-variant">
+          This batch was discarded. Nothing was imported and the staged leads were deleted. Start a new pull to continue.
+        </div>
+      )}
+
+      {run && run.status !== 'discarded' && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-outline-variant bg-surface-container-lowest p-4">
+          <Button variant="primary" onClick={handleApply} disabled={!canApply || applyInFlight || run.importable === 0} aria-busy={applyInFlight}>
+            {applyInFlight
+              ? 'Applying…'
+              : run.status === 'applied' && run.importable_total === 0
+                ? 'Applied'
+                : `Apply Selected Leads (${run.importable.toLocaleString()})`}
           </Button>
-          <p className="text-xs text-[#64748B]">
-            Enabled only once the pull has completed, and runs in the background — you can leave this page while it
-            applies. Imports {run.importable.toLocaleString()} row
-            {run.importable === 1 ? '' : 's'} — new leads plus phone/email duplicates. Duplicates ARE imported on
-            purpose: the canonical write path supersedes on a phone match or returns the existing lead on an email
-            match, and either way it writes the tracking row that stops this same lead being re-fetched forever.
+          {canReview && (
+            <Button onClick={() => openVerdictGrid(undefined, 'Staged Leads Review')}>Review staged leads</Button>
+          )}
+          {canDiscard && (
+            <Button variant="danger" onClick={() => { setDiscardError(null); setDiscardOpen(true); }}>Discard Batch</Button>
+          )}
+          <p className="min-w-0 flex-1 text-xs text-on-surface-variant">
+            {run.importable.toLocaleString()} of {run.importable_total.toLocaleString()} importable row
+            {run.importable_total === 1 ? '' : 's'} ticked — new leads plus phone/email duplicates. Duplicates ARE imported on
+            purpose: the canonical write path supersedes on a phone match or returns the existing lead on an email match, and
+            either way it writes the tracking row that stops this same lead being re-fetched forever. Unticked rows stay staged
+            for a later Apply. Runs in the background — you can leave this page while it applies.
           </p>
         </div>
       )}
 
-      {applyError && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {applyError}
-        </div>
-      )}
+      {applyError && <Alert tone="error">{applyError}</Alert>}
 
       {applyResult && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+        <div className="rounded-xl border border-status-success/30 bg-status-success-container px-4 py-3 text-sm text-on-status-success-container">
           Apply finished — {applyResult.applied} applied, {applyResult.already_synced} already synced,{' '}
           {applyResult.skipped} skipped, {applyResult.failed} failed (of {applyResult.attempted} attempted).
         </div>
@@ -346,9 +377,36 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
           title={grid.title}
           pageNames={pageNames}
           orgNames={orgNames}
+          canSelect={canReview}
+          onSelectionChanged={() => setPollNonce((n) => n + 1)}
           onClose={() => setGrid(null)}
         />
       )}
+
+      {historyOpen && <PullHistoryModal tenantId={tenantId} onClose={() => setHistoryOpen(false)} />}
+
+      <Modal open={discardOpen} onClose={() => setDiscardOpen(false)} title="Discard this batch?" locked={discarding}>
+        <p className="text-sm text-on-surface-variant">
+          The staged leads are deleted and nothing is imported. This cannot be undone — a new pull is needed to stage them again.
+        </p>
+        {discardError && <Alert tone="error">{discardError}</Alert>}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button onClick={() => setDiscardOpen(false)} disabled={discarding}>Keep batch</Button>
+          <Button variant="primary" onClick={handleDiscard} disabled={discarding} aria-busy={discarding}>
+            {discarding ? 'Discarding…' : 'Discard Batch'}
+          </Button>
+        </div>
+      </Modal>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <Link href="/dashboard/meta-campaigns" className="rounded-lg border border-outline-variant px-3 py-1.5 font-medium text-on-surface-variant hover:bg-surface-container">
+          ← Campaign Mapping &amp; Rules
+        </Link>
+        <Link href="/dashboard/meta-lead-inbox" className="rounded-lg bg-primary px-3 py-1.5 font-medium text-on-primary hover:bg-primary/90">
+          Open Leads Inbox (unmapped / errors) →
+        </Link>
+      </div>
+      </PageBody>
 
       <MappingFormModal
         open={mapPageId !== null}
@@ -362,6 +420,6 @@ export default function LeadPullClient({ tenantId, pages, pagesUnavailable, init
         initialPageId={mapPageId ?? undefined}
         onSaved={handleMappingSaved}
       />
-    </div>
+    </>
   );
 }

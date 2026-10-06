@@ -29,7 +29,7 @@ import {
 import { canCreateUser } from '../../lib/permissions';
 import type { TeamRow } from '../../lib/types';
 import UserStatusBadge from './UserStatusBadge';
-import { GRID_DEFAULT_COL_DEF } from '@platform/ui-kit/grid';
+import { GRID_DEFAULT_COL_DEF, scalePx } from '@platform/ui-kit/grid';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -72,6 +72,24 @@ function branchesOf(u: SessionUser): OrgMembership[] {
   if (u.org_memberships && u.org_memberships.length > 0) return u.org_memberships;
   if (!u.org_id) return [];
   return [{ org_id: u.org_id, org_name: u.org_name || u.org_id, role_label: u.role_label, is_home: true }];
+}
+
+function initialsOf(u: SessionUser): string {
+  const parts = displayName(u).split(/s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? (parts[parts.length - 1]![0] ?? '') : '')).toUpperCase() || '?';
+}
+
+function Avatar({ user }: { user: SessionUser }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+        user.is_active ? 'bg-primary-fixed text-on-primary-container' : 'bg-surface-container-high text-on-surface-variant'
+      }`}
+    >
+      {initialsOf(user)}
+    </span>
+  );
 }
 
 const STATUS_OPTIONS: SelectOption[] = [
@@ -174,14 +192,17 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
     const u = params.data;
     if (!u) return null;
     return (
-      <div className="flex flex-col justify-center leading-tight">
-        <p className="truncate text-sm font-semibold leading-tight text-[#0F172A]">
-          {displayName(u) || '—'}
-          {u.id === currentUserId && (
-            <span className="ml-2 text-[10px] font-semibold uppercase text-[#0b6cbf]">(you)</span>
-          )}
-        </p>
-        {u.role_label && <p className="truncate text-[11px] leading-tight text-[#64748B]">{u.role_label}</p>}
+      <div className="flex items-center gap-2.5">
+        <Avatar user={u} />
+        <div className="flex min-w-0 flex-col justify-center leading-tight">
+          <p className="truncate text-sm font-semibold leading-tight text-on-surface">
+            {displayName(u) || '—'}
+            {u.id === currentUserId && (
+              <span className="ml-2 text-[0.625rem] font-semibold uppercase text-primary">(you)</span>
+            )}
+          </p>
+          {u.role_label && <p className="truncate text-[0.6875rem] leading-tight text-on-surface-variant">{u.role_label}</p>}
+        </div>
       </div>
     );
   }, [currentUserId]);
@@ -198,11 +219,11 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
     const d = params.data?.report_depth;
     if (d === null || d === undefined) return null;
     return d === 1 ? (
-      <span className="rounded-md bg-[#EFF6FF] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#1E40AF]">
+      <span className="rounded-md bg-primary-fixed px-2 py-0.5 text-[0.625rem] font-semibold uppercase tracking-wide text-primary">
         Direct
       </span>
     ) : (
-      <span className="text-[11px] text-[#94A3B8]">{d} levels down</span>
+      <span className="text-[0.6875rem] text-outline">{d} levels down</span>
     );
   }, []);
 
@@ -210,13 +231,13 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
     const u = params.data;
     if (!u) return null;
     const branches = branchesOf(u);
-    if (branches.length === 0) return <span className="italic text-[#94A3B8]">—</span>;
+    if (branches.length === 0) return <span className="italic text-outline">—</span>;
     const all = branches.map((b) => b.org_name).join(', ');
     return (
       <div className="flex items-center gap-1.5 leading-tight" title={all}>
-        <span className="truncate text-sm text-[#0F172A]">{branches[0]!.org_name}</span>
+        <span className="truncate text-sm text-on-surface">{branches[0]!.org_name}</span>
         {branches.length > 1 && (
-          <span className="shrink-0 rounded-full bg-[#F1F5F9] px-1.5 py-0.5 text-[10px] font-semibold text-[#475569]">
+          <span className="shrink-0 rounded-full bg-surface-container px-1.5 py-0.5 text-[0.625rem] font-semibold text-on-surface-variant">
             +{branches.length - 1}
           </span>
         )}
@@ -226,12 +247,12 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
 
   const managerCellRenderer = useCallback((params: ICellRendererParams<SessionUser>) => {
     const u = params.data;
-    if (!u?.manager_id) return <span className="italic text-[#94A3B8]">—</span>;
+    if (!u?.manager_id) return <span className="italic text-outline">—</span>;
     const manager = userById.get(u.manager_id);
     return (
       <div className="flex flex-col justify-center leading-tight">
-        <p className="truncate text-sm leading-tight text-[#0F172A]">{u.manager_name ?? '—'}</p>
-        {manager?.role_label && <p className="truncate text-[11px] leading-tight text-[#64748B]">{manager.role_label}</p>}
+        <p className="truncate text-sm leading-tight text-on-surface">{u.manager_name ?? '—'}</p>
+        {manager?.role_label && <p className="truncate text-[0.6875rem] leading-tight text-on-surface-variant">{manager.role_label}</p>}
       </div>
     );
   }, [userById]);
@@ -247,19 +268,20 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
     return canEditRow(u) ? (
       <button
         type="button"
+        title="Edit"
         onClick={() => onEdit(u)}
-        className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC]"
+        className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-low"
       >
         Edit
       </button>
     ) : (
-      <span className="text-[10px] uppercase tracking-wide text-[#94A3B8]">View only</span>
+      <span className="text-[0.625rem] uppercase tracking-wide text-outline">View only</span>
     );
   }, [canEditRow, onEdit]);
 
   const columnDefs = useMemo((): ColDef<SessionUser>[] => [
     {
-      colId: 'name', headerName: 'Name', width: 220, minWidth: 180, sortable: true, filter: true, editable: false,
+      colId: 'name', headerName: 'Name', width: 240, minWidth: 200, sortable: true, filter: true, editable: false,
       valueGetter: (p) => displayName(p.data as SessionUser) || '',
       cellRenderer: nameCellRenderer,
     },
@@ -351,18 +373,24 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
 
   if (users.length === 0) {
     return (
-      <div className="rounded-xl border border-[#E2E8F0] bg-white p-8 text-center text-sm text-[#64748B]">
+      <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-8 text-center text-sm text-on-surface-variant">
         No team members found.
       </div>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-sm">
+    <div className={isMobile ? 'space-y-3' : 'overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm'}>
       {/* items-end, and the search box carries its own label: every MultiSelect
           is a label over a 34px trigger, so a bare input in this row sat half a
           label-height above the dropdowns whatever the alignment. */}
-      <div className="flex flex-wrap items-end gap-2 border-b border-[#F1F5F9] p-3 sm:p-4">
+      <div
+        className={`flex flex-wrap items-end gap-2 p-3 sm:p-4 ${
+          isMobile
+            ? 'rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm'
+            : 'border-b border-outline-variant bg-surface-container-low'
+        }`}
+      >
         <div className="min-w-[200px] flex-1">
           <FilterField label="Search">
             <input
@@ -370,7 +398,7 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
               placeholder="Search by name or email…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-[34px] w-full rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20"
+              className="h-[2.75rem] w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 text-sm sm:h-[34px] text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
             />
           </FilterField>
         </div>
@@ -407,7 +435,7 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
           </>
         )}
         <div className="ml-auto flex items-center gap-2 pb-1">
-          <span className="text-xs text-[#64748B]">
+          <span className="text-xs text-on-surface-variant">
             {filtered.length} of {users.length}
           </span>
           {/* Exports what the filters left, not the whole roster — the count beside
@@ -417,30 +445,33 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
       </div>
 
       {isMobile ? (
-        <ul className="divide-y divide-[#F1F5F9]">
+        <ul className="space-y-3">
           {filtered.map((u) => (
-            <li key={u.id} className="space-y-2 p-4">
+            <li key={u.id} className="space-y-3 rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm">
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-[#0F172A]">
-                    {displayName(u) || '—'}
-                    {u.id === currentUserId && (
-                      <span className="ml-2 text-[10px] font-semibold uppercase text-[#0b6cbf]">(you)</span>
-                    )}
-                  </p>
-                  {u.role_label && <p className="text-[10px] text-[#94A3B8]">{u.role_label}</p>}
-                  <p className="truncate text-xs text-[#475569]">{u.email}</p>
+                <div className="flex min-w-0 items-center gap-3">
+                  <Avatar user={u} />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-on-surface">
+                      {displayName(u) || '—'}
+                      {u.id === currentUserId && (
+                        <span className="ml-2 text-[0.625rem] font-semibold uppercase text-primary">(you)</span>
+                      )}
+                    </p>
+                    {u.role_label && <p className="text-[0.6875rem] text-on-surface-variant">{u.role_label}</p>}
+                    <p className="truncate text-xs text-on-surface-variant">{u.email}</p>
+                  </div>
                 </div>
                 {canEditRow(u) ? (
                   <button
                     type="button"
                     onClick={() => onEdit(u)}
-                    className="shrink-0 rounded-lg border border-[#E2E8F0] bg-white px-3 py-1 text-xs font-semibold text-[#475569]"
+                    className="min-h-[2.75rem] shrink-0 rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-1 text-xs font-semibold text-on-surface-variant"
                   >
                     Edit
                   </button>
                 ) : (
-                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-[#94A3B8]">
+                  <span className="shrink-0 text-[0.625rem] uppercase tracking-wide text-outline">
                     View only
                   </span>
                 )}
@@ -448,21 +479,21 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
               <div className="flex flex-wrap items-center gap-2">
                 <UserStatusBadge active={u.is_active} />
                 {branchesOf(u).length > 0 && (
-                  <span className="text-[11px] text-[#475569]" title={branchesOf(u).map((b) => b.org_name).join(', ')}>
+                  <span className="text-[0.6875rem] text-on-surface-variant" title={branchesOf(u).map((b) => b.org_name).join(', ')}>
                     {branchesOf(u)[0]!.org_name}
                     {branchesOf(u).length > 1 && ` +${branchesOf(u).length - 1}`}
                   </span>
                 )}
                 {u.manager_name ? (
-                  <span className="text-[11px] text-[#475569]">↑ {u.manager_name}</span>
+                  <span className="text-[0.6875rem] text-on-surface-variant">↑ {u.manager_name}</span>
                 ) : (
-                  <span className="text-[11px] italic text-[#94A3B8]">No manager</span>
+                  <span className="text-[0.6875rem] italic text-outline">No manager</span>
                 )}
               </div>
             </li>
           ))}
           {filtered.length === 0 && (
-            <li className="px-4 py-8 text-center text-xs text-[#64748B]">
+            <li className="rounded-xl border border-outline-variant bg-surface-container-lowest px-4 py-8 text-center text-xs text-on-surface-variant">
               No users match the filters.
             </li>
           )}
@@ -478,8 +509,8 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
             pagination
             paginationPageSize={25}
             paginationPageSizeSelector={[25, 50, 100]}
-            rowHeight={44}
-            headerHeight={40}
+            rowHeight={scalePx(44)}
+            headerHeight={scalePx(40)}
             animateRows={false}
             suppressCellFocus={false}
             enableCellTextSelection

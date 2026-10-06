@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
-import { getServerSession } from '@platform/ui-kit/server';
+import { DEFAULT_BRAND, getServerSession } from '@platform/ui-kit/server';
 import { productOrigins } from '@platform/ui-kit';
 import LoginForm from '@/components/auth/LoginForm';
 import AuthFrame from '@/components/auth/AuthFrame';
@@ -15,11 +15,12 @@ interface LoginPageProps {
 
 export async function generateMetadata({ searchParams }: LoginPageProps): Promise<Metadata> {
   const { brand } = await loadBrand((await searchParams).t);
-  const name = brand.brandName ?? 'FitClass';
+  const name = brand.brandName ?? DEFAULT_BRAND.name;
+  const apple = brand.assets.apple_touch_icon ?? brand.assets.app_icon ?? DEFAULT_BRAND.icons.appleTouch;
   return {
     title: `Sign in · ${name}`,
     description: `Secure single sign-on for the ${name} platform`,
-    ...(brand.assets.favicon ? { icons: { icon: brand.assets.favicon, apple: brand.assets.app_icon ?? '/icons/apple-touch-icon.png' } } : {}),
+    ...(brand.assets.favicon ? { icons: { icon: brand.assets.favicon, apple } } : {}),
   };
 }
 
@@ -46,7 +47,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   // ?t=<public_key> (tenant login link) or the brand this device remembered:
   // display only — the tenant is still derived from the authenticated user.
   const { brandKey, brand } = await loadBrand(params.t);
-  const name = brand.brandName ?? 'FitClass';
+  const name = brand.brandName ?? DEFAULT_BRAND.name;
 
   return (
     <AuthFrame

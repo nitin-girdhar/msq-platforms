@@ -1,7 +1,7 @@
 # CRM Monorepo — Database Model
 
 > **Database:** PostgreSQL 14+  
-> **Schema version:** 1.74.0 (see `db_scripts/09_schema_version.sql`)  
+> **Schema version:** 1.75.0 (see `db_scripts/09_schema_version.sql`)  
 > **Primary keys:** UUIDv7 (time-ordered) everywhere, including `geo.*`; SMALLINT identity only on `ext.meta_capi_event_types`  
 > **Source of truth:** the `CREATE TABLE` statements in `db_scripts/02_tables_core.sql` and `03_tables_product.sql`. The column tables below mirror them; the diagrams are generated from them by `docs/tools/gen_db_diagram.py`  
 > **Multi-tenancy:** Row Level Security (RLS) on every operational table  

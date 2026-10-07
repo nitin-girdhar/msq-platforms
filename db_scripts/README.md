@@ -156,3 +156,18 @@ parent*, so deleting one **reveals** the page. An explicit `is_granted = FALSE`
 row is the mechanism. Prefer a tenant-scoped deny (`v_tenant_id = '<uuid>'`) —
 that is the same row the Capability Matrix screen writes, so it can be reversed
 from the admin UI.
+
+`build_prod_rollout.ps1` — assembles `msq-deploy/DB_ROLLOUT_<from>_to_<to>.sql`, the
+single-transaction file that takes a production database from one schema version to the
+next (the `one_time/apply_*.sql` parts in version order, then `04`–`08` and `10`, then the
+`09` rows). Append a line to its `$Order` list for each new schema version, rebuild, and
+rehearse on a fresh prod clone (`one_time/refresh_from_prod.ps1`) before shipping. See
+`msq-deploy/DB_ROLLOUT_1.56.0_to_1.75.0.md`.
+
+### Default branch per tenant
+
+A session must sit in a real branch, so a tenant with no branch can't be switched into from the
+navbar. admin-service now creates `<Tenant> - Head Office` (org type `head_office`) in the same
+transaction as every new tenant. For tenants that already exist without one, run
+`one_time/backfill_default_branch_dryrun.sql` and then `one_time/backfill_default_branch.sql`
+(idempotent, no schema change, so no version bump). Applied to local only; UAT/prod pending.

@@ -7,7 +7,6 @@ import {
   userRolesTable,
   userOrgMappingTable,
   organizationsTable,
-  vwUserTeamMembers,
   vwUserOrgChart,
   vwUserOrgAccess,
 } from '@platform/db/schema';
@@ -62,7 +61,7 @@ export async function listUsers(
   // The 'reports' scope is org-agnostic on purpose: membership of the actor's
   // subtree IS the scope, and pinning it to a single branch as well would hide the
   // reports a multi-branch manager holds elsewhere — the exact restriction that
-  // makes getTeamMembers unsuitable here. Tenancy is still enforced: the view is
+  // made the old branch-roster read unsuitable here. Tenancy is still enforced: the view is
   // security_invoker, so RLS applies, and reporting lines never cross an org
   // boundary (iam.check_reporting_line_membership).
   const scopeClause = isReports
@@ -450,27 +449,6 @@ export async function getAssignableUsers(
     // read_only (which hold lms.leads). Both are needed; neither suffices alone.
     if (purpose === 'filter') return filterRowsByCapability(tenantId, rows, CAPABILITY.LMS_LEADS);
     return filterRowsByCapability(tenantId, rows, PRODUCT_CAPABILITY[product]);
-  });
-}
-
-export async function getTeamMembers(ctx: RoleTxContext) {
-  return withRoleTx(ctx, async (tx) => {
-    return tx.select({
-      managerId:      vwUserTeamMembers.managerId,
-      memberId:       vwUserTeamMembers.memberId,
-      memberFullName: vwUserTeamMembers.memberFullName,
-      memberEmail:    vwUserTeamMembers.memberEmail,
-      memberRole:     vwUserTeamMembers.memberRole,
-      depth:          vwUserTeamMembers.depth,
-      isActive:       vwUserTeamMembers.isActive,
-    })
-      .from(vwUserTeamMembers)
-      .where(
-        and(
-          eq(vwUserTeamMembers.orgId, ctx.org_id),
-          eq(vwUserTeamMembers.managerId, ctx.user_id),
-        ),
-      );
   });
 }
 

@@ -44,6 +44,13 @@ export interface NavItem {
    * invisible to EVERY user, super admin included.
    */
   exact?: boolean;
+  /**
+   * Further operations that ALSO open this entry (plain `can()`), for a page that
+   * serves two audiences with different grants — e.g. Payroll opens for payslip.view
+   * (own payslips) OR payroll.manage (HR). The page guard behind the link must ask
+   * the same pair, or the link and the page disagree.
+   */
+  orCapabilities?: readonly CapabilityKey[];
 }
 
 /**
@@ -62,8 +69,10 @@ export function filterNav(
   actor: CapabilityHolder | null | undefined,
 ): NavItem[] {
   if (!actor) return [];
-  return items.filter((item) =>
-    item.exact ? can(actor, item.capability) : holdsUsableNode(actor, item.capability),
+  return items.filter(
+    (item) =>
+      (item.exact ? can(actor, item.capability) : holdsUsableNode(actor, item.capability)) ||
+      (item.orCapabilities ?? []).some((key) => can(actor, key)),
   );
 }
 

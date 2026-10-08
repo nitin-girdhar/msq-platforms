@@ -9,7 +9,6 @@ import { proxyTo, proxyToRaw, proxySSE } from './lib/proxy.js';
 import { authPreHandler } from './middleware/auth.js';
 import { productGuard } from './middleware/require-product.js';
 import { superAdminGuard } from './middleware/require-super-admin.js';
-import { communicationSendGuard } from './middleware/comms-send-guard.js';
 import { verifyJwtEdge, revokeJti } from './lib/jwt-verify.js';
 import { createRateLimiter } from './lib/rate-limit.js';
 import { publicApiKeyAuth, publicUserContext, publicScopeHeaders } from './lib/public-auth.js';
@@ -255,9 +254,6 @@ app.get('/public/v1/lead-report', { preHandler: [publicApiKeyAuth('lead-report:r
 // product). Public routes above register no auth and are never product-gated.
 configureProductSource(getActiveTenantModulesByTenantId);
 const withAuth = { preHandler: [authPreHandler, productGuard] };
-// Communication send routes: additionally enforce the read_only send-block here
-// (communication-service itself is a stateless relay — see comms-send-guard).
-const withCommsSend = { preHandler: [authPreHandler, productGuard, communicationSendGuard] };
 // Super-admin console routes (the /meta/* admin surface lookup-admin uses):
 // refused at the edge unless platform_role is super_admin. Defence in depth —
 // meta-conversion-api re-checks RANKS.SUPER_ADMIN and RLS fences the rows — so
@@ -345,8 +341,7 @@ app.get('/leads/:id/assignment-history', { ...withAuth }, async (req, reply) => 
   const { id } = req.params as { id: string };
   return proxyTo(config.leadsServiceUrl, `/api/v1/leads/${id}/assignment-history`, req, reply, req.userCtx);
 });
-// WhatsApp-to-lead. Not withCommsSend: that guard exists for the direct
-// /communications/* relay routes. Here leads-service is the caller and does its
+// WhatsApp-to-lead. leads-service is the caller of communication-service and does its
 // own authorization (lms.leads.whatsapp.send + the per-lead edit scope), which
 // read_only does not hold.
 app.get('/leads/:id/whatsapp/templates', { ...withAuth }, async (req, reply) => {
@@ -535,7 +530,6 @@ app.put('/roles/:id/capabilities', { ...withAuth }, async (req, reply) => {
 const TENANT_LOOKUP_TARGETS: Record<string, string> = {
   'task-statuses':      config.tasksServiceUrl,
   'task-priorities':    config.tasksServiceUrl,
-  'task-roles':         config.tasksServiceUrl,
   'leave-types':        config.hrServiceUrl,
   'employment-types':   config.hrServiceUrl,
   'attendance-statuses':config.hrServiceUrl,
@@ -547,8 +541,6 @@ const TENANT_LOOKUP_TARGETS: Record<string, string> = {
   'holiday-calendars':  config.hrServiceUrl,
   'holidays':           config.hrServiceUrl,
   'shifts':             config.hrServiceUrl,
-  'hr-roles':           config.hrServiceUrl,
-  'lms-roles':          config.leadsServiceUrl,
   // N-6 Half B — 7 tenant-scoped LMS marketing lookups
   'lead-stage':         config.leadsServiceUrl,
   'lead-stage-outcome': config.leadsServiceUrl,
@@ -643,9 +635,6 @@ app.get('/users/campaign-type-catalog', { ...withAuth }, async (req, reply) => {
 });
 app.get('/users/manager-candidates', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/users/manager-candidates', req, reply, req.userCtx);
-});
-app.get('/users/team', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.identityServiceUrl, '/api/v1/users/team', req, reply, req.userCtx);
 });
 app.get('/users/org-chart', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/users/org-chart', req, reply, req.userCtx);
@@ -850,19 +839,14 @@ app.post('/analytics/report/send', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.leadsServiceUrl, '/api/v1/analytics/report/send', req, reply, req.userCtx);
 });
 
-// Meta CAPI (protected — manual conversion event trigger)
-app.post('/meta/crm-event', { ...withAuth }, async (req, reply) => {
-  return proxyTo(config.metaServiceUrl, '/api/v1/crm-event', req, reply, req.userCtx);
-});
-
-// Meta integration management (protected — admin only)
-app.get('/meta/integration', { ...withAuth }, async (req, reply) => {
+// Meta integration management (super-admin only; no tenant UI calls these)
+app.get('/meta/integration', { ...withSuperAdmin }, async (req, reply) => {
   return proxyTo(config.metaServiceUrl, '/api/v1/integration', req, reply, req.userCtx);
 });
-app.post('/meta/integration', { ...withAuth }, async (req, reply) => {
+app.post('/meta/integration', { ...withSuperAdmin }, async (req, reply) => {
   return proxyTo(config.metaServiceUrl, '/api/v1/integration', req, reply, req.userCtx);
 });
-app.patch('/meta/integration', { ...withAuth }, async (req, reply) => {
+app.patch('/meta/integration', { ...withSuperAdmin }, async (req, reply) => {
   return proxyTo(config.metaServiceUrl, '/api/v1/integration', req, reply, req.userCtx);
 });
 
@@ -1059,18 +1043,6 @@ app.post('/lead-assignment/rerun', { ...withSuperAdmin }, async (req, reply) => 
 // Communications
 app.get('/communications/status', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.communicationServiceUrl, '/api/v1/communications/status', req, reply, req.userCtx);
-});
-app.post('/communications/email', { ...withCommsSend }, async (req, reply) => {
-  return proxyTo(config.communicationServiceUrl, '/api/v1/communications/email', req, reply, req.userCtx);
-});
-app.post('/communications/whatsapp/text', { ...withCommsSend }, async (req, reply) => {
-  return proxyTo(config.communicationServiceUrl, '/api/v1/communications/whatsapp/text', req, reply, req.userCtx);
-});
-app.post('/communications/whatsapp/template', { ...withCommsSend }, async (req, reply) => {
-  return proxyTo(config.communicationServiceUrl, '/api/v1/communications/whatsapp/template', req, reply, req.userCtx);
-});
-app.post('/communications/send', { ...withCommsSend }, async (req, reply) => {
-  return proxyTo(config.communicationServiceUrl, '/api/v1/communications/send', req, reply, req.userCtx);
 });
 
 // HR (employee profiles module — leave/attendance/tasks module-gated inside hr-service)

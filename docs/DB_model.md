@@ -1300,6 +1300,8 @@ Tenant-defined and tenant-copied roles (e.g. `sales_representative`, `senior_sal
 
 The global, platform-shipped capability catalog (Tier C3) — a self-referential tree: `tool → page → tab → operation → scope`. Generated into `@platform/rbac`'s `CAPABILITY` map (keys only, no label/kind/parent — a UI reads this table directly for that metadata, see `admin-service`'s `GET /capabilities`). A tenant cannot invent a capability; what a tenant *can* change is the grant (see `iam.role_capabilities` below). Read-only from the app — writes are seed/migration only.
 
+**1.76.0 (capability walls):** 156 active nodes (9 tools, 15 pages, 8 tabs, 103 operations, 21 scopes). Added `lms.leads.export`, `hr.employees.statutory.view`, `hr.leave.admin.tenant_wide`, `hr.attendance.admin.tenant_wide`, `admin.api_tokens.tenant_wide`; merged the two `*.reject` keys into their `*.approve`; removed the keys nothing read (list in `docs/Architecture.md` → *Capability walls*). Migration: `db_scripts/one_time/apply_capability_walls.sql`.
+
 | Column      | Type        | Constraints                                                    |
 | ----------- | ----------- | -------------------------------------------------------------- |
 | id          | UUID        | PK (UUIDv7)                                                    |

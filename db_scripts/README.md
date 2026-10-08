@@ -164,6 +164,12 @@ next (the `one_time/apply_*.sql` parts in version order, then `04`–`08` and `1
 rehearse on a fresh prod clone (`one_time/refresh_from_prod.ps1`) before shipping. See
 `msq-deploy/DB_ROLLOUT_1.56.0_to_1.75.0.md`.
 
+`one_time/apply_capability_walls.sql` (schema 1.76.0, registered in `build_prod_rollout.ps1`) is the capability
+cleanup: new/merged/removed keys plus the grants that keep the rank-to-capability cutover
+behaviour-neutral. Run it as a dry run first (`sed 's/^COMMIT;/ROLLBACK;/' ... | psql`: it rolls back and prints every changed
+grant), take the `*_bak_20261008` copies it names, then run it for real. Build a rollout that includes it
+with `build_prod_rollout.ps1 -ToVersion 1.76.0`.
+
 ### Default branch per tenant
 
 A session must sit in a real branch, so a tenant with no branch can't be switched into from the

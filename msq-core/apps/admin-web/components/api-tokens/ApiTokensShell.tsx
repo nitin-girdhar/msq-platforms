@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { SessionUser } from '@platform/types';
 import { Button, PageBody, PageHeader } from '@platform/ui-kit';
-import { RANKS } from '@platform/authz';
+import { can, CAPABILITY } from '@platform/rbac';
 import type { ApiTokenRow } from '@/src/lib/api/client';
 import ApiTokensTable from './ApiTokensTable';
 import CreateApiTokenModal from './CreateApiTokenModal';
@@ -28,7 +28,8 @@ export default function ApiTokensShell({ tokens, orgs, actor, canManage }: Props
   const [editTarget, setEditTarget] = useState<ApiTokenRow | null>(null);
   const [rotateTarget, setRotateTarget] = useState<ApiTokenRow | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<ApiTokenRow | null>(null);
-  const isOrgAdmin = actor.rank < RANKS.TENANT_ADMIN;
+  // Branch-only unless the role holds admin.api_tokens.tenant_wide (identity-service enforces the same).
+  const isOrgAdmin = !can(actor, CAPABILITY.ADMIN_API_TOKENS_TENANT_WIDE);
 
   return (
     <>

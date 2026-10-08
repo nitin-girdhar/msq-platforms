@@ -672,9 +672,6 @@ export async function getCampaignTypeCatalog(ctx: RoleTxContext) {
   return repo.getAllCampaignTypesForTenant(tenantId);
 }
 
-export async function getTeamMembers(ctx: RoleTxContext) {
-  return repo.getTeamMembers(ctx);
-}
 
 export async function getOrgChart(ctx: RoleTxContext) {
   return repo.getOrgChart(ctx);

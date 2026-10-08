@@ -205,8 +205,6 @@ export const users = {
     return request<{ success: true; data: unknown[] }>(withAdminScope(path, scope));
   },
 
-  team: () => request<{ success: true; data: unknown[] }>('/users/team'),
-
   // Profile photo. `photo` is a base64 string (data: URI prefix optional).
   // uploadMyPhoto is self-service; uploadPhoto targets another user (admin).
   uploadMyPhoto: (body: { photo: string; consent: boolean; content_type?: string }) =>

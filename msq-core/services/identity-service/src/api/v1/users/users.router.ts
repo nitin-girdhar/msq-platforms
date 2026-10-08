@@ -23,7 +23,6 @@ export async function usersRouter(app: FastifyInstance) {
   app.get('/users/campaign-type-catalog', { preHandler: [authenticate, validate({ query: orgScopedQuerySchema })] }, ctrl.getCampaignTypeCatalog);
   app.get('/users/manager-candidates', { preHandler: [authenticate, validate({ query: orgScopedQuerySchema })] }, ctrl.getManagerCandidates);
   app.put('/users/assignment-weights', { preHandler: [authenticate, validate({ body: updateAssignmentWeightsSchema, query: orgScopedQuerySchema })] }, ctrl.updateAssignmentWeights);
-  app.get('/users/team',       { preHandler: [authenticate, validate({ query: orgScopedQuerySchema })] }, ctrl.getTeam);
   app.get('/users/org-chart',  { preHandler: [authenticate, validate({ query: orgScopedQuerySchema })] }, ctrl.getOrgChart);
   // Profile photo / avatar. `/users/me/photo` is self-service; `/users/:id/photo`
   // POST is admin-only (rank ceiling enforced in the service). GET is

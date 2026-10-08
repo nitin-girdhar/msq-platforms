@@ -1,6 +1,6 @@
 // ── Capability keys (Tier C3) ───────────────────────────────────────────────
 // GENERATED from iam.capabilities — do not hand-edit. Add a node to the seed in
-// db_scripts/07_seed_lookup_data.sql, then regenerate.
+// db_scripts/reference_data/02_capabilities.sql, then regenerate.
 //
 // The keys form a TREE: tool -> page -> tab -> operation -> scope. Denying a node
 // makes its whole subtree unreachable, whatever a descendant's own grant says.
@@ -38,7 +38,6 @@ export const CAPABILITY = {
   LMS_ASSIGNMENTS:      'lms.assignments',
   LMS_CAMPAIGNS:        'lms.campaigns',
   LMS_CAMPAIGN_TYPES:   'lms.campaign_types',
-  LMS_DASHBOARD:        'lms.dashboard',
   LMS_FOLLOWUPS:        'lms.followups',
   LMS_HISTORY:          'lms.history',
   LMS_LEADS:            'lms.leads',
@@ -55,8 +54,9 @@ export const CAPABILITY = {
   HR_LEAVE_ADMIN_HOLIDAYS:          'hr.leave.admin.holidays',
   HR_LEAVE_ADMIN_POLICIES:          'hr.leave.admin.policies',
 
-  // ── Operations (73) ──
+  // ── Operations (103) ──
   ADMIN_API_TOKENS_MANAGE:                 'admin.api_tokens.manage',
+  ADMIN_API_TOKENS_TENANT_WIDE:            'admin.api_tokens.tenant_wide',
   ADMIN_API_TOKENS_VIEW:                   'admin.api_tokens.view',
   ADMIN_BRANDING_MANAGE:                   'admin.branding.manage',
   ADMIN_BRANDING_VIEW:                     'admin.branding.view',
@@ -73,9 +73,9 @@ export const CAPABILITY = {
   HR_ATTENDANCE_ADMIN_SHIFTS_VIEW:         'hr.attendance.admin.shifts.view',
   HR_ATTENDANCE_PHOTO_VIEW:                'hr.attendance.photo.view',
   HR_ATTENDANCE_ADMIN_OVERRIDE:            'hr.attendance.admin.override',
+  HR_ATTENDANCE_ADMIN_TENANT_WIDE:         'hr.attendance.admin.tenant_wide',
   HR_ATTENDANCE_PUNCH:                     'hr.attendance.punch',
   HR_ATTENDANCE_REGULARIZATION_APPROVE:    'hr.attendance.regularization.approve',
-  HR_ATTENDANCE_REGULARIZATION_REJECT:     'hr.attendance.regularization.reject',
   HR_ATTENDANCE_REGULARIZATION_REQUEST:    'hr.attendance.regularization.request',
   HR_ATTENDANCE_ROSTER_MANAGE:             'hr.attendance.roster.manage',
   HR_ATTENDANCE_ROSTER_VIEW:               'hr.attendance.roster.view',
@@ -91,15 +91,16 @@ export const CAPABILITY = {
   HR_EMPLOYEES_MANAGE:                     'hr.employees.manage',
   HR_EMPLOYEES_NOTES_MANAGE:               'hr.employees.notes.manage',
   HR_EMPLOYEES_STATUTORY_MANAGE:           'hr.employees.statutory.manage',
+  HR_EMPLOYEES_STATUTORY_VIEW:             'hr.employees.statutory.view',
   HR_EMPLOYEES_PAYSLIP_VIEW:               'hr.employees.payslip.view',
   HR_EMPLOYEES_PROFILE360_VIEW:            'hr.employees.profile360.view',
   HR_EMPLOYEES_PROFILE_EDIT:               'hr.employees.profile.edit',
   HR_EMPLOYEES_TAXONOMY_MANAGE:            'hr.employees.taxonomy.manage',
   HR_EMPLOYEES_VIEW:                       'hr.employees.view',
   HR_LEAVE_ADMIN_ADJUSTMENT_CREATE:        'hr.leave.admin.adjustment.create',
+  HR_LEAVE_ADMIN_TENANT_WIDE:              'hr.leave.admin.tenant_wide',
   HR_LEAVE_ADMIN_CYCLE_MANAGE:             'hr.leave.admin.cycle.manage',
   HR_LEAVE_ADMIN_HOLIDAYS_MANAGE:          'hr.leave.admin.holidays.manage',
-  HR_LEAVE_ADMIN_HOLIDAYS_VIEW:            'hr.leave.admin.holidays.view',
   HR_LEAVE_ADMIN_POLICIES_MANAGE:          'hr.leave.admin.policies.manage',
   HR_LEAVE_ADMIN_POLICIES_VIEW:            'hr.leave.admin.policies.view',
   HR_LEAVE_APPROVE:                        'hr.leave.approve',
@@ -107,7 +108,6 @@ export const CAPABILITY = {
   HR_LEAVE_COMP_OFF_REQUEST:               'hr.leave.comp_off.request',
   HR_LEAVE_ENCASHMENT_APPROVE:             'hr.leave.encashment.approve',
   HR_LEAVE_ENCASHMENT_REQUEST:             'hr.leave.encashment.request',
-  HR_LEAVE_REJECT:                         'hr.leave.reject',
   HR_LEAVE_REQUEST_CANCEL:                 'hr.leave.request.cancel',
   HR_LEAVE_REQUEST_CREATE:                 'hr.leave.request.create',
   HR_LEAVE_VIEW:                           'hr.leave.view',
@@ -120,16 +120,16 @@ export const CAPABILITY = {
   LMS_ASSIGNMENTS_VIEW:                    'lms.assignments.view',
   LMS_CAMPAIGNS_MANAGE:                    'lms.campaigns.manage',
   LMS_CAMPAIGNS_VIEW:                      'lms.campaigns.view',
-  LMS_DASHBOARD_VIEW:                      'lms.dashboard.view',
   LMS_FOLLOWUPS_BULK_RESCHEDULE:           'lms.followups.bulk.reschedule',
   LMS_FOLLOWUPS_CREATE:                    'lms.followups.create',
   LMS_FOLLOWUPS_DELETE:                    'lms.followups.delete',
   LMS_FOLLOWUPS_EDIT:                      'lms.followups.edit',
   LMS_FOLLOWUPS_VIEW:                      'lms.followups.view',
-  LMS_HISTORY_DETAIL_VIEW:                 'lms.history.detail.view',
   LMS_HISTORY_VIEW:                        'lms.history.view',
   LMS_LEADS_ASSIGN:                        'lms.leads.assign',
+  LMS_LEADS_ASSIGN_BULK:                   'lms.leads.assign.bulk',
   LMS_LEADS_BULK_UPDATE:                   'lms.leads.bulk.update',
+  LMS_LEADS_EXPORT:                        'lms.leads.export',
   LMS_LEADS_CREATE:                        'lms.leads.create',
   LMS_LEADS_DELETE:                        'lms.leads.delete',
   LMS_LEADS_EDIT:                          'lms.leads.edit',
@@ -165,39 +165,27 @@ export const CAPABILITY = {
   TASKS_LISTS_VIEW:                        'tasks.lists.view',
   TASKS_VIEW:                              'tasks.view',
 
-  // ── Scopes — read with resolveScope(), not can() (32) ──
+  // ── Scopes — read with resolveScope(), not can() (21) ──
   ADMIN_TEAM_VIEW_ORG:       'admin.team.view.org',
   ADMIN_TEAM_VIEW_TEAM:      'admin.team.view.team',
-  HR_ATTENDANCE_VIEW_ORG:    'hr.attendance.view.org',
-  HR_ATTENDANCE_VIEW_OWN:    'hr.attendance.view.own',
   HR_ATTENDANCE_VIEW_TEAM:   'hr.attendance.view.team',
   HR_LEAVE_VIEW_ORG:         'hr.leave.view.org',
-  HR_LEAVE_VIEW_OWN:         'hr.leave.view.own',
-  HR_LEAVE_VIEW_TEAM:        'hr.leave.view.team',
   HR_LEAVE_VIEW_TENANT:      'hr.leave.view.tenant',
   HR_REPORTS_ATTENDANCE_VIEW_ORG:    'hr.reports.attendance.view.org',
   HR_REPORTS_ATTENDANCE_VIEW_TENANT: 'hr.reports.attendance.view.tenant',
   LMS_HISTORY_VIEW_ALL:      'lms.history.view.all',
   LMS_HISTORY_VIEW_ORG:      'lms.history.view.org',
   LMS_HISTORY_VIEW_OWN:      'lms.history.view.own',
-  LMS_HISTORY_VIEW_TEAM:     'lms.history.view.team',
   LMS_HISTORY_VIEW_TENANT:   'lms.history.view.tenant',
   LMS_LEADS_ASSIGN_ANY:      'lms.leads.assign.any',
-  LMS_LEADS_ASSIGN_BULK:     'lms.leads.assign.bulk',
   LMS_LEADS_ASSIGN_PEERS:    'lms.leads.assign.peers',
   LMS_LEADS_ASSIGN_REPORTS:  'lms.leads.assign.reports',
-  LMS_LEADS_EDIT_ANY:        'lms.leads.edit.any',
-  LMS_LEADS_EDIT_OWN:        'lms.leads.edit.own',
-  LMS_LEADS_EDIT_TEAM:       'lms.leads.edit.team',
   LMS_LEADS_VIEW_ORG:        'lms.leads.view.org',
   LMS_LEADS_VIEW_OWN:        'lms.leads.view.own',
   LMS_LEADS_VIEW_TEAM:       'lms.leads.view.team',
   LMS_LEADS_VIEW_TENANT:     'lms.leads.view.tenant',
   TASKS_EDIT_ANY:            'tasks.edit.any',
-  TASKS_EDIT_OWN:            'tasks.edit.own',
-  TASKS_EDIT_TEAM:           'tasks.edit.team',
   TASKS_VIEW_ORG:            'tasks.view.org',
-  TASKS_VIEW_OWN:            'tasks.view.own',
   TASKS_VIEW_TEAM:           'tasks.view.team',
 
 } as const;
@@ -320,13 +308,23 @@ export function holdsUsableNode(
  * A prefix test over `admin.*` rather than the bare `admin` root: nav grants
  * cascade DOWNWARD, so a role scoped to one subtree holds `admin.team…` without
  * ever holding `admin` itself. The dot guard keeps a future `admin_*` tool out.
+ *
+ * The console also serves the HR admin screens (Leave and Attendance
+ * administration are pages of admin-web), so a holder of only `hr.leave.admin.*`
+ * or `hr.attendance.admin.*` gets in too — admin-web's own layout guard already
+ * admits them, and the pill must agree with it.
  */
 export function canOpenAdminConsole(actor: CapabilityHolder | null | undefined): boolean {
   if (!actor) return false;
   const held = actor.capabilities instanceof Set
     ? [...actor.capabilities]
     : (actor.capabilities as readonly string[]);
-  return held.some((k) => k.startsWith(`${CAPABILITY.ADMIN}.`));
+  return held.some(
+    (k) =>
+      k.startsWith(`${CAPABILITY.ADMIN}.`) ||
+      k.startsWith(`${CAPABILITY.HR_LEAVE_ADMIN}.`) ||
+      k.startsWith(`${CAPABILITY.HR_ATTENDANCE_ADMIN}.`),
+  );
 }
 
 /**

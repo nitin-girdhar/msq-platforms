@@ -7,14 +7,14 @@ import { usableProducts, landingFor, productHref } from '../products';
 // rule). Trimmed to what these tests exercise.
 const HR_ADMIN = [
   'platform', 'platform.write',
-  'hr.attendance', 'hr.attendance.view', 'hr.attendance.view.org',
+  'hr.attendance', 'hr.attendance.view',
   'hr.leave', 'hr.leave.view', 'hr.leave.approve',
   'hr.employees', 'hr.employees.view',
 ];
 
 const LMS_ADMIN = [
   'platform', 'platform.write',
-  'lms', 'lms.leads', 'lms.leads.view', 'lms.dashboard', 'lms.dashboard.view',
+  'lms', 'lms.leads', 'lms.leads.view',
 ];
 
 const ORG_ADMIN = [...LMS_ADMIN, ...HR_ADMIN, 'tasks', 'tasks.view', 'tasks.lists.view'];

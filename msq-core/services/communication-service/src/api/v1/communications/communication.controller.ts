@@ -9,7 +9,7 @@ import type {
 
 // P1.3: this service does no rank authz — it is a stateless relay. The direct
 // user-facing send permission (block read_only from org SMTP/WhatsApp) is enforced
-// at the gateway (comms-send-guard); internal cross-product callers authorize
+// by its caller (the gateway no longer exposes the direct send routes); internal cross-product callers authorize
 // before invoking. Handlers below just dispatch what the caller passed.
 
 export class CommunicationController {

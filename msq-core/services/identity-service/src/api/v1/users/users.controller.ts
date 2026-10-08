@@ -3,7 +3,7 @@ import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, UpdateAssign
 import { RANKS } from '@platform/authz';
 import { hasCapability } from '@platform/db';
 import { CAPABILITY, ANCHOR_RANK } from '@platform/rbac';
-import { ForbiddenError } from '../../../lib/errors.js';
+import { ForbiddenError, NotFoundError } from '../../../lib/errors.js';
 import * as service from './users.service.js';
 import type { ListUsersQuery, GetAssignableQuery, AdminScopeQuery, OrgScopedQuery, AssignmentWeightsQuery } from './users.schema.js';
 
@@ -15,6 +15,8 @@ import type { ListUsersQuery, GetAssignableQuery, AdminScopeQuery, OrgScopedQuer
 // dependency. Matches the RANK_READ_ONLY/RANK_ADMIN inlining already used in
 // users.repository.ts and packages/db/src/assignment.ts.
 const USER_MGMT_MIN_RANK = 40;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // May this actor send the affected user a notification email for a Team action?
 // The checkbox is opt-out (undefined = the admin left it ticked), ANDed with the
@@ -35,10 +37,27 @@ async function mayNotify(
   return hasCapability(tenantId, roleName ?? '', CAPABILITY.ADMIN_TEAM_NOTIFY);
 }
 
+// Capability gate for the user routes (1.76.0). The rank checks beside each call are SENIORITY
+// (who may touch whom) and stay; this adds the PERMISSION, so revoking admin.team.* on the Capability
+// Matrix actually blocks the API and not just the screen. super_admin passes (lookup-admin).
+// Capability gate for the reads that expose other people's records (email, mobile,
+// weights). super_admin is the platform operator and reaches them through
+// lookup-admin; everyone else needs the named capability. Fresh-from-cache, fails
+// closed, derived from the verified session — never from the request.
+async function requireCapability(
+  auth: { role: string; tenant_id: string; role_name: string | null },
+  key: Parameters<typeof hasCapability>[2],
+  message: string,
+): Promise<void> {
+  if (auth.role === 'super_admin') return;
+  if (!(await hasCapability(auth.tenant_id, auth.role_name, key))) throw new ForbiddenError(message);
+}
+
 export class UsersController {
   list = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
     if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to view iam.users');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_VIEW, 'Insufficient permissions to view users');
     const q = request.query as ListUsersQuery;
     // role_name, not `role`: the scope ladder lives on the tenant-defined role
     // (iam.user_roles.name), which platform_role collapses to four values.
@@ -49,9 +68,16 @@ export class UsersController {
   };
 
   getById = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id } = request.auth;
+    const { org_id, user_id, role, role_name, tenant_id } = request.auth;
     const { id } = request.params as { id: string };
+    // A literal path segment that once had its own route (/users/team) lands here now; it is not a user.
+    if (!UUID_RE.test(id)) throw new NotFoundError('User not found');
     const q = request.query as AdminScopeQuery;
+    // A colleague's email, mobile and last login are not every member's to read:
+    // yourself, or the Team screen's view capability.
+    if (id !== user_id) {
+      await requireCapability({ role, tenant_id, role_name }, CAPABILITY.ADMIN_TEAM_VIEW, 'Insufficient permissions to view this user');
+    }
     const user = await service.getUserById({ org_id, user_id, role, tenant_id }, id, q.tenant_id, q.org_id);
     return reply.send({ success: true, data: user });
   };
@@ -69,7 +95,8 @@ export class UsersController {
   };
 
   getAssignmentWeights = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id } = request.auth;
+    const { org_id, user_id, role, role_name, tenant_id } = request.auth;
+    await requireCapability({ role, tenant_id, role_name }, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to view lead assignment weights');
     const { org_id: queryOrgId, campaign_type_id, tenant_id: scopeTenantId } = request.query as AssignmentWeightsQuery;
     const { ctx } = await service.scopeContext(
       { org_id, user_id, role, tenant_id }, { tenant_id: scopeTenantId, org_id: queryOrgId }, { requireOrg: true },
@@ -86,6 +113,7 @@ export class UsersController {
   getCampaignTypeCatalog = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
     if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to view campaign types');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to view campaign types');
     const q = request.query as OrgScopedQuery;
     const { ctx } = await service.scopeContext({ org_id, user_id, role, tenant_id }, { tenant_id: q.tenant_id });
     const data = await service.getCampaignTypeCatalog(ctx);
@@ -97,6 +125,7 @@ export class UsersController {
   getRoleCatalog = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
     if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to view roles');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to view roles');
     const q = request.query as OrgScopedQuery;
     const { ctx } = await service.scopeContext({ org_id, user_id, role, tenant_id }, { tenant_id: q.tenant_id });
     const data = await service.getRoleCatalog(ctx, rank);
@@ -106,6 +135,7 @@ export class UsersController {
   getManagerCandidates = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
     if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to view managers');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to view managers');
     const q = request.query as OrgScopedQuery;
     const { ctx } = await service.scopeContext(
       { org_id, user_id, role, tenant_id }, { tenant_id: q.tenant_id, org_id: q.org_id }, { requireOrg: true },
@@ -117,6 +147,7 @@ export class UsersController {
   updateAssignmentWeights = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
     if (rank < RANKS.ADMIN) throw new ForbiddenError('Only org admins can manage lead assignment weights');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to manage lead assignment weights');
     const data = request.body as UpdateAssignmentWeightsInput;
     // Writes land in ctx.org_id. For super_admin that is the `org_id` named here
     // (required when working another tenant); for everyone else it stays their
@@ -129,18 +160,9 @@ export class UsersController {
     return reply.status(204).send();
   };
 
-  getTeam = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id } = request.auth;
-    const q = request.query as OrgScopedQuery;
-    const { ctx } = await service.scopeContext(
-      { org_id, user_id, role, tenant_id }, { tenant_id: q.tenant_id, org_id: q.org_id }, { requireOrg: true },
-    );
-    const members = await service.getTeamMembers(ctx);
-    return reply.send({ success: true, data: members });
-  };
-
   getOrgChart = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id } = request.auth;
+    const { org_id, user_id, role, role_name, tenant_id } = request.auth;
+    await requireCapability({ role, tenant_id, role_name }, CAPABILITY.ADMIN_TEAM_VIEW, 'Insufficient permissions to view the org chart');
     // A super_admin reads any branch of the selected tenant's reporting tree
     // (lookup-admin's Team view); everyone else, their own branch as before.
     const q = request.query as OrgScopedQuery;
@@ -203,6 +225,7 @@ export class UsersController {
   update = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
     if (rank < USER_MGMT_MIN_RANK) throw new ForbiddenError('Insufficient permissions to update iam.users');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to update users');
     const { id } = request.params as { id: string };
     const data = request.body as UpdateUserInput;
     const notify = await mayNotify(data.send_email_notification, tenant_id, role_name);
@@ -216,6 +239,7 @@ export class UsersController {
   delete = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
     if (rank < RANKS.ADMIN) throw new ForbiddenError('Forbidden');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to delete users');
     const { id } = request.params as { id: string };
     const { tenant_id: scopeTenantId } = request.query as AdminScopeQuery;
     await service.deleteUser({ org_id, user_id, role, tenant_id }, rank, id, scopeTenantId);
@@ -225,6 +249,7 @@ export class UsersController {
   resetPassword = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, role_name, tenant_id, rank } = request.auth;
     if (rank < RANKS.ADMIN) throw new ForbiddenError('Only admins can reset passwords');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to reset passwords');
     const { id } = request.params as { id: string };
     const data = request.body as ResetPasswordInput;
     const notify = await mayNotify(data.send_email_notification, tenant_id, role_name);
@@ -236,6 +261,7 @@ export class UsersController {
   listOrgMappings = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
     if (rank < RANKS.ADMIN) throw new ForbiddenError('Only admins can view org mappings');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to view org mappings');
     const { id } = request.params as { id: string };
     const { tenant_id: scopeTenantId } = request.query as AdminScopeQuery;
     const data = await service.listOrgMappings({ org_id, user_id, role, tenant_id }, id, scopeTenantId);
@@ -245,6 +271,7 @@ export class UsersController {
   addOrgMapping = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
     if (rank < RANKS.ADMIN) throw new ForbiddenError('Only admins can grant org access');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to grant org access');
     const { id } = request.params as { id: string };
     const data = request.body as AddOrgMappingInput;
     const { tenant_id: scopeTenantId } = request.query as AdminScopeQuery;
@@ -255,6 +282,7 @@ export class UsersController {
   removeOrgMapping = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
     if (rank < RANKS.ADMIN) throw new ForbiddenError('Only admins can revoke org access');
+    await requireCapability(request.auth, CAPABILITY.ADMIN_TEAM_MANAGE, 'Insufficient permissions to revoke org access');
     const { id, orgId } = request.params as { id: string; orgId: string };
     const { tenant_id: scopeTenantId } = request.query as AdminScopeQuery;
     await service.removeOrgMapping({ org_id, user_id, role, tenant_id }, rank, id, orgId, scopeTenantId);

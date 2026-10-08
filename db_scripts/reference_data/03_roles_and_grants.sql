@@ -69,35 +69,33 @@ FROM (VALUES
   -- Appearance is personal and changes nothing shared, so even the audit
   -- account may pick its own colours.
   'platform','platform.appearance',
-  'lms','lms.dashboard.view','lms.leads.view','lms.leads.view.org',
+  'lms','lms.leads.view','lms.leads.export','lms.leads.view.org',
   'lms.leads.timeline.view','lms.followups.view',
-  'lms.history.detail.view',
-  'lms.history.view','lms.history.view.org',
+  'lms.history.view','lms.history.view.own',
   'lms.assignments.view',
-  'hr.attendance','hr.attendance.view','hr.attendance.view.own',
-  'hr.leave','hr.leave.view','hr.leave.view.own',
-  'tasks','tasks.view','tasks.view.own','tasks.lists','tasks.lists.view'
+  'hr.attendance','hr.attendance.view',
+  'hr.leave','hr.leave.view',
+  'tasks','tasks.view','tasks.lists','tasks.lists.view'
 ]),
 
 -- ── sales_representative (20) ───────────────────────────────────────
 ('sales_representative', ARRAY[
   'platform','platform.write','platform.appearance',
-  'lms','lms.dashboard.view',
-  'lms.leads.view','lms.leads.view.own',
-  'lms.leads.create','lms.leads.edit','lms.leads.edit.own',
+  'lms',
+  'lms.leads.view','lms.leads.export','lms.leads.view.own',
+  'lms.leads.create','lms.leads.edit',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit',
-  'lms.history.detail.view',
   'lms.history.view','lms.history.view.own',
   'lms.assignments.view',
-  'hr.attendance','hr.attendance.view','hr.attendance.view.own',
+  'hr.attendance','hr.attendance.view',
   'hr.attendance.punch','hr.attendance.photo.view',
   'hr.attendance.regularization.request',
-  'hr.leave','hr.leave.view','hr.leave.view.own',
+  'hr.leave','hr.leave.view',
   'hr.leave.request.create','hr.leave.request.cancel',
   'hr.employees','hr.employees.view',
-  'tasks','tasks.view','tasks.view.own','tasks.create',
-  'tasks.edit','tasks.edit.own','tasks.comment','tasks.history.view',
+  'tasks','tasks.view','tasks.create',
+  'tasks.edit','tasks.comment','tasks.history.view',
   'tasks.lists.view'
 ]),
 
@@ -105,26 +103,25 @@ FROM (VALUES
 -- First tier that sees a team, works the unassigned queue, and may hand work down.
 ('senior_sales_executive', ARRAY[
   'platform','platform.write','platform.appearance',
-  'lms','lms.dashboard.view',
-  'lms.leads.view','lms.leads.view.own','lms.leads.view.team',
+  'lms',
+  'lms.leads.view','lms.leads.export','lms.leads.view.own','lms.leads.view.team',
   'lms.leads.unassigned.view',
-  'lms.leads.create','lms.leads.edit','lms.leads.edit.own','lms.leads.edit.team',
+  'lms.leads.create','lms.leads.edit',
   'lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
-  'lms.history.detail.view',
-  'lms.history.view','lms.history.view.own','lms.history.view.team',
+  'lms.history.view','lms.history.view.own','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit',
   'admin','admin.team.view','admin.team.view.team',
-  'hr.attendance','hr.attendance.view','hr.attendance.view.own',
+  'hr.attendance','hr.attendance.view',
   'hr.attendance.punch','hr.attendance.photo.view',
   'hr.attendance.regularization.request',
-  'hr.leave','hr.leave.view','hr.leave.view.own',
+  'hr.leave','hr.leave.view',
   'hr.leave.request.create','hr.leave.request.cancel',
   'hr.employees','hr.employees.view',
-  'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.create',
-  'tasks.edit','tasks.edit.own','tasks.edit.team','tasks.assign',
+  'tasks','tasks.view','tasks.view.team','tasks.create',
+  'tasks.edit','tasks.assign',
   'tasks.comment','tasks.history.view',
   'tasks.lists.view','tasks.lists.manage'
 ]),
@@ -133,16 +130,15 @@ FROM (VALUES
 -- Branch-wide visibility and the first tier that approves leave and deletes leads.
 ('org_manager', ARRAY[
   'platform','platform.write','platform.appearance',
-  'lms','lms.dashboard.view',
-  'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
+  'lms',
+  'lms.leads.view','lms.leads.export','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
   'lms.leads.unassigned.view',
-  'lms.leads.create','lms.leads.edit','lms.leads.edit.own','lms.leads.edit.team',
-  'lms.leads.delete','lms.leads.transfer',
+  'lms.leads.create','lms.leads.edit',
+  'lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
-  'lms.history.detail.view',
-  'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
+  'lms.history.view','lms.history.view.own','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'admin','admin.team.view','admin.team.view.team','admin.team.view.org',
   'lms.campaigns.view',
@@ -152,16 +148,16 @@ FROM (VALUES
   -- what keeps a hiring lead off a sales rep's list.
   'lms.leads.view.all_types',
   'lms.analytics','lms.analytics.view',
-  'hr.attendance','hr.attendance.view','hr.attendance.view.own','hr.attendance.view.team',
+  'hr.attendance','hr.attendance.view','hr.attendance.view.team',
   'hr.attendance.punch','hr.attendance.photo.view',
   'hr.attendance.regularization.request',
-  'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
-  'hr.leave','hr.leave.view','hr.leave.view.own','hr.leave.view.team',
+  'hr.attendance.regularization.approve',
+  'hr.leave','hr.leave.view',
   'hr.leave.request.create','hr.leave.request.cancel',
-  'hr.leave.approve','hr.leave.reject',
+  'hr.leave.approve',
   'hr.employees','hr.employees.view',
-  'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.create',
-  'tasks.edit','tasks.edit.own','tasks.edit.team','tasks.delete','tasks.assign',
+  'tasks','tasks.view','tasks.view.team','tasks.create',
+  'tasks.edit','tasks.delete','tasks.assign',
   'tasks.comment','tasks.history.view',
   'tasks.lists.view','tasks.lists.manage'
 ]),
@@ -170,17 +166,15 @@ FROM (VALUES
 -- As org_manager, plus branch-wide edit and peer-level assignment reach.
 ('org_sr_manager', ARRAY[
   'platform','platform.write','platform.appearance',
-  'lms','lms.dashboard.view',
-  'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
+  'lms',
+  'lms.leads.view','lms.leads.export','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
   'lms.leads.unassigned.view',
   'lms.leads.create','lms.leads.edit',
-  'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
-  'lms.leads.delete','lms.leads.transfer',
+  'lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
-  'lms.history.detail.view',
-  'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
+  'lms.history.view','lms.history.view.own','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'admin','admin.team.view','admin.team.view.team','admin.team.view.org',
   'lms.campaigns.view',
@@ -190,16 +184,16 @@ FROM (VALUES
   -- what keeps a hiring lead off a sales rep's list.
   'lms.leads.view.all_types',
   'lms.analytics','lms.analytics.view',
-  'hr.attendance','hr.attendance.view','hr.attendance.view.own','hr.attendance.view.team',
+  'hr.attendance','hr.attendance.view','hr.attendance.view.team',
   'hr.attendance.punch','hr.attendance.photo.view',
   'hr.attendance.regularization.request',
-  'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
-  'hr.leave','hr.leave.view','hr.leave.view.own','hr.leave.view.team',
+  'hr.attendance.regularization.approve',
+  'hr.leave','hr.leave.view',
   'hr.leave.request.create','hr.leave.request.cancel',
-  'hr.leave.approve','hr.leave.reject',
+  'hr.leave.approve',
   'hr.employees','hr.employees.view',
-  'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.create',
-  'tasks.edit','tasks.edit.own','tasks.edit.team','tasks.delete','tasks.assign',
+  'tasks','tasks.view','tasks.view.team','tasks.create',
+  'tasks.edit','tasks.delete','tasks.assign',
   'tasks.comment','tasks.history.view',
   'tasks.lists.view','tasks.lists.manage'
 ]),
@@ -219,9 +213,9 @@ FROM (VALUES
 ('hr_admin', ARRAY[
   'platform','platform.write','platform.appearance',
   'hr.attendance','hr.attendance.view',
-  'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
+  'hr.attendance.view.team',
   'hr.attendance.photo.view',
-  'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
+  'hr.attendance.regularization.approve',
   'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
   'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
@@ -229,14 +223,14 @@ FROM (VALUES
   'hr.reports','hr.reports.attendance.view',
   'hr.reports.attendance.view.org','hr.reports.attendance.view.tenant',
   'hr.leave','hr.leave.view',
-  'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org',
-  'hr.leave.approve','hr.leave.reject',
+  'hr.leave.view.org',
+  'hr.leave.approve',
   'hr.leave.admin.policies.view','hr.leave.admin.policies.manage',
-  'hr.leave.admin.holidays.view','hr.leave.admin.holidays.manage',
+  'hr.leave.admin.holidays.manage',
   'hr.leave.admin.cycle.manage','hr.leave.admin.adjustment.create',
   'hr.employees','hr.employees.view','hr.employees.manage','hr.employees.taxonomy.manage',
-  'tasks','tasks.view','tasks.view.own','tasks.create',
-  'tasks.edit','tasks.edit.own','tasks.comment','tasks.history.view',
+  'tasks','tasks.view','tasks.create',
+  'tasks.edit','tasks.comment','tasks.history.view',
   'tasks.lists.view'
 ]),
 
@@ -247,11 +241,10 @@ FROM (VALUES
 -- don't clock themselves in or file their own requests through this role.
 ('org_admin', ARRAY[
   'platform','platform.write','platform.appearance',
-  'lms','lms.dashboard.view',
-  'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
+  'lms',
+  'lms.leads.view','lms.leads.export','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
   'lms.leads.unassigned.view',
   'lms.leads.create','lms.leads.edit',
-  'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
   'lms.leads.delete','lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.any',
   -- assign.any is the RANK ceiling (assign to anyone); assign.bulk is the Bulk
@@ -261,8 +254,7 @@ FROM (VALUES
   'lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
-  'lms.history.detail.view',
-  'lms.history.view','lms.history.view.own','lms.history.view.team','lms.history.view.org',
+  'lms.history.view','lms.history.view.own','lms.history.view.org',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.analytics.view',
   'lms.campaigns.view','lms.campaigns.manage',
@@ -271,23 +263,23 @@ FROM (VALUES
   'admin','admin.team.view','admin.team.view.team','admin.team.view.org','admin.team.manage','admin.team.notify',
   'admin.api_tokens.view','admin.api_tokens.manage',
   'hr.attendance','hr.attendance.view',
-  'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
+  'hr.attendance.view.team',
   'hr.attendance.photo.view',
-  'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
+  'hr.attendance.regularization.approve',
   'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
   'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
   'hr.attendance.admin.geo_exceptions.view','hr.attendance.admin.geo_exceptions.manage',
   'hr.reports','hr.reports.attendance.view','hr.reports.attendance.view.org',
   'hr.leave','hr.leave.view',
-  'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org',
-  'hr.leave.approve','hr.leave.reject',
+  'hr.leave.view.org',
+  'hr.leave.approve',
   'hr.leave.admin.policies.view','hr.leave.admin.policies.manage',
-  'hr.leave.admin.holidays.view','hr.leave.admin.holidays.manage',
+  'hr.leave.admin.holidays.manage',
   'hr.leave.admin.cycle.manage','hr.leave.admin.adjustment.create',
   'hr.employees','hr.employees.view','hr.employees.manage','hr.employees.taxonomy.manage',
-  'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.view.org',
-  'tasks.create','tasks.edit','tasks.edit.own','tasks.edit.team','tasks.edit.any',
+  'tasks','tasks.view','tasks.view.team','tasks.view.org',
+  'tasks.create','tasks.edit','tasks.edit.any',
   'tasks.delete','tasks.assign','tasks.comment','tasks.history.view',
   'tasks.lists.view','tasks.lists.manage','tasks.lists.delete'
   -- No `admin` tool: the only pages left under it are lookup-admin's, which
@@ -299,8 +291,8 @@ FROM (VALUES
 -- No self-service punch/leave-apply, same reasoning as org_admin above.
 ('tenant_admin', ARRAY[
   'platform','platform.write','platform.appearance',
-  'lms','lms.dashboard.view',
-  'lms.leads.view','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
+  'lms',
+  'lms.leads.view','lms.leads.export','lms.leads.view.own','lms.leads.view.team','lms.leads.view.org',
   -- The only role with cross-BRANCH lead reach: this is what puts every branch
   -- in the Bulk Assign / dashboard branch picker (identity-service resolves the
   -- picker off this exact ladder) and what lets leads-service run the read under
@@ -309,7 +301,6 @@ FROM (VALUES
   'lms.leads.view.tenant',
   'lms.leads.unassigned.view',
   'lms.leads.create','lms.leads.edit',
-  'lms.leads.edit.own','lms.leads.edit.team','lms.leads.edit.any',
   'lms.leads.delete','lms.leads.transfer',
   'lms.leads.assign','lms.leads.assign.reports','lms.leads.assign.peers','lms.leads.assign.any',
   -- assign.any is the RANK ceiling (assign to anyone); assign.bulk is the Bulk
@@ -319,8 +310,7 @@ FROM (VALUES
   'lms.leads.assign.bulk',
   'lms.leads.interaction.log','lms.leads.timeline.view','lms.leads.whatsapp.send',
   'lms.followups.view','lms.followups.create','lms.followups.edit','lms.followups.delete',
-  'lms.history.detail.view',
-  'lms.history.view','lms.history.view.own','lms.history.view.team',
+  'lms.history.view','lms.history.view.own',
   'lms.history.view.org','lms.history.view.tenant',
   'lms.assignments.view','lms.assignments.edit','lms.assignments.delete',
   'lms.analytics.view','lms.analytics.org.view',
@@ -328,29 +318,29 @@ FROM (VALUES
   'lms.campaign_types.view','lms.campaign_types.manage',
   'lms.leads.view.all_types',
   'admin','admin.team.view','admin.team.view.team','admin.team.view.org','admin.team.manage','admin.team.notify',
-  'admin.api_tokens.view','admin.api_tokens.manage',
+  'admin.api_tokens.view','admin.api_tokens.manage','admin.api_tokens.tenant_wide',
   -- Branding (1.57.0): tenant admins own the colours / terms / menu half;
   -- Super Admin owns logos, names and the login link.
   'admin.branding','admin.branding.view','admin.branding.manage',
   'hr.attendance','hr.attendance.view',
-  'hr.attendance.view.own','hr.attendance.view.team','hr.attendance.view.org',
+  'hr.attendance.view.team',
   'hr.attendance.photo.view',
-  'hr.attendance.regularization.approve','hr.attendance.regularization.reject',
+  'hr.attendance.regularization.approve',
   'hr.attendance.admin.rules.view','hr.attendance.admin.rules.update',
   'hr.attendance.admin.shifts.view','hr.attendance.admin.shifts.manage',
   'hr.attendance.admin.assignments.view','hr.attendance.admin.assignments.manage',
-  'hr.attendance.admin.geo_exceptions.view','hr.attendance.admin.geo_exceptions.manage',
+  'hr.attendance.admin.geo_exceptions.view','hr.attendance.admin.geo_exceptions.manage','hr.attendance.admin.tenant_wide',
   'hr.reports','hr.reports.attendance.view',
   'hr.reports.attendance.view.org','hr.reports.attendance.view.tenant',
   'hr.leave','hr.leave.view',
-  'hr.leave.view.own','hr.leave.view.team','hr.leave.view.org','hr.leave.view.tenant',
-  'hr.leave.approve','hr.leave.reject',
+  'hr.leave.view.org','hr.leave.view.tenant',
+  'hr.leave.approve',
   'hr.leave.admin.policies.view','hr.leave.admin.policies.manage',
-  'hr.leave.admin.holidays.view','hr.leave.admin.holidays.manage',
-  'hr.leave.admin.cycle.manage','hr.leave.admin.adjustment.create',
+  'hr.leave.admin.holidays.manage',
+  'hr.leave.admin.cycle.manage','hr.leave.admin.adjustment.create','hr.leave.admin.tenant_wide',
   'hr.employees','hr.employees.view','hr.employees.manage','hr.employees.taxonomy.manage',
-  'tasks','tasks.view','tasks.view.own','tasks.view.team','tasks.view.org',
-  'tasks.create','tasks.edit','tasks.edit.own','tasks.edit.team','tasks.edit.any',
+  'tasks','tasks.view','tasks.view.team','tasks.view.org',
+  'tasks.create','tasks.edit','tasks.edit.any',
   'tasks.delete','tasks.assign','tasks.comment','tasks.history.view',
   -- No `admin` subtree. Platform administration (the lookup-admin console) is
   -- super_admin-only by decision, and admin-service's putGrants now REFUSES to
@@ -553,40 +543,8 @@ ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
 DO UPDATE SET is_granted = TRUE;
 
 
--- ── Back-fill: lms.history.detail.view (Lead History dialog) ────────
--- Same trap as the WhatsApp back-fill above, and the same remedy: pin the new
--- capability to one that already has exactly the right audience. Whoever may
--- read the history list may open a row from it, so this follows
--- lms.history.view — for the per-tenant ladder copies AND for the anchors,
--- including tenant-scoped copies of org_admin/tenant_admin that a tenant
--- provisioned before those two became global.
---
--- This is what makes the dialog independent of the Leads page: a role denied
--- 'lms.leads' loses lms.leads.view and lms.leads.timeline.view with it, and
--- before this capability existed that silently broke the dialog on the history
--- page the role still holds.
-INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
-SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
-FROM iam.role_capabilities rc
-JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.history.view'
-CROSS JOIN iam.capabilities tgt
-WHERE tgt.key = 'lms.history.detail.view'
-  AND rc.is_granted
-  AND rc.tenant_id IS NULL
-ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
-DO UPDATE SET is_granted = TRUE;
-
-INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
-SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
-FROM iam.role_capabilities rc
-JOIN iam.capabilities src ON src.id = rc.capability_id AND src.key = 'lms.history.view'
-CROSS JOIN iam.capabilities tgt
-WHERE tgt.key = 'lms.history.detail.view'
-  AND rc.is_granted
-  AND rc.tenant_id IS NOT NULL
-ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
-DO UPDATE SET is_granted = TRUE;
-
+-- (lms.history.detail.view and its back-fill were removed in 1.76.0: the Lead History
+-- dialog reads lms.history.view now. See one_time/apply_capability_walls.sql.)
 
 -- ── Back-fill: cross-branch lead reach + the Bulk Assign page gate ──
 -- Same trap as the WhatsApp back-fill above, and the reason the Bulk Assign
@@ -1269,6 +1227,55 @@ DO NOTHING;
 
 WITH pin(src_key, tgt_key) AS (
   VALUES ('hr.attendance.admin.assignments.manage', 'hr.attendance.roster.manage')
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id
+JOIN pin ON pin.src_key = src.key
+JOIN iam.capabilities tgt ON tgt.key = pin.tgt_key
+JOIN iam.user_roles r ON r.id = rc.role_id
+JOIN LATERAL (
+  SELECT 1 FROM iam.fn_role_capability_matrix(rc.tenant_id) m
+  WHERE m.role_name = r.name AND m.capability_key = pin.src_key AND m.granted
+  LIMIT 1
+) eff ON TRUE
+WHERE rc.is_granted
+  AND rc.tenant_id IS NOT NULL
+ON CONFLICT (tenant_id, role_id, capability_id) WHERE tenant_id IS NOT NULL
+DO NOTHING;
+
+
+-- ── Back-fill: capability walls (schema 1.76.0) ───────────────────────
+--   lms.leads.export             <- lms.leads.view              (whoever sees leads could already download them)
+--   hr.employees.statutory.view  <- hr.employees.profile360.view (whoever opened the 360 saw the statutory tab)
+-- Effective holders only; DO NOTHING so a tenant opt-out survives. The three
+-- *.tenant_wide keys are NOT back-filled here: they are listed on tenant_admin
+-- above, and existing tenants get them from one_time/apply_capability_walls.sql.
+WITH pin(src_key, tgt_key) AS (
+  VALUES ('lms.leads.view',                'lms.leads.export'),
+         ('hr.employees.profile360.view',  'hr.employees.statutory.view')
+)
+INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
+SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE
+FROM iam.role_capabilities rc
+JOIN iam.capabilities src ON src.id = rc.capability_id
+JOIN pin ON pin.src_key = src.key
+JOIN iam.capabilities tgt ON tgt.key = pin.tgt_key
+JOIN iam.user_roles r ON r.id = rc.role_id
+JOIN LATERAL (
+  SELECT 1 FROM iam.fn_role_capability_matrix(rc.tenant_id) m
+  WHERE m.role_name = r.name AND m.capability_key = pin.src_key AND m.granted
+  LIMIT 1
+) eff ON TRUE
+WHERE rc.is_granted
+  AND rc.tenant_id IS NULL
+ON CONFLICT (role_id, capability_id) WHERE tenant_id IS NULL
+DO NOTHING;
+
+WITH pin(src_key, tgt_key) AS (
+  VALUES ('lms.leads.view',                'lms.leads.export'),
+         ('hr.employees.profile360.view',  'hr.employees.statutory.view')
 )
 INSERT INTO iam.role_capabilities (tenant_id, role_id, capability_id, is_granted)
 SELECT rc.tenant_id, rc.role_id, tgt.id, TRUE

@@ -24,14 +24,16 @@ export const ADMIN_NAV: NavGroup[] = [
         label: 'Team',
         href: '/dashboard/team',
         icon: 'users-round',
-        capability: CAPABILITY.ADMIN_TEAM,
+        // Same question as the page: canOpenTeam = holdsUsableNode(admin.team.view).
+        capability: CAPABILITY.ADMIN_TEAM_VIEW,
       },
       {
         id: 'api-tokens',
         label: 'API Tokens',
         href: '/dashboard/api-tokens',
         icon: 'key-round',
-        capability: CAPABILITY.ADMIN_API_TOKENS,
+        capability: CAPABILITY.ADMIN_API_TOKENS_VIEW,
+        exact: true,
       },
       {
         id: 'leave-admin',
@@ -52,7 +54,8 @@ export const ADMIN_NAV: NavGroup[] = [
         label: 'Branding',
         href: '/dashboard/branding',
         icon: 'palette',
-        capability: CAPABILITY.ADMIN_BRANDING,
+        capability: CAPABILITY.ADMIN_BRANDING_VIEW,
+        exact: true,
       },
     ],
   },

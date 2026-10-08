@@ -143,3 +143,30 @@ describe("isNavItemActive", () => {
     expect(isNavItemActive(lms[1]!, "/dashboard/leads/42", lms)).toBe(false);
   });
 });
+
+// A page that serves two audiences with different grants (Payroll: own payslips OR
+// payroll management) lists the second as `orCapabilities`, so the link and the
+// page guard behind it ask the same pair.
+describe('filterNav — orCapabilities', () => {
+  const PAYROLL: NavItem = {
+    ...ITEM('payroll', 'hr.employees.payslip.view'),
+    exact: true,
+    orCapabilities: ['hr.reports.payroll.manage' as NavItem['capability']],
+  };
+
+  it('opens for either grant', () => {
+    expect(filterNav([PAYROLL], actor(['hr.employees.payslip.view']))).toHaveLength(1);
+    expect(filterNav([PAYROLL], actor(['hr.reports.payroll.manage']))).toHaveLength(1);
+  });
+
+  it('stays closed when the actor holds neither', () => {
+    expect(filterNav([PAYROLL], actor(['hr.employees.view']))).toHaveLength(0);
+    expect(filterNav([PAYROLL], actor([]))).toHaveLength(0);
+    expect(filterNav([PAYROLL], null)).toHaveLength(0);
+  });
+
+  it('does not change an item that lists no alternatives', () => {
+    const plain: NavItem = { ...ITEM('team', 'hr.attendance.roster.view'), exact: true };
+    expect(filterNav([plain], actor(['hr.reports.payroll.manage']))).toHaveLength(0);
+  });
+});

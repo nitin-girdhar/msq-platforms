@@ -230,3 +230,17 @@ describe('canOpenAdminConsole', () => {
     expect(canOpenAdminConsole({ capabilities: ['administration.things'] })).toBe(false);
   });
 });
+
+// Leave and Attendance administration are pages OF admin-web, so a holder of only
+// those grants reaches the console; the pill must agree with the layout guard.
+describe('canOpenAdminConsole — HR admin screens (1.76.0)', () => {
+  it('admits a holder of only hr.leave.admin.* or hr.attendance.admin.*', () => {
+    expect(canOpenAdminConsole({ capabilities: ['hr.leave', 'hr.leave.admin.policies.manage'] })).toBe(true);
+    expect(canOpenAdminConsole({ capabilities: ['hr.attendance.admin.rules.update'] })).toBe(true);
+  });
+
+  it('does not admit ordinary HR self-service or a look-alike key', () => {
+    expect(canOpenAdminConsole({ capabilities: ['hr.leave', 'hr.leave.view', 'hr.leave.approve'] })).toBe(false);
+    expect(canOpenAdminConsole({ capabilities: ['hr.attendance.view', 'hr.attendance.administrative'] })).toBe(false);
+  });
+});

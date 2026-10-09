@@ -946,7 +946,7 @@ GRANT INSERT, UPDATE ON TABLE hr.attendance_statuses TO hr_svc;
 GRANT INSERT, UPDATE ON TABLE task.task_statuses TO task_svc;
 GRANT INSERT, UPDATE ON TABLE task.task_priorities TO task_svc;
 GRANT SELECT              ON iam.departments TO app_user, tenant_admin;
-GRANT INSERT, UPDATE      ON iam.departments TO app_user, hr_svc;
+GRANT INSERT, UPDATE      ON iam.departments TO app_user, hr_svc, tenant_admin;  -- 1.78.0: tenant_admin writes departments (was SELECT only -> 500)
 GRANT SELECT ON iam.capabilities TO app_user, tenant_admin;
 GRANT SELECT                        ON iam.role_capabilities TO app_user, tenant_admin;
 GRANT INSERT, UPDATE, DELETE        ON iam.role_capabilities TO app_user;
@@ -1019,5 +1019,23 @@ GRANT SELECT, INSERT, UPDATE ON hr.document_settings, hr.shift_requirements, hr.
 
 -- Leave request number (1.67.0).
 GRANT USAGE ON SEQUENCE hr.leave_request_no_seq TO app_user, tenant_admin, root_service, hr_svc;
+
+-- Meta CAPI v2 (1.79.0).
+-- Platform tables: root_service ONLY (like ext.meta_ad_accounts). They name no lead and the
+-- credentials table holds the system-user tokens, so no tenant or product login may read them.
+REVOKE ALL ON TABLE ext.meta_platform_credentials, ext.meta_business_portfolios, ext.meta_datasets,
+               ext.meta_dataset_ad_accounts, ext.meta_org_dataset_map
+  FROM app_user, tenant_admin, lms_svc, meta_svc, lead_svc;
+GRANT ALL PRIVILEGES ON TABLE ext.meta_platform_credentials, ext.meta_business_portfolios, ext.meta_datasets,
+                              ext.meta_dataset_ad_accounts, ext.meta_org_dataset_map TO root_service;
+
+-- The outbox: written by leads-service IN the stage-change transaction (lms_svc / app_user), read and
+-- retried from the console under the N-6 tenant-config path, and driven by the meta-conversion-api
+-- worker on the service path (root_service). The RLS policies decide who may do WHAT to which rows.
+GRANT SELECT, INSERT, UPDATE ON TABLE ext.meta_capi_outbox TO app_user, lms_svc, meta_svc;
+GRANT SELECT                 ON TABLE ext.meta_capi_outbox TO tenant_admin;
+GRANT ALL PRIVILEGES         ON TABLE ext.meta_capi_outbox TO root_service;
+-- leads-service resolves the lead's dataset snapshot and Meta lead id when it enqueues.
+GRANT SELECT ON TABLE ext.meta_leads, ext.meta_capi_event_types, ext.vw_meta_capi_event_types TO lms_svc;
 
 COMMIT;

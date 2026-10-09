@@ -69,7 +69,8 @@ export default function TenantModulesClient({ tenantId, tenantName, initialModul
     <>
       <PageHeader
         title={`Modules${tenantName ? ` — ${tenantName}` : ''}`}
-        subtitle={`Which products this tenant is entitled to use · ${active.size} / ${Object.keys(MODULE_LABELS).length} active`}
+        subtitle={`${active.size} / ${Object.keys(MODULE_LABELS).length} active`}
+        info="Which products this tenant is entitled to use."
         actions={
           <>
             <Link href="/dashboard/lookups/tenants" className="inline-flex min-h-[2.75rem] items-center px-1 text-xs font-semibold text-primary hover:underline sm:min-h-0">

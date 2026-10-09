@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Button, SearchableSelect, type SearchableOption } from '@platform/ui-kit';
 import {
   metaCampaigns,
@@ -55,6 +55,10 @@ interface Aggregate {
 // branch that ran it. Firing them all at once (the old Promise.all) put N
 // concurrent fan-outs on leads-service for one click; this caps it.
 const PREVIEW_CONCURRENCY = 3;
+// Each campaign in a bulk confirm costs one dry-run (a reclassify fan-out across the
+// tenant's branches) and one commit. A server-side bulk endpoint would collapse that;
+// until then the dialog refuses a batch it cannot finish in reasonable time.
+const MAX_BULK_CONFIRM = 200;
 
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -126,6 +130,13 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
+  // Progress for a bulk run (preview and commit are one request per campaign), the ids
+  // already confirmed (so Confirm again after a partial failure retries only the rest),
+  // and a cancel flag the commit loop checks between campaigns.
+  const [previewProgress, setPreviewProgress] = useState(0);
+  const [commitProgress, setCommitProgress] = useState(0);
+  const [confirmedIds, setConfirmedIds] = useState<Set<string>>(new Set());
+  const cancelCommit = useRef(false);
 
   useEffect(() => {
     if (!target) return;
@@ -136,6 +147,10 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
     setPreviews(null);
     setPreviewError(null);
     setCommitError(null);
+    setPreviewProgress(0);
+    setCommitProgress(0);
+    setConfirmedIds(new Set());
+    cancelCommit.current = false;
     // isSingleEditable is derived from target itself; re-running this whenever
     // target changes identity is what's wanted, not a separate dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -158,13 +173,22 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
       setPreviews(null);
       return;
     }
+    if (effectiveEntries.length > MAX_BULK_CONFIRM) {
+      setPreviews(null);
+      setPreviewError(`Too many campaigns for one confirmation (${effectiveEntries.length}; the limit is ${MAX_BULK_CONFIRM}). Narrow the list with the search or page filter and confirm in batches.`);
+      return;
+    }
     let cancelled = false;
     setPreviewing(true);
+    setPreviewProgress(0);
     setPreviewError(null);
     mapWithConcurrency(effectiveEntries, PREVIEW_CONCURRENCY, (e) =>
       metaCampaigns
         .confirm(tenantId, e.row.meta_campaign_id, { campaign_type_id: e.campaignTypeId }, true)
-        .then((res) => [e.row.meta_campaign_id, res.data] as const),
+        .then((res) => {
+          if (!cancelled) setPreviewProgress((n) => n + 1);
+          return [e.row.meta_campaign_id, res.data] as const;
+        }),
     )
       .then((entries) => {
         if (cancelled) return;
@@ -200,14 +224,21 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
 
     setCommitting(true);
     setCommitError(null);
+    setCommitProgress(0);
+    cancelCommit.current = false;
+    const alreadyDone = new Set(confirmedIds);
     // Two different outcomes, reported differently. `failures`: the mapping was
     // NOT saved. `rerouteFailures`: the mapping WAS saved (the campaign is now in
     // Confirmed and new leads route correctly) but moving its EXISTING leads
     // failed — pressing Confirm on it again retries just that, safely.
     const failures: string[] = [];
     const rerouteFailures: string[] = [];
+    let cancelled = 0;
     for (const entry of effectiveEntries) {
       const name = entry.row.name ?? entry.row.meta_campaign_id;
+      // Confirmed in an earlier pass of this dialog -- do not repeat it (it re-routes leads).
+      if (alreadyDone.has(entry.row.meta_campaign_id)) { setCommitProgress((n) => n + 1); continue; }
+      if (cancelCommit.current) { cancelled += 1; continue; }
       try {
         const res = await metaCampaigns.confirm(
           tenantId,
@@ -218,16 +249,22 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
           },
           false,
         );
+        alreadyDone.add(entry.row.meta_campaign_id);
         if (res.data.reclassification_error) {
           rerouteFailures.push(`${name}: ${res.data.reclassification_error}`);
         }
       } catch (err) {
         failures.push(`${name}: ${err instanceof Error ? err.message : 'failed'}`);
       }
+      setCommitProgress((n) => n + 1);
     }
+    setConfirmedIds(alreadyDone);
     setCommitting(false);
     onConfirmed();
     const messages: string[] = [];
+    if (cancelled > 0) {
+      messages.push(`Stopped: ${cancelled} campaign${cancelled === 1 ? ' was' : 's were'} not confirmed. Press Confirm to continue with the rest.`);
+    }
     if (failures.length > 0) {
       messages.push(`${failures.length} of ${effectiveEntries.length} did not confirm — ${failures.join('; ')}`);
     }
@@ -250,11 +287,21 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
 
   const footer = (
     <div className="flex justify-end gap-2">
-      <Button variant="secondary" onClick={handleClose} disabled={committing}>
-        Cancel
-      </Button>
+      {committing && isBulk ? (
+        <Button variant="secondary" onClick={() => { cancelCommit.current = true; }}>
+          Stop after current
+        </Button>
+      ) : (
+        <Button variant="secondary" onClick={handleClose} disabled={committing}>
+          Cancel
+        </Button>
+      )}
       <Button variant="primary" type="submit" form={FORM_ID} disabled={disableCommit} aria-busy={committing}>
-        {committing ? 'Confirming…' : isBulk ? `Confirm ${effectiveEntries.length} campaigns` : 'Confirm'}
+        {committing
+          ? (isBulk ? `Confirming ${commitProgress}/${effectiveEntries.length}…` : 'Confirming…')
+          : isBulk
+            ? `Confirm ${effectiveEntries.length - confirmedIds.size} campaigns`
+            : 'Confirm'}
       </Button>
     </div>
   );
@@ -312,7 +359,7 @@ export default function ConfirmTypeModal({ target, tenantId, campaignTypeOptions
 
         <div className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-xs text-on-surface-variant">
           {previewing || !previews || !aggregate ? (
-            <p className="text-on-surface-variant">{missingType ? 'Pick a campaign type to see its impact.' : 'Calculating impact…'}</p>
+            <p className="text-on-surface-variant">{missingType ? 'Pick a campaign type to see its impact.' : `Calculating impact…${effectiveEntries.length > 1 ? ` ${previewProgress}/${effectiveEntries.length}` : ''}`}</p>
           ) : (
             <div className="space-y-1">
               <p>

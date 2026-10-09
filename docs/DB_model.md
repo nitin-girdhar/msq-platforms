@@ -1,7 +1,7 @@
 # CRM Monorepo — Database Model
 
 > **Database:** PostgreSQL 14+  
-> **Schema version:** 1.75.0 (see `db_scripts/09_schema_version.sql`)  
+> **Schema version:** 1.79.0 (see `db_scripts/09_schema_version.sql`)  
 > **Primary keys:** UUIDv7 (time-ordered) everywhere, including `geo.*`; SMALLINT identity only on `ext.meta_capi_event_types`  
 > **Source of truth:** the `CREATE TABLE` statements in `db_scripts/02_tables_core.sql` and `03_tables_product.sql`. The column tables below mirror them; the diagrams are generated from them by `docs/tools/gen_db_diagram.py`  
 > **Multi-tenancy:** Row Level Security (RLS) on every operational table  
@@ -1792,7 +1792,7 @@ Self-service **forgot-password** tokens (1.57.0). Only the **SHA-256** of the em
 
 ### iam.departments
 
-Org-level department catalog. Required parent of `iam.user_roles.department_id`, and referenced by `hr.employee_profiles.department_id`.
+Org-level department catalog. Required parent of `iam.user_roles.department_id`, and referenced by `hr.employee_profiles.department_id`. `tenant_admin` has SELECT/INSERT/UPDATE with a tenant-pinned `FOR ALL` policy (1.78.0); who may write is an app-layer capability decision.
 
 | Column      | Type        | Constraints                                         |
 | ----------- | ----------- | --------------------------------------------------- |
@@ -2446,29 +2446,61 @@ writes only via `root_service` (`logActivity`).
 
 ### ext.meta_tenant_config
 
-Per-tenant Meta App/Business Manager credentials and CAPI configuration. One
-Meta App is registered per tenant (not per org) — individual orgs/branches
-are attributed via `ext.meta_page_form_org_map` below, since many orgs' Pages
-and Forms can sit behind a single tenant-level app.
+Meta app configuration. Since 1.79.0 there is **one Meta app for the whole platform**: its webhook secret and verify token live in the single shared row (`tenant_id IS NULL`, enforced by `uix_meta_tenant_config_one_shared`); the console edits it on *Meta Connection*. Per-tenant rows (`tenant_id` set) still work for a tenant with its own app. Individual orgs/branches are attributed via `ext.meta_page_form_org_map` below.
 
-| Column              | Type        | Constraints                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| id                  | UUID        | PK (UUIDv7)                                                                                                                                                                                                                                                                                                                                                                                                     |
-| tenant_id           | UUID        | NOT NULL, FK → entity.tenants(id)                                                                                                                                                                                                                                                                                                                                                                               |
-| app_secret          | TEXT        | NOT NULL                                                                                                                                                                                                                                                                                                                                                                                                        |
-| verify_token        | TEXT        | NOT NULL                                                                                                                                                                                                                                                                                                                                                                                                        |
-| pixel_id            | TEXT        | NOT NULL                                                                                                                                                                                                                                                                                                                                                                                                        |
-| access_token        | TEXT        | NOT NULL                                                                                                                                                                                                                                                                                                                                                                                                        |
-| graph_api_version   | TEXT        | NOT NULL, DEFAULT 'v21.0'                                                                                                                                                                                                                                                                                                                                                                                       |
-| is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                                                                                                                                                                                                                                                                                                                                          |
-| capi_trigger_stages | UUID[]      | NOT NULL, DEFAULT '{}'                                                                                                                                                                                                                                                                                                                                                                                          |
-| ad_account_ids      | TEXT[]      | NOT NULL, DEFAULT '{}'; the `act_<digits>` accounts a "Fetch campaigns" run iterates to populate `ext.meta_campaigns`. A column rather than an `ext.meta_ad_accounts` table because an ad account carries nothing but its id here — Pages are already handled the same way (a bare `page_id`, no `ext.meta_pages`) — and the only per-campaign sync state there is lives on `ext.meta_campaigns.last_synced_at` |
-| field_mappings      | JSONB       | nullable — per-tenant override of Meta form field keys; falls back to `DEFAULT_FIELD_MAPPINGS` in `meta.config.ts` when NULL                                                                                                                                                                                                                                                                                    |
-| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                                                                                                                                                                                                                                                                                                                                         |
-| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                                                                                                                                                                                                                                                                                                                                         |
+The **access token and pixel no longer belong here**: the token is the platform's system user (`ext.meta_platform_credentials`) and the dataset is per ad account (`ext.meta_datasets`). `pixel_id` / `access_token` are DEPRECATED and nullable — read only as a fallback until the credentials are entered. `capi_trigger_stages` (never evaluated — the stage map is `ext.lead_stage_capi_event_map`) and `ad_account_ids` (superseded by `ext.meta_ad_accounts`) left the `CREATE` in 1.79.0; existing databases keep them until `db_scripts/one_time/apply_meta_capi_v2_drop_dead_columns_1_80.sql` runs, after the new images are deployed.
 
-**Unique:** `(tenant_id)`  
-**RLS:** tenant_admin only (no app_user policy — an individual org never owns the shared app config)
+| Column              | Type        | Constraints                                                                                                                  |
+| ------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| id                  | UUID        | PK (UUIDv7)                                                                                                                  |
+| tenant_id           | UUID        | nullable, UNIQUE, FK → entity.tenants(id) — NULL = the shared app row                                                        |
+| app_secret          | TEXT        | NOT NULL (AES-256-GCM at rest)                                                                                               |
+| verify_token        | TEXT        | NOT NULL                                                                                                                     |
+| pixel_id            | TEXT        | nullable — DEPRECATED (1.79.0)                                                                                               |
+| access_token        | TEXT        | nullable — DEPRECATED (1.79.0), fallback only                                                                                |
+| graph_api_version   | TEXT        | NOT NULL, DEFAULT 'v21.0'                                                                                                    |
+| is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                                                       |
+| field_mappings      | JSONB       | nullable — per-tenant override of Meta form field keys; falls back to `DEFAULT_FIELD_MAPPINGS` in `meta.config.ts` when NULL |
+| created_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                                                      |
+| updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT NOW()                                                                                                      |
+
+**RLS:** tenant_admin only (no app_user policy). The shared row matches no policy and is reached only on the service path (`withServiceTx`) from super-admin routes.
+
+---
+
+#### Meta Conversions API v2 tables (schema 1.79.0)
+
+Four platform tables are **root_service only** (RLS enabled and forced, **no policy** — the `ext.meta_ad_accounts` treatment): they hold configuration and ownership, never lead data.
+
+**`ext.meta_platform_credentials`** — the two system users. `purpose` ∈ `LEADS_READ | CAPI_WRITE`; `access_token` AES-256-GCM (`enc:v1:…`); `scopes TEXT[]`, `expires_at` (NULL = non-expiring) from `debug_token`; `status` ∈ `ACTIVE | ROTATED | REVOKED`; partial unique `uix_meta_platform_credentials_active (purpose) WHERE status='ACTIVE'`.
+
+**`ext.meta_business_portfolios`** — `tenant_id NOT NULL` (the owner; the brand is a tenant too), `meta_business_id` UNIQUE, `kind` ∈ `BRAND | FRANCHISE`, `partner_status` ∈ `PENDING | ACTIVE | REVOKED`; `UNIQUE (tenant_id, id)` is the target of the composite FKs below.
+
+**`ext.meta_datasets`** — `(tenant_id, portfolio_id)` composite FK → portfolios (a dataset cannot be filed under another tenant), `dataset_id` UNIQUE (the pixel id), `credential_id` (NULL = the active CAPI_WRITE), `test_event_code`, `status` ∈ `PENDING | ACTIVE | NO_ACCESS | DISABLED`, `last_verified_at`, `last_error`; `UNIQUE (tenant_id, id)`.
+
+**`ext.meta_dataset_ad_accounts`** — PK `(dataset_id, ad_account_id)`, `UNIQUE (ad_account_id)` (an ad account feeds exactly one dataset), FK → `ext.meta_ad_accounts(ad_account_id)`. This is the routing key.
+
+**`ext.meta_org_dataset_map`** — FALLBACK only: `(tenant_id, org_id)` → `entity.organizations (tenant_id, id)` and `(tenant_id, dataset_id)` → datasets, so neither can belong to another tenant; at most one active row per org.
+
+**`ext.meta_capi_outbox`** — the transactional outbox. Tenant + org scoped:
+
+| Column | Notes |
+| --- | --- |
+| tenant_id, org_id, department_id | who owns it; `department_id` is reporting only, never routing |
+| marketing_lead_id, meta_lead_id | the CRM lead and the leadgen id sent as `user_data.lead_id` |
+| dataset_id | composite FK `(tenant_id, dataset_id)`; NULL only on a SKIPPED/closed row |
+| stage_id, event_type_id, funnel_rank, event_name, event_id | the stage that caused it (NULL for a stage the lead jumped over) and the event; `event_id = sha256(meta_lead_id:event_name)` |
+| event_time, expires_at | the stage-change time and `+7 days` (Meta's window) |
+| event_value, currency, is_negative | value is reserved (no source for a lead value yet) |
+| status | `PENDING SENDING SENT FAILED DEAD EXPIRED SKIPPED_NO_DATASET SKIPPED_TENANT_MISMATCH SKIPPED_NO_MAPPING SKIPPED_NOT_META SKIPPED_AMBIGUOUS_DATASET` |
+| attempts, next_retry_at, last_error, fb_trace_id, request_payload, response_payload | delivery state |
+| triggered_by, triggered_by_user_id, sent_at | `auto_stage_change | manual | backfill` |
+
+Unique `(dataset_id, event_id)` (idempotent enqueue) and, for parked rows, `(marketing_lead_id, event_id) WHERE dataset_id IS NULL`. **RLS:** an org user may read and enqueue their own org's rows (`tenant_id` is checked too) but **not update** them; the console path (`withTenantConfigTx`, tenant-pinned) has the N-6 policy; `tenant_admin` reads the tenant. The worker runs on the service path.
+
+**Functions (all `SECURITY DEFINER`, `search_path` pinned):** `ext.fn_resolve_capi_dataset(tenant, org, ad_account)`, `ext.fn_enqueue_capi_events(lead, stage, at, trigger, actor)` (refuses a lead outside `app.current_org_id`), `ext.fn_requeue_capi_skipped(tenant)` (refuses a tenant other than `app.current_tenant_id`).
+
+**Altered:** `ext.meta_leads` + `ad_account_id`, `capi_dataset_id`, `capi_resolution` (`AD_ACCOUNT | ORG_FALLBACK | NONE`); `ext.meta_capi_event_types` + `funnel_rank`, `is_negative`; `ext.meta_page_health` + `leads_access_ok`; `entity.organizations` + `UNIQUE (tenant_id, id)`.
 
 ---
 
@@ -2730,7 +2762,7 @@ Demographic fields from Meta lead forms (1:1 from `ext.meta_leads`).
 
 ### ext.meta_capi_outbound_logs
 
-Outbound Meta Conversion API event audit trail.
+Outbound Meta Conversion API event audit trail. **Frozen legacy since 1.79.0:** the system of record is now `ext.meta_capi_outbox`; this table is no longer written, and `ext.fn_enqueue_capi_events` still reads its `SUCCESS` rows so an event delivered before the outbox existed is not queued again.
 
 | Column               | Type        | Constraints                                       |
 | -------------------- | ----------- | ------------------------------------------------- |
@@ -2765,8 +2797,12 @@ Lookup of supported Meta CAPI event names.
 | description | TEXT         |                         |
 | is_active   | BOOLEAN      | NOT NULL, DEFAULT TRUE  |
 | sort_order  | SMALLINT     | NOT NULL, DEFAULT 0     |
+| funnel_rank | SMALLINT     | nullable — position in the funnel (Lead 10, ContactedLead 20, QualifiedLead 30, ConvertedLead 40); NULL = outside the sequence |
+| is_negative | BOOLEAN      | NOT NULL, DEFAULT FALSE — a negative signal (UnqualifiedLead) |
 | created_at  | TIMESTAMPTZ  | NOT NULL, DEFAULT NOW() |
 | updated_at  | TIMESTAMPTZ  | NOT NULL, DEFAULT NOW() |
+
+Seeded (1.79.0): `Lead`, `ContactedLead`, `QualifiedLead`, `ConvertedLead`, `UnqualifiedLead`; the old catch-all `Other` is retired (`is_active = FALSE`, kept so existing rows resolve).
 
 **View:** `ext.vw_meta_capi_event_types` (active rows only)
 **RLS:** none (global lookup, like lms.lead_stage)
@@ -3169,6 +3205,7 @@ Per-org (or tenant-default) attendance policy — geofencing, photo requirements
 | min_full_day_minutes             | SMALLINT     | DEFAULT 480, CHECK 0-1440; CHECK `min_half_day_minutes <= min_full_day_minutes` |
 | regularization_approval_levels   | SMALLINT     | DEFAULT 1, CHECK >= 1                                                           |
 | regularization_max_backdate_days | SMALLINT     | DEFAULT 30, CHECK 0-365                                                         |
+| min_rest_hours                   | SMALLINT     | NOT NULL, DEFAULT 11, CHECK 0-24; minimum rest between shifts, 0 = off (1.77.0)  |
 | is_active                        | BOOLEAN      | NOT NULL, DEFAULT TRUE                                                          |
 | is_deleted                       | BOOLEAN      | NOT NULL, DEFAULT FALSE                                                         |
 | deleted_at                       | TIMESTAMPTZ  |                                                                                 |
@@ -3197,6 +3234,7 @@ Per-org (or tenant-default) attendance policy — geofencing, photo requirements
 | min_full_day_minutes | SMALLINT    | DEFAULT 240 / 480                                          |
 | is_night_shift       | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
 | is_split             | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
+| min_rest_hours       | SMALLINT    | NULL = follow attendance_rules; CHECK 0-24, 0 = no rule (1.77.0) |
 | is_active            | BOOLEAN     | NOT NULL, DEFAULT TRUE                                     |
 | is_deleted           | BOOLEAN     | NOT NULL, DEFAULT FALSE                                    |
 | deleted_at           | TIMESTAMPTZ |                                                            |

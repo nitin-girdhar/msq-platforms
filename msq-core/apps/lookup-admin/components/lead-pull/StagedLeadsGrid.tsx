@@ -1,9 +1,9 @@
 'use client';
 
 import '@platform/ui-kit/ag-grid.css';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import type { ColDef, GridReadyEvent, GridSizeChangedEvent, ICellRendererParams } from 'ag-grid-community';
+import type { ColDef, FirstDataRenderedEvent, GridApi, GridReadyEvent, GridSizeChangedEvent, ICellRendererParams } from 'ag-grid-community';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
 import { GRID_DEFAULT_COL_DEF, scalePx } from '@platform/ui-kit/grid';
 import { Modal, Button, buildFilename, exportRows } from '@platform/ui-kit';
@@ -13,44 +13,17 @@ import {
   type PullVerdict,
   type StagedLeadRow,
 } from '@/src/lib/api/client';
+import {
+  APPLIED_STATUS_CLASSES,
+  APPLIED_STATUS_LABELS,
+  VERDICT_CLASSES,
+  VERDICT_LABELS,
+  type AppliedStatus,
+} from '@/components/meta-shared/pull-labels';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
 const PAGE_SIZE = 200;
-
-const VERDICT_LABELS: Record<string, string> = {
-  new: 'New',
-  phone_duplicate: 'Phone duplicate',
-  email_duplicate: 'Email duplicate',
-  already_synced: 'Already synced',
-  test_lead: 'Test lead',
-  unmapped_form: 'Unmapped form',
-  missing_contact: 'Missing contact',
-};
-
-const VERDICT_CLASSES: Record<string, string> = {
-  new: 'bg-status-success-container text-on-status-success-container',
-  phone_duplicate: 'bg-status-info-container text-primary',
-  email_duplicate: 'bg-status-info-container text-primary',
-  already_synced: 'bg-surface-container text-on-surface-variant',
-  test_lead: 'bg-surface-container text-on-surface-variant',
-  unmapped_form: 'bg-status-due-container text-on-status-due-container',
-  missing_contact: 'bg-status-due-container text-on-status-due-container',
-};
-
-const APPLIED_STATUS_LABELS: Record<string, string> = {
-  pending: 'Pending',
-  applied: 'Applied',
-  skipped: 'Skipped',
-  failed: 'Failed',
-};
-
-const APPLIED_STATUS_CLASSES: Record<string, string> = {
-  pending: 'bg-surface-container text-on-surface-variant',
-  applied: 'bg-status-success-container text-on-status-success-container',
-  skipped: 'bg-surface-container text-on-surface-variant',
-  failed: 'bg-error-container text-on-error-container',
-};
 
 function badge(label: string, cls: string) {
   return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{label}</span>;
@@ -67,6 +40,9 @@ interface Props {
   runId: string;
   // undefined = every staged row for this run.
   verdict: PullVerdict | undefined;
+  // Narrow to one Apply outcome (the summary's applied / skipped / failed numbers).
+  // Applied in SQL, so it is correct on a run bigger than one loaded page.
+  appliedStatus?: AppliedStatus | undefined;
   title: string;
   pageNames: Record<string, string>;
   // 1.51.0: branch names for the Branch column (org_id -> name).
@@ -78,7 +54,7 @@ interface Props {
   onClose: () => void;
 }
 
-export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageNames, orgNames, canSelect, onSelectionChanged, onClose }: Props) {
+export default function StagedLeadsGrid({ tenantId, runId, verdict, appliedStatus, title, pageNames, orgNames, canSelect, onSelectionChanged, onClose }: Props) {
   const [rows, setRows] = useState<StagedLeadRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -87,23 +63,37 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  // Only the newest request may write state: changing the view (or pressing
+  // "Load more" twice) leaves older requests in flight, and a slow stale answer
+  // must not replace the rows now on screen.
+  const loadSeq = useRef(0);
   const loadPage = useCallback((p: number, append: boolean) => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
-    leadPull.listLeads(tenantId, runId, verdict, p, PAGE_SIZE)
+    leadPull.listLeads(tenantId, runId, verdict, p, PAGE_SIZE, appliedStatus)
       .then((res) => {
+        if (seq !== loadSeq.current) return;
         setRows((prev) => (append ? [...prev, ...res.data] : res.data));
         setTotal(res.total);
         setPage(p);
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Could not load staged leads.'))
-      .finally(() => setLoading(false));
-  }, [tenantId, runId, verdict]);
+      .catch((err: unknown) => {
+        if (seq !== loadSeq.current) return;
+        setError(err instanceof Error ? err.message : 'Could not load staged leads.');
+      })
+      .finally(() => { if (seq === loadSeq.current) setLoading(false); });
+  }, [tenantId, runId, verdict, appliedStatus]);
 
   useEffect(() => {
     loadPage(1, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, runId, verdict]);
+  }, [tenantId, runId, verdict, appliedStatus]);
+
+  // A column filter or sort only sees the rows loaded so far. On a partial load it
+  // would present a slice of the run as the whole answer, so they switch off until
+  // everything is in (the verdict / outcome filters above are server-side and exact).
+  const partial = rows.length < total;
 
   const isTickable = (r: StagedLeadRow | undefined): boolean =>
     !!r && !!canSelect && r.applied_status === 'pending' && !!r.verdict && IMPORTABLE_PULL_VERDICTS.includes(r.verdict);
@@ -111,11 +101,14 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
   // Saves ONE row's tick, optimistically; a failure puts it back and says so.
   const toggleRow = useCallback((row: StagedLeadRow, selected: boolean) => {
     setError(null);
+    const previous = row.apply_selected;
     setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, apply_selected: selected } : r)));
     leadPull.setSelection(tenantId, runId, { selected, ids: [row.id] })
       .then(() => onSelectionChanged?.())
       .catch((err: unknown) => {
-        setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, apply_selected: !selected } : r)));
+        // Revert only if the row still shows THIS request's value: a later toggle of the
+        // same row (rapid clicks) must not be overwritten by an earlier request's failure.
+        setRows((prev) => prev.map((r) => (r.id === row.id && r.apply_selected === selected ? { ...r, apply_selected: previous } : r)));
         setError(err instanceof Error ? err.message : 'Could not save the selection.');
       });
   }, [tenantId, runId, onSelectionChanged]);
@@ -141,7 +134,7 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
     try {
       const all: StagedLeadRow[] = [];
       for (let p = 1; p <= 200; p += 1) {
-        const res = await leadPull.listLeads(tenantId, runId, verdict, p, 500);
+        const res = await leadPull.listLeads(tenantId, runId, verdict, p, 500, appliedStatus);
         all.push(...res.data);
         if (all.length >= res.total || res.data.length === 0) break;
       }
@@ -160,7 +153,7 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
           { header: 'Applied status', value: (r) => r.applied_status },
           { header: 'Applied error', value: (r) => r.applied_error },
         ],
-        buildFilename(['staged-leads', verdict ?? 'all']),
+        buildFilename(['staged-leads', verdict ?? 'all', appliedStatus ?? '']),
         'csv',
       );
     } catch (err) {
@@ -298,20 +291,42 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
     },
   ], [pageNames, orgNames, tickCellRenderer, pageCellRenderer, verdictCellRenderer, importableCellRenderer, hiringCellRenderer, appliedStatusCellRenderer]);
 
+  // Column sizing inside a modal. The grid mounts while the modal is still laying out, so a fit run at that instant
+  // measured a stale (narrow) width -- headers and filter icons piled on top of each other until the window was resized
+  // (alt-tab did it). The fit is therefore deferred a frame, repeated when the first rows land, and only applied when the
+  // columns genuinely fit: below their combined width they keep their own sizes and the grid scrolls sideways, instead
+  // of every column being crushed under its minimum.
+  const gridBox = useRef<HTMLDivElement>(null);
+  const fitWhenRoomy = useCallback((api: GridApi<StagedLeadRow>, available: number) => {
+    const needed = api.getColumns()?.reduce((n, c) => n + (c.getColDef().width ?? 150), 0) ?? 0;
+    if (available >= needed) api.sizeColumnsToFit();
+  }, []);
   const onGridReady = useCallback((params: GridReadyEvent<StagedLeadRow>) => {
-    params.api.sizeColumnsToFit();
-  }, []);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (params.api.isDestroyed()) return;
+      fitWhenRoomy(params.api, gridBox.current?.clientWidth ?? 0);
+    }));
+  }, [fitWhenRoomy]);
+  const onFirstDataRendered = useCallback((params: FirstDataRenderedEvent<StagedLeadRow>) => {
+    fitWhenRoomy(params.api, gridBox.current?.clientWidth ?? 0);
+  }, [fitWhenRoomy]);
   const onGridSizeChanged = useCallback((params: GridSizeChangedEvent<StagedLeadRow>) => {
-    params.api.sizeColumnsToFit();
-  }, []);
+    fitWhenRoomy(params.api, params.clientWidth);
+  }, [fitWhenRoomy]);
 
   // Stable module-level reference — never wrapped in useMemo.
   const defaultColDef: ColDef = GRID_DEFAULT_COL_DEF;
 
   const hasMore = rows.length < total;
 
+  // See `partial` above: sorting / filtering a partial slice would misreport the run.
+  const gridColumnDefs = useMemo<ColDef<StagedLeadRow>[]>(
+    () => (partial ? columnDefs.map((c) => ({ ...c, filter: false, sortable: false })) : columnDefs),
+    [columnDefs, partial],
+  );
+
   return (
-    <Modal open onClose={onClose} title={title} closeOnBackdropClick maxWidth="max-w-5xl">
+    <Modal open onClose={onClose} title={title} closeOnBackdropClick maxWidth="max-w-7xl">
       <div className="space-y-3">
         {error && (
           <div role="alert" className="rounded-xl border border-error/30 bg-error-container px-3 py-2 text-xs text-on-error-container">
@@ -336,10 +351,10 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
           </div>
         </div>
         <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
-          <div className="ag-theme-alpine" style={{ height: 480, width: '100%' }}>
+          <div ref={gridBox} className="ag-theme-alpine" style={{ height: 480, width: '100%' }}>
             <AgGridReact<StagedLeadRow>
               rowData={rows}
-              columnDefs={columnDefs}
+              columnDefs={gridColumnDefs}
               defaultColDef={defaultColDef}
               rowHeight={scalePx(44)}
               headerHeight={scalePx(40)}
@@ -347,12 +362,18 @@ export default function StagedLeadsGrid({ tenantId, runId, verdict, title, pageN
               suppressCellFocus={false}
               enableCellTextSelection
               onGridReady={onGridReady}
+              onFirstDataRendered={onFirstDataRendered}
               onGridSizeChanged={onGridSizeChanged}
               getRowId={(params) => params.data.id}
               overlayNoRowsTemplate={loading ? 'Loading…' : 'No staged leads for this filter.'}
             />
           </div>
         </div>
+        {hasMore && (
+          <p className="text-center text-xs text-on-surface-variant">
+            Showing {rows.length.toLocaleString()} of {total.toLocaleString()} — sorting and column filters turn on once all rows are loaded.
+          </p>
+        )}
         {hasMore && (
           <div className="flex justify-center">
             <Button variant="secondary" onClick={() => loadPage(page + 1, true)} disabled={loading}>

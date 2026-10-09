@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Alert, Modal } from '@platform/ui-kit';
+import { Alert, LocalDateTime, Modal } from '@platform/ui-kit';
 import { leadPull, type PullHistoryRow } from '@/src/lib/api/client';
 
 interface Props {
@@ -15,12 +15,6 @@ const STATUS_CLASS: Record<string, string> = {
   failed: 'bg-error-container text-on-error-container',
   discarded: 'bg-surface-container text-on-surface-variant',
 };
-
-function when(v: string | null): string {
-  if (!v) return '—';
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
-}
 
 function num(counts: Record<string, unknown>, key: string): number | null {
   const v = counts[key];
@@ -69,7 +63,7 @@ export default function PullHistoryModal({ tenantId, onClose }: Props) {
                 const applied = r.counts['apply'] as { applied?: number } | undefined;
                 return (
                   <tr key={r.run_id} className="border-t border-outline-variant align-top">
-                    <td className="px-3 py-2 text-on-surface">{when(r.started_at ?? r.created_at)}</td>
+                    <td className="px-3 py-2 text-on-surface"><LocalDateTime value={r.started_at ?? r.created_at} /></td>
                     <td className="px-3 py-2 text-on-surface-variant">{r.created_by_name ?? (r.trigger_kind === 'scheduled' ? 'Scheduler' : '—')}</td>
                     <td className="px-3 py-2 text-on-surface-variant capitalize">{r.trigger_kind}</td>
                     <td className="px-3 py-2 text-on-surface-variant">{since ? `${since} → ${until ?? 'now'}` : '—'}</td>
@@ -82,8 +76,8 @@ export default function PullHistoryModal({ tenantId, onClose }: Props) {
                       <span className={`rounded-full px-2 py-0.5 text-[0.6875rem] font-medium ${STATUS_CLASS[r.status] ?? 'bg-surface-container text-on-surface-variant'}`}>
                         {r.status}
                       </span>
-                      {r.status === 'applied' && <span className="block text-[0.6875rem] text-on-surface-variant">{when(r.applied_at)}</span>}
-                      {r.status === 'discarded' && <span className="block text-[0.6875rem] text-on-surface-variant">{when(r.discarded_at)}</span>}
+                      {r.status === 'applied' && <span className="block text-[0.6875rem] text-on-surface-variant"><LocalDateTime value={r.applied_at} /></span>}
+                      {r.status === 'discarded' && <span className="block text-[0.6875rem] text-on-surface-variant"><LocalDateTime value={r.discarded_at} /></span>}
                     </td>
                   </tr>
                 );

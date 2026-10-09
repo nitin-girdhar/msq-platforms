@@ -17,6 +17,8 @@ export const metaPageHealthTable = extSchema.table('meta_page_health', {
   tokenStatus:  text('token_status').notNull(),
   /** NULL = could not be determined. */
   isSubscribed: boolean('is_subscribed'),
+  /** Can the page's leads be read (leads access + leads_retrieval)? NULL = not checked (1.79.0). */
+  leadsAccessOk: boolean('leads_access_ok'),
   errorText:    text('error_text'),
   checkedAt:    timestamp('checked_at', { withTimezone: true }).notNull().defaultNow(),
   checkedBy:    uuid('checked_by').references(() => usersTable.id, { onDelete: 'set null' }),

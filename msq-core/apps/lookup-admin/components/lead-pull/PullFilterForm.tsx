@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Button, MultiSelect, type SelectOption } from '@platform/ui-kit';
+import { Button, InfoTip, MultiSelect, type SelectOption } from '@platform/ui-kit';
 import {
   leadPull,
   orgs,
@@ -204,11 +204,14 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
             allLabel="All campaigns"
             selectAllLabel="Select all"
           />
-          <p className="text-[0.6875rem] leading-snug text-on-surface-variant">
-            {mode === 'campaign'
-              ? 'Campaign mode: only these campaigns\u2019 ads are read, so the pull is as small as the selection.'
-              : 'Pages mode reads every form on the selected pages and keeps only these campaigns — narrowing focuses the review, not the pull.'}
-          </p>
+          <span className="flex items-center gap-1 text-[0.6875rem] text-on-surface-variant">
+            {mode === 'campaign' ? 'Campaign mode' : 'Pages mode'}
+            <InfoTip label="About campaign filtering">
+              {mode === 'campaign'
+                ? 'Only these campaigns’ ads are read, so the pull is as small as the selection.'
+                : 'Reads every form on the selected pages and keeps only these campaigns. Narrowing focuses the review, not the pull.'}
+            </InfoTip>
+          </span>
         </div>
       </div>
 
@@ -224,10 +227,26 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
         </label>
       </fieldset>
 
+      {/* The campaign filter in Pages mode is applied AFTER every lead has been fetched (Meta has no campaign-scoped
+          lead edge), so picking one campaign here still walks every form of every page since the start date. */}
+      {mode === 'pages' && selectedCampaigns.length > 0 && !fieldsDisabled && (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-status-due/30 bg-status-due-container px-3 py-2 text-xs text-on-status-due-container">
+          <span>
+            You picked {selectedCampaigns.length === 1 ? 'a campaign' : `${selectedCampaigns.length} campaigns`}, but Pages mode still reads <strong>every form on
+            {resolvedPageIds.length === 0 ? ' every mapped page' : ` ${resolvedPageIds.length} page${resolvedPageIds.length === 1 ? '' : 's'}`}</strong> since {since || 'the start date'} and only
+            filters afterwards — slow, and it hits Meta&apos;s limits. Campaign mode reads just that campaign&apos;s ads.
+          </span>
+          <button type="button" onClick={() => setMode('campaign')} className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1 font-semibold text-primary hover:bg-surface-container-low">
+            Use Campaign mode
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="flex flex-col gap-1">
           <label htmlFor="lp-since" className="text-[0.625rem] font-semibold uppercase tracking-wide text-on-surface-variant">
             Since <span className="text-error">*</span>
+            <InfoTip label="About the Since date" className="ml-1.5 normal-case">Required. An unbounded pull across every page is exactly the operation that triggers Meta throttling.</InfoTip>
           </label>
           <input
             id="lp-since"
@@ -238,14 +257,12 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
             required
             className="rounded-lg border border-outline-variant bg-surface-container-lowest px-2.5 py-1.5 text-xs text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
           />
-          <p className="text-[0.6875rem] text-on-surface-variant">
-            Required — an unbounded pull across every page is exactly the operation that triggers Meta throttling.
-          </p>
         </div>
 
         <div className="flex flex-col gap-1">
           <label htmlFor="lp-until" className="text-[0.625rem] font-semibold uppercase tracking-wide text-on-surface-variant">
             Until
+            <InfoTip label="About the Until date" className="ml-1.5 normal-case">Optional. Leave blank to pull up to now.</InfoTip>
           </label>
           <input
             id="lp-until"
@@ -255,7 +272,6 @@ export default function PullFilterForm({ tenantId, pages, pagesUnavailable, disa
             disabled={fieldsDisabled}
             className="rounded-lg border border-outline-variant bg-surface-container-lowest px-2.5 py-1.5 text-xs text-on-surface focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
           />
-          <p className="text-[0.6875rem] text-on-surface-variant">Optional — omit for up to now.</p>
         </div>
 
         <div className="flex items-end">

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { FineTuneColors, PageBody, PageHeader, ThemePicker, applyThemePreview } from '@platform/ui-kit';
+import { FineTuneColors, InfoTip, LocalDateTime, PageBody, PageHeader, ThemePicker, applyThemePreview } from '@platform/ui-kit';
 import {
   DEFAULT_FONT_ID,
   DEFAULT_PRESET_ID,
@@ -54,11 +54,13 @@ function Section({ n, title, subtitle, aside, children }: {
   n: number; title: string; subtitle: string; aside?: React.ReactNode; children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl bg-surface-container-lowest p-4 shadow-card sm:p-6">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+    <section className="rounded-xl bg-surface-container-lowest p-3 shadow-card sm:p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-headline-sm font-semibold text-on-surface">{n}. {title}</h2>
-          <p className="mt-0.5 text-body-sm text-on-surface-variant">{subtitle}</p>
+          <h2 className="flex items-center gap-1.5 text-headline-sm font-semibold text-on-surface">
+            {n}. {title}
+            <InfoTip label={`About ${title}`}>{subtitle}</InfoTip>
+          </h2>
         </div>
         {aside}
       </div>
@@ -162,9 +164,6 @@ export default function BrandingSettings({ initial, canManage }: Props) {
     }
   };
 
-  const updatedLabel = saved.updated_at
-    ? new Date(saved.updated_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-    : null;
 
   const termsSet = BRAND_TERM_ROWS.filter((r) => saved.terms[r.singular] || saved.terms[r.plural]);
   const navSet = BRANDABLE_NAV.flatMap((g) => g.items).filter((i) => saved.nav_overrides[i.id]);
@@ -176,10 +175,11 @@ export default function BrandingSettings({ initial, canManage }: Props) {
     <>
       <PageHeader
         title="Branding"
-        subtitle="Choose your colours and font. Logos, names, wording, menus and regional formats are set by the platform administrator."
-        actions={updatedLabel ? <p className="text-label-sm text-on-surface-variant">Last saved {updatedLabel}</p> : undefined}
+        subtitle="Choose your colours and font"
+        info="Logos, names, wording, menus and regional formats are set by the platform administrator."
+        actions={saved.updated_at ? <p className="text-label-sm text-on-surface-variant">Last saved <LocalDateTime value={saved.updated_at} /></p> : undefined}
       />
-      <PageBody className="mx-auto flex max-w-5xl flex-col gap-4 !space-y-0 pb-28 sm:pb-28">
+      <PageBody className="mx-auto flex max-w-5xl flex-col gap-3 !space-y-0 pb-28 sm:pb-28">
 
       {!canManage && (
         <p className="rounded-lg bg-surface-container px-3 py-2 text-body-sm text-on-surface-variant">

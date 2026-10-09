@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { InfoTip } from '@platform/ui-kit';
 import type { ResolvedCapability } from '@platform/rbac';
 import type { CapabilityRow } from '@/src/lib/api/client';
 import { KIND_LABEL, originText } from '@/src/lib/capability-tree';
@@ -76,10 +77,10 @@ export default function PolicyRulesTable({ roleLabel, rows, byKey, resolved, pen
     <section className="space-y-3" aria-label="Configured policy rules">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-bold text-on-surface">Configured &amp; Active Policy Rules for {roleLabel}</h2>
-          <p className="text-xs text-on-surface-variant">
-            Toggle a capability here or through the cascade above — both stage the same change.
-          </p>
+          <h2 className="flex items-center gap-1.5 text-sm font-bold text-on-surface">
+            Configured &amp; Active Policy Rules for {roleLabel}
+            <InfoTip label="About policy rules">Toggle a capability here or through the cascade above. Both stage the same change.</InfoTip>
+          </h2>
         </div>
         <button
           type="button"

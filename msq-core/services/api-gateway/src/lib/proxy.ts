@@ -6,6 +6,7 @@ import {
   UpstreamTimeoutError,
 } from '@platform/http';
 import { config } from '../config.js';
+import { buildUpstreamUrl } from './upstream-url.js';
 
 export interface UserContext {
   user_id: string;
@@ -74,7 +75,8 @@ export async function proxyTo(
   userCtx?: UserContext,
   options?: ProxyOptions,
 ): Promise<void> {
-  const url = new URL(path, targetUrl);
+  const url = buildUpstreamUrl(targetUrl, path);
+  if (!url) return rejectUnsafePath(request, reply);
 
   const rawQuery = (request.raw.url ?? '').split('?')[1];
   if (rawQuery) url.search = rawQuery;
@@ -149,6 +151,13 @@ export async function proxyTo(
   }
 }
 
+// The upstream path did not resolve to itself (see upstream-url.ts). Nothing is
+// sent upstream; the route pattern is logged, not the offending value.
+function rejectUnsafePath(request: FastifyRequest, reply: FastifyReply): void {
+  request.log.warn({ route: request.routeOptions?.url ?? 'unknown' }, 'rejected unsafe upstream path');
+  reply.status(400).send({ error: 'Invalid request path' });
+}
+
 /**
  * Maps a proxy transport failure to a response.
  *
@@ -192,7 +201,8 @@ export async function proxySSE(
   reply: FastifyReply,
   userCtx?: UserContext,
 ): Promise<void> {
-  const url = new URL(path, targetUrl);
+  const url = buildUpstreamUrl(targetUrl, path);
+  if (!url) return rejectUnsafePath(request, reply);
 
   const forwardHeaders = withUserHeaders({ 'Accept': 'text/event-stream' }, userCtx);
 
@@ -277,7 +287,8 @@ export async function proxyToRaw(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const url = new URL(path, targetUrl);
+  const url = buildUpstreamUrl(targetUrl, path);
+  if (!url) return rejectUnsafePath(request, reply);
 
   const rawQuery = (request.raw.url ?? '').split('?')[1];
   if (rawQuery) url.search = rawQuery;

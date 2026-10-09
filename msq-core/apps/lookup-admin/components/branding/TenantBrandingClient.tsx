@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { FineTuneColors, Modal, PageBody, PageHeader, ThemePicker } from '@platform/ui-kit';
+import { FineTuneColors, InfoTip, Modal, PageBody, PageHeader, ThemePicker } from '@platform/ui-kit';
 import {
   DEFAULT_FONT_ID,
   DEFAULT_PRESET_ID,
@@ -147,11 +147,13 @@ const inputCls =
 
 function Card({ title, subtitle, aside, children }: { title: string; subtitle: string; aside?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="rounded-xl bg-surface-container-lowest p-4 shadow-card sm:p-6">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+    <section className="rounded-xl bg-surface-container-lowest p-3 shadow-card sm:p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-headline-sm font-semibold text-on-surface">{title}</h2>
-          <p className="mt-0.5 text-body-sm text-on-surface-variant">{subtitle}</p>
+          <h2 className="flex items-center gap-1.5 text-headline-sm font-semibold text-on-surface">
+            {title}
+            <InfoTip label={`About ${title}`}>{subtitle}</InfoTip>
+          </h2>
         </div>
         {aside}
       </div>
@@ -325,10 +327,11 @@ export default function TenantBrandingClient({ tenantId, initial }: Props) {
     <>
       <PageHeader
         title="Tenant branding"
-        subtitle={`${saved.tenant_name} · logos, names, wording, menus, regional formats, colours and the tenant login link`}
+        subtitle={saved.tenant_name}
+        info="Logos, names, wording, menus, regional formats, colours and the tenant login link."
         actions={<Link href="/dashboard/branding" className="inline-flex min-h-[2.75rem] items-center text-xs font-semibold text-primary hover:underline sm:min-h-0">← All tenants</Link>}
       />
-      <PageBody className="max-w-5xl">
+      <PageBody dense className="max-w-5xl">
       <Card title="1. Brand assets" subtitle="Uploaded files are checked and sanitised on the server. SVGs with scripts or external links are rejected.">
         <p className="mb-4 text-body-sm text-on-surface-variant">
           {requiredDone} of {requiredSlots.length} required images uploaded · {uploadedCount} of {ASSETS.length} in total. Empty slots show the platform default.

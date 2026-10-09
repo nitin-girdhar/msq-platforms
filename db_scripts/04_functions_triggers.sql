@@ -2963,6 +2963,23 @@ CREATE TRIGGER trg_meta_pull_runs_history
 DROP TRIGGER IF EXISTS trg_meta_ad_accounts_updated_at ON ext.meta_ad_accounts;
 CREATE TRIGGER trg_meta_ad_accounts_updated_at
   BEFORE UPDATE ON ext.meta_ad_accounts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ── Meta CAPI v2 (1.79.0): updated_at on the new Meta tables ────────
+DROP TRIGGER IF EXISTS trg_meta_platform_credentials_updated_at ON ext.meta_platform_credentials;
+CREATE TRIGGER trg_meta_platform_credentials_updated_at
+  BEFORE UPDATE ON ext.meta_platform_credentials FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_meta_business_portfolios_updated_at ON ext.meta_business_portfolios;
+CREATE TRIGGER trg_meta_business_portfolios_updated_at
+  BEFORE UPDATE ON ext.meta_business_portfolios FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_meta_datasets_updated_at ON ext.meta_datasets;
+CREATE TRIGGER trg_meta_datasets_updated_at
+  BEFORE UPDATE ON ext.meta_datasets FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_meta_org_dataset_map_updated_at ON ext.meta_org_dataset_map;
+CREATE TRIGGER trg_meta_org_dataset_map_updated_at
+  BEFORE UPDATE ON ext.meta_org_dataset_map FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_meta_capi_outbox_updated_at ON ext.meta_capi_outbox;
+CREATE TRIGGER trg_meta_capi_outbox_updated_at
+  BEFORE UPDATE ON ext.meta_capi_outbox FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 DROP TRIGGER IF EXISTS trg_meta_adsets_updated_at ON ext.meta_adsets;
 CREATE TRIGGER trg_meta_adsets_updated_at
   BEFORE UPDATE ON ext.meta_adsets FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
@@ -3315,5 +3332,301 @@ CREATE TRIGGER trg_01_roster_publications_set_created_by
 DROP TRIGGER IF EXISTS trg_roster_publications_audit             ON hr.roster_publications;
 CREATE TRIGGER trg_roster_publications_audit
   AFTER UPDATE OR DELETE ON hr.roster_publications FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
+
+-- ── Meta CAPI v2 (1.79.0): dataset resolution + the conversion-event outbox ─────────────────────
+--
+-- ext.fn_resolve_capi_dataset: which dataset (pixel) does a lead report to? From its ORIGIN -- the
+-- ad account of its campaign -- else the branch's fallback dataset. Both lookups are pinned to the
+-- lead's TENANT: a dataset owned by another tenant is never returned, so a mismatch becomes a
+-- recorded skip and not a send into someone else's pixel. A DISABLED dataset is never returned.
+--
+-- SECURITY DEFINER (owner = the deploying superuser): the platform tables it reads are root_service
+-- only (RLS on, no policy), and the callers -- leads-service on an org user's transaction, the
+-- webhook ingest, the outbox worker -- must not be given read access to them. It returns an id and a
+-- label, nothing else, for ids the caller already holds.
+CREATE OR REPLACE FUNCTION ext.fn_resolve_capi_dataset(p_tenant_id UUID, p_org_id UUID, p_ad_account_id TEXT)
+RETURNS TABLE (dataset_id UUID, resolution TEXT)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE
+  v_id UUID;
+BEGIN
+  IF p_ad_account_id IS NOT NULL THEN
+    SELECT d.id INTO v_id
+    FROM ext.meta_dataset_ad_accounts a
+    JOIN ext.meta_datasets d ON d.id = a.dataset_id
+    WHERE a.ad_account_id = p_ad_account_id AND d.tenant_id = p_tenant_id AND d.status <> 'DISABLED'
+    LIMIT 1;
+    IF v_id IS NOT NULL THEN
+      dataset_id := v_id; resolution := 'AD_ACCOUNT'; RETURN NEXT; RETURN;
+    END IF;
+  END IF;
+
+  SELECT d.id INTO v_id
+  FROM ext.meta_org_dataset_map m
+  JOIN ext.meta_datasets d ON d.id = m.dataset_id
+  WHERE m.org_id = p_org_id AND m.is_active AND d.tenant_id = p_tenant_id AND d.status <> 'DISABLED'
+  LIMIT 1;
+  IF v_id IS NOT NULL THEN
+    dataset_id := v_id; resolution := 'ORG_FALLBACK'; RETURN NEXT; RETURN;
+  END IF;
+
+  dataset_id := NULL; resolution := 'NONE'; RETURN NEXT;
+END; $$;
+
+-- ext.fn_enqueue_capi_events: called by leads-service INSIDE the stage-change transaction (and by lead
+-- intake for a Meta lead's first stage). Writes the conversion events this stage change owes Meta into
+-- ext.meta_capi_outbox and returns how many rows it added. It never calls Meta -- the outbox worker does.
+--
+-- What it enforces, in one place:
+--   * the lead is a META lead (source facebook / instagram / whatsapp AND a linked ext.meta_leads row,
+--     following lms.lead_links back through a cross-branch transfer) -- anything else returns 0;
+--   * the stage maps to a CAPI event for THIS tenant (ext.lead_stage_capi_event_map) -- unmapped stages return 0;
+--   * Meta's ordering rule: reaching a later funnel stage means every earlier mapped stage was already
+--     sent, so the stages a lead JUMPED are enqueued first, with strictly earlier times;
+--   * an event Meta already received (the outbox, or the pre-outbox log) is not queued again;
+--   * the dataset is the lead's ORIGIN snapshot (ext.meta_leads.capi_dataset_id), resolved here the
+--     first time it is needed and then kept -- a lead moved between branches or departments keeps
+--     reporting to the pixel whose ad produced it. No dataset => a SKIPPED_NO_DATASET row, so the
+--     console can list the leads that never reached Meta and why.
+--
+-- SECURITY DEFINER because it reads ext.meta_leads / platform tables the org user's role cannot (a
+-- transferred lead's Meta record sits in the SOURCE branch, behind org RLS). The guard is the first
+-- statement: the lead must belong to the org the caller's transaction is pinned to
+-- (app.current_org_id), so the function cannot be pointed at another branch's lead.
+CREATE OR REPLACE FUNCTION ext.fn_enqueue_capi_events(
+  p_lead_id       UUID,
+  p_stage_id      UUID,
+  p_changed_at    TIMESTAMPTZ DEFAULT CLOCK_TIMESTAMP(),
+  p_triggered_by  TEXT        DEFAULT 'auto_stage_change',
+  p_actor_id      UUID        DEFAULT NULL
+) RETURNS INT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE
+  v_org        UUID;
+  v_tenant     UUID;
+  v_source     TEXT;
+  v_assignee   UUID;
+  v_dept       UUID;
+  v_meta       RECORD;
+  v_cur        UUID;
+  v_hops       INT := 0;
+  v_event      RECORD;
+  v_dataset    UUID;
+  v_resolution TEXT;
+  v_ad_account TEXT;
+  v_ev         RECORD;
+  v_steps      INT;
+  v_total      INT := 0;
+  v_n          INT;
+  v_time       TIMESTAMPTZ;
+  v_status     TEXT;
+  v_event_id   TEXT;
+BEGIN
+  -- 1. The lead, and the caller's right to it.
+  SELECT ml.org_id, o.tenant_id, s.name, ml.assigned_user_id
+    INTO v_org, v_tenant, v_source, v_assignee
+  FROM lms.marketing_leads ml
+  JOIN entity.organizations o ON o.id = ml.org_id
+  LEFT JOIN lms.lead_sources s ON s.id = ml.source_id
+  WHERE ml.id = p_lead_id AND NOT ml.is_deleted;
+  IF NOT FOUND THEN RETURN 0; END IF;
+
+  IF v_org IS DISTINCT FROM NULLIF(current_setting('app.current_org_id', true), '')::uuid THEN
+    RAISE EXCEPTION 'ext.fn_enqueue_capi_events: lead is not in the caller''s branch' USING ERRCODE = '42501';
+  END IF;
+
+  -- 2. Only leads Meta captured report back to Meta.
+  IF COALESCE(v_source, '') NOT IN ('facebook', 'instagram', 'whatsapp') THEN RETURN 0; END IF;
+
+  v_cur := p_lead_id;
+  LOOP
+    SELECT e.id, e.org_id, e.meta_lead_id, e.lead_created_at, e.ad_account_id, e.capi_dataset_id, e.marketing_lead_id, e.campaign_id
+      INTO v_meta
+    FROM ext.meta_leads e WHERE e.marketing_lead_id = v_cur LIMIT 1;
+    EXIT WHEN FOUND OR v_hops >= 5;
+    -- A cross-branch transfer creates a NEW lead and retires the old one: follow the link back.
+    SELECT l.source_lead_id INTO v_cur
+    FROM lms.lead_links l
+    WHERE l.dest_lead_id = v_cur AND l.status = 'completed' AND l.link_type = 'transfer'
+    LIMIT 1;
+    v_hops := v_hops + 1;
+    EXIT WHEN v_cur IS NULL;
+  END LOOP;
+  IF v_meta.id IS NULL THEN RETURN 0; END IF;
+  -- The Meta record must belong to the same tenant (never a cross-tenant link).
+  IF (SELECT tenant_id FROM entity.organizations WHERE id = v_meta.org_id) IS DISTINCT FROM v_tenant THEN RETURN 0; END IF;
+
+  -- 3. The event this stage owes Meta, for THIS tenant.
+  SELECT m.capi_event_type_id AS type_id, et.code, et.funnel_rank, et.is_negative
+    INTO v_event
+  FROM ext.lead_stage_capi_event_map m
+  JOIN ext.meta_capi_event_types et ON et.id = m.capi_event_type_id
+  WHERE m.stage_id = p_stage_id AND m.tenant_id = v_tenant;
+  IF NOT FOUND THEN RETURN 0; END IF;
+
+  -- 4. The dataset: the origin snapshot, resolved once.
+  v_dataset := v_meta.capi_dataset_id;
+  IF v_dataset IS NULL THEN
+    v_ad_account := v_meta.ad_account_id;
+    -- A campaign first seen on a lead has no ad account until the campaign fetch runs: look it up now.
+    IF v_ad_account IS NULL AND v_meta.campaign_id IS NOT NULL THEN
+      SELECT mc.ad_account_id INTO v_ad_account
+      FROM ext.meta_campaigns mc WHERE mc.meta_campaign_id = v_meta.campaign_id AND mc.tenant_id = v_tenant LIMIT 1;
+      IF v_ad_account IS NOT NULL THEN
+        UPDATE ext.meta_leads SET ad_account_id = v_ad_account WHERE id = v_meta.id;
+      END IF;
+    END IF;
+    SELECT r.dataset_id, r.resolution INTO v_dataset, v_resolution
+    FROM ext.fn_resolve_capi_dataset(v_tenant, v_meta.org_id, v_ad_account) r;
+    IF v_dataset IS NOT NULL THEN
+      UPDATE ext.meta_leads SET capi_dataset_id = v_dataset, capi_resolution = v_resolution WHERE id = v_meta.id;
+    END IF;
+  END IF;
+  v_status := CASE WHEN v_dataset IS NULL THEN 'SKIPPED_NO_DATASET' ELSE 'PENDING' END;
+
+  SELECT r.department_id INTO v_dept
+  FROM iam.user_roles r
+  WHERE v_assignee IS NOT NULL AND r.id = iam.fn_effective_role_id(v_assignee, v_org);
+
+  -- 5. The stages a jump skipped (positive events only), earliest first, strictly earlier times.
+  IF NOT v_event.is_negative AND v_event.funnel_rank IS NOT NULL THEN
+    SELECT COUNT(DISTINCT et.id) INTO v_steps
+    FROM ext.lead_stage_capi_event_map m
+    JOIN ext.meta_capi_event_types et ON et.id = m.capi_event_type_id
+    WHERE m.tenant_id = v_tenant AND NOT et.is_negative AND et.funnel_rank < v_event.funnel_rank;
+
+    FOR v_ev IN
+      SELECT DISTINCT et.id AS type_id, et.code, et.funnel_rank
+      FROM ext.lead_stage_capi_event_map m
+      JOIN ext.meta_capi_event_types et ON et.id = m.capi_event_type_id
+      WHERE m.tenant_id = v_tenant AND NOT et.is_negative AND et.funnel_rank < v_event.funnel_rank
+      ORDER BY et.funnel_rank
+    LOOP
+      v_time := GREATEST(p_changed_at - (v_steps * INTERVAL '1 second'), v_meta.lead_created_at + INTERVAL '1 second');
+      v_steps := v_steps - 1;
+      v_event_id := encode(sha256(convert_to(v_meta.meta_lead_id::text || ':' || v_ev.code, 'UTF8')), 'hex');
+      -- Already with Meta (outbox) or in the pre-outbox log: not queued again.
+      CONTINUE WHEN EXISTS (
+        SELECT 1 FROM ext.meta_capi_outbox o
+        WHERE o.marketing_lead_id = v_meta.marketing_lead_id AND o.event_type_id = v_ev.type_id
+          AND o.status IN ('PENDING','SENDING','SENT','FAILED')
+      ) OR EXISTS (
+        SELECT 1 FROM ext.meta_capi_outbound_logs lg
+        WHERE lg.marketing_lead_id = v_meta.marketing_lead_id AND lg.event_name = v_ev.code AND lg.delivery_status = 'SUCCESS'
+      );
+      INSERT INTO ext.meta_capi_outbox (
+        tenant_id, org_id, department_id, marketing_lead_id, meta_lead_id, dataset_id, stage_id, event_type_id,
+        funnel_rank, event_name, event_id, event_time, is_negative, status, next_retry_at, expires_at,
+        triggered_by, triggered_by_user_id
+      ) VALUES (
+        v_tenant, v_org, v_dept, v_meta.marketing_lead_id, v_meta.meta_lead_id, v_dataset, NULL, v_ev.type_id,
+        v_ev.funnel_rank, v_ev.code, v_event_id, v_time, FALSE, v_status, CLOCK_TIMESTAMP(), v_time + INTERVAL '7 days',
+        p_triggered_by, p_actor_id
+      ) ON CONFLICT DO NOTHING;
+      GET DIAGNOSTICS v_n = ROW_COUNT;
+      v_total := v_total + v_n;
+      IF v_n > 0 AND v_status = 'PENDING' THEN
+        -- A skip recorded while no dataset was linked is obsolete once the event is queued for real.
+        DELETE FROM ext.meta_capi_outbox o
+        WHERE o.marketing_lead_id = v_meta.marketing_lead_id AND o.event_type_id = v_ev.type_id AND o.status LIKE 'SKIPPED%';
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- 6. The event for the stage itself.
+  v_event_id := encode(sha256(convert_to(v_meta.meta_lead_id::text || ':' || v_event.code, 'UTF8')), 'hex');
+  IF NOT EXISTS (
+       SELECT 1 FROM ext.meta_capi_outbox o
+       WHERE o.marketing_lead_id = v_meta.marketing_lead_id AND o.event_type_id = v_event.type_id
+         AND o.status IN ('PENDING','SENDING','SENT','FAILED')
+     ) AND NOT EXISTS (
+       SELECT 1 FROM ext.meta_capi_outbound_logs lg
+       WHERE lg.marketing_lead_id = v_meta.marketing_lead_id AND lg.event_name = v_event.code AND lg.delivery_status = 'SUCCESS'
+     ) THEN
+    INSERT INTO ext.meta_capi_outbox (
+      tenant_id, org_id, department_id, marketing_lead_id, meta_lead_id, dataset_id, stage_id, event_type_id,
+      funnel_rank, event_name, event_id, event_time, is_negative, status, next_retry_at, expires_at,
+      triggered_by, triggered_by_user_id
+    ) VALUES (
+      v_tenant, v_org, v_dept, v_meta.marketing_lead_id, v_meta.meta_lead_id, v_dataset, p_stage_id, v_event.type_id,
+      v_event.funnel_rank, v_event.code, v_event_id, GREATEST(p_changed_at, v_meta.lead_created_at + INTERVAL '1 second'),
+      v_event.is_negative, v_status, CLOCK_TIMESTAMP(),
+      GREATEST(p_changed_at, v_meta.lead_created_at + INTERVAL '1 second') + INTERVAL '7 days',
+      p_triggered_by, p_actor_id
+    ) ON CONFLICT DO NOTHING;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    v_total := v_total + v_n;
+    IF v_n > 0 AND v_status = 'PENDING' THEN
+      DELETE FROM ext.meta_capi_outbox o
+      WHERE o.marketing_lead_id = v_meta.marketing_lead_id AND o.event_type_id = v_event.type_id AND o.status LIKE 'SKIPPED%';
+    END IF;
+  END IF;
+
+  RETURN v_total;
+END; $$;
+
+REVOKE ALL ON FUNCTION ext.fn_resolve_capi_dataset(UUID, UUID, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ext.fn_enqueue_capi_events(UUID, UUID, TIMESTAMPTZ, TEXT, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ext.fn_resolve_capi_dataset(UUID, UUID, TEXT) TO root_service, lms_svc, lead_svc, meta_svc, app_user;
+GRANT EXECUTE ON FUNCTION ext.fn_enqueue_capi_events(UUID, UUID, TIMESTAMPTZ, TEXT, UUID) TO root_service, lms_svc, lead_svc, meta_svc, app_user;
+
+-- ext.fn_requeue_capi_skipped: after an admin links a dataset (or an ad account to one), push the
+-- events that were parked as SKIPPED_NO_DATASET / SKIPPED_AMBIGUOUS_DATASET back into the queue.
+-- For each affected Meta lead the dataset is resolved AGAIN from its origin, the lead's snapshot
+-- (ext.meta_leads.capi_dataset_id) is set, and its parked rows become PENDING -- or EXPIRED, if the
+-- 7-day window has already closed. Returns the number of rows re-queued.
+--
+-- SECURITY DEFINER for the same reason as fn_enqueue_capi_events (platform tables, and ext.meta_leads
+-- behind org RLS). The guard is the tenant the caller's transaction is pinned to -- the console path
+-- (withTenantConfigTx) -- so it can only ever touch that tenant's rows.
+CREATE OR REPLACE FUNCTION ext.fn_requeue_capi_skipped(p_tenant_id UUID) RETURNS INT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+DECLARE
+  r         RECORD;
+  v_dataset UUID;
+  v_res     TEXT;
+  v_total   INT := 0;
+  v_n       INT;
+BEGIN
+  IF p_tenant_id IS DISTINCT FROM NULLIF(current_setting('app.current_tenant_id', true), '')::uuid THEN
+    RAISE EXCEPTION 'ext.fn_requeue_capi_skipped: not the tenant this transaction is pinned to' USING ERRCODE = '42501';
+  END IF;
+
+  FOR r IN
+    SELECT DISTINCT ON (o.meta_lead_id) o.meta_lead_id, ml.id AS meta_row_id, ml.org_id, ml.ad_account_id
+    FROM ext.meta_capi_outbox o
+    JOIN ext.meta_leads ml ON ml.meta_lead_id = o.meta_lead_id
+    WHERE o.tenant_id = p_tenant_id AND o.status IN ('SKIPPED_NO_DATASET', 'SKIPPED_AMBIGUOUS_DATASET')
+  LOOP
+    SELECT d.dataset_id, d.resolution INTO v_dataset, v_res
+    FROM ext.fn_resolve_capi_dataset(p_tenant_id, r.org_id, r.ad_account_id) d;
+    CONTINUE WHEN v_dataset IS NULL;
+
+    UPDATE ext.meta_leads SET capi_dataset_id = v_dataset, capi_resolution = v_res WHERE id = r.meta_row_id;
+
+    -- A parked row whose event is already queued for real is simply obsolete.
+    DELETE FROM ext.meta_capi_outbox s
+    WHERE s.tenant_id = p_tenant_id AND s.meta_lead_id = r.meta_lead_id
+      AND s.status IN ('SKIPPED_NO_DATASET', 'SKIPPED_AMBIGUOUS_DATASET')
+      AND EXISTS (SELECT 1 FROM ext.meta_capi_outbox x
+                  WHERE x.meta_lead_id = s.meta_lead_id AND x.event_type_id = s.event_type_id
+                    AND x.id <> s.id AND x.status NOT LIKE 'SKIPPED%');
+
+    UPDATE ext.meta_capi_outbox s
+    SET dataset_id    = v_dataset,
+        status        = CASE WHEN s.expires_at < CLOCK_TIMESTAMP() THEN 'EXPIRED' ELSE 'PENDING' END,
+        last_error    = CASE WHEN s.expires_at < CLOCK_TIMESTAMP() THEN 'Linked after Meta''s 7-day window had closed' ELSE NULL END,
+        attempts      = 0,
+        next_retry_at = CLOCK_TIMESTAMP()
+    WHERE s.tenant_id = p_tenant_id AND s.meta_lead_id = r.meta_lead_id
+      AND s.status IN ('SKIPPED_NO_DATASET', 'SKIPPED_AMBIGUOUS_DATASET');
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    v_total := v_total + v_n;
+  END LOOP;
+  RETURN v_total;
+END; $$;
+
+REVOKE ALL ON FUNCTION ext.fn_requeue_capi_skipped(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ext.fn_requeue_capi_skipped(UUID) TO root_service, lms_svc, meta_svc, app_user;
 
 COMMIT;

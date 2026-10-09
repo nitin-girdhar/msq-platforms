@@ -27,6 +27,8 @@ const PLATFORM_CLASSES: Record<MetaPlatform, string> = {
 // reads like missing data.
 const PAGE_LEVEL_LABEL = 'All forms (page-level)';
 
+import GridIconButton from '@/components/meta-shared/GridIconButton';
+
 interface Props {
   rows: MetaPageOrgMapRow[];
   pageNames: Record<string, string>;
@@ -34,6 +36,9 @@ interface Props {
   onEdit: (row: MetaPageOrgMapRow) => void;
   // 1.70.0: last stored token / subscription check per page_id.
   health: Record<string, MetaPageHealthRow>;
+  // 1.79.0: subscribe the app to this page's leadgen webhook (Meta delivers leads only for subscribed pages).
+  onSubscribe?: ((pageId: string) => void) | undefined;
+  subscribingPageId?: string | null | undefined;
 }
 
 // What the Token health cell says, and its colour. 'Not checked' is its own state: a page
@@ -41,6 +46,9 @@ interface Props {
 export function healthView(h: MetaPageHealthRow | undefined): { label: string; className: string; title: string } {
   if (!h) return { label: 'Not checked', className: 'bg-surface-container text-on-surface-variant', title: 'Press Validate Page Tokens to check' };
   const when = `Checked ${new Date(h.checked_at).toLocaleString()}`;
+  // The page works end to end only when the token is good, the app is subscribed AND the leads can actually be read.
+  if (h.token_status === 'ok' && h.is_subscribed && h.leads_access_ok === false) return { label: 'No leads access', className: 'bg-error-container text-on-error-container', title: `${h.error_text ?? 'The page is shared but its leads cannot be read'} ${when}`.trim() };
+  if (h.token_status === 'ok' && h.is_subscribed && h.leads_access_ok === true) return { label: 'Healthy', className: 'bg-status-success-container text-on-status-success-container', title: `Token, webhook subscription and leads access all OK. ${when}` };
   if (h.token_status === 'ok' && h.is_subscribed) return { label: 'Subscribed', className: 'bg-status-success-container text-on-status-success-container', title: when };
   if (h.token_status === 'ok') return { label: 'Not subscribed', className: 'bg-status-due-container text-on-status-due-container', title: `${h.error_text ?? ''} ${when}`.trim() };
   if (h.token_status === 'expired') return { label: 'Token expired', className: 'bg-error-container text-on-error-container', title: `${h.error_text ?? ''} ${when}`.trim() };
@@ -58,7 +66,7 @@ function formatSyncedAt(value: string | null | undefined): string {
   return Number.isNaN(parsed.getTime()) ? 'Never' : parsed.toLocaleString();
 }
 
-export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit, health }: Props) {
+export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit, health, onSubscribe, subscribingPageId }: Props) {
   const pageCellRenderer = useCallback((p: ICellRendererParams<MetaPageOrgMapRow>) => {
     const id = p.data?.page_id ?? '';
     const name = pageNames[id];
@@ -121,16 +129,23 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit, he
   const actionsCellRenderer = useCallback((p: ICellRendererParams<MetaPageOrgMapRow>) => {
     const row = p.data;
     if (!row) return null;
+    const h = health[row.page_id];
+    const canSubscribe = Boolean(onSubscribe) && h?.token_status === 'ok' && h.is_subscribed === false;
     return (
-      <button
-        type="button"
-        onClick={() => onEdit(row)}
-        className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-low"
-      >
-        Edit
-      </button>
+      <span className="inline-flex items-center gap-1.5">
+        {canSubscribe && (
+          <GridIconButton
+            icon="subscribe"
+            label={subscribingPageId === row.page_id ? 'Subscribing…' : 'Subscribe the app to this page'}
+            onClick={() => onSubscribe?.(row.page_id)}
+            disabled={subscribingPageId === row.page_id}
+            primary
+          />
+        )}
+        <GridIconButton icon="edit" label="Edit mapping" onClick={() => onEdit(row)} />
+      </span>
     );
-  }, [onEdit]);
+  }, [onEdit, onSubscribe, subscribingPageId, health]);
 
   // Every cellRenderer that draws a LABEL gets a valueGetter returning that
   // same label — the rule documented in @platform/ui-kit/grid's gridDefaults.
@@ -140,7 +155,7 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit, he
   // filter matches nothing and the sort order looks arbitrary.
   const columnDefs = useMemo((): ColDef<MetaPageOrgMapRow>[] => [
     {
-      colId: 'page', headerName: 'Page', width: 240, minWidth: 180, sortable: true, filter: true,
+      colId: 'page', headerName: 'Page', flex: 2, minWidth: 150, sortable: true, filter: true,
       valueGetter: (p) => {
         const id = p.data?.page_id ?? '';
         const name = pageNames[id];
@@ -149,46 +164,46 @@ export default function MetaMappingsGrid({ rows, pageNames, orgNames, onEdit, he
       cellRenderer: pageCellRenderer,
     },
     {
-      colId: 'form_id', headerName: 'Form', width: 200, minWidth: 160, sortable: true, filter: true,
+      colId: 'form_id', headerName: 'Form', width: 170, minWidth: 130, sortable: true, filter: true,
       valueGetter: (p) => (p.data?.form_id === null ? PAGE_LEVEL_LABEL : p.data?.form_id ?? ''),
       cellRenderer: formCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
-      colId: 'org', headerName: 'Branch', width: 200, minWidth: 160, sortable: true, filter: true,
+      colId: 'org', headerName: 'Branch', flex: 1.5, minWidth: 130, sortable: true, filter: true,
       valueGetter: (p) => orgNames[p.data?.org_id ?? ''] ?? p.data?.org_id ?? '',
     },
     {
       // 1.51.0: the page/form fallback type — used when neither a confirmed
       // campaign nor a rule types the lead, and for organic leads.
-      colId: 'default_type', headerName: 'Default type', width: 150, minWidth: 130, sortable: true, filter: true,
+      colId: 'default_type', headerName: 'Default type', width: 120, minWidth: 100, sortable: true, filter: true,
       valueGetter: (p) => p.data?.default_campaign_type_label ?? '—',
     },
     {
-      colId: 'platform', headerName: 'Platform', width: 140, sortable: true, filter: true,
+      colId: 'platform', headerName: 'Platform', width: 105, minWidth: 95, sortable: true, filter: true,
       valueGetter: (p) => platformLabel(p.data?.platform),
       cellRenderer: platformCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
       // 1.70.0: the last "Validate Page Tokens" result for this row's page.
-      colId: 'token_health', headerName: 'Token health', width: 150, minWidth: 130, sortable: true, filter: true,
+      colId: 'token_health', headerName: 'Health', width: 130, minWidth: 120, sortable: true, filter: true,
       valueGetter: (p) => healthView(health[p.data?.page_id ?? '']).label,
       cellRenderer: healthCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
-      colId: 'is_active', headerName: 'Status', width: 130, sortable: true, filter: true,
+      colId: 'is_active', headerName: 'Status', width: 100, minWidth: 90, sortable: true, filter: true,
       valueGetter: (p) => (p.data?.is_active ? 'Active' : 'Inactive'),
       cellRenderer: statusCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
-      colId: 'last_synced_at', headerName: 'Last lead', width: 190, minWidth: 150, sortable: true, filter: true,
+      colId: 'last_synced_at', headerName: 'Last lead', width: 150, minWidth: 120, sortable: true, filter: true,
       valueGetter: (p) => formatSyncedAt(p.data?.last_synced_at),
     },
     {
-      colId: '__actions', headerName: '', width: 100, minWidth: 100, maxWidth: 100,
+      colId: '__actions', headerName: '', width: 84, minWidth: 84, maxWidth: 84,
       pinned: 'right', sortable: false, filter: false, resizable: false,
       cellRenderer: actionsCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end' },

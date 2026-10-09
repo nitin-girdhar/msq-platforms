@@ -35,6 +35,9 @@ export const attendanceRulesTable = hrSchema.table('attendance_rules', {
   // How many days back a regularization may be filed, in the ORG's timezone.
   // 0 = today only. Future work_dates are always rejected (service-side rule).
   regularizationMaxBackdateDays:  smallint('regularization_max_backdate_days').notNull().default(30),
+  // Minimum rest (hours) between two shifts that the roster planner warns about; a shift's own
+  // min_rest_hours overrides it. 0 = rule off.
+  minRestHours:                   smallint('min_rest_hours').notNull().default(11),
   isActive:              boolean('is_active').notNull().default(true),
   isDeleted:             boolean('is_deleted').notNull().default(false),
   deletedAt:             timestamp('deleted_at', { withTimezone: true }),

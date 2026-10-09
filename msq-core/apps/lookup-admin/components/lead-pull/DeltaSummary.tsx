@@ -1,31 +1,13 @@
 'use client';
 
 import Link from 'next/link';
+import { InfoTip } from '@platform/ui-kit';
 import type { PullRunStatus, PullVerdict } from '@/src/lib/api/client';
-
-const VERDICT_ORDER: PullVerdict[] = [
-  'new',
-  'phone_duplicate',
-  'email_duplicate',
-  'already_synced',
-  'test_lead',
-  'unmapped_form',
-  'missing_contact',
-];
-
-const VERDICT_LABELS: Record<PullVerdict, string> = {
-  new: 'New',
-  phone_duplicate: 'Phone duplicate',
-  email_duplicate: 'Email duplicate',
-  already_synced: 'Already in LMS',
-  test_lead: 'Test leads',
-  unmapped_form: 'Unmapped form',
-  missing_contact: 'Missing contact',
-};
+import { VERDICT_LABELS, VERDICT_ORDER, type AppliedStatus } from '@/components/meta-shared/pull-labels';
 
 interface Props {
   run: PullRunStatus;
-  onOpenVerdict: (verdict: PullVerdict | undefined, label: string) => void;
+  onOpenVerdict: (verdict: PullVerdict | undefined, label: string, appliedStatus?: AppliedStatus) => void;
   unmappedPageIds: string[];
   pageNames: Record<string, string>;
   // 1.51.0: map an unmapped page right here, then remap the run's rows.
@@ -129,7 +111,7 @@ export default function DeltaSummary({ run, onOpenVerdict, unmappedPageIds, page
                 <button
                   key={k}
                   type="button"
-                  onClick={() => onOpenVerdict(undefined, 'All staged leads')}
+                  onClick={() => onOpenVerdict(undefined, `Staged leads — ${k}`, k)}
                   disabled={count === 0}
                   className={`rounded-lg border px-3 py-1.5 text-xs font-medium hover:opacity-80 disabled:cursor-default disabled:opacity-40 ${cls}`}
                 >
@@ -138,8 +120,9 @@ export default function DeltaSummary({ run, onOpenVerdict, unmappedPageIds, page
               );
             })}
           </div>
-          <p className="mt-1.5 text-[0.6875rem] text-on-surface-variant">
-            Opens the full staged-row grid — filter its &quot;Applied status&quot; column to isolate one outcome, and see the reason on any failed row.
+          <p className="mt-1.5 flex items-center gap-1 text-[0.6875rem] text-on-surface-variant">
+            Click an outcome to open its rows
+            <InfoTip label="About outcomes">Opens the staged rows with that outcome. The reason is shown on any failed row.</InfoTip>
           </p>
         </div>
       )}

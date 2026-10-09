@@ -115,17 +115,22 @@ export default function RerunAssignmentClient({ tenantId, tenantName }: Props) {
 
   return (
     <>
-      <PageHeader title="Re-run Auto-Assignment" scope={tenantName} subtitle="Assign leads that arrived unassigned" />
-      <PageBody>
+      <PageHeader
+        title="Re-run Auto-Assignment"
+        scope={tenantName}
+        subtitle="Assign leads that arrived unassigned"
+        info={
+          <p>
+            Assigns leads that arrived unassigned because their pool had nobody eligible. Run it after fixing lead weights or a role&apos;s
+            department. <strong>Only fills gaps:</strong> leads that have an owner or have been worked are never touched.
+          </p>
+        }
+      />
+      <PageBody dense>
         <div>
           <Link href="/dashboard/m/lms" className="inline-flex min-h-11 items-center text-xs font-semibold text-primary hover:underline sm:min-h-0">
             ← Back to LMS
           </Link>
-          <p className="max-w-3xl text-xs text-on-surface-variant">
-            Assigns leads that arrived unassigned because their pool had nobody eligible — run it after fixing
-            lead weights or a role&apos;s department. <strong className="text-on-surface">Only fills gaps:</strong> leads that have an owner or have been worked are
-            never touched.
-          </p>
         </div>
 
         {(loadError || error) && <Alert tone="error">{loadError ?? error}</Alert>}

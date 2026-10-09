@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { InfoTip } from '@platform/ui-kit';
 
 export interface ConsoleCard {
   key: string;
@@ -55,7 +56,7 @@ export default function ModuleConsole({ sections }: Props) {
     }`;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         {multi && (
           <div className="flex flex-wrap gap-2" role="group" aria-label="Section">
@@ -92,31 +93,36 @@ export default function ModuleConsole({ sections }: Props) {
       )}
 
       {visible.map((s) => (
-        <section key={s.id} className="space-y-3" aria-label={s.title || 'Cards'}>
+        <section key={s.id} className="space-y-2" aria-label={s.title || 'Cards'}>
           {s.title && (
             <div className="flex items-start gap-3 border-l-4 border-primary pl-3">
               <div className="min-w-0 flex-1">
-                <h2 className="text-sm font-bold text-on-surface">{s.title}</h2>
-                {s.blurb && <p className="text-xs text-on-surface-variant">{s.blurb}</p>}
+                <h2 className="flex items-center gap-1.5 text-sm font-bold text-on-surface">
+                  {s.title}
+                  {s.blurb && <InfoTip label={`About ${s.title}`}>{s.blurb}</InfoTip>}
+                </h2>
               </div>
               <span className="shrink-0 rounded-md bg-surface-container px-2 py-0.5 text-[0.6875rem] font-semibold text-on-surface-variant">
                 {s.cards.length} {s.cards.length === 1 ? 'card' : 'cards'}
               </span>
             </div>
           )}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {s.cards.map((c) => (
-              <Link
-                key={c.key}
-                href={c.href}
-                className="group flex min-h-11 flex-col gap-1.5 rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm transition-colors hover:border-primary hover:bg-primary-fixed"
-              >
-                <h3 className="text-sm font-semibold text-on-surface">{c.title}</h3>
-                <p className="flex-1 text-xs text-on-surface-variant">{c.description}</p>
-                <span className="mt-1 text-xs font-semibold text-primary" aria-hidden="true">
-                  Open →
-                </span>
-              </Link>
+              // The (i) is a sibling of the link, not a child: a button inside an anchor is invalid
+              // and would navigate on tap. Positioned over the card's top-right corner.
+              <div key={c.key} className="relative">
+                <Link
+                  href={c.href}
+                  className="group flex min-h-11 items-center justify-between gap-2 rounded-xl border border-outline-variant bg-surface-container-lowest py-2.5 pl-3 pr-9 shadow-sm transition-colors hover:border-primary hover:bg-primary-fixed"
+                >
+                  <h3 className="min-w-0 truncate text-sm font-semibold text-on-surface">{c.title}</h3>
+                  <span className="shrink-0 text-xs font-semibold text-primary" aria-hidden="true">
+                    Open →
+                  </span>
+                </Link>
+                <InfoTip label={`About ${c.title}`} className="absolute right-3 top-1/2 -translate-y-1/2">{c.description}</InfoTip>
+              </div>
             ))}
           </div>
         </section>

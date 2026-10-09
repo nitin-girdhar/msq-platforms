@@ -109,7 +109,8 @@ export default function ReportingLines({ tenantId, orgId, branchName }: Props) {
     <>
       <PageHeader
         title="Reporting lines"
-        subtitle={`${branchName} · ${rows.length} ${rows.length === 1 ? 'person' : 'people'} · change someone's manager from their Edit form on the People tab`}
+        subtitle={`${branchName} · ${rows.length} ${rows.length === 1 ? 'person' : 'people'}`}
+        info="Change someone's manager from their Edit form on the People tab."
       />
       <PageBody>
       {error && (

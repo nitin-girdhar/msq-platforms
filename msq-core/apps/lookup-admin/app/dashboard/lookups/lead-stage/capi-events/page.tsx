@@ -12,6 +12,11 @@ interface EventTypeOption {
   id: number;
   code: string;
   label: string;
+  /** Position in the sales funnel; null = outside the sequence (negative signals, the retired 'Other'). */
+  funnel_rank: number | null;
+  is_negative: boolean;
+  /** Inactive types are not offered for NEW picks, but a stage already on one must keep showing it. */
+  retired: boolean;
 }
 
 // Bespoke tab off the Lead Stages page — see lookupTableConfig.ts's note on
@@ -60,9 +65,14 @@ export default async function LeadStageCapiEventsPage() {
   const mappingsBody = await mappingsRes.json() as { data: LeadStageCapiEventRow[] };
   const eventTypesBody = await eventTypesRes.json() as { data: Array<Record<string, unknown>> };
 
-  const eventTypes: EventTypeOption[] = eventTypesBody.data
-    .filter((r) => r['is_active'] !== false)
-    .map((r) => ({ id: Number(r['id']), code: String(r['code']), label: String(r['label']) }));
+  const eventTypes: EventTypeOption[] = eventTypesBody.data.map((r) => ({
+    id: Number(r['id']),
+    code: String(r['code']),
+    label: String(r['label']),
+    funnel_rank: r['funnel_rank'] === null || r['funnel_rank'] === undefined ? null : Number(r['funnel_rank']),
+    is_negative: r['is_negative'] === true,
+    retired: r['is_active'] === false,
+  }));
 
   return (
     <LeadStageCapiEventsClient

@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { getServerSession, GATEWAY_URL } from '@/src/lib/server-session';
 import { getSelectedTenantId, getSelectedTenantName } from '@/src/lib/tenant-scope';
+import { PageBody, PageHeader } from '@platform/ui-kit';
+import MetaTabs from '@/components/meta-nav/MetaTabs';
 import LeadPullClient from '@/components/lead-pull/LeadPullClient';
 import type { MetaPageOption } from '@/src/lib/api/client';
 
@@ -23,14 +25,17 @@ export default async function LeadPullPage() {
 
   if (!selectedTenantId) {
     return (
-      <div className="space-y-4 p-4 sm:p-6">
-        <Link href="/dashboard/m/lms" className="text-xs font-semibold text-primary hover:underline">
-          ← Back to LMS
-        </Link>
-        <p className="rounded-xl border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant">
-          Pick a tenant in the top bar to pull Meta leads.
-        </p>
-      </div>
+      <>
+        <PageHeader title="Meta Lead Ingestion & Pull Engine" subtitle="Backfill leads the live webhook missed" tabs={<MetaTabs />} />
+        <PageBody dense>
+          <Link href="/dashboard/m/lms" className="text-xs font-semibold text-primary hover:underline">
+            ← Back to LMS
+          </Link>
+          <p className="rounded-xl border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant">
+            Pick a tenant in the top bar to pull Meta leads.
+          </p>
+        </PageBody>
+      </>
     );
   }
 

@@ -7,15 +7,18 @@ import { Alert, Button, PageBody, PageHeader, buildFilename, exportRows, type Se
 import {
   orgs,
   campaignTypes,
+  metaMappings,
   metaLeadInbox,
   metaPageHealth,
   type MetaPageHealthRow,
   type MetaPageOption,
   type MetaPageOrgMapRow,
+  type OrgOption,
 } from "@/src/lib/api/client";
 import MetaMappingsGrid from "./MetaMappingsGrid";
 import MappingFormModal from "./MappingFormModal";
 import MetaTabs from "@/components/meta-nav/MetaTabs";
+import KpiTile from "@/components/meta-shared/KpiTile";
 
 type KindFilter = "all" | "page" | "form";
 
@@ -31,8 +34,6 @@ interface Props {
   // unmapped_form link. Narrows the grid to that one page.
   pageIdFilter?: string | undefined;
   rows: MetaPageOrgMapRow[];
-  pages: MetaPageOption[];
-  pagesUnavailable: boolean;
 }
 
 export default function MetaMappingsClient({
@@ -41,8 +42,6 @@ export default function MetaMappingsClient({
   selectedOrgId,
   pageIdFilter,
   rows,
-  pages,
-  pagesUnavailable,
 }: Props) {
   const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
@@ -51,12 +50,14 @@ export default function MetaMappingsClient({
   const [health, setHealth] = useState<Record<string, MetaPageHealthRow>>({});
   const [validating, setValidating] = useState(false);
   const [unmappedInbound, setUnmappedInbound] = useState<number | null>(null);
+  // Live Graph page list: loaded once per tenant here (not in the server component,
+  // which re-runs on every save). pagesUnavailable = no integration / Graph failure.
+  const [pages, setPages] = useState<MetaPageOption[]>([]);
+  const [pagesUnavailable, setPagesUnavailable] = useState(false);
   const [kind, setKind] = useState<KindFilter>("all");
   const [branchFilter, setBranchFilter] = useState("");
   const [search, setSearch] = useState("");
-  const [orgList, setOrgList] = useState<
-    Array<{ id: string; name: string; tenant_id: string }>
-  >([]);
+  const [orgList, setOrgList] = useState<OrgOption[]>([]);
 
   // Branches for the picker and for resolving org_id -> name on the grid. The
   // mapping rows carry only org_id: entity.organizations is not readable inside
@@ -67,7 +68,7 @@ export default function MetaMappingsClient({
   useEffect(() => {
     let cancelled = false;
     orgs
-      .listAll()
+      .listAll(true)
       .then((res) => {
         if (!cancelled) setOrgList(res.data);
       })
@@ -101,6 +102,17 @@ export default function MetaMappingsClient({
     };
   }, [tenantId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setPages([]);
+    setPagesUnavailable(false);
+    metaMappings
+      .pages(tenantId)
+      .then((res) => { if (!cancelled) setPages(res.data); })
+      .catch(() => { if (!cancelled) setPagesUnavailable(true); });
+    return () => { cancelled = true; };
+  }, [tenantId]);
+
   // 1.70.0: stored token health per page, and how many open inbox leads are stuck on an
   // unmapped page — this tenant's, plus the tenant-less ones (a page mapped to nobody yet).
   useEffect(() => {
@@ -109,14 +121,32 @@ export default function MetaMappingsClient({
       .list(tenantId)
       .then((res) => { if (!cancelled) setHealth(Object.fromEntries(res.data.map((h) => [h.page_id, h]))); })
       .catch(() => { if (!cancelled) setHealth({}); });
+    // `total` is the server-side count of the whole match, not the (capped) row list.
     Promise.all([
       metaLeadInbox.list(tenantId, "open", "unmapped"),
       metaLeadInbox.list(null, "open", "unmapped"),
     ])
-      .then(([mine, orphan]) => { if (!cancelled) setUnmappedInbound(mine.data.length + orphan.data.length); })
+      .then(([mine, orphan]) => { if (!cancelled) setUnmappedInbound(mine.total + orphan.total); })
       .catch(() => { if (!cancelled) setUnmappedInbound(null); });
     return () => { cancelled = true; };
-  }, [tenantId]);
+    // `rows` changes identity after each save (router.refresh), so mapping a page
+    // refreshes the unmapped-inbound figure instead of leaving it stale.
+  }, [tenantId, rows]);
+
+  // 1.79.0: subscribe the app to ONE page's leadgen webhook, then re-check it (the service returns the fresh health).
+  const [subscribingPageId, setSubscribingPageId] = useState<string | null>(null);
+  const subscribePage = async (pageId: string) => {
+    setSubscribingPageId(pageId);
+    setError(null);
+    try {
+      const res = await metaPageHealth.subscribe(tenantId, pageId);
+      setHealth(Object.fromEntries(res.data.map((h) => [h.page_id, h])));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not subscribe the app to that page.");
+    } finally {
+      setSubscribingPageId(null);
+    }
+  };
 
   const validateTokens = async () => {
     setValidating(true);
@@ -136,13 +166,17 @@ export default function MetaMappingsClient({
     [orgList, tenantId],
   );
 
-  const orgOptions: SearchableOption[] = useMemo(
-    () => tenantOrgs.map((o) => ({ id: o.id, label: o.name })),
-    [tenantOrgs],
-  );
+  // Offer active branches, plus a deactivated one only while an existing mapping
+  // still points at it -- otherwise editing that mapping shows a blank picker.
+  const orgOptions: SearchableOption[] = useMemo(() => {
+    const mapped = new Set(rows.map((r) => r.org_id));
+    return tenantOrgs
+      .filter((o) => o.is_active || mapped.has(o.id))
+      .map((o) => ({ id: o.id, label: o.is_active ? o.name : `${o.name} (inactive)` }));
+  }, [tenantOrgs, rows]);
 
   const orgNames = useMemo(
-    () => Object.fromEntries(orgList.map((o) => [o.id, o.name])),
+    () => Object.fromEntries(orgList.map((o) => [o.id, o.is_active ? o.name : `${o.name} (inactive)`])),
     [orgList],
   );
 
@@ -244,7 +278,8 @@ export default function MetaMappingsClient({
       <PageHeader
         title="Meta Page & Branch Mapping"
         scope={tenantName}
-        subtitle={`${stats.total} mapping${stats.total === 1 ? "" : "s"} · which branch every inbound Meta lead lands in${selectedOrgId ? " (narrowed to the branch in the top bar)" : ""}`}
+        subtitle={`${stats.total} mapping${stats.total === 1 ? "" : "s"}${selectedOrgId ? " · branch from top bar" : ""}`}
+        info="Which branch every inbound Meta lead lands in. When a branch is picked in the top bar, the list is narrowed to it."
         tabs={<MetaTabs />}
         actions={
           <>
@@ -256,7 +291,7 @@ export default function MetaMappingsClient({
           </>
         }
       />
-      <PageBody>
+      <PageBody dense>
         {pageIdFilter ? (
           <p className="text-xs text-on-surface-variant">
             Filtered to page <span className="font-mono">{pageNames[pageIdFilter] ?? pageIdFilter}</span>
@@ -285,13 +320,7 @@ export default function MetaMappingsClient({
               value: unmappedInbound ?? "—",
               note: unmappedInbound === 0 ? "No lead is waiting on a mapping" : "Open leads in the Lead Review Inbox",
             },
-          ].map((c) => (
-            <div key={c.label} className="rounded-xl border border-outline-variant bg-surface-container-lowest p-3">
-              <p className="text-[0.6875rem] font-semibold uppercase tracking-widest text-on-surface-variant">{c.label}</p>
-              <p className="mt-1 font-mono text-2xl font-bold text-on-surface">{c.value}</p>
-              <p className="text-[0.6875rem] text-on-surface-variant">{c.note}</p>
-            </div>
-          ))}
+          ].map((c) => <KpiTile key={c.label} label={c.label} value={c.value} note={c.note} />)}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -344,6 +373,8 @@ export default function MetaMappingsClient({
         orgNames={orgNames}
         onEdit={openEdit}
         health={health}
+        onSubscribe={subscribePage}
+        subscribingPageId={subscribingPageId}
       />
 
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-outline-variant bg-surface-container-lowest p-3">

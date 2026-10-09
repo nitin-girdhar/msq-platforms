@@ -539,7 +539,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
   if (recent >= RESET_MAX_PER_WINDOW) return;
 
   const token = randomBytes(32).toString('base64url');
-  await repo.createResetToken(db_user.id, hashResetToken(token), RESET_TOKEN_TTL_MINUTES, null);
+  if (!(await repo.createResetToken(db_user.id, hashResetToken(token), RESET_TOKEN_TTL_MINUTES, null, RESET_MAX_PER_WINDOW))) return;
 
   const resetUrl = `${config.authWebUrl.replace(/\/+$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
   const mail = buildPasswordResetLinkEmail({

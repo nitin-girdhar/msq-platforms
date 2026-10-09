@@ -1,31 +1,41 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { Alert, Button, PageBody, PageHeader, type SearchableOption } from '@platform/ui-kit';
+import { Alert, Button, InfoTip, LocalDateTime, PageBody, PageHeader, type SearchableOption } from '@platform/ui-kit';
 import { metaCampaigns, type CampaignSyncResult, type MetaCampaignRow, type CampaignTypeRow } from '@/src/lib/api/client';
 import FetchCampaignsButton from './FetchCampaignsButton';
 import FetchResultPanel from './FetchResultPanel';
 import RuleEngineDrawer from './RuleEngineDrawer';
 import MetaTabs from '@/components/meta-nav/MetaTabs';
+import KpiTile from '@/components/meta-shared/KpiTile';
 
-type Tab = 'suggested' | 'unmapped' | 'confirmed' | 'archived';
 import CampaignMappingGrid from './CampaignMappingGrid';
 import ConfirmTypeModal, { type ConfirmTarget } from './ConfirmTypeModal';
+
+type Tab = 'suggested' | 'unmapped' | 'confirmed' | 'archived';
 
 interface Props {
   tenantId: string;
   /** Named in the header so a login-time tenant reset is visible here, not
    *  mistaken for an edit that did not save. See getSelectedTenantName(). */
   tenantName: string | undefined;
+  /** The server-rendered first page of campaigns; later refreshes are client-side. */
   rows: MetaCampaignRow[];
   campaignTypes: CampaignTypeRow[];
   campaignTypesUnavailable: boolean;
 }
 
-export default function MetaCampaignsClient({ tenantId, tenantName, rows, campaignTypes, campaignTypesUnavailable }: Props) {
-  const router = useRouter();
+export default function MetaCampaignsClient({ tenantId, tenantName, rows: initialRows, campaignTypes, campaignTypesUnavailable }: Props) {
+  // Row state lives here. A confirm / archive / fetch used to call router.refresh(),
+  // which re-ran the whole server render (session, campaign types, the full campaign
+  // list and its lead-count aggregate) for a change to a handful of rows. Now an
+  // action patches the affected rows in place and, where the server decides the
+  // result (confirm, fetch), re-reads only the campaign list.
+  const [rows, setRows] = useState<MetaCampaignRow[]>(initialRows);
+  const [reloadError, setReloadError] = useState<string | null>(null);
+  const reloadSeq = useRef(0);
+  useEffect(() => { setRows(initialRows); }, [initialRows]);
   // Keyed by meta_campaign_id -> chosen campaign_type_id. Seeded per row below
   // and otherwise left alone across re-renders so an admin's in-progress picks
   // in the grid survive unrelated state changes.
@@ -50,14 +60,24 @@ export default function MetaCampaignsClient({ tenantId, tenantName, rows, campai
   // empty on purpose: "Confirm all" on Needs mapping must never confirm every
   // unmatched campaign to one pool in a click — the decision this grid exists
   // to make a human take.
+  // What each row was last seeded with, so a later fetch that CHANGES the suggestion
+  // re-seeds the dropdown -- but only if the admin has not already picked something
+  // else (their pick equals the old seed). Otherwise Confirm would commit a stale guess.
+  const seededRef = useRef<Record<string, string>>({});
   useEffect(() => {
     setSelections((prev) => {
       let changed = false;
       const next = { ...prev };
       for (const row of rows) {
-        if (!(row.meta_campaign_id in next)) {
-          next[row.meta_campaign_id] =
-            row.mapping_status === 'unmapped' ? '' : (row.campaign_type_id ?? row.suggested_campaign_type_id ?? '');
+        const seed = row.mapping_status === 'unmapped' ? '' : (row.campaign_type_id ?? row.suggested_campaign_type_id ?? '');
+        const id = row.meta_campaign_id;
+        if (!(id in next)) {
+          next[id] = seed;
+          seededRef.current[id] = seed;
+          changed = true;
+        } else if (seededRef.current[id] !== seed && next[id] === seededRef.current[id]) {
+          next[id] = seed;
+          seededRef.current[id] = seed;
           changed = true;
         }
       }
@@ -92,7 +112,7 @@ export default function MetaCampaignsClient({ tenantId, tenantName, rows, campai
   const lastSynced = useMemo(() => {
     const times = rows.map((r) => (r.last_synced_at ? new Date(r.last_synced_at).getTime() : 0));
     const latest = Math.max(0, ...times);
-    return latest ? new Date(latest).toLocaleString() : 'Never';
+    return latest || null;
   }, [rows]);
   const conflicted = useMemo(() => rows.filter((r) => r.conflict_reason), [rows]);
 
@@ -130,9 +150,17 @@ export default function MetaCampaignsClient({ tenantId, tenantName, rows, campai
     setConfirmTarget({ campaigns: withTypes, editable: false });
   };
 
-  // Re-runs the server component, which refetches the campaigns (and campaign
-  // types) under the current tenant cookie.
-  const handleRefresh = () => router.refresh();
+  // Re-reads the campaign list (client-side, newest request wins).
+  const handleRefresh = useCallback(async () => {
+    const seq = ++reloadSeq.current;
+    setReloadError(null);
+    try {
+      const res = await metaCampaigns.list(tenantId);
+      if (seq === reloadSeq.current) setRows(res.data);
+    } catch (err) {
+      if (seq === reloadSeq.current) setReloadError(err instanceof Error ? err.message : 'Could not refresh the campaigns.');
+    }
+  }, [tenantId]);
 
   const archive = async (ids: string[], value: boolean) => {
     if (ids.length === 0) return;
@@ -141,7 +169,9 @@ export default function MetaCampaignsClient({ tenantId, tenantName, rows, campai
     try {
       await metaCampaigns.archive(tenantId, ids, value);
       setTicked([]);
-      handleRefresh();
+      // Visibility only -- patch the rows in place, no refetch needed.
+      const hit = new Set(ids);
+      setRows((prev) => prev.map((r) => (hit.has(r.meta_campaign_id) ? { ...r, is_archived: value } : r)));
     } catch (err) {
       setArchiveError(err instanceof Error ? err.message : 'Could not change the hidden state.');
     } finally {
@@ -168,39 +198,38 @@ export default function MetaCampaignsClient({ tenantId, tenantName, rows, campai
       <PageHeader
         title="Meta Campaign Mapping & Classification"
         scope={tenantName}
-        subtitle="Classify campaigns into departmental pipelines. Unconfirmed campaigns route on ordered keyword rules until you confirm them."
+        subtitle="Classify campaigns into departmental pipelines"
+        info="Unconfirmed campaigns route on ordered keyword rules until you confirm them."
         tabs={<MetaTabs />}
         actions={
           <>
             <Button onClick={() => setRulesOpen(true)}>Rule Engine Settings</Button>
             <FetchCampaignsButton
               tenantId={tenantId}
-              onSynced={handleRefresh}
+              onSynced={() => void handleRefresh()}
               onResult={(result, error) => { setFetchResult(result); setFetchError(error); }}
             />
           </>
         }
       />
-      <PageBody>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <PageBody dense>
+        {reloadError && <Alert tone="error">{reloadError}</Alert>}
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
           {[
             { label: 'Ad accounts', value: adAccountCount, note: 'With campaigns here' },
             { label: 'Campaigns', value: rows.length, note: 'Known to this tenant' },
             { label: 'Need confirmation', value: rows.filter((r) => r.mapping_status === 'suggested' && !r.is_archived).length, note: 'Rule engine has a guess' },
             { label: 'Need mapping', value: rows.filter((r) => r.mapping_status === 'unmapped' && !r.is_archived).length, note: 'No rule matched' },
             { label: 'Confirmed', value: rows.filter((r) => r.mapping_status === 'confirmed' && !r.is_archived).length, note: 'Routed by your choice' },
-          ].map((c) => (
-            <div key={c.label} className="rounded-xl border border-outline-variant bg-surface-container-lowest p-3">
-              <p className="text-[0.6875rem] font-semibold uppercase tracking-widest text-on-surface-variant">{c.label}</p>
-              <p className="mt-1 font-mono text-2xl font-bold text-on-surface">{c.value}</p>
-              <p className="text-[0.6875rem] text-on-surface-variant">{c.note}</p>
-            </div>
-          ))}
+          ].map((c) => <KpiTile key={c.label} label={c.label} value={c.value} note={c.note} />)}
         </div>
-        <p className="text-xs text-on-surface-variant">
-          Last campaign sync: {lastSynced}. Campaigns are fetched from the{' '}
-          <Link href="/dashboard/meta-ad-accounts" className="font-semibold text-primary hover:underline">enabled ad accounts</Link>{' '}
-          and land in the tenant their pages are mapped to.
+        <p className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+          Last campaign sync: <LocalDateTime value={lastSynced} fallback="Never" />
+          <InfoTip label="About campaign sync">
+            Campaigns are fetched from the{' '}
+            <Link href="/dashboard/meta-ad-accounts" className="font-semibold underline">enabled ad accounts</Link>{' '}
+            and land in the tenant their pages are mapped to.
+          </InfoTip>
         </p>
 
         <FetchResultPanel result={fetchResult} error={fetchError} />
@@ -315,8 +344,9 @@ export default function MetaCampaignsClient({ tenantId, tenantName, rows, campai
         )}
         {tab === 'archived' && (
           <section className="space-y-2" aria-label="Archived campaigns">
-            <p className="text-xs text-on-surface-variant">
-              Hidden from the working lists. They keep routing leads by the type they hold — restoring only changes the view.
+            <p className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+              Archived campaigns
+              <InfoTip label="About archived campaigns">Hidden from the working lists. They keep routing leads by the type they hold; restoring only changes the view.</InfoTip>
             </p>
             <CampaignMappingGrid
               key="archived"
@@ -405,7 +435,7 @@ export default function MetaCampaignsClient({ tenantId, tenantName, rows, campai
         tenantId={tenantId}
         campaignTypeOptions={campaignTypeOptions}
         onClose={() => setConfirmTarget(null)}
-        onConfirmed={handleRefresh}
+        onConfirmed={() => void handleRefresh()}
       />
     </>
   );

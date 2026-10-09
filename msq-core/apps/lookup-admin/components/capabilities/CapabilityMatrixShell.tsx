@@ -274,14 +274,24 @@ export default function CapabilityMatrixShell({ selectedTenantId, tenantName }: 
       <PageHeader
         title="Capability Matrix"
         scope={tenantName}
-        subtitle="Pick a tool, drill into its modules, then grant or deny operations and scopes. Changes stage until you save."
+        subtitle="Grant or deny operations and scopes. Changes stage until you save."
+        info={
+          <>
+            <p>Pick a tool, drill into its modules, then grant or deny operations and scopes. Changes stage until you save.</p>
+            <p>
+              Pages and tabs are <strong>on by default</strong> when the tool above them is on. They show <em>Inherited</em> and have no
+              row of their own. Denying one saves an explicit deny and switches off everything beneath it. Operations and scopes never
+              inherit: they are off until granted.
+            </p>
+          </>
+        }
         actions={
           roleId ? (
             <Button onClick={handleExport} disabled={ruleRows.length === 0}>Export Matrix</Button>
           ) : undefined
         }
       />
-      <PageBody>
+      <PageBody dense>
         {error && <Alert tone="error">{error}</Alert>}
         {savedMessage && <Alert tone="success">{savedMessage}</Alert>}
 
@@ -330,11 +340,6 @@ export default function CapabilityMatrixShell({ selectedTenantId, tenantName }: 
               <p className="text-sm text-on-surface-variant">Loading…</p>
             ) : (
               <>
-                <p className="text-xs leading-relaxed text-on-surface-variant">
-                  Pages and tabs are <strong className="text-on-surface">on by default</strong> when the tool above them is on —
-                  they show <em>Inherited</em> and have no row of their own. Denying one saves an explicit deny and switches off
-                  everything beneath it. Operations and scopes never inherit: they are off until granted.
-                </p>
                 <DrilldownColumns
                   index={index}
                   tools={tools}

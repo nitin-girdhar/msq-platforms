@@ -543,6 +543,11 @@ CREATE TABLE IF NOT EXISTS hr.attendance_rules (
   -- far in the past resolves an approver chain that may not have existed then.
   regularization_max_backdate_days SMALLINT NOT NULL DEFAULT 30
                              CONSTRAINT chk_attendance_rules_reg_backdate CHECK (regularization_max_backdate_days BETWEEN 0 AND 365),
+  -- Minimum rest, in hours, between the end of one shift and the start of the next (schema 1.77.0).
+  -- The roster planner WARNS when an edit breaks it and lets the planner confirm; shift swaps still
+  -- refuse. A shift's own hr.shifts.min_rest_hours overrides it. 0 = the rule is off.
+  min_rest_hours           SMALLINT NOT NULL DEFAULT 11
+                             CONSTRAINT chk_attendance_rules_min_rest CHECK (min_rest_hours BETWEEN 0 AND 24),
   -- ── standard soft-delete / audit ──
   is_active   BOOLEAN NOT NULL DEFAULT TRUE,
   is_deleted  BOOLEAN NOT NULL DEFAULT FALSE,
@@ -575,6 +580,9 @@ CREATE TABLE IF NOT EXISTS hr.shifts (
   -- A split shift works 2+ separate slots in a day (see hr.shift_segments).
   -- start_time/end_time above stay the OUTER window the segments live inside.
   is_split              BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Own minimum rest (hours) before this shift starts (schema 1.77.0). NULL = follow
+  -- hr.attendance_rules.min_rest_hours; 0 = no rest rule for this shift.
+  min_rest_hours        SMALLINT CONSTRAINT chk_shifts_min_rest CHECK (min_rest_hours IS NULL OR min_rest_hours BETWEEN 0 AND 24),
   is_active             BOOLEAN NOT NULL DEFAULT TRUE,
   is_deleted            BOOLEAN NOT NULL DEFAULT FALSE,
   deleted_at            TIMESTAMPTZ,

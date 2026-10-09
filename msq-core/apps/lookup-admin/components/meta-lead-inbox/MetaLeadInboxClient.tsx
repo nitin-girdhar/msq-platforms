@@ -1,13 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Alert, Button, PageBody, PageHeader } from '@platform/ui-kit';
+import { Alert, Button, LocalDateTime, Modal, PageBody, PageHeader } from '@platform/ui-kit';
 import MetaTabs from '@/components/meta-nav/MetaTabs';
+import KpiTile from '@/components/meta-shared/KpiTile';
+import FilterChip from '@/components/meta-shared/FilterChip';
 import {
   metaLeadInbox,
   type InboxReason,
   type InboxStatus,
+  type MetaLeadInboxCounts,
   type MetaLeadInboxRow,
 } from '@/src/lib/api/client';
 
@@ -16,12 +19,6 @@ const REASON_LABELS: Record<InboxReason, string> = {
   missing_contact: 'No phone number on the lead',
   sync_failed: 'Could not be saved',
 };
-
-function formatDate(value: string | null): string {
-  if (!value) return '—';
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
-}
 
 interface Props {
   // The administered tenant, or null when none is selected — then only the
@@ -42,23 +39,35 @@ export default function MetaLeadInboxClient({ tenantId, tenantName }: Props) {
   const [scope, setScope] = useState<'tenant' | 'unowned'>(tenantId ? 'tenant' : 'unowned');
   const [status, setStatus] = useState<InboxStatus>('open');
   const [rows, setRows] = useState<MetaLeadInboxRow[]>([]);
+  // Server-side totals: `rows` is capped (see `limit`), `counts` covers the whole match.
+  const [counts, setCounts] = useState<MetaLeadInboxCounts | null>(null);
+  const [limit, setLimit] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [confirmIgnore, setConfirmIgnore] = useState<MetaLeadInboxRow | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const scopedTenant = scope === 'tenant' ? tenantId : null;
 
+  // Toggling scope/status quickly leaves several requests in flight; only the newest
+  // may write state, or a slow earlier answer would replace the rows now on screen.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
     try {
       const res = await metaLeadInbox.list(scopedTenant, status);
+      if (seq !== loadSeq.current) return;
       setRows(res.data);
+      setCounts(res.counts);
+      setLimit(res.limit);
     } catch (err) {
+      if (seq !== loadSeq.current) return;
       setError(err instanceof Error ? err.message : 'Could not load the inbox.');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [scopedTenant, status]);
 
@@ -84,9 +93,10 @@ export default function MetaLeadInboxClient({ tenantId, tenantName }: Props) {
   };
 
   const ignore = async (row: MetaLeadInboxRow) => {
-    if (!window.confirm(`Ignore lead ${row.meta_lead_id}? It will not be imported.`)) return;
+    setConfirmIgnore(null);
     setBusyId(row.id);
     setError(null);
+    setNotice(null);
     try {
       await metaLeadInbox.ignore(scopedTenant, row.id);
       await load();
@@ -104,20 +114,18 @@ export default function MetaLeadInboxClient({ tenantId, tenantName }: Props) {
         [r.lead_name, r.meta_lead_id, r.page_id, r.form_id, r.error_text].some((v) => (v ?? '').toLowerCase().includes(q)),
       )
     : rows;
-  const countOf = (reason: InboxReason) => rows.filter((r) => r.reason === reason).length;
+  const countOf = (reason: InboxReason) => counts?.by_reason[reason] ?? 0;
+  const total = counts?.total ?? rows.length;
+  const capped = rows.length < total;
 
   const select = 'min-h-11 rounded-lg border border-outline-variant bg-surface-container-lowest px-2 text-sm text-on-surface sm:min-h-8 sm:text-xs';
-  const statusChip = (on: boolean) =>
-    `inline-flex min-h-11 items-center px-3 text-xs font-semibold transition-colors sm:min-h-8 ${
-      on ? 'bg-primary-fixed text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-low'
-    }`;
   const STATUSES: { value: InboxStatus; label: string }[] = [
     { value: 'open', label: 'Open' },
     { value: 'resolved', label: 'Resolved' },
     { value: 'ignored', label: 'Ignored' },
   ];
   const stats: { label: string; value: number }[] = [
-    { label: 'In this view', value: rows.length },
+    { label: 'In this view', value: total },
     { label: 'Unmapped page / form', value: countOf('unmapped') },
     { label: 'No phone number', value: countOf('missing_contact') },
     { label: 'Could not be saved', value: countOf('sync_failed') },
@@ -127,25 +135,22 @@ export default function MetaLeadInboxClient({ tenantId, tenantName }: Props) {
     <>
       <PageHeader
         title="Meta Lead Review Inbox"
-        scope={tenantName}
+        scope={scope === 'tenant' ? tenantName : 'No tenant'}
         subtitle="Leads Meta delivered that could not be created"
+        info={
+          <p>
+            Fix the cause. For an unmapped page, map it on{' '}
+            <Link href="/dashboard/meta-mappings" className="font-semibold underline">Meta Page Mapping</Link>, then Retry. A retried lead is
+            typed and assigned exactly as a live one.
+          </p>
+        }
         tabs={<MetaTabs />}
       />
-      <PageBody>
-        <p className="max-w-3xl rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2 text-xs text-on-surface-variant">
-          Fix the cause — for an unmapped page, map it on{' '}
-          <Link href="/dashboard/meta-mappings" className="font-semibold text-primary hover:underline">Meta Page Mapping</Link>{' '}
-          — then Retry. A retried lead is typed and assigned exactly as a live one.
-        </p>
+      <PageBody dense>
 
         {!loading && (
           <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-            {stats.map((s) => (
-              <div key={s.label} className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2">
-                <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-on-surface-variant">{s.label}</p>
-                <p className="font-mono text-2xl font-bold tabular-nums text-on-surface">{s.value}</p>
-              </div>
-            ))}
+            {stats.map((s) => <KpiTile key={s.label} label={s.label} value={s.value} />)}
           </div>
         )}
 
@@ -156,9 +161,7 @@ export default function MetaLeadInboxClient({ tenantId, tenantName }: Props) {
           </select>
           <div role="group" aria-label="Inbox status" className="inline-flex overflow-hidden rounded-lg border border-outline-variant bg-surface-container-lowest">
             {STATUSES.map((s) => (
-              <button key={s.value} type="button" aria-pressed={status === s.value} onClick={() => setStatus(s.value)} className={statusChip(status === s.value)}>
-                {s.label}
-              </button>
+              <FilterChip key={s.value} on={status === s.value} onClick={() => setStatus(s.value)}>{s.label}</FilterChip>
             ))}
           </div>
           <input
@@ -194,7 +197,7 @@ export default function MetaLeadInboxClient({ tenantId, tenantName }: Props) {
               )}
               {!loading && shownRows.map((r) => (
                 <tr key={r.id} className="border-t border-outline-variant align-top">
-                  <td className="whitespace-nowrap px-3 py-2">{formatDate(r.lead_created_at ?? r.created_at)}</td>
+                  <td className="whitespace-nowrap px-3 py-2"><LocalDateTime value={r.lead_created_at ?? r.created_at} /></td>
                   <td className="px-3 py-2">
                     <span className="font-semibold text-on-surface">{r.lead_name ?? '—'}</span>
                     <span className="block font-mono text-on-surface-variant">{r.meta_lead_id}</span>
@@ -216,7 +219,7 @@ export default function MetaLeadInboxClient({ tenantId, tenantName }: Props) {
                         <Button variant="primary" className="min-h-11 sm:min-h-8" onClick={() => void retry(r)} disabled={busyId !== null}>
                           {busyId === r.id ? 'Retrying…' : 'Retry'}
                         </Button>
-                        <Button variant="secondary" className="min-h-11 sm:min-h-8" onClick={() => void ignore(r)} disabled={busyId !== null}>Ignore</Button>
+                        <Button variant="secondary" className="min-h-11 sm:min-h-8" onClick={() => setConfirmIgnore(r)} disabled={busyId !== null}>Ignore</Button>
                       </span>
                     )}
                   </td>
@@ -227,10 +230,28 @@ export default function MetaLeadInboxClient({ tenantId, tenantName }: Props) {
         </div>
         {!loading && (
           <p className="text-xs text-on-surface-variant">
-            Showing {shownRows.length}{shownRows.length !== rows.length ? ` of ${rows.length}` : ''} lead{rows.length === 1 ? '' : 's'}
+            Showing {shownRows.length}{shownRows.length !== rows.length ? ` of ${rows.length} loaded` : ''} lead{shownRows.length === 1 ? '' : 's'}
+            {capped && ` — the newest ${limit} of ${total}. Resolve or ignore some to bring the rest into view.`}
           </p>
         )}
       </PageBody>
+
+      <Modal
+        open={confirmIgnore !== null}
+        onClose={() => setConfirmIgnore(null)}
+        title="Ignore this lead?"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmIgnore(null)}>Cancel</Button>
+            <Button variant="danger" onClick={() => confirmIgnore && void ignore(confirmIgnore)}>Ignore lead</Button>
+          </>
+        }
+      >
+        <p className="text-sm text-on-surface">
+          Lead <span className="font-mono">{confirmIgnore?.meta_lead_id}</span>
+          {confirmIgnore?.lead_name ? ` (${confirmIgnore.lead_name})` : ''} will not be imported into LMS.
+        </p>
+      </Modal>
     </>
   );
 }

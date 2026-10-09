@@ -801,6 +801,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_shift_requirements_org_shift
 CREATE UNIQUE INDEX IF NOT EXISTS uix_roster_publications_org_week
   ON hr.roster_publications (org_id, week_start) WHERE NOT is_deleted;
 
+-- ── Meta CAPI v2 (1.79.0) ────────────────────────────────────────────
+-- Exactly one ACTIVE credential per purpose (rotation flips the old row to ROTATED first).
+CREATE UNIQUE INDEX IF NOT EXISTS uix_meta_platform_credentials_active
+  ON ext.meta_platform_credentials (purpose) WHERE status = 'ACTIVE';
+CREATE INDEX IF NOT EXISTS idx_meta_business_portfolios_tenant ON ext.meta_business_portfolios (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_meta_datasets_tenant            ON ext.meta_datasets (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_meta_datasets_portfolio         ON ext.meta_datasets (portfolio_id);
+-- A branch has at most one live fallback dataset.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_meta_org_dataset_map_org
+  ON ext.meta_org_dataset_map (org_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_meta_org_dataset_map_dataset    ON ext.meta_org_dataset_map (dataset_id);
+CREATE INDEX IF NOT EXISTS idx_meta_leads_capi_dataset         ON ext.meta_leads (capi_dataset_id) WHERE capi_dataset_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_meta_leads_ad_account           ON ext.meta_leads (ad_account_id) WHERE ad_account_id IS NOT NULL;
+
+-- Outbox: idempotent enqueue, the worker's poll, per-lead ordering, console filters.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_meta_capi_outbox_event
+  ON ext.meta_capi_outbox (dataset_id, event_id) WHERE dataset_id IS NOT NULL;
+-- A skipped lead (no dataset) has no dataset to key idempotency on: one skip row per lead+event.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_meta_capi_outbox_skip
+  ON ext.meta_capi_outbox (marketing_lead_id, event_id) WHERE dataset_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_meta_capi_outbox_poll
+  ON ext.meta_capi_outbox (next_retry_at) WHERE status IN ('PENDING','FAILED');
+CREATE INDEX IF NOT EXISTS idx_meta_capi_outbox_lead
+  ON ext.meta_capi_outbox (marketing_lead_id, funnel_rank);
+CREATE INDEX IF NOT EXISTS idx_meta_capi_outbox_tenant_status
+  ON ext.meta_capi_outbox (tenant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_meta_capi_outbox_org            ON ext.meta_capi_outbox (org_id);
+
 COMMIT;
 
 -- 1.70.0: Super Admin Meta console.

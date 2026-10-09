@@ -419,6 +419,10 @@ export const TABLE_CONFIG: Record<string, LookupTableDef> = {
       { key: 'label', label: 'Label', type: 'text', required: true },
       DESCRIPTION_FIELD,
       { key: 'sort_order', label: 'Sort Order', type: 'number' },
+      // 1.79.0: Meta wants a lead's stages sent IN ORDER. funnel_rank is the position (10, 20, 30, 40); when a lead
+      // jumps ahead the outbox first queues every earlier mapped stage. Blank for negative signals.
+      { key: 'funnel_rank', label: 'Funnel Position', type: 'number' },
+      { key: 'is_negative', label: 'Negative Signal', type: 'boolean' },
     ],
   },
   'organizations': {

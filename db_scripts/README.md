@@ -162,13 +162,12 @@ single-transaction file that takes a production database from one schema version
 next (the `one_time/apply_*.sql` parts in version order, then `04`–`08` and `10`, then the
 `09` rows). Append a line to its `$Order` list for each new schema version, rebuild, and
 rehearse on a fresh prod clone (`one_time/refresh_from_prod.ps1`) before shipping. See
-`msq-deploy/DB_ROLLOUT_1.56.0_to_1.75.0.md`.
+`msq-deploy/DB_ROLLOUT_1.56.0_to_1.79.0.md`.
 
 `one_time/apply_capability_walls.sql` (schema 1.76.0, registered in `build_prod_rollout.ps1`) is the capability
 cleanup: new/merged/removed keys plus the grants that keep the rank-to-capability cutover
 behaviour-neutral. Run it as a dry run first (`sed 's/^COMMIT;/ROLLBACK;/' ... | psql`: it rolls back and prints every changed
-grant), take the `*_bak_20261008` copies it names, then run it for real. Build a rollout that includes it
-with `build_prod_rollout.ps1 -ToVersion 1.76.0`.
+grant), take the `*_bak_20261008` copies it names, then run it for real. It is included in `msq-deploy/DB_ROLLOUT_1.56.0_to_1.79.0.sql` (the builder's default target).
 
 ### Default branch per tenant
 
@@ -177,3 +176,9 @@ navbar. admin-service now creates `<Tenant> - Head Office` (org type `head_offic
 transaction as every new tenant. For tenants that already exist without one, run
 `one_time/backfill_default_branch_dryrun.sql` and then `one_time/backfill_default_branch.sql`
 (idempotent, no schema change, so no version bump). Applied to local only; UAT/prod pending.
+
+`one_time/apply_departments_tenant_admin_write.sql` (schema 1.78.0) grants `tenant_admin` INSERT/UPDATE on `iam.departments`, widens its policy to `FOR ALL ... WITH CHECK`, and enables deny-all RLS on the `iam.*_bak_*` capability backups. Run the `_dryrun.sql` twin first; it is idempotent and has no column changes.
+
+## Meta Conversions API v2 rollout (1.79.0)
+
+`one_time/apply_meta_capi_v2_1_79.sql` (+ `_dryrun`) — new platform tables, the outbox, three `SECURITY DEFINER` functions, view column additions, the funnel event vocabulary and a per-tenant re-wire of the stage → event map (only stages still on the retired `Other` move). Idempotent and transactional. Run it **before** deploying the new `meta-conversion-api`, `leads-service` and `lookup-admin` images; it is safe for the old ones. `one_time/apply_meta_capi_v2_drop_dead_columns_1_80.sql` drops `ext.meta_tenant_config.capi_trigger_stages` / `ad_account_ids` and is run only **after** every image has been replaced (an older meta-conversion-api still reads them). Afterwards, in the console: Meta Connection (enter both system-user tokens), Meta Datasets (register each client's portfolio and dataset, link its ad accounts, Verify), then *CAPI Outbox → Re-queue parked*. The scripts in `one_time/` are gitignored by design — copy them to the server.

@@ -899,7 +899,7 @@ AS
     ON m.form_id = f.form_id AND m.tenant_id = f.tenant_id AND m.is_active;
 
 CREATE OR REPLACE VIEW ext.vw_meta_capi_event_types AS
-SELECT id, code, label, description, is_active, sort_order
+SELECT id, code, label, description, is_active, sort_order, funnel_rank, is_negative
 FROM ext.meta_capi_event_types
 WHERE is_active = TRUE
 ORDER BY sort_order, label;
@@ -923,7 +923,10 @@ SELECT
   et.code  AS capi_event_code,
   et.label AS capi_event_label,
   m.created_at,
-  m.updated_at
+  m.updated_at,
+  et.funnel_rank,
+  et.is_negative,
+  ls.sort_order AS stage_sort_order
 FROM ext.lead_stage_capi_event_map m
 JOIN lms.lead_stage ls            ON ls.id = m.stage_id AND ls.tenant_id IS NOT DISTINCT FROM m.tenant_id
 JOIN ext.meta_capi_event_types et ON et.id = m.capi_event_type_id;

@@ -14,6 +14,7 @@ import { createRateLimiter } from './lib/rate-limit.js';
 import { publicApiKeyAuth, publicUserContext, publicScopeHeaders } from './lib/public-auth.js';
 import { publicCommsGuard } from './lib/public-comms.js';
 import { getJwks } from './lib/jwks.js';
+import { rejectUnsafePathParams } from './lib/upstream-url.js';
 import { createLoggerOptions } from '@platform/logger';
 
 const app = Fastify({
@@ -62,8 +63,14 @@ app.addHook('onSend', async (_req, reply, payload) => {
   return payload;
 });
 
+// Path params are single segments: `..%2Finternal%2F...` must never reach a handler
+// that interpolates it into an upstream path. proxy.ts re-checks the built path.
+app.addHook('preValidation', rejectUnsafePathParams);
+
 // Aggressive limit on credential endpoints; looser on public webhooks.
 const loginRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
+// Own bucket: failed reset attempts must not spend the login budget (shared NAT lock-out).
+const resetPasswordRateLimit = createRateLimiter({ max: 10, windowMs: 60_000 });
 const webhookRateLimit = createRateLimiter({ max: 60, windowMs: 60_000 });
 // Meta's own delivery volume is low, so this is generous for the legitimate
 // caller while still bounding an anonymous flood. Its own bucket rather than
@@ -98,7 +105,7 @@ app.post('/auth/forgot-password', { preHandler: [forgotPasswordRateLimit] }, asy
   return proxyTo(config.identityServiceUrl, '/api/v1/auth/forgot-password', req, reply);
 });
 
-app.post('/auth/reset-password', { preHandler: [loginRateLimit] }, async (req, reply) => {
+app.post('/auth/reset-password', { preHandler: [resetPasswordRateLimit] }, async (req, reply) => {
   return proxyTo(config.identityServiceUrl, '/api/v1/auth/reset-password', req, reply);
 });
 
@@ -581,7 +588,7 @@ app.get('/tenants/:id/modules', { ...withAuth }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.adminServiceUrl, `/api/v1/tenants/${id}/modules`, req, reply, req.userCtx);
 });
-app.put('/tenants/:id/modules', { ...withAuth }, async (req, reply) => {
+app.put('/tenants/:id/modules', { ...withSuperAdmin }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.adminServiceUrl, `/api/v1/tenants/${id}/modules`, req, reply, req.userCtx);
 });
@@ -891,6 +898,13 @@ app.post('/meta/pages/health/validate', { ...withSuperAdmin }, async (req, reply
     timeoutMs: config.metaAdminLongTimeoutMs,
   });
 });
+app.post('/meta/pages/:pageId/subscribe', { ...withSuperAdmin }, async (req, reply) => {
+  const { pageId } = req.params as { pageId: string };
+  // Subscribes the app on Meta, then re-checks the page: several Graph calls, so the long admin timeout.
+  return proxyTo(config.metaServiceUrl, `/api/v1/pages/${encodeURIComponent(pageId)}/subscribe`, req, reply, req.userCtx, {
+    timeoutMs: config.metaAdminLongTimeoutMs,
+  });
+});
 app.get('/meta/pages/:pageId/forms', { ...withSuperAdmin }, async (req, reply) => {
   const { pageId } = req.params as { pageId: string };
   return proxyTo(config.metaServiceUrl, `/api/v1/pages/${encodeURIComponent(pageId)}/forms`, req, reply, req.userCtx);
@@ -1030,6 +1044,100 @@ app.post('/meta/lead-inbox/:id/retry', { ...withSuperAdmin }, async (req, reply)
 app.post('/meta/lead-inbox/:id/ignore', { ...withSuperAdmin }, async (req, reply) => {
   const { id } = req.params as { id: string };
   return proxyTo(config.metaServiceUrl, `/api/v1/lead-inbox/${id}/ignore`, req, reply, req.userCtx);
+});
+
+// Meta Conversions API v2 console (1.79.0; super_admin only -- every route re-checked in
+// meta-conversion-api, and the tenant-scoped ones RLS-pinned to the administered tenant).
+// CONNECTION: the one Meta app + the two platform system users (secrets are write-only).
+app.get('/meta/connection', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/connection', req, reply, req.userCtx);
+});
+app.put('/meta/connection/app', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/connection/app', req, reply, req.userCtx);
+});
+app.post('/meta/connection/credentials', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/connection/credentials', req, reply, req.userCtx);
+});
+app.post('/meta/connection/credentials/:id/verify', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  // Calls Graph (debug_token) -- the long timeout the other Meta admin calls use.
+  return proxyTo(config.metaServiceUrl, `/api/v1/connection/credentials/${encodeURIComponent(id)}/verify`, req, reply, req.userCtx, { timeoutMs: config.metaAdminLongTimeoutMs });
+});
+app.post('/meta/connection/credentials/:id/revoke', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/connection/credentials/${encodeURIComponent(id)}/revoke`, req, reply, req.userCtx);
+});
+
+// PORTFOLIOS + DATASETS (pixels) + the ad-account links + the per-branch fallback.
+app.get('/meta/portfolios', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/portfolios', req, reply, req.userCtx);
+});
+app.post('/meta/portfolios', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/portfolios', req, reply, req.userCtx);
+});
+app.patch('/meta/portfolios/:id', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/portfolios/${encodeURIComponent(id)}`, req, reply, req.userCtx);
+});
+app.delete('/meta/portfolios/:id', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/portfolios/${encodeURIComponent(id)}`, req, reply, req.userCtx);
+});
+app.get('/meta/datasets', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/datasets', req, reply, req.userCtx);
+});
+app.post('/meta/datasets', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/datasets', req, reply, req.userCtx);
+});
+app.patch('/meta/datasets/:id', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/datasets/${encodeURIComponent(id)}`, req, reply, req.userCtx);
+});
+app.delete('/meta/datasets/:id', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/datasets/${encodeURIComponent(id)}`, req, reply, req.userCtx);
+});
+app.post('/meta/datasets/:id/verify', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/datasets/${encodeURIComponent(id)}/verify`, req, reply, req.userCtx, { timeoutMs: config.metaAdminLongTimeoutMs });
+});
+app.put('/meta/datasets/:id/ad-accounts', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/datasets/${encodeURIComponent(id)}/ad-accounts`, req, reply, req.userCtx);
+});
+app.get('/meta/org-datasets', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/org-datasets', req, reply, req.userCtx);
+});
+app.put('/meta/org-datasets', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/org-datasets', req, reply, req.userCtx);
+});
+app.delete('/meta/org-datasets', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/org-datasets', req, reply, req.userCtx);
+});
+
+// CAPI OUTBOX: what each stage change owes Meta, what was sent, what failed and why. ?tenant_id= is the
+// ADMINISTERED tenant; the service pins RLS to it.
+app.get('/meta/capi-outbox', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/capi-outbox', req, reply, req.userCtx);
+});
+app.get('/meta/capi-outbox/summary', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/capi-outbox/summary', req, reply, req.userCtx);
+});
+app.get('/meta/capi-outbox/worklist', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/capi-outbox/worklist', req, reply, req.userCtx);
+});
+app.get('/meta/capi-outbox/:id', { ...withSuperAdmin }, async (req, reply) => {
+  const { id } = req.params as { id: string };
+  return proxyTo(config.metaServiceUrl, `/api/v1/capi-outbox/${encodeURIComponent(id)}`, req, reply, req.userCtx);
+});
+app.post('/meta/capi-outbox/retry', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/capi-outbox/retry', req, reply, req.userCtx);
+});
+app.post('/meta/capi-outbox/dismiss', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/capi-outbox/dismiss', req, reply, req.userCtx);
+});
+app.post('/meta/capi-outbox/requeue-skipped', { ...withSuperAdmin }, async (req, reply) => {
+  return proxyTo(config.metaServiceUrl, '/api/v1/capi-outbox/requeue-skipped', req, reply, req.userCtx);
 });
 
 // Re-run auto-assignment (super_admin console): re-routes leads that arrived

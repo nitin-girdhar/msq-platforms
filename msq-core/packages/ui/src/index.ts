@@ -8,6 +8,7 @@
 export { Modal } from './components/Modal';
 export { Sheet, type SheetProps } from './components/Modal';
 export { Pagination } from './components/Pagination';
+export { LocalDateTime, type LocalDateTimeProps } from './components/LocalDateTime';
 export { DownloadButton, type ExportFormat } from './components/DownloadButton';
 export { Placeholder } from './components/Placeholder';
 export { MonthGrid, type MonthGridBar, type MonthGridMarker } from './components/MonthGrid';
@@ -57,6 +58,7 @@ export {
   PageBody,
   PageSection,
   Alert,
+  InfoTip,
   type ButtonVariant,
   type ButtonSize,
   type PageTab,

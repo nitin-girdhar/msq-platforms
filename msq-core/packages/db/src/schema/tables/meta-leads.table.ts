@@ -23,5 +23,11 @@ export const metaLeadsTable = extSchema.table('meta_leads', {
   phone:            text('phone'),
   whatsappNumber:   text('whatsapp_number'),
   rawFieldData:     jsonb('raw_field_data'),
+  /** The campaign's ad account `act_<digits>` -- the key that picks the conversion dataset (1.79.0). */
+  adAccountId:      text('ad_account_id'),
+  /** The dataset this lead's events go to, decided ONCE at ingestion (ext.meta_datasets.id). */
+  capiDatasetId:    uuid('capi_dataset_id'),
+  /** 'AD_ACCOUNT' | 'ORG_FALLBACK' | 'NONE' */
+  capiResolution:   text('capi_resolution'),
   createdAt:        timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

@@ -37,6 +37,8 @@ export const organizationsTable = entitySchema.table('organizations', {
   updatedAt:       timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uqOrganizationsTenantName: unique('uq_organizations_tenant_name').on(t.tenantId, t.name),
+  // (tenant_id, id) -- the target of composite (tenant_id, org_id) FKs, e.g. ext.meta_org_dataset_map (1.79.0).
+  uqOrganizationsTenantId: unique('uq_organizations_tenant_id').on(t.tenantId, t.id),
   fkOrganizationsCity: foreignKey({
     name: 'fk_organizations_city',
     columns: [t.tenantId, t.cityId],

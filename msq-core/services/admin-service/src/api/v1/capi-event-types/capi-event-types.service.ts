@@ -33,6 +33,8 @@ export async function create(data: CreateCapiEventTypeInput) {
       label: data.label,
       ...(data.description !== undefined ? { description: data.description } : {}),
       ...(data.sort_order !== undefined ? { sortOrder: data.sort_order } : {}),
+      ...(data.funnel_rank !== undefined ? { funnelRank: data.funnel_rank } : {}),
+      ...(data.is_negative !== undefined ? { isNegative: data.is_negative } : {}),
     });
     return withNameAlias(toApiRow(row));
   } catch (err) {
@@ -50,6 +52,8 @@ export async function update(idParam: string, data: UpdateCapiEventTypeInput) {
   if (data.label !== undefined) fields.label = data.label;
   if (data.description !== undefined) fields.description = data.description;
   if (data.sort_order !== undefined) fields.sortOrder = data.sort_order;
+  if (data.funnel_rank !== undefined) fields.funnelRank = data.funnel_rank;
+  if (data.is_negative !== undefined) fields.isNegative = data.is_negative;
   if (data.is_active !== undefined) fields.isActive = data.is_active;
 
   try {

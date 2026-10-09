@@ -22,13 +22,31 @@ export interface ExportColumn<T> {
   value: (row: T) => string | number | null | undefined;
 }
 
-function toAoA<T>(rows: readonly T[], columns: ReadonlyArray<ExportColumn<T>>): (string | number)[][] {
-  const headerRow = columns.map((c) => c.header);
+// CSV FORMULA INJECTION — a text cell that starts with = + - @ (or a tab / CR,
+// which some spreadsheets strip before evaluating) is executed as a formula when
+// the CSV is opened in Excel / Sheets. Several exported strings are controlled by
+// third parties (Meta page / form / campaign names, lead answers, error text), so
+// they get a leading apostrophe, which spreadsheets render as plain text.
+// Only STRING cells are touched: numbers stay numeric, and xlsx cells are typed
+// ('s') so they are never evaluated -- the guard therefore applies to CSV output only.
+const FORMULA_TRIGGER = /^[=+\-@\t\r]/;
+
+export function neutralizeFormula(value: string | number): string | number {
+  return typeof value === 'string' && FORMULA_TRIGGER.test(value) ? `'${value}` : value;
+}
+
+function toAoA<T>(
+  rows: readonly T[],
+  columns: ReadonlyArray<ExportColumn<T>>,
+  guardFormulas: boolean,
+): (string | number)[][] {
+  const guard = guardFormulas ? neutralizeFormula : (v: string | number) => v;
+  const headerRow = columns.map((c) => guard(c.header));
   const body = rows.map((row) =>
     columns.map((c) => {
       const v = c.value(row);
       if (v === null || v === undefined) return '';
-      return v;
+      return guard(v);
     }),
   );
   return [headerRow, ...body];
@@ -40,7 +58,7 @@ export function exportRows<T>(
   filename: string,
   format: ExportFormat = 'xlsx',
 ): void {
-  const aoa = toAoA(rows, columns);
+  const aoa = toAoA(rows, columns, format === 'csv');
   const worksheet = XLSX.utils.aoa_to_sheet(aoa);
 
   if (format === 'csv') {

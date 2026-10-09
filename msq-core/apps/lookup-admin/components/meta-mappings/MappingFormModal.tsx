@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Modal, Button, SearchableSelect, type SearchableOption } from '@platform/ui-kit';
+import { Modal, Button, InfoTip, SearchableSelect, type SearchableOption } from '@platform/ui-kit';
 import {
   metaMappings,
   type MetaPageForm,
@@ -313,9 +313,9 @@ export default function MappingFormModal({
                 className={`${inputClass} font-mono`}
               />
             )}
-            <p className="mt-1 text-[0.6875rem] text-on-surface-variant">
-              A form-level row overrides the page-level row for this one form — use it when one page serves several
-              branches.
+            <p className="mt-1 flex items-center gap-1 text-[0.6875rem] text-on-surface-variant">
+              Form-level mapping
+              <InfoTip label="About form-level mapping">A form-level row overrides the page-level row for this one form. Use it when one page serves several branches.</InfoTip>
             </p>
           </div>
         )}
@@ -366,9 +366,9 @@ export default function MappingFormModal({
               className="w-full"
             />
           </div>
-          <p className="mt-1 text-[0.6875rem] text-on-surface-variant">
-            Used when the lead&apos;s campaign is not confirmed and no rule matches — and for organic leads with no
-            campaign. E.g. set a hiring-only form to Hiring.
+          <p className="mt-1 flex items-center gap-1 text-[0.6875rem] text-on-surface-variant">
+            Default type fallback
+            <InfoTip label="About the default type">Used when the lead&apos;s campaign is not confirmed and no rule matches, and for organic leads with no campaign. For example, set a hiring-only form to Hiring.</InfoTip>
           </p>
         </div>
 

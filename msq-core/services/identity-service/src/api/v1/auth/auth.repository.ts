@@ -414,8 +414,19 @@ export async function createResetToken(
   token_hash: string,
   ttlMinutes: number,
   requested_ip: string | null,
-): Promise<void> {
-  await withServiceTx(async (tx) => {
+  maxPerWindow = Number.MAX_SAFE_INTEGER,
+): Promise<boolean> {
+  return withServiceTx(async (tx) => {
+    // The controller answers before this write runs, so back-to-back requests overlap. Without a
+    // per-user lock two of them both retire nothing and both insert: two live links (cycle-8 finding).
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${user_id}, 0))`);
+    // The per-user cap is re-checked here, under the lock: the pre-check in requestPasswordReset
+    // is only a fast path and lets overlapping requests all pass it.
+    const recent = (await tx.execute(sql`
+      SELECT COUNT(*)::int AS n FROM iam.password_reset_tokens
+      WHERE user_id = ${user_id}::uuid AND created_at > CLOCK_TIMESTAMP() - make_interval(mins => ${ttlMinutes})
+    `)) as Array<{ n: number }>;
+    if (Number(recent[0]?.n ?? 0) >= maxPerWindow) return false;
     await tx.execute(sql`
       UPDATE iam.password_reset_tokens SET used_at = CLOCK_TIMESTAMP()
       WHERE user_id = ${user_id}::uuid AND used_at IS NULL
@@ -425,6 +436,7 @@ export async function createResetToken(
       VALUES (${user_id}::uuid, ${token_hash},
               CLOCK_TIMESTAMP() + make_interval(mins => ${ttlMinutes}), ${requested_ip})
     `);
+    return true;
   });
 }
 

@@ -69,6 +69,18 @@ export default function RunProgress({ run, onStartAnother }: Props) {
         <div className="rounded-xl border border-status-success/30 bg-status-success-container px-4 py-3 text-sm text-on-status-success-container">
           Pull complete — {formatCount(counts.pages_walked)} pages walked, {formatCount(counts.leads_staged)} leads
           staged for review.
+          {(counts.leads_returned ?? 0) > 0 && (counts.leads_staged ?? 0) === 0 && (
+            <>
+              {' '}Meta returned {formatCount(counts.leads_returned)} lead{counts.leads_returned === 1 ? '' : 's'} across {formatCount(counts.forms_walked)} forms,
+              but none matched your filters
+              {(counts.campaign_mismatch ?? 0) + (counts.campaign_missing ?? 0) > 0 && (
+                <>
+                  : {formatCount(counts.campaign_mismatch)} belonged to other campaigns and {formatCount(counts.campaign_missing)} carried no campaign id
+                </>
+              )}
+              . If the campaign should have leads in this window, check the Since date, or try Campaign mode.
+            </>
+          )}
           {(counts.out_of_scope ?? 0) > 0 && (
             <>
               {' '}{formatCount(counts.out_of_scope)} lead{counts.out_of_scope === 1 ? '' : 's'} on the same pages

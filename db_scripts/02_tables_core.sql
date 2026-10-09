@@ -322,6 +322,9 @@ CREATE TABLE IF NOT EXISTS entity.organizations (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   CONSTRAINT uq_organizations_tenant_name  UNIQUE (tenant_id, name),
+  -- Lets tables that carry both tenant_id and org_id (ext.meta_org_dataset_map) take a
+  -- composite (tenant_id, org_id) FK, so a row cannot name another tenant's branch (1.79.0).
+  CONSTRAINT uq_organizations_tenant_id    UNIQUE (tenant_id, id),
   CONSTRAINT chk_organizations_active_deleted CHECK (NOT (is_active AND is_deleted)),
   CONSTRAINT fk_organizations_city
     FOREIGN KEY (tenant_id, city_id)    REFERENCES geo.cities    (tenant_id, id) ON DELETE RESTRICT,
@@ -1353,20 +1356,14 @@ CREATE TABLE IF NOT EXISTS ext.meta_tenant_config (
   tenant_id          UUID        REFERENCES entity.tenants(id),
   app_secret         TEXT        NOT NULL,
   verify_token       TEXT        NOT NULL,
-  pixel_id           TEXT        NOT NULL,
-  access_token       TEXT        NOT NULL,
+  -- DEPRECATED (1.79.0): the dataset (pixel) is per ad account / branch now
+  -- (ext.meta_datasets) and the token is the platform system user's
+  -- (ext.meta_platform_credentials). Both stay readable as a fallback until the
+  -- credentials are entered on the Meta Connection screen, then are unused.
+  pixel_id           TEXT,
+  access_token       TEXT,
   graph_api_version  TEXT        NOT NULL DEFAULT 'v21.0',
   is_active          BOOLEAN     NOT NULL DEFAULT true,
-  capi_trigger_stages UUID[]     NOT NULL DEFAULT '{}',
-  -- The ad accounts a later "Fetch campaigns" button iterates to populate
-  -- ext.meta_campaigns. A column rather than an ext.meta_ad_accounts table
-  -- because an account carries nothing but its id here -- pages are already
-  -- handled the same way (a bare page_id, no ext.meta_pages) and the only
-  -- per-campaign sync state there is lives on ext.meta_campaigns.last_synced_at.
-  -- DEPRECATED (1.51.0): superseded by ext.meta_ad_accounts, which the
-  -- campaign fetch now walks. Kept, unread, for one version so a rollback of
-  -- the service image still finds it.
-  ad_account_ids     TEXT[]      NOT NULL DEFAULT '{}',
   field_mappings     JSONB,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1539,6 +1536,109 @@ CREATE TABLE IF NOT EXISTS ext.meta_ad_accounts (
   CONSTRAINT chk_meta_ad_accounts_format CHECK (ad_account_id ~ '^act_[0-9]+$')
 );
 
+-- ── META CAPI v2 PLATFORM TABLES (1.79.0) ─────────────────────────
+-- One Meta app serves every tenant; these tables say WHICH credential speaks to Meta
+-- and WHICH dataset (pixel) each lead's events belong to. All four are platform
+-- level in the same way ext.meta_ad_accounts is: RLS on, no app-role policy, so only
+-- root_service (withServiceTx behind the super-admin console) reaches them. They hold
+-- no lead data. tenant_id on portfolios/datasets records WHO OWNS the asset -- the
+-- guard that stops one tenant's lead being sent into another tenant's pixel.
+
+-- The two system users: LEADS_READ (pages, leads_retrieval) and CAPI_WRITE (datasets).
+-- One ACTIVE row per purpose; rotating a token = insert a new row, flip the old one to
+-- ROTATED. access_token is AES-256-GCM (enc:v1:...) exactly like ext.meta_tenant_config.
+CREATE TABLE IF NOT EXISTS ext.meta_platform_credentials (
+  id                UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  purpose           TEXT        NOT NULL
+                    CONSTRAINT chk_meta_platform_credentials_purpose CHECK (purpose IN ('LEADS_READ','CAPI_WRITE')),
+  system_user_id    TEXT,
+  label             TEXT,
+  access_token      TEXT        NOT NULL,
+  graph_api_version TEXT        NOT NULL DEFAULT 'v21.0',
+  scopes            TEXT[]      NOT NULL DEFAULT '{}',     -- from debug_token
+  expires_at        TIMESTAMPTZ,                           -- NULL = non-expiring
+  status            TEXT        NOT NULL DEFAULT 'ACTIVE'
+                    CONSTRAINT chk_meta_platform_credentials_status CHECK (status IN ('ACTIVE','ROTATED','REVOKED')),
+  last_verified_at  TIMESTAMPTZ,
+  last_error        TEXT,
+  created_by        UUID,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- A Meta business portfolio (Business Manager) we are a partner of. Belongs to exactly
+-- one tenant; the brand is a tenant like any other.
+CREATE TABLE IF NOT EXISTS ext.meta_business_portfolios (
+  id                UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id         UUID        NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
+  meta_business_id  TEXT        NOT NULL
+                    CONSTRAINT chk_meta_business_portfolios_id CHECK (meta_business_id ~ '^[0-9]+$'),
+  name              TEXT,
+  kind              TEXT        NOT NULL DEFAULT 'FRANCHISE'
+                    CONSTRAINT chk_meta_business_portfolios_kind CHECK (kind IN ('BRAND','FRANCHISE')),
+  partner_status    TEXT        NOT NULL DEFAULT 'PENDING'
+                    CONSTRAINT chk_meta_business_portfolios_partner CHECK (partner_status IN ('PENDING','ACTIVE','REVOKED')),
+  verified_at       TIMESTAMPTZ,
+  last_error        TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_meta_business_portfolios_meta_id UNIQUE (meta_business_id),
+  CONSTRAINT uq_meta_business_portfolios_tenant_id UNIQUE (tenant_id, id)
+);
+
+-- A dataset (pixel) events are sent to. Inherits its tenant from its portfolio through the
+-- composite FK, so a dataset can never be filed under a different tenant than its owner.
+CREATE TABLE IF NOT EXISTS ext.meta_datasets (
+  id                UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id         UUID        NOT NULL,
+  portfolio_id      UUID        NOT NULL,
+  dataset_id        TEXT        NOT NULL
+                    CONSTRAINT chk_meta_datasets_dataset_id CHECK (dataset_id ~ '^[0-9]+$'),
+  name              TEXT,
+  -- NULL = use the active CAPI_WRITE credential (the normal case).
+  credential_id     UUID        REFERENCES ext.meta_platform_credentials(id) ON DELETE SET NULL,
+  -- Set while testing: events carry it and show in Events Manager > Test events only.
+  test_event_code   TEXT,
+  status            TEXT        NOT NULL DEFAULT 'PENDING'
+                    CONSTRAINT chk_meta_datasets_status CHECK (status IN ('PENDING','ACTIVE','NO_ACCESS','DISABLED')),
+  last_verified_at  TIMESTAMPTZ,
+  last_error        TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_meta_datasets_dataset_id UNIQUE (dataset_id),
+  CONSTRAINT uq_meta_datasets_tenant_id UNIQUE (tenant_id, id),
+  CONSTRAINT fk_meta_datasets_portfolio
+    FOREIGN KEY (tenant_id, portfolio_id) REFERENCES ext.meta_business_portfolios (tenant_id, id) ON DELETE CASCADE
+);
+
+-- The routing key: an ad account feeds exactly ONE dataset (UNIQUE ad_account_id --
+-- the 1:1 the business runs on; relax it in a later migration for the first account
+-- with two datasets, and add ad-set level overrides then). A lead's ad account comes
+-- from its campaign (ext.meta_campaigns.ad_account_id).
+CREATE TABLE IF NOT EXISTS ext.meta_dataset_ad_accounts (
+  dataset_id        UUID        NOT NULL REFERENCES ext.meta_datasets(id) ON DELETE CASCADE,
+  ad_account_id     TEXT        NOT NULL REFERENCES ext.meta_ad_accounts(ad_account_id) ON DELETE CASCADE,
+  verified_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (dataset_id, ad_account_id),
+  CONSTRAINT uq_meta_dataset_ad_accounts_account UNIQUE (ad_account_id)
+);
+
+-- Fallback only: when a lead's ad account is unknown or unlinked, the branch's dataset.
+CREATE TABLE IF NOT EXISTS ext.meta_org_dataset_map (
+  id                UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id         UUID        NOT NULL,
+  org_id            UUID        NOT NULL,
+  dataset_id        UUID        NOT NULL,
+  is_active         BOOLEAN     NOT NULL DEFAULT TRUE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT fk_meta_org_dataset_map_org
+    FOREIGN KEY (tenant_id, org_id) REFERENCES entity.organizations (tenant_id, id) ON DELETE CASCADE,
+  CONSTRAINT fk_meta_org_dataset_map_dataset
+    FOREIGN KEY (tenant_id, dataset_id) REFERENCES ext.meta_datasets (tenant_id, id) ON DELETE CASCADE
+);
+
 -- ── META_ADSETS / META_ADS (1.51.0) ───────────────────────────────
 -- Name caches for the two per-lead Meta names the rule engine can match on
 -- (adset_name, ad_name), plus the ad set's promoted page. Same discovery-cache
@@ -1640,6 +1740,15 @@ CREATE TABLE IF NOT EXISTS ext.meta_leads (
   phone              TEXT,
   whatsapp_number    TEXT,
   raw_field_data     JSONB,
+  -- Where this lead's conversion events go (1.79.0): decided ONCE, when the lead is
+  -- ingested, from its campaign's ad account -> dataset (else the branch's fallback
+  -- dataset). A snapshot on purpose: a lead later transferred between branches or
+  -- departments must still report to the dataset whose ad generated it.
+  ad_account_id      TEXT,                                  -- 'act_<digits>', from the campaign
+  capi_dataset_id    UUID        REFERENCES ext.meta_datasets(id) ON DELETE SET NULL,
+  capi_resolution    TEXT
+                     CONSTRAINT chk_meta_leads_capi_resolution
+                     CHECK (capi_resolution IN ('AD_ACCOUNT','ORG_FALLBACK','NONE')),
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_meta_leads_meta_lead_id UNIQUE (meta_lead_id)
 );
@@ -1679,6 +1788,13 @@ CREATE TABLE IF NOT EXISTS ext.meta_capi_event_types (
   description TEXT,
   is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
   sort_order  SMALLINT     NOT NULL DEFAULT 0,
+  -- Position in the sales funnel (1.79.0). Meta's Conversion Leads wants stages sent in
+  -- order -- reaching "converted" means every earlier stage was already sent -- so the
+  -- outbox uses this to enqueue the stages a lead jumped over. NULL = not part of the
+  -- sequence (negative events, and the legacy 'Other').
+  funnel_rank SMALLINT,
+  -- A negative signal (e.g. an unqualified lead): sent when reached, never as a "skipped" stage.
+  is_negative BOOLEAN      NOT NULL DEFAULT FALSE,
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_meta_capi_event_types_code UNIQUE (code)
@@ -1712,6 +1828,58 @@ CREATE TABLE IF NOT EXISTS ext.lead_stage_capi_event_map (
   CONSTRAINT fk_capi_event_map_stage
     FOREIGN KEY (tenant_id, stage_id) REFERENCES lms.lead_stage (tenant_id, id)
     ON DELETE CASCADE
+);
+
+-- ── META_CAPI_OUTBOX (1.79.0): transactional outbox for conversion events ─────────
+-- Replaces fire-and-forget HTTP from leads-service. A stage change writes its rows
+-- IN THE SAME TRANSACTION as the stage change; the meta-conversion-api worker sends them
+-- with retry/backoff and expires anything older than Meta's 7-day window. One row =
+-- one event for one lead in one dataset.
+--   * event_time is when the STAGE CHANGED (Meta learns timing from it), not when sent.
+--   * UNIQUE (dataset_id, event_id) makes enqueueing idempotent.
+--   * (marketing_lead_id, funnel_rank) is the per-lead ordering the worker honours.
+--   * dataset_id carries the composite tenant FK: an event cannot point at another tenant's pixel.
+-- Skips are rows too (status SKIPPED_*), so "why did this lead never reach Meta?" has an answer.
+CREATE TABLE IF NOT EXISTS ext.meta_capi_outbox (
+  id                  UUID        PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  tenant_id           UUID        NOT NULL REFERENCES entity.tenants(id),
+  org_id              UUID        NOT NULL REFERENCES entity.organizations(id),
+  department_id       UUID        REFERENCES iam.departments(id) ON DELETE SET NULL,  -- reporting only, never routing
+  marketing_lead_id   UUID        NOT NULL REFERENCES lms.marketing_leads(id),
+  meta_lead_id        BIGINT      NOT NULL,                 -- the leadgen id sent as user_data.lead_id
+  dataset_id          UUID,                                  -- NULL on SKIPPED_NO_DATASET
+  stage_id            UUID        REFERENCES lms.lead_stage(id) ON DELETE SET NULL,
+  event_type_id       SMALLINT    NOT NULL REFERENCES ext.meta_capi_event_types(id),
+  funnel_rank         SMALLINT,
+  event_name          TEXT        NOT NULL,
+  event_id            TEXT        NOT NULL,
+  event_time          TIMESTAMPTZ NOT NULL,
+  event_value         NUMERIC(14,2),
+  currency            CHAR(3),
+  is_negative         BOOLEAN     NOT NULL DEFAULT FALSE,
+  status              TEXT        NOT NULL DEFAULT 'PENDING'
+                      CONSTRAINT chk_meta_capi_outbox_status
+                      CHECK (status IN ('PENDING','SENDING','SENT','FAILED','DEAD','EXPIRED',
+                                        'SKIPPED_NO_DATASET','SKIPPED_TENANT_MISMATCH',
+                                        'SKIPPED_NO_MAPPING','SKIPPED_NOT_META','SKIPPED_AMBIGUOUS_DATASET')),
+  attempts            INT         NOT NULL DEFAULT 0,
+  next_retry_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at          TIMESTAMPTZ NOT NULL,                  -- event_time + 7 days
+  last_error          TEXT,
+  fb_trace_id         TEXT,
+  request_payload     JSONB,
+  response_payload    JSONB,
+  triggered_by        TEXT        NOT NULL DEFAULT 'auto_stage_change'
+                      CONSTRAINT chk_meta_capi_outbox_triggered_by
+                      CHECK (triggered_by IN ('auto_stage_change','manual','backfill')),
+  triggered_by_user_id UUID,
+  sent_at             TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT fk_meta_capi_outbox_dataset
+    FOREIGN KEY (tenant_id, dataset_id) REFERENCES ext.meta_datasets (tenant_id, id),
+  CONSTRAINT chk_meta_capi_outbox_dataset_status
+    CHECK (dataset_id IS NOT NULL OR status IN ('SKIPPED_NO_DATASET','SKIPPED_NOT_META','SKIPPED_NO_MAPPING','SKIPPED_AMBIGUOUS_DATASET','SKIPPED_TENANT_MISMATCH','DEAD','EXPIRED'))
 );
 
 -- ── META_LEAD_ADDRESSES: address fields from Meta lead forms (1:1) ────
@@ -1893,6 +2061,7 @@ CREATE TABLE IF NOT EXISTS ext.meta_page_health (
                 CONSTRAINT chk_meta_page_health_status
                 CHECK (token_status IN ('ok','missing','expired','error')),
   is_subscribed BOOLEAN,                 -- NULL = could not be determined
+  leads_access_ok BOOLEAN,               -- NULL = not checked; FALSE = the page tokens work but leads cannot be read (1.79.0)
   error_text    TEXT,
   checked_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   checked_by    UUID        REFERENCES iam.users(id) ON DELETE SET NULL,

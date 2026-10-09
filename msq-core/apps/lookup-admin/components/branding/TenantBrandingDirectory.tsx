@@ -44,8 +44,8 @@ export default function TenantBrandingDirectory({ tenants }: { tenants: Branding
 
   return (
     <>
-      <PageHeader title="Tenant branding" subtitle="Logos, product names, company colours and the login link, per tenant" />
-      <PageBody>
+      <PageHeader title="Tenant branding" subtitle="Per-tenant branding" info="Logos, product names, company colours and the login link, per tenant." />
+      <PageBody dense>
         <div className="flex flex-wrap items-center gap-2">
           <input
             type="search"

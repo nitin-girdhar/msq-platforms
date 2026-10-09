@@ -37,6 +37,24 @@ const EXTRA_CARDS: Partial<Record<ModuleKey, { slug: string; title: string; desc
       href: '/dashboard/campaign-types',
     },
     {
+      slug: 'meta-connection',
+      title: 'Meta Connection',
+      description: 'The one Meta app and the two system users (leads reader, events sender) — status, scopes, expiry, rotation.',
+      href: '/dashboard/meta-connection',
+    },
+    {
+      slug: 'meta-datasets',
+      title: 'Meta Datasets',
+      description: 'Client business portfolios and their datasets (pixels), which ad accounts feed each, and the per-branch fallback.',
+      href: '/dashboard/meta-datasets',
+    },
+    {
+      slug: 'capi-outbox',
+      title: 'CAPI Outbox',
+      description: 'The lead-quality events each stage change owes Meta — sent, failed and why, parked for want of a dataset; retry or dismiss.',
+      href: '/dashboard/capi-outbox',
+    },
+    {
       slug: 'meta-ad-accounts',
       title: 'Meta Ad Accounts',
       description: 'Ad accounts under the shared Meta integration — enable the ones "Fetch campaigns" walks.',
@@ -100,7 +118,7 @@ const SECTION_DEFS: Partial<Record<ModuleKey, { id: string; title: string; blurb
       id: 'meta',
       title: 'Meta Lead Pipeline & Integrations',
       blurb: 'Inbound automation.',
-      slugs: ['campaign-types', 'meta-ad-accounts', 'meta-lead-inbox', 'meta-mappings', 'meta-campaigns', 'lead-pull'],
+      slugs: ['meta-connection', 'meta-datasets', 'campaign-types', 'meta-ad-accounts', 'meta-lead-inbox', 'meta-mappings', 'meta-campaigns', 'lead-pull', 'capi-outbox'],
     },
     { id: 'ops', title: 'Operations & Allocation', blurb: 'Queue recalibration.', slugs: ['lead-assignment-rerun'] },
     { id: 'lookups', title: 'Pipeline Taxonomy & Lookups', blurb: 'Classification and signal dictionaries.', slugs: [] },
@@ -142,8 +160,8 @@ export default async function ModulePage({ params }: PageProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader title={def.label} subtitle={`${cardCount} table${cardCount === 1 ? '' : 's'} · ${def.description}`} />
-      <PageBody>
+      <PageHeader title={def.label} subtitle={`${cardCount} table${cardCount === 1 ? '' : 's'}`} info={def.description} />
+      <PageBody dense>
         {cardCount === 0 ? (
           <p className="rounded-xl border border-outline-variant bg-surface-container-lowest px-4 py-3 text-sm text-on-surface-variant">
             Nothing configured in this module yet.

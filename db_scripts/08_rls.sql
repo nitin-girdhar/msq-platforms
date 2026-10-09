@@ -1897,8 +1897,9 @@ DROP POLICY IF EXISTS admin_tenant_config_policy ON iam.departments;
 CREATE POLICY org_isolation_policy ON iam.departments AS PERMISSIVE FOR SELECT TO app_user
   USING (tenant_id = (SELECT tenant_id FROM entity.organizations
                       WHERE id = NULLIF(current_setting('app.current_org_id', true), '')::uuid));
-CREATE POLICY tenant_isolation_policy ON iam.departments AS PERMISSIVE FOR SELECT TO tenant_admin
-  USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+CREATE POLICY tenant_isolation_policy ON iam.departments AS PERMISSIVE FOR ALL TO tenant_admin
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 -- Writes stay within the actor's tenant (derived from current org). WHO may write
 -- is enforced in the app layer (HR/tenant admin); RLS only fences the tenant.
 CREATE POLICY admin_tenant_config_policy ON iam.departments AS PERMISSIVE FOR ALL TO app_user
@@ -2194,6 +2195,56 @@ CREATE POLICY org_isolation_policy ON hr.roster_publications AS PERMISSIVE FOR S
   USING (org_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid AND NOT is_deleted);
 CREATE POLICY tenant_isolation_policy ON hr.roster_publications AS PERMISSIVE FOR ALL TO tenant_admin
   USING ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted) WITH CHECK ((org_id IN (SELECT id FROM entity.organizations WHERE tenant_id = NULLIF(current_setting('app.current_tenant_id',true),'')::uuid AND NOT is_deleted)) AND NOT is_deleted);
+
+-- ── Meta CAPI v2 (1.79.0) ─────────────────────────────────────────────
+-- Placed BEFORE the widening block so these policies reach the NOINHERIT service logins too.
+--
+-- Platform tables: RLS on, FORCE on, and NO POLICY -- the ext.meta_ad_accounts treatment. Every
+-- non-BYPASSRLS role reads zero rows and writes fail; only root_service (withServiceTx behind the
+-- super-admin console and the outbox worker) reaches them.
+ALTER TABLE ext.meta_platform_credentials  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_platform_credentials  FORCE  ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_business_portfolios   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_business_portfolios   FORCE  ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_datasets              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_datasets              FORCE  ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_dataset_ad_accounts   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_dataset_ad_accounts   FORCE  ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_org_dataset_map       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_org_dataset_map       FORCE  ROW LEVEL SECURITY;
+
+-- ext.meta_capi_outbox: tenant- and org-scoped like the audit log it replaces.
+--   * an org user (app_user) can SEE and ENQUEUE rows for their own org -- the stage-change path --
+--     but never UPDATE them: the status machine belongs to the worker and the console;
+--   * the console (a super admin administering ONE tenant through withTenantConfigTx, which pins the
+--     tenant and never sets an org) gets the N-6 policy, tenant-pinned, for retry / skip;
+--   * a tenant_admin reads the tenant's rows.
+ALTER TABLE ext.meta_capi_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ext.meta_capi_outbox FORCE  ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_select_policy          ON ext.meta_capi_outbox;
+DROP POLICY IF EXISTS org_insert_policy          ON ext.meta_capi_outbox;
+DROP POLICY IF EXISTS tenant_isolation_policy    ON ext.meta_capi_outbox;
+DROP POLICY IF EXISTS admin_tenant_config_policy ON ext.meta_capi_outbox;
+
+CREATE POLICY org_select_policy ON ext.meta_capi_outbox
+  AS PERMISSIVE FOR SELECT TO app_user
+  USING (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+
+-- tenant_id is checked as well as org_id: they are independent columns, and without the second half a
+-- caller could enqueue an event under its own org but another tenant's tenant_id.
+CREATE POLICY org_insert_policy ON ext.meta_capi_outbox
+  AS PERMISSIVE FOR INSERT TO app_user
+  WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid
+              AND tenant_id = entity.fn_org_tenant(org_id));
+
+CREATE POLICY tenant_isolation_policy ON ext.meta_capi_outbox
+  AS PERMISSIVE FOR SELECT TO tenant_admin
+  USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+CREATE POLICY admin_tenant_config_policy ON ext.meta_capi_outbox
+  AS PERMISSIVE FOR ALL TO app_user
+  USING      (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 
 -- Widen every RLS policy to also name the roles that are MEMBERS of the roles
 -- it already targets.

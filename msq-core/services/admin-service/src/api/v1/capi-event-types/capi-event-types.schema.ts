@@ -5,6 +5,10 @@ export const createCapiEventTypeSchema = z.object({
   label: z.string().min(1).max(100).trim(),
   description: z.string().trim().optional(),
   sort_order: z.number().int().optional(),
+  // Position in the sales funnel (1.79.0); null = outside the sequence (negative events). Meta wants stages
+  // sent in order, so the outbox uses this to enqueue the stages a lead jumped over.
+  funnel_rank: z.number().int().min(1).max(1000).nullable().optional(),
+  is_negative: z.boolean().optional(),
 });
 
 export const updateCapiEventTypeSchema = createCapiEventTypeSchema.partial().extend({

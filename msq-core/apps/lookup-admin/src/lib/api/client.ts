@@ -573,6 +573,10 @@ export interface MetaAdAccountRow {
   last_seen_at: string | null;
   last_error: string | null;
   last_error_at: string | null;
+  /** The dataset (pixel) this account's leads report conversions to (1.79.0); null = not linked yet. */
+  dataset_uuid: string | null;
+  dataset_label: string | null;
+  dataset_tenant_name: string | null;
 }
 
 export interface MetaTokenPermissions {
@@ -644,6 +648,8 @@ export interface MetaPageHealthRow {
   token_status: PageTokenStatus;
   // null = could not be determined.
   is_subscribed: boolean | null;
+  // 1.79.0: can the page's leads be read? null = not checked.
+  leads_access_ok: boolean | null;
   error_text: string | null;
   checked_at: string;
 }
@@ -657,11 +663,27 @@ export const metaPageHealth = {
       `/meta/pages/health/validate?tenant_id=${encodeURIComponent(tenantId)}`,
       { method: 'POST' },
     ),
+  // 1.79.0: subscribe the app to ONE page's leadgen webhook, then re-check it.
+  subscribe: (tenantId: string, pageId: string) =>
+    request<{ success: true; data: MetaPageHealthRow[] }>(
+      `/meta/pages/${encodeURIComponent(pageId)}/subscribe?tenant_id=${encodeURIComponent(tenantId)}`,
+      { method: 'POST' },
+    ),
 };
 
+export interface MetaLeadInboxCounts {
+  /** Every row matching the filters — `data` may hold fewer (capped at `limit`). */
+  total: number;
+  /** Per-reason split of the rows matching the status alone. */
+  by_reason: Record<InboxReason, number>;
+}
+
 export const metaLeadInbox = {
-  list: (tenantId: string | null, status: InboxStatus = 'open', reason?: InboxReason) =>
-    request<{ success: true; data: MetaLeadInboxRow[] }>(`/meta/lead-inbox${inboxQuery(tenantId, { status, reason })}`),
+  list: (tenantId: string | null, status: InboxStatus = 'open', reason?: InboxReason, signal?: AbortSignal) =>
+    request<{ success: true; data: MetaLeadInboxRow[]; total: number; limit: number; counts: MetaLeadInboxCounts }>(
+      `/meta/lead-inbox${inboxQuery(tenantId, { status, reason })}`,
+      signal ? { signal } : {},
+    ),
   retry: (tenantId: string | null, id: string) =>
     request<{ success: true; data: { status: 'resolved'; marketing_lead_id: string; duplicate: boolean; assigned_user_id: string | null } }>(
       `/meta/lead-inbox/${id}/retry${inboxQuery(tenantId)}`, { method: 'POST' },
@@ -751,6 +773,9 @@ export interface PullRunCounts {
   // Leads on forms mapped to a branch outside the selected orgs — dropped, not
   // staged (and not misreported as unmapped_form).
   out_of_scope: number;
+  // 1.79.0: why leads Meta returned were not staged.
+  campaign_mismatch?: number;
+  campaign_missing?: number;
   truncated_forms: string[];
   truncated: boolean;
   page_errors: PullPageError[];
@@ -904,15 +929,25 @@ export const leadPull = {
     ),
 
   // The staged rows behind one summary number. verdict omitted = every row.
-  listLeads: (tenantId: string, runId: string, verdict?: PullVerdict, page = 1, pageSize = 100) => {
+  listLeads: (
+    tenantId: string,
+    runId: string,
+    verdict?: PullVerdict,
+    page = 1,
+    pageSize = 100,
+    appliedStatus?: StagedLeadRow['applied_status'],
+    signal?: AbortSignal,
+  ) => {
     const params = new URLSearchParams({
       tenant_id: tenantId,
       page: String(page),
       page_size: String(pageSize),
     });
     if (verdict) params.set('verdict', verdict);
+    if (appliedStatus) params.set('applied_status', appliedStatus);
     return request<{ success: true; data: StagedLeadRow[]; total: number; page: number; page_size: number }>(
       `/meta/lead-pull/runs/${runId}/leads?${params.toString()}`,
+      signal ? { signal } : {},
     );
   },
 
@@ -1013,8 +1048,12 @@ export const leadAssignmentRerun = {
 // The mapping is kept (rather than returning the response as-is) so callers
 // get `id`/`tenant_id` as strings regardless of how the driver serialized the
 // uuid columns.
+export interface OrgOption { id: string; name: string; tenant_id: string; is_active: boolean }
+
 export const orgs = {
-  listAll: async (): Promise<{ success: true; data: Array<{ id: string; name: string; tenant_id: string }> }> => {
+  // Active branches only by default (pickers). `includeInactive` is for screens that
+  // must still NAME a deactivated branch an existing row points at (e.g. page mappings).
+  listAll: async (includeInactive = false): Promise<{ success: true; data: OrgOption[] }> => {
     const res = await request<{
       success: true;
       data: Array<{ id: string; name: string; tenant_id: string; is_active?: boolean }>;
@@ -1022,8 +1061,8 @@ export const orgs = {
     return {
       success: true,
       data: res.data
-        .filter((o) => o.is_active !== false)
-        .map((o) => ({ id: String(o.id), name: o.name, tenant_id: String(o.tenant_id) })),
+        .filter((o) => includeInactive || o.is_active !== false)
+        .map((o) => ({ id: String(o.id), name: o.name, tenant_id: String(o.tenant_id), is_active: o.is_active !== false })),
     };
   },
 };
@@ -1090,6 +1129,229 @@ export const saBranding = {
     }),
   rotateKey: (tenantId: string) =>
     request<{ success: true; data: SaBrandingView }>(`/sa/tenants/${tenantId}/branding/rotate-key`, {
+      method: 'POST',
+    }),
+};
+
+// ── Meta Conversions API v2 (1.79.0) ─────────────────────────────────────────
+// The single Meta app + the two platform system users; business portfolios, datasets (pixels) and how an ad
+// account / branch finds its dataset; the outbox of conversion events. Super admin only; every secret is
+// write-only (no response carries a token).
+
+export type CredentialPurpose = 'LEADS_READ' | 'CAPI_WRITE';
+export type CredentialStatus = 'ACTIVE' | 'ROTATED' | 'REVOKED';
+
+export interface MetaCredentialRow {
+  id: string;
+  purpose: CredentialPurpose;
+  system_user_id: string | null;
+  label: string | null;
+  graph_api_version: string;
+  scopes: string[];
+  expires_at: string | null;
+  status: CredentialStatus;
+  last_verified_at: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+export interface MetaAppConfig {
+  configured: boolean;
+  is_active: boolean;
+  graph_api_version: string | null;
+  webhook_path: string;
+  has_app_secret: boolean;
+  has_verify_token: boolean;
+  has_legacy_token: boolean;
+  updated_at: string | null;
+}
+
+export const metaConnection = {
+  get: () =>
+    request<{ success: true; data: { app: MetaAppConfig; credentials: MetaCredentialRow[] } }>('/meta/connection'),
+  saveApp: (body: { app_secret?: string; verify_token?: string; graph_api_version?: string; is_active?: boolean }) =>
+    request<{ success: true; data: MetaAppConfig }>('/meta/connection/app', { method: 'PUT', body: JSON.stringify(body) }),
+  saveCredential: (body: {
+    purpose: CredentialPurpose; access_token: string; system_user_id?: string; label?: string; graph_api_version?: string;
+  }) =>
+    request<{ success: true; data: MetaCredentialRow }>('/meta/connection/credentials', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+  verifyCredential: (id: string) =>
+    request<{ success: true; data: MetaCredentialRow }>(`/meta/connection/credentials/${encodeURIComponent(id)}/verify`, {
+      method: 'POST',
+    }),
+  revokeCredential: (id: string) =>
+    request<void>(`/meta/connection/credentials/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
+};
+
+export type PortfolioKind = 'BRAND' | 'FRANCHISE';
+export type PartnerStatus = 'PENDING' | 'ACTIVE' | 'REVOKED';
+export type DatasetStatus = 'PENDING' | 'ACTIVE' | 'NO_ACCESS' | 'DISABLED';
+
+export interface MetaPortfolioRow {
+  id: string;
+  tenant_id: string;
+  tenant_name: string | null;
+  meta_business_id: string;
+  name: string | null;
+  kind: PortfolioKind;
+  partner_status: PartnerStatus;
+  verified_at: string | null;
+  last_error: string | null;
+  dataset_count: number;
+}
+
+export interface MetaDatasetRow {
+  id: string;
+  tenant_id: string;
+  tenant_name: string | null;
+  portfolio_id: string;
+  portfolio_name: string | null;
+  dataset_id: string;
+  name: string | null;
+  test_event_code: string | null;
+  status: DatasetStatus;
+  last_verified_at: string | null;
+  last_error: string | null;
+  ad_account_ids: string[];
+}
+
+export interface MetaOrgDatasetRow {
+  id: string;
+  tenant_id: string;
+  org_id: string;
+  dataset_id: string;
+  dataset_label: string;
+}
+
+function tenantQs(tenantId?: string): string {
+  return tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : '';
+}
+
+export const metaPortfolios = {
+  list: (tenantId?: string) =>
+    request<{ success: true; data: MetaPortfolioRow[] }>(`/meta/portfolios${tenantQs(tenantId)}`),
+  create: (body: { tenant_id: string; meta_business_id: string; name?: string; kind: PortfolioKind; partner_status?: PartnerStatus }) =>
+    request<{ success: true; data: { id: string } }>('/meta/portfolios', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id: string, body: { name?: string; kind?: PortfolioKind; partner_status?: PartnerStatus }) =>
+    request<void>(`/meta/portfolios/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  remove: (id: string) => request<void>(`/meta/portfolios/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+};
+
+export const metaDatasets = {
+  list: (tenantId?: string) =>
+    request<{ success: true; data: MetaDatasetRow[] }>(`/meta/datasets${tenantQs(tenantId)}`),
+  create: (body: { portfolio_id: string; dataset_id: string; name?: string; test_event_code?: string }) =>
+    request<{ success: true; data: { id: string } }>('/meta/datasets', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id: string, body: { name?: string; test_event_code?: string | null; status?: DatasetStatus }) =>
+    request<void>(`/meta/datasets/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  remove: (id: string) => request<void>(`/meta/datasets/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  verify: (id: string) =>
+    request<{ success: true; data: MetaDatasetRow }>(`/meta/datasets/${encodeURIComponent(id)}/verify`, { method: 'POST' }),
+  setAdAccounts: (id: string, adAccountIds: string[]) =>
+    request<void>(`/meta/datasets/${encodeURIComponent(id)}/ad-accounts`, {
+      method: 'PUT', body: JSON.stringify({ ad_account_ids: adAccountIds }),
+    }),
+  orgMap: (tenantId: string) =>
+    request<{ success: true; data: MetaOrgDatasetRow[] }>(`/meta/org-datasets?tenant_id=${encodeURIComponent(tenantId)}`),
+  setOrg: (tenantId: string, orgId: string, datasetId: string) =>
+    request<void>('/meta/org-datasets', {
+      method: 'PUT', body: JSON.stringify({ tenant_id: tenantId, org_id: orgId, dataset_id: datasetId }),
+    }),
+  clearOrg: (tenantId: string, orgId: string) =>
+    request<void>(`/meta/org-datasets?tenant_id=${encodeURIComponent(tenantId)}&org_id=${encodeURIComponent(orgId)}`, {
+      method: 'DELETE',
+    }),
+};
+
+export type OutboxStatus =
+  | 'PENDING' | 'SENDING' | 'SENT' | 'FAILED' | 'DEAD' | 'EXPIRED'
+  | 'SKIPPED_NO_DATASET' | 'SKIPPED_TENANT_MISMATCH' | 'SKIPPED_NO_MAPPING' | 'SKIPPED_NOT_META' | 'SKIPPED_AMBIGUOUS_DATASET';
+
+export interface CapiOutboxRow {
+  id: string;
+  org_id: string;
+  department_id: string | null;
+  marketing_lead_id: string;
+  meta_lead_id: string;
+  dataset_id: string | null;
+  event_name: string;
+  funnel_rank: number | null;
+  is_negative: boolean;
+  event_time: string;
+  status: OutboxStatus;
+  attempts: number;
+  next_retry_at: string;
+  expires_at: string;
+  last_error: string | null;
+  fb_trace_id: string | null;
+  triggered_by: string;
+  sent_at: string | null;
+  created_at: string;
+}
+
+export interface CapiOutboxDetail extends CapiOutboxRow {
+  request_payload: unknown;
+  response_payload: unknown;
+}
+
+export interface CapiOutboxSummary {
+  by_status: Record<string, number>;
+  oldest_open_at: string | null;
+  last_sent_at: string | null;
+  datasets: Array<{
+    dataset_id: string | null;
+    sent_24h: number; failed_24h: number; sent_7d: number; failed_7d: number; expired_7d: number; open: number;
+    last_sent_at: string | null;
+  }>;
+}
+
+export interface CapiWorklistRow {
+  ad_account_id: string | null;
+  org_id: string;
+  org_name: string | null;
+  leads: number;
+  events: number;
+  oldest: string;
+}
+
+export interface CapiOutboxFilters {
+  status?: OutboxStatus | 'SKIPPED' | 'OPEN';
+  dataset_id?: string;
+  org_id?: string;
+  event_name?: string;
+  page?: number;
+  page_size?: number;
+}
+
+function outboxQs(tenantId: string, f: CapiOutboxFilters = {}): string {
+  const params = new URLSearchParams({ tenant_id: tenantId });
+  for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== '') params.set(k, String(v));
+  return `?${params.toString()}`;
+}
+
+export const capiOutbox = {
+  list: (tenantId: string, f: CapiOutboxFilters = {}, signal?: AbortSignal) =>
+    request<{ success: true; data: CapiOutboxRow[]; total: number; page: number; page_size: number; by_status: Record<string, number> }>(
+      `/meta/capi-outbox${outboxQs(tenantId, f)}`, signal ? { signal } : {},
+    ),
+  get: (tenantId: string, id: string) =>
+    request<{ success: true; data: CapiOutboxDetail }>(`/meta/capi-outbox/${encodeURIComponent(id)}${outboxQs(tenantId)}`),
+  summary: (tenantId: string) =>
+    request<{ success: true; data: CapiOutboxSummary }>(`/meta/capi-outbox/summary${outboxQs(tenantId)}`),
+  worklist: (tenantId: string) =>
+    request<{ success: true; data: CapiWorklistRow[] }>(`/meta/capi-outbox/worklist${outboxQs(tenantId)}`),
+  retry: (tenantId: string, ids?: string[]) =>
+    request<{ success: true; data: { retried: number } }>(`/meta/capi-outbox/retry${outboxQs(tenantId)}`, {
+      method: 'POST', body: JSON.stringify(ids ? { ids } : {}),
+    }),
+  dismiss: (tenantId: string, ids: string[]) =>
+    request<{ success: true; data: { dismissed: number } }>(`/meta/capi-outbox/dismiss${outboxQs(tenantId)}`, {
+      method: 'POST', body: JSON.stringify({ ids }),
+    }),
+  requeueSkipped: (tenantId: string) =>
+    request<{ success: true; data: { requeued: number } }>(`/meta/capi-outbox/requeue-skipped${outboxQs(tenantId)}`, {
       method: 'POST',
     }),
 };

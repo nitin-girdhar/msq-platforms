@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { LocalDateTime } from '@platform/ui-kit';
 import type { ApiTokenRow } from '@/src/lib/api/client';
 
 interface OrgOption {
@@ -175,7 +176,7 @@ export default function ApiTokensTable({ tokens, orgs, canManage, onEdit, onRota
               <ScopeChips scopes={t.scopes} />
             </div>
             <p className="text-xs text-on-surface-variant">
-              Last used: {t.last_used_at ? new Date(t.last_used_at).toLocaleString() : 'Never'}
+              Last used: <LocalDateTime value={t.last_used_at} fallback="Never" options={{ dateStyle: 'medium', timeStyle: 'short' }} />
             </p>
             {canManage && <div className="flex flex-wrap justify-end gap-2">{actions(t, true)}</div>}
           </li>
@@ -206,7 +207,7 @@ export default function ApiTokensTable({ tokens, orgs, canManage, onEdit, onRota
                   <td className="px-4 py-3 text-xs text-on-surface-variant">{branchLabel(t, orgs)}</td>
                   <td className="px-4 py-3"><StatusPill token={t} /></td>
                   <td className="px-4 py-3 text-xs text-on-surface-variant">
-                    {t.last_used_at ? new Date(t.last_used_at).toLocaleString() : 'Never'}
+                    <LocalDateTime value={t.last_used_at} fallback="Never" options={{ dateStyle: 'medium', timeStyle: 'short' }} />
                   </td>
                   {canManage && (
                     <td className="px-4 py-3 text-right">

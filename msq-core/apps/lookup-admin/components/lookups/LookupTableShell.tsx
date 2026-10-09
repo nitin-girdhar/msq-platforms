@@ -96,7 +96,8 @@ export default function LookupTableShell({
       <PageHeader
         title={config.title}
         scope={tenantName}
-        subtitle={`${typedRows.length} total · ${config.description}`}
+        subtitle={`${typedRows.length} total`}
+        info={config.description}
         actions={
           <>
             <Link href={`/dashboard/m/${config.module}`} className="inline-flex min-h-[2.75rem] items-center px-1 text-xs font-semibold text-primary hover:underline sm:min-h-0">
@@ -122,15 +123,15 @@ export default function LookupTableShell({
           </>
         }
       />
-      <PageBody>
+      <PageBody dense>
         {isLeadStage && !scopeMissing && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {[
               { k: 'Active stages', v: `${chipCount('active')} / ${typedRows.length}`, note: 'configured' },
               { k: 'Follow-up gates', v: String(chipCount('followup')), note: 'stages require a follow-up' },
               { k: 'Terminal states', v: String(chipCount('terminal')), note: 'stages end the lead' },
             ].map((c) => (
-              <div key={c.k} className="rounded-xl border border-outline-variant bg-surface-container-lowest p-4">
+              <div key={c.k} className="rounded-xl border border-outline-variant bg-surface-container-lowest p-3">
                 <p className="text-[0.6875rem] font-semibold uppercase tracking-widest text-on-surface-variant">{c.k}</p>
                 <p className="mt-1 font-mono text-headline-md font-bold text-on-surface">{c.v}</p>
                 <p className="text-xs text-on-surface-variant">{c.note}</p>

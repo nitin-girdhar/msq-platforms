@@ -102,33 +102,50 @@ $$;
 -- EXT -- META CAPI EVENT TYPES + LEAD STAGE -> CAPI EVENT MAPPING
 -- ===================================================================
 
-INSERT INTO ext.meta_capi_event_types (code, label, sort_order) VALUES
-  ('Other',         'Other',           1),
-  ('ConvertedLead', 'Converted Lead',  2),
-  ('QualifiedLead', 'Qualified Lead',  3)
+-- 1.79.0: one distinct event per funnel stage instead of a catch-all 'Other'. Meta's Conversion
+-- Leads optimisation learns from the SEQUENCE of stages a lead reaches, so each stage needs its own
+-- name, and funnel_rank is what lets the outbox send the stages a lead jumped over, in order.
+-- UnqualifiedLead is a negative signal (outside the sequence). 'Other' is retired (inactive): rows
+-- that still point at it keep working, but it is no longer offered.
+INSERT INTO ext.meta_capi_event_types (code, label, sort_order, funnel_rank, is_negative, is_active) VALUES
+  ('Lead',            'Lead',             1, 10,   FALSE, TRUE),
+  ('ContactedLead',   'Contacted Lead',   2, 20,   FALSE, TRUE),
+  ('QualifiedLead',   'Qualified Lead',   3, 30,   FALSE, TRUE),
+  ('ConvertedLead',   'Converted Lead',   4, 40,   FALSE, TRUE),
+  ('UnqualifiedLead', 'Unqualified Lead', 5, NULL, TRUE,  TRUE),
+  ('Other',           'Other (retired)',  9, NULL, FALSE, FALSE)
 ON CONFLICT (code) DO UPDATE SET
-  label      = EXCLUDED.label,
-  sort_order = EXCLUDED.sort_order;
+  label       = EXCLUDED.label,
+  sort_order  = EXCLUDED.sort_order,
+  funnel_rank = EXCLUDED.funnel_rank,
+  is_negative = EXCLUDED.is_negative,
+  is_active   = EXCLUDED.is_active;
 
 -- Wire each lead_stage to its Meta CAPI event by id (never by name-string
 -- comparison at request time — this join is one-time seed wiring only).
--- Stages not listed here ('new', 'unqualified') get no row, so no CAPI
+-- Stages not listed here ('on_hold', 'transferred_out') get no row, so no CAPI
 -- event fires when a lead transitions into them.
 -- Template rows only (tenant_id IS NULL, against the template stages) —
 -- entity.seed_tenant_lms_catalogs() clones them into each tenant.
 INSERT INTO ext.lead_stage_capi_event_map (tenant_id, stage_id, capi_event_type_id)
 SELECT NULL, ls.id, et.id
 FROM (VALUES
-  ('contacting',      'Other'),
-  ('on_hold',         'Other'),
+  ('new',             'Lead'),
+  ('contacting',      'ContactedLead'),
   ('qualified',       'QualifiedLead'),
   ('converted',       'ConvertedLead'),
-  ('transferred_out', 'Other')
+  ('unqualified',     'UnqualifiedLead')
 ) AS m(stage_name, event_code)
 JOIN lms.lead_stage ls            ON ls.name = m.stage_name AND ls.tenant_id IS NULL
 JOIN ext.meta_capi_event_types et ON et.code = m.event_code
 ON CONFLICT (stage_id) DO UPDATE SET
   capi_event_type_id = EXCLUDED.capi_event_type_id;
+
+-- Retired wiring: these two template stages used to map to 'Other'.
+DELETE FROM ext.lead_stage_capi_event_map m
+USING lms.lead_stage ls
+WHERE ls.id = m.stage_id AND ls.tenant_id IS NULL AND m.tenant_id IS NULL
+  AND ls.name IN ('on_hold', 'transferred_out');
 
 INSERT INTO lms.interaction_types (name, label, description) VALUES
   ('call',          'Call',          'Outbound or inbound phone call'),

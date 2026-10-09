@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { getServerSession, GATEWAY_URL } from '@/src/lib/server-session';
 import { getSelectedTenantId, getSelectedTenantName } from '@/src/lib/tenant-scope';
 import LookupLoadError from '@/components/lookups/LookupLoadError';
+import { PageBody, PageHeader } from '@platform/ui-kit';
+import MetaTabs from '@/components/meta-nav/MetaTabs';
 import MetaCampaignsClient from '@/components/meta-campaigns/MetaCampaignsClient';
 import type { MetaCampaignRow, CampaignTypeRow } from '@/src/lib/api/client';
 
@@ -26,14 +28,17 @@ export default async function MetaCampaignsPage() {
 
   if (!selectedTenantId) {
     return (
-      <div className="space-y-4 p-4 sm:p-6">
-        <Link href="/dashboard/m/lms" className="text-xs font-semibold text-primary hover:underline">
-          ← Back to LMS
-        </Link>
-        <p className="rounded-xl border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant">
-          Pick a tenant in the top bar to manage Meta campaign mapping.
-        </p>
-      </div>
+      <>
+        <PageHeader title="Meta Campaign Mapping & Classification" subtitle="Classify campaigns into departmental pipelines" tabs={<MetaTabs />} />
+        <PageBody dense>
+          <Link href="/dashboard/m/lms" className="text-xs font-semibold text-primary hover:underline">
+            ← Back to LMS
+          </Link>
+          <p className="rounded-xl border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant">
+            Pick a tenant in the top bar to manage Meta campaign mapping.
+          </p>
+        </PageBody>
+      </>
     );
   }
 

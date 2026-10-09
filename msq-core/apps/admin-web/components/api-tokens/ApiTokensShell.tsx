@@ -35,7 +35,8 @@ export default function ApiTokensShell({ tokens, orgs, actor, canManage }: Props
     <>
       <PageHeader
         title="API Tokens"
-        subtitle={`${tokens.length} total · machine credentials for integrations`}
+        subtitle={`${tokens.length} total`}
+        info="Machine credentials for integrations."
         actions={
           canManage ? (
             <Button variant="primary" size="md" onClick={() => setCreateOpen(true)} className="min-h-[2.75rem] sm:min-h-0">
@@ -47,7 +48,7 @@ export default function ApiTokensShell({ tokens, orgs, actor, canManage }: Props
           ) : undefined
         }
       />
-      <PageBody>
+      <PageBody dense>
         <ApiTokensTable
           tokens={tokens}
           orgs={orgs}

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import InfoTip from './InfoTip';
 
 interface Props {
   title: string;
@@ -14,6 +15,10 @@ interface Props {
    *  is on: callers resolve the scope from a session that may not have one and
    *  pass the result straight through, rather than spreading a conditional prop. */
   scope?: string | undefined;
+  /** Explanatory text for the screen, shown in an (i) beside the title instead of
+   *  as a paragraph in the body. Keep `subtitle` to a short phrase and put the
+   *  rest here. Never put a warning or error in it — those stay on the page. */
+  info?: ReactNode;
   /** Tab strip (PageTabs) — rendered as the band's first row, full-bleed. */
   tabs?: ReactNode;
   /** Primary/secondary actions, right-aligned on the title row. */
@@ -27,7 +32,7 @@ interface Props {
 // used to do — leaves its border-b floating short of both the sidebar rule and
 // the right edge, which is the single biggest reason those pages read as
 // unfinished next to LMS.
-export default function PageHeader({ title, subtitle, scope, tabs, actions }: Props) {
+export default function PageHeader({ title, subtitle, scope, info, tabs, actions }: Props) {
   return (
     <header className="shrink-0 border-b border-outline-variant bg-surface-container-lowest">
       {tabs && <div className="px-4 sm:px-5">{tabs}</div>}
@@ -46,6 +51,7 @@ export default function PageHeader({ title, subtitle, scope, tabs, actions }: Pr
                 {scope}
               </span>
             )}
+            {info && <InfoTip label={`About ${title}`}>{info}</InfoTip>}
           </div>
           {subtitle && <p className="mt-0.5 truncate text-xs text-on-surface-variant">{subtitle}</p>}
         </div>

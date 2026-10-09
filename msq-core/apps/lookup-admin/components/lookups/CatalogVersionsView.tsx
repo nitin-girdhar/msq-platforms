@@ -37,13 +37,9 @@ export default function CatalogVersionsView({ rows }: { rows: CatalogDriftRow[] 
       <PageHeader
         title="Catalog Versions"
         subtitle={`${tenants.length} tenant${tenants.length === 1 ? '' : 's'} · ${behindCells} of ${totalCells} catalogs behind current`}
+        info="Each cell is a tenant's seeded version over the current default. A red cell is behind current or was never seeded. That is not necessarily a problem, since a tenant may have customised past what a re-seed would restore, but check before assuming every tenant has the latest defaults."
       />
-      <PageBody>
-        <p className="max-w-3xl text-xs text-on-surface-variant">
-          Each cell is a tenant&apos;s seeded version over the current default. A red cell is behind current or was
-          never seeded — not necessarily a problem (a tenant may have customised past what a re-seed would restore),
-          but worth checking before assuming every tenant has the latest defaults.
-        </p>
+      <PageBody dense>
 
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter tenants">
           {([['all', `All tenants (${tenants.length})`], ['behind', `Behind current only (${behindTenants.length})`]] as const).map(([id, text]) => (

@@ -17,7 +17,10 @@ export const shiftsTable = hrSchema.table('shifts', {
   // A split shift works 2+ slots in a day (see shiftSegmentsTable). startTime /
   // endTime stay the OUTER window those segments live inside.
   isSplit:            boolean('is_split').notNull().default(false),
-  isActive:           boolean('is_active').notNull().default(true),
+  // Own minimum rest (hours) before this shift starts. NULL = follow hr.attendance_rules.min_rest_hours;
+  // 0 = no rest rule for this shift.
+  minRestHours:       smallint('min_rest_hours'),
+  isActive:          boolean('is_active').notNull().default(true),
   isDeleted:          boolean('is_deleted').notNull().default(false),
   deletedAt:          timestamp('deleted_at', { withTimezone: true }),
   deletedBy:          uuid('deleted_by'),

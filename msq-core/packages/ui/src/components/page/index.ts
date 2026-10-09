@@ -4,3 +4,4 @@ export { default as PageTabs, type PageTab } from './PageTabs';
 export { default as PageBody } from './PageBody';
 export { default as PageSection } from './PageSection';
 export { default as Alert } from './Alert';
+export { default as InfoTip } from './InfoTip';

@@ -158,7 +158,7 @@ export default function TeamShell({
           </>
         }
       />
-      <PageBody>
+      <PageBody dense>
         {users.length === 0 ? (
           <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-8 text-center text-sm text-on-surface-variant">
             {SCOPE_EMPTY[scope]}

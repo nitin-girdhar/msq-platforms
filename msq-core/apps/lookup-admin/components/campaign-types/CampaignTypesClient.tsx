@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Button, PageBody, PageHeader } from '@platform/ui-kit';
+import { Button, InfoTip, PageBody, PageHeader } from '@platform/ui-kit';
 import {
   campaignTypes as campaignTypesApi,
   departmentsApi,
@@ -144,17 +144,22 @@ export default function CampaignTypesClient({ tenantId, tenantName }: Props) {
         title="Campaign Types & Rules"
         scope={tenantName}
         subtitle="Which department's pool a lead is assigned from"
+        info={
+          <>
+            <p>
+              A lead&apos;s type decides which department&apos;s pool it is assigned from. Order of decision:{' '}
+              <strong>confirmed campaign type</strong> (Meta Campaign Mapping), then <strong>first matching rule below</strong>, then{' '}
+              <strong>page default type</strong> (Meta Page Mapping), then <strong>tenant default type</strong>.
+            </p>
+            <p>
+              Rules match a whole word or phrase, case-insensitive: <code>HIR</code> matches <code>HIR_Gurugram_Sep</code> but not{' '}
+              <code>Hiring</code>.
+            </p>
+          </>
+        }
         actions={<Link href="/dashboard/m/lms" className="inline-flex min-h-[2.75rem] items-center text-xs font-semibold text-primary hover:underline sm:min-h-0">← Back to LMS</Link>}
       />
-      <PageBody>
-      <p className="max-w-3xl text-xs text-on-surface-variant">
-        A lead&apos;s type decides which department&apos;s pool it is assigned from. Order of decision:{' '}
-        <strong>confirmed campaign type</strong> (Meta Campaign Mapping) → <strong>first matching rule below</strong> →{' '}
-        <strong>page default type</strong> (Meta Page Mapping) → <strong>tenant default type</strong>. Rules match a
-        whole word or phrase, case-insensitive: <code>HIR</code> matches <code>HIR_Gurugram_Sep</code> but not{' '}
-        <code>Hiring</code>.
-      </p>
-
+      <PageBody dense>
       {error && (
         <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">{error}</div>
       )}
@@ -274,11 +279,13 @@ export default function CampaignTypesClient({ tenantId, tenantName }: Props) {
       </div>
       {/* ── Types ── */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-on-surface">Campaign types</h2>
-        <p className="text-xs text-on-surface-variant">
-          Each type routes to one department. A lead of that type is assigned only to users whose role is in that
-          department, hold LMS access, and have a weight for the type in the lead&apos;s branch (Users → Org access).
-        </p>
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold text-on-surface">
+          Campaign types
+          <InfoTip label="About campaign types">
+            Each type routes to one department. A lead of that type is assigned only to users whose role is in that
+            department, hold LMS access, and have a weight for the type in the lead&apos;s branch (Users → Org access).
+          </InfoTip>
+        </h2>
         <div className="overflow-x-auto rounded-xl border border-outline-variant bg-surface-container-lowest">
           <table className="w-full text-xs">
             <thead className="bg-surface-container-low text-left text-on-surface-variant">

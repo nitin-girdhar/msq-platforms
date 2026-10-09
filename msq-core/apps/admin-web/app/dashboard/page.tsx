@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { PageBody, PageHeader } from '@platform/ui-kit';
+import { InfoTip, PageBody, PageHeader } from '@platform/ui-kit';
 import { NavIcon, filterNavGroups } from '@platform/ui-kit/shell';
 import { getServerSession } from '@/src/lib/server-session';
 import { ADMIN_NAV } from '@/src/config/navigation';
@@ -30,21 +30,22 @@ export default async function DashboardPage() {
 
   return (
     <>
-      <PageHeader title="Admin" subtitle="Manage your team, API tokens, and HR admin settings." />
-      <PageBody>
-        <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2">
+      <PageHeader title="Admin" info="Manage your team, API tokens, and HR admin settings." />
+      <PageBody dense>
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
           {cards.map((card) => (
+            // The (i) sits beside the link, not inside it: a button nested in an anchor is invalid
+            // and would navigate on tap.
+            <div key={card.href} className="relative">
             <Link
-              key={card.href}
               href={card.href}
-              className="group flex min-h-[4.5rem] items-center gap-4 rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-container-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:p-5"
+              className="group flex min-h-[3.25rem] items-center gap-3 rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2 pr-10 shadow-sm transition-colors hover:border-primary/40 hover:bg-surface-container-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
             >
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary-fixed text-on-primary-container">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-fixed text-on-primary-container">
                 {card.icon && <NavIcon name={card.icon} className="h-5 w-5" />}
               </span>
               <span className="min-w-0 flex-1">
                 <h2 className="text-body-lg font-semibold text-on-surface">{card.label}</h2>
-                <p className="mt-0.5 text-body-sm leading-relaxed text-on-surface-variant">{DESCRIPTIONS[card.id]}</p>
               </span>
               <svg
                 viewBox="0 0 24 24"
@@ -59,6 +60,8 @@ export default async function DashboardPage() {
                 <path d="m9 18 6-6-6-6" />
               </svg>
             </Link>
+            <InfoTip label={`About ${card.label}`} className="absolute right-9 top-1/2 -translate-y-1/2">{DESCRIPTIONS[card.id]}</InfoTip>
+            </div>
           ))}
         </div>
       </PageBody>

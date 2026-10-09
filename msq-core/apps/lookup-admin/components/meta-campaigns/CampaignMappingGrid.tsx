@@ -26,6 +26,8 @@ function formatDate(value: string | null | undefined): string {
 
 export type GridMode = 'suggested' | 'unmapped' | 'confirmed' | 'archived';
 
+import GridIconButton from '@/components/meta-shared/GridIconButton';
+
 interface Props {
   mode: GridMode;
   rows: MetaCampaignRow[];
@@ -91,36 +93,30 @@ export default function CampaignMappingGrid({
   const actionsCellRenderer = useCallback((p: ICellRendererParams<MetaCampaignRow>) => {
     const row = p.data;
     if (!row) return null;
-    const ghost =
-      'rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-low';
+    const name = row.name ?? row.meta_campaign_id;
     if (mode === 'archived') {
-      return (
-        <button type="button" onClick={() => onToggleArchive?.(row)} className={ghost}>
-          Restore
-        </button>
-      );
+      return <GridIconButton icon="restore" label={`Restore ${name}`} onClick={() => onToggleArchive?.(row)} />;
     }
     if (mode === 'confirmed') {
       return (
-        <div className="flex gap-1.5">
-          <button type="button" onClick={() => onEdit?.(row)} className={ghost}>Edit</button>
-          <button type="button" onClick={() => onToggleArchive?.(row)} className={ghost} aria-label={`Hide ${row.name ?? row.meta_campaign_id}`}>Hide</button>
-        </div>
+        <span className="inline-flex items-center gap-1.5">
+          <GridIconButton icon="edit" label={`Edit type of ${name}`} onClick={() => onEdit?.(row)} />
+          <GridIconButton icon="hide" label={`Hide ${name}`} onClick={() => onToggleArchive?.(row)} />
+        </span>
       );
     }
     const selected = selections[row.meta_campaign_id];
     return (
-      <div className="flex gap-1.5">
-        <button
-          type="button"
+      <span className="inline-flex items-center gap-1.5">
+        <GridIconButton
+          icon="confirm"
+          label={selected ? `Confirm type for ${name}` : 'Pick a type first'}
           onClick={() => onConfirmOne(row)}
           disabled={!selected}
-          className="rounded-lg bg-primary px-3 py-1 text-xs font-semibold text-on-primary hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Confirm
-        </button>
-        <button type="button" onClick={() => onToggleArchive?.(row)} className={ghost} aria-label={`Hide ${row.name ?? row.meta_campaign_id}`}>Hide</button>
-      </div>
+          primary
+        />
+        <GridIconButton icon="hide" label={`Hide ${name}`} onClick={() => onToggleArchive?.(row)} />
+      </span>
     );
   }, [mode, selections, onConfirmOne, onEdit, onToggleArchive]);
 
@@ -132,7 +128,7 @@ export default function CampaignMappingGrid({
   const columnDefs = useMemo((): ColDef<MetaCampaignRow>[] => {
     const cols: ColDef<MetaCampaignRow>[] = [
       {
-        colId: 'name', headerName: 'Campaign', flex: 2, minWidth: 220, sortable: true, filter: true,
+        colId: 'name', headerName: 'Campaign', flex: 2, minWidth: 180, sortable: true, filter: true,
         valueGetter: (p) => p.data?.name ?? p.data?.meta_campaign_id ?? '',
         tooltipValueGetter: (p) => p.data?.conflict_reason ?? undefined,
         cellRenderer: (p: ICellRendererParams<MetaCampaignRow>) => (
@@ -147,15 +143,15 @@ export default function CampaignMappingGrid({
       {
         // 1.51.0: the pages this campaign's ad sets promote — what the fetch
         // attributed it to its tenant by.
-        colId: 'page_ids', headerName: 'Page(s)', width: 170, minWidth: 140, sortable: true, filter: true,
+        colId: 'page_ids', headerName: 'Page(s)', width: 130, minWidth: 100, sortable: true, filter: true,
         valueGetter: (p) => (p.data?.page_ids ?? []).join(', '),
       },
       {
-        colId: 'ad_account_id', headerName: 'Ad account', width: 180, minWidth: 150, sortable: true, filter: true,
+        colId: 'ad_account_id', headerName: 'Ad account', width: 150, minWidth: 120, sortable: true, filter: true,
         valueGetter: (p) => p.data?.ad_account_id ?? '',
       },
       {
-        colId: 'effective_status', headerName: 'Meta status', width: 130, sortable: true, filter: true,
+        colId: 'effective_status', headerName: 'Meta status', width: 115, minWidth: 100, sortable: true, filter: true,
         valueGetter: (p) => p.data?.effective_status ?? '',
         cellRenderer: statusCellRenderer,
         cellStyle: { display: 'flex', alignItems: 'center' },
@@ -165,13 +161,13 @@ export default function CampaignMappingGrid({
     if (mode === 'suggested') {
       cols.push({
         // The pattern of the ordered rule that produced the suggestion (1.51.0).
-        colId: 'matched_keyword', headerName: 'Matched rule', width: 150, minWidth: 130, sortable: true, filter: true,
+        colId: 'matched_keyword', headerName: 'Matched rule', width: 120, minWidth: 100, sortable: true, filter: true,
         valueGetter: (p) => p.data?.matched_keyword ?? '',
       });
     }
 
     cols.push({
-      colId: 'type', headerName: mode === 'confirmed' ? 'Type' : 'Suggested type', width: 220, minWidth: 200, sortable: true, filter: true,
+      colId: 'type', headerName: mode === 'confirmed' ? 'Type' : 'Suggested type', width: 190, minWidth: 160, sortable: true, filter: true,
       valueGetter: (p) => {
         if (!p.data) return '';
         if (mode === 'confirmed') return p.data.campaign_type_label ?? '';
@@ -182,7 +178,7 @@ export default function CampaignMappingGrid({
     });
 
     cols.push({
-      colId: 'lead_count', headerName: 'Leads so far', width: 120, sortable: true, filter: 'agNumberColumnFilter',
+      colId: 'lead_count', headerName: 'Leads', width: 90, minWidth: 80, sortable: true, filter: 'agNumberColumnFilter',
       valueGetter: (p) => p.data?.lead_count ?? 0,
     });
 
@@ -200,12 +196,12 @@ export default function CampaignMappingGrid({
     }
 
     cols.push({
-      colId: 'last_synced_at', headerName: 'Last synced', width: 180, minWidth: 150, sortable: true, filter: true,
+      colId: 'last_synced_at', headerName: 'Last synced', width: 150, minWidth: 120, sortable: true, filter: true,
       valueGetter: (p) => formatDate(p.data?.last_synced_at),
     });
 
     cols.push({
-      colId: '__actions', headerName: '', width: 170, minWidth: 170, maxWidth: 170,
+      colId: '__actions', headerName: '', width: 84, minWidth: 84, maxWidth: 84,
       pinned: 'right', sortable: false, filter: false, resizable: false,
       cellRenderer: actionsCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end' },

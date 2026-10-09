@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Modal, PageBody, PageHeader, type ApiRequestError, type SearchableOption } from '@platform/ui-kit';
+import { Alert, Button, InfoTip, Modal, PageBody, PageHeader, type ApiRequestError, type SearchableOption } from '@platform/ui-kit';
 import {
   leadPull,
   orgs as orgsApi,
@@ -21,6 +21,7 @@ import StagedLeadsGrid from './StagedLeadsGrid';
 import PullHistoryModal from './PullHistoryModal';
 import MappingFormModal from '@/components/meta-mappings/MappingFormModal';
 import MetaTabs from '@/components/meta-nav/MetaTabs';
+import type { AppliedStatus } from '@/components/meta-shared/pull-labels';
 
 interface Props {
   tenantId: string;
@@ -38,10 +39,19 @@ interface Props {
 // screen learns when it finishes.
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'applied', 'discarded']);
 
+// Consecutive failed status checks before the poller gives up and hands control to
+// the admin ("Check again"). Delays back off 5s -> 60s so a down gateway is not
+// hammered, and a hidden tab does not burn requests it cannot show.
+const MAX_POLL_FAILURES = 5;
+const pollBackoffMs = (failures: number) => Math.min(5000 * 2 ** (failures - 1), 60000);
+
 export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnavailable, initialRunId }: Props) {
   const [runId, setRunId] = useState<string | null>(initialRunId);
   const [run, setRun] = useState<PullRunStatus | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
+  // True once the poller has stopped after MAX_POLL_FAILURES; "Check again" restarts it.
+  const [pollStopped, setPollStopped] = useState(false);
+  const [applyConfirmOpen, setApplyConfirmOpen] = useState(false);
 
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -55,7 +65,7 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
   // pressing Apply must start it again to follow apply_queued → applying → applied.
   const [pollNonce, setPollNonce] = useState(0);
 
-  const [grid, setGrid] = useState<{ verdict: PullVerdict | undefined; title: string } | null>(null);
+  const [grid, setGrid] = useState<{ verdict: PullVerdict | undefined; appliedStatus: AppliedStatus | undefined; title: string } | null>(null);
 
   // ── 1.51.0: inline "map this page", then remap the run's unmapped rows ──
   const [orgList, setOrgList] = useState<Array<{ id: string; name: string; tenant_id: string }>>([]);
@@ -87,8 +97,11 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
     [orgList],
   );
 
-  const pageNames: Record<string, string> = Object.fromEntries(
-    pages.filter((p) => p.name).map((p) => [p.page_id, p.name as string]),
+  // Memoised: it is a dependency of StagedLeadsGrid's column definitions, which
+  // would otherwise be rebuilt on every 3s poll tick while the grid is open.
+  const pageNames: Record<string, string> = useMemo(
+    () => Object.fromEntries(pages.filter((p) => p.name).map((p) => [p.page_id, p.name as string])),
+    [pages],
   );
 
   // ── Polling ─────────────────────────────────────────────────────────────
@@ -98,11 +111,14 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
     if (!runId) return;
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+    setPollStopped(false);
 
     const poll = async () => {
       try {
         const res = await leadPull.getRun(tenantId, runId);
         if (cancelled) return;
+        failures = 0;
         setRun(res.data);
         setPollError(null);
         if (!TERMINAL_STATUSES.has(res.data.status)) {
@@ -112,22 +128,38 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
       } catch (err) {
         if (cancelled) return;
         // 404: the run is gone — a newer Pull (here or in another tab) deleted
-        // it. Retrying every 5s forever would never succeed; stop and say so.
+        // it. Retrying would never succeed; stop and say so.
         if ((err as Partial<ApiRequestError>).status === 404) {
           setPollError('This run no longer exists — a newer pull replaced it. Start a new pull to continue.');
           setRun(null);
           setRunId(null);
           return;
         }
-        setPollError(err instanceof Error ? err.message : 'Could not check run status.');
-        timeoutId = setTimeout(poll, 5000);
+        failures += 1;
+        const reason = err instanceof Error ? err.message : 'Could not check run status.';
+        if (failures >= MAX_POLL_FAILURES) {
+          setPollError(`${reason} Status checks stopped after ${MAX_POLL_FAILURES} failed attempts.`);
+          setPollStopped(true);
+          return;
+        }
+        setPollError(reason);
+        timeoutId = setTimeout(poll, pollBackoffMs(failures));
       }
     };
 
-    poll();
+    // A tab left hidden polls slowly; come back to it and the status is refreshed at once.
+    const onVisible = () => {
+      if (document.hidden || cancelled) return;
+      if (timeoutId) clearTimeout(timeoutId);
+      void poll();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    void poll();
     return () => {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [tenantId, runId, pollNonce]);
 
@@ -180,6 +212,7 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
   // this button over a run the server was busy with.
   const handleApply = useCallback(() => {
     if (!runId) return;
+    setApplyConfirmOpen(false);
     setQueueingApply(true);
     setApplyError(null);
     leadPull.apply(tenantId, runId)
@@ -193,8 +226,8 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
       .finally(() => setQueueingApply(false));
   }, [tenantId, runId]);
 
-  const openVerdictGrid = useCallback((verdict: PullVerdict | undefined, title: string) => {
-    setGrid({ verdict, title });
+  const openVerdictGrid = useCallback((verdict: PullVerdict | undefined, title: string, appliedStatus?: AppliedStatus) => {
+    setGrid({ verdict, appliedStatus, title });
   }, []);
 
   // An applied run can be applied AGAIN when rows became importable after an
@@ -256,7 +289,13 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
       <PageHeader
         title="Meta Lead Ingestion & Pull Engine"
         scope={tenantName}
-        subtitle="Backfill leads the live webhook missed, review what is genuinely missing from LMS and where each lead will go, then apply only that."
+        subtitle="Backfill leads the live webhook missed"
+        info={
+          <>
+            <p>Review what is genuinely missing from LMS and where each lead will go, then apply only that.</p>
+            <p>A scheduled catch-up run also stages the last few days automatically; it is never applied without you.</p>
+          </>
+        }
         tabs={<MetaTabs />}
         actions={
           <>
@@ -265,11 +304,8 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
           </>
         }
       />
-      <PageBody>
-      <p className="max-w-3xl text-xs text-on-surface-variant">
-        A scheduled catch-up run also stages the last few days automatically; it is never applied without you.
-        {scheduledError && <span className="ml-2 font-medium text-on-surface">{scheduledError}</span>}
-      </p>
+      <PageBody dense>
+      {scheduledError && <p className="text-xs font-medium text-on-surface">{scheduledError}</p>}
 
       {run?.trigger_kind === 'scheduled' && (
         <div role="status" className="rounded-xl border border-status-info/30 bg-status-info-container px-3 py-2 text-xs text-primary">
@@ -293,10 +329,11 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
 
       {/* A new Pull deletes this tenant's previous run, staged rows and all. Say
           so before an admin discards importable leads they meant to apply. */}
-      {run?.status === 'completed' && run.importable > 0 && (
+      {run && ((run.status === 'completed' && run.importable > 0) || (run.status === 'applied' && run.importable_total > 0)) && (
         <div role="status" className="rounded-xl border border-status-due/30 bg-status-due-container px-3 py-2 text-xs text-on-status-due-container">
-          This run has {run.importable.toLocaleString()} importable row{run.importable === 1 ? '' : 's'} not yet
-          applied. Starting a new pull discards them — apply first if you want them.
+          This run still has {(run.status === 'completed' ? run.importable : run.importable_total).toLocaleString()} importable row
+          {(run.status === 'completed' ? run.importable : run.importable_total) === 1 ? '' : 's'} not yet
+          applied{run.status === 'applied' ? ' (left unticked)' : ''}. Starting a new pull discards them — apply first if you want them.
         </div>
       )}
 
@@ -309,7 +346,14 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
         onSubmit={startRun}
       />
 
-      {pollError && <Alert tone="error">{pollError}</Alert>}
+      {pollError && (
+        <Alert tone="error">
+          {pollError}
+          {pollStopped && (
+            <Button variant="secondary" className="ml-2" onClick={() => setPollNonce((n) => n + 1)}>Check again</Button>
+          )}
+        </Alert>
+      )}
 
       {run && <RunProgress run={run} onStartAnother={startAnother} />}
 
@@ -337,7 +381,7 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
 
       {run && run.status !== 'discarded' && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-outline-variant bg-surface-container-lowest p-4">
-          <Button variant="primary" onClick={handleApply} disabled={!canApply || applyInFlight || run.importable === 0} aria-busy={applyInFlight}>
+          <Button variant="primary" onClick={() => setApplyConfirmOpen(true)} disabled={!canApply || applyInFlight || run.importable === 0} aria-busy={applyInFlight}>
             {applyInFlight
               ? 'Applying…'
               : run.status === 'applied' && run.importable_total === 0
@@ -350,12 +394,13 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
           {canDiscard && (
             <Button variant="danger" onClick={() => { setDiscardError(null); setDiscardOpen(true); }}>Discard Batch</Button>
           )}
-          <p className="min-w-0 flex-1 text-xs text-on-surface-variant">
+          <p className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-on-surface-variant">
             {run.importable.toLocaleString()} of {run.importable_total.toLocaleString()} importable row
-            {run.importable_total === 1 ? '' : 's'} ticked — new leads plus phone/email duplicates. Duplicates ARE imported on
-            purpose: the canonical write path supersedes on a phone match or returns the existing lead on an email match, and
-            either way it writes the tracking row that stops this same lead being re-fetched forever. Unticked rows stay staged
-            for a later Apply. Runs in the background — you can leave this page while it applies.
+            {run.importable_total === 1 ? '' : 's'} ticked
+            <InfoTip label="About importable rows">
+              <p>New leads plus phone/email duplicates. Duplicates are imported on purpose: the canonical write path supersedes on a phone match or returns the existing lead on an email match, and either way it writes the tracking row that stops this same lead being re-fetched forever.</p>
+              <p>Unticked rows stay staged for a later Apply. Runs in the background, so you can leave this page while it applies.</p>
+            </InfoTip>
           </p>
         </div>
       )}
@@ -374,6 +419,7 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
           tenantId={tenantId}
           runId={runId}
           verdict={grid.verdict}
+          appliedStatus={grid.appliedStatus}
           title={grid.title}
           pageNames={pageNames}
           orgNames={orgNames}
@@ -385,6 +431,24 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
 
       {historyOpen && <PullHistoryModal tenantId={tenantId} onClose={() => setHistoryOpen(false)} />}
 
+      <Modal
+        open={applyConfirmOpen}
+        onClose={() => setApplyConfirmOpen(false)}
+        title="Apply the ticked leads?"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setApplyConfirmOpen(false)}>Cancel</Button>
+            <Button variant="primary" onClick={handleApply}>Apply {run?.importable.toLocaleString()} lead{run?.importable === 1 ? '' : 's'}</Button>
+          </>
+        }
+      >
+        <p className="text-sm text-on-surface">
+          {run?.importable.toLocaleString()} ticked lead{run?.importable === 1 ? '' : 's'} will be written into LMS
+          {tenantName ? <> for <strong>{tenantName}</strong></> : null}, typed and assigned like live leads. This runs in the
+          background and cannot be undone from here.
+        </p>
+      </Modal>
+
       <Modal open={discardOpen} onClose={() => setDiscardOpen(false)} title="Discard this batch?" locked={discarding}>
         <p className="text-sm text-on-surface-variant">
           The staged leads are deleted and nothing is imported. This cannot be undone — a new pull is needed to stage them again.
@@ -392,7 +456,7 @@ export default function LeadPullClient({ tenantId, tenantName, pages, pagesUnava
         {discardError && <Alert tone="error">{discardError}</Alert>}
         <div className="mt-4 flex justify-end gap-2">
           <Button onClick={() => setDiscardOpen(false)} disabled={discarding}>Keep batch</Button>
-          <Button variant="primary" onClick={handleDiscard} disabled={discarding} aria-busy={discarding}>
+          <Button variant="danger" onClick={handleDiscard} disabled={discarding} aria-busy={discarding}>
             {discarding ? 'Discarding…' : 'Discard Batch'}
           </Button>
         </div>

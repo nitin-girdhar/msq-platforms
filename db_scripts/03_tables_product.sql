@@ -238,7 +238,11 @@ CREATE TABLE IF NOT EXISTS hr.employee_profiles (
   -- days of week off, 0=Sunday .. 6=Saturday; overridable by shift assignment
   weekly_off_pattern  SMALLINT[] NOT NULL DEFAULT '{0,6}',
   metadata            JSONB   NOT NULL DEFAULT '{}',
-  -- ── Face-verification enrollment (dormant until Prompt 11) ──
+  -- ── Face-verification enrollment ──
+  -- reference_photo_url mirrors iam.users.photo_key (the enrolled avatar);
+  -- face_subject_id = hr.face_templates.id of the ACTIVE template (TEXT, kept
+  -- from the original design: NULL = not enrolled). The template itself lives in
+  -- hr.face_templates, never on this org-readable row.
   reference_photo_url TEXT,
   face_subject_id     TEXT,
   face_enrolled_at    TIMESTAMPTZ,
@@ -254,6 +258,42 @@ CREATE TABLE IF NOT EXISTS hr.employee_profiles (
   CONSTRAINT chk_employee_profiles_exit_after_joining
     CHECK (date_of_exit IS NULL OR date_of_exit >= date_of_joining),
   CONSTRAINT chk_employee_profiles_active_deleted CHECK (NOT (is_active AND is_deleted))
+);
+
+
+-- ===================================================================
+-- hr.face_templates — encrypted face embeddings for attendance face match
+--    (schema 1.81.0). One row per (org, user): the template the in-process
+--    ONNX engine (hr-service lib/face) computed from the enrolled reference
+--    photo. Re-enrolment replaces the row in place.
+--
+--    BIOMETRIC DATA (DPDP), so this table breaks three house rules on purpose:
+--    * embedding_enc is AES-256-GCM ciphertext (key FACE_TEMPLATE_KEY, held
+--      only by hr-service); plaintext never reaches the database.
+--    * HARD delete: no is_deleted / soft_delete_row trigger. Unenrolment must
+--      erase the template, not hide it.
+--    * No audit_row_changes trigger: it would copy the ciphertext into
+--      audit.* on every update/delete and outlive the erasure. Enrol/unenrol
+--      are audited by hr-service (attendance_face_enrolled / _unenrolled)
+--      without any template data.
+--    Access: root_service only (hr-service's service transaction, after its own
+--    capability checks). No app_user / tenant_admin / hr_svc grant and RLS
+--    forced with no policy, so no session role can read it (see 07, 08).
+-- ===================================================================
+CREATE TABLE IF NOT EXISTS hr.face_templates (
+  id             UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
+  org_id         UUID    NOT NULL REFERENCES entity.organizations(id) ON DELETE RESTRICT,
+  user_id        UUID    NOT NULL REFERENCES iam.users(id)            ON DELETE RESTRICT,
+  -- Embeddings from different models are not comparable; a template whose
+  -- model_version differs from the engine's is treated as unusable (fail open).
+  model_version  TEXT    NOT NULL,
+  embedding_enc  TEXT    NOT NULL CONSTRAINT chk_face_templates_encrypted CHECK (embedding_enc LIKE 'enc:v1:%'),
+  -- Enrollment quality measurements (numbers only: blur, light, pose, size).
+  quality        JSONB   NOT NULL DEFAULT '{}',
+  created_by     UUID,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
+  CONSTRAINT uq_face_templates_org_user UNIQUE (org_id, user_id)
 );
 
 

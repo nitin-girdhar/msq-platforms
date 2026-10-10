@@ -730,6 +730,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uix_emergency_contacts_primary
 CREATE INDEX IF NOT EXISTS idx_employee_notes_user
   ON hr.employee_notes (user_id, created_at DESC) WHERE NOT is_deleted;
 
+-- hr.face_templates (1.81.0): uq_face_templates_org_user covers (org_id, user_id)
+-- lookups and the org_id FK; this covers the user_id FK.
+CREATE INDEX IF NOT EXISTS idx_face_templates_user ON hr.face_templates (user_id);
+
 -- hr.shift_swap_requests (1.61.0). A person may be in at most one OPEN swap per day,
 -- whether as requester or as peer (the service also refuses a day where they are
 -- the peer of another open swap, which two partial indexes cannot express).

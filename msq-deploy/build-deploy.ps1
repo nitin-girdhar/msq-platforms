@@ -423,7 +423,7 @@ if ($SkipBuild) {
             # so retry here too rather than serialising the whole build back down.
             Invoke-NativeWithRetry { docker compose --env-file .env.example build } "docker compose build failed in $name."
 
-            # `build` never fetches third-party images (postgres, exadel/compreface*).
+            # `build` never fetches third-party images (postgres, caddy, ...).
             # --ignore-buildable pulls only the services that have no build context.
             # Both files are needed: docker-compose-linux.yml carries `image:` but
             # no `build:`, so on its own every service looks unbuildable and compose
@@ -432,7 +432,7 @@ if ($SkipBuild) {
             # images (postgres, caddy, ...) to actually pull.
             Write-Host "  pulling third-party images for $name"
             # --policy missing skips the registry entirely for any tag already present
-            # locally (postgres, caddy, exadel/compreface*, ...) - on repeat builds
+            # locally (postgres, caddy, ...) - on repeat builds
             # that's every image, so this also sidesteps the Hyper-V bridge flakiness
             # below since there is nothing left to pull.
             $env:COMPOSE_PARALLEL_LIMIT = '1'
@@ -515,7 +515,7 @@ foreach ($img in $Images) {
 if ($missing.Count -gt 0) {
     Write-Host '  Missing:' -ForegroundColor Yellow
     $missing | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
-    Write-Error "$($missing.Count) image(s) not built. Third-party images (compreface, postgres) need `docker compose pull` first."
+    Write-Error "$($missing.Count) image(s) not built. Third-party images (postgres, caddy) need `docker compose pull` first."
 }
 Write-Host "  All $($Images.Count) images found." -ForegroundColor Green
 
@@ -602,7 +602,6 @@ $ServiceHosts = [ordered]@{
     'NOTIFICATIONS_SERVICE_URL' = 'http://notifications-service:4004'
     'HR_SERVICE_URL'            = 'http://hr-service:4007'
     'TASKS_SERVICE_URL'         = 'http://tasks-service:4008'
-    'COMPREFACE_URL'            = 'http://compreface-api:8080'
 }
 foreach ($k in $ServiceHosts.Keys) {
     $merged = [regex]::Replace($merged, "(?m)^$k=.*$", "$k=$($ServiceHosts[$k])")

@@ -70,7 +70,7 @@ services:
       <<: *db-env
       # Profile-photo (avatar) storage. MUST resolve to the SAME shared blob
       # volume hr-service mounts (msq-hrms/docker-compose-linux.yml) so the
-      # avatar identity writes is the exact file hr-service enrolls with CompreFace.
+      # avatar identity writes is the exact file hr-service builds the face template from.
       BLOB_STORAGE_DRIVER: ${BLOB_STORAGE_DRIVER:-local}
       BLOB_STORAGE_DIR: ${BLOB_STORAGE_DIR:-/data/blobs}
       PHOTO_MAX_BYTES: ${PHOTO_MAX_BYTES:-2097152}

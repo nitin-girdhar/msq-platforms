@@ -1825,6 +1825,13 @@ DROP TRIGGER IF EXISTS trg_employee_profiles_audit              ON hr.employee_p
 CREATE TRIGGER trg_employee_profiles_audit
   AFTER UPDATE OR DELETE ON hr.employee_profiles FOR EACH ROW EXECUTE FUNCTION audit.audit_row_changes();
 
+-- hr.face_templates (1.81.0): updated_at only. Deliberately NO soft_delete_row
+-- (unenrolment must erase the biometric template) and NO audit_row_changes (it
+-- would copy the ciphertext into audit.* and outlive the erasure).
+DROP TRIGGER IF EXISTS trg_face_templates_updated_at ON hr.face_templates;
+CREATE TRIGGER trg_face_templates_updated_at
+  BEFORE UPDATE ON hr.face_templates FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
 DROP TRIGGER IF EXISTS trg_holiday_calendars_updated_at        ON hr.holiday_calendars;
 CREATE TRIGGER trg_holiday_calendars_updated_at
   BEFORE UPDATE ON hr.holiday_calendars FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();

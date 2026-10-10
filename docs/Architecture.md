@@ -24,15 +24,8 @@ Browser
                           ├─→ hr-service             (4007)  (leave + attendance + shifts + face verification)
                           └─→ tasks-service          (4008)
 
-                          hr-service ──(internal network only; NEVER via gateway)──┐
-                                                                                   ▼
-                          ┌──────────────────────── CompreFace (Exadel) — INTERNAL ────────────────────────┐
-                          │ compreface-ui(nginx, admin UI ops-only) → compreface-api ↔ compreface-core (ML) │
-                          │ compreface-admin        ── all backed by compreface-postgres-db (its OWN DB,     │
-                          │                            NOT the app cluster)                                  │
-                          │ Defined in msq-hrms/docker-compose.yml (nested repo), pulled into the root      │
-                          │ compose project by its `include:` block — see "One compose project" below       │
-                          └────────────────────────────────────────────────────────────────────────────────┘
+                          hr-service runs face verification IN-PROCESS (ONNX models inside its
+                          image — no face service, no network call; see "Face verification" below)
 
 admin-web    (port 3004) ─→ API Gateway (port 4000) ─→ identity-service / hr-service / etc.
   (org/tenant-admin console — Team, API tokens, HR leave/attendance admin; capability-gated per screen,
@@ -545,7 +538,7 @@ a caller that merges lists cannot undo it.
 ## Face verification (attendance)
 
 Optional per-org verification of attendance punch selfies against an enrolled
-reference photo, using a **self-hosted CompreFace (Exadel)** instance. Governed by
+reference photo, using an **in-process ONNX face engine inside hr-service**. Governed by
 `hr.attendance_rules` columns: `require_face_match` (off by default),
 `face_match_threshold` (default 85), `face_match_action` (`flag` | `block`),
 `photo_change_cooldown_days` (default 30 — self-service reference-photo change
@@ -555,23 +548,44 @@ selfies are kept before the retention job deletes them).
 **The reference photo IS the user's profile avatar.** Avatars are platform-wide
 (`iam.users.photo_key` + consent metadata; bytes in `@platform/blob-storage`,
 served by identity-service at `GET /users/:id/photo` with an ETag). Enrollment no
-longer carries an image — hr-service reads the stored avatar and registers it with
-CompreFace, so the displayed avatar and the biometric reference are always the same
-image. Because `hr_svc` has SELECT-only on `iam`, **identity-service is the sole
+longer carries an image — hr-service reads the stored avatar and builds the face
+template from it, so the displayed avatar and the biometric reference are always the
+same image. Because `hr_svc` has SELECT-only on `iam`, **identity-service is the sole
 writer of `photo_key`**; hr-service only reads it. Daily check-in/out selfies are a
 separate, shorter-lived store (`punch/<userId>/<YYYYMMDD>_chkin|chkout.jpg`) that the
 retention job prunes; avatars (`avatar/<userId>/<epochMs>.jpg`) are never auto-deleted.
 
-**Deployment — internal-only.** CompreFace (compreface-ui/api/core/admin) runs on
-the compose network with its **own** postgres (`compreface-postgres-db` + a
-dedicated volume) — never the app cluster. Nothing is published to the host except,
-optionally, the admin UI (ops-only, for the one-time API-key setup). It is a private
-dependency of **hr-service only**: hr-service calls `http://compreface-api:8080`
-directly; **the api-gateway never proxies to CompreFace** and no other service
-touches it. hr-service talks to it through a vendor-neutral `FaceVerificationDriver`
-(`services/hr-service/src/lib/face/`) selected by `FACE_DRIVER`, so a cloud driver
-can replace CompreFace without changing any call site. CompreFace's 0–1 similarity
-is normalized to 0–100 at the driver boundary.
+**Engine — in-process, schema 1.81.0.** hr-service runs three ONNX models with
+`onnxruntime-node` (`services/hr-service/src/lib/face/`, models + SHA-256 pins in
+`services/hr-service/models/MODELS.md`, all Apache-2.0): **YuNet** finds the face
+and 5 landmarks, **SFace** turns the aligned 112×112 face into a 128-d embedding,
+and two **MiniFASNet** models score liveness (a live person vs a photo or screen
+held up to the camera). No image leaves the process and there is no face service
+to deploy, secure or keep up. Models load lazily on first use, so a broken model
+never blocks startup. The image is Debian (`node:20-bookworm-slim`) because ONNX
+Runtime ships glibc-only binaries. Everything calls a vendor-neutral `FaceEngine`
+(`enroll(image)` → template, `verify(template, image, threshold)` → score), so the
+punch flow, enrolment and the review queue never name a model.
+
+**Templates.** The embedding is stored in **`hr.face_templates`** (one row per org +
+user; `employee_profiles.face_subject_id` points at the active row), **AES-256-GCM
+encrypted** with `FACE_TEMPLATE_KEY`, which only hr-service holds — the database
+never sees plaintext (a CHECK enforces the `enc:v1:` envelope). The table is
+**root_service only** (grants revoked from every session role, RLS forced with no
+policy), **hard-deleted** on unenrol (no soft delete) and has **no audit trigger**
+(it would copy the ciphertext into `audit.*` and outlive the erasure). Losing the
+key makes every template unreadable: verification then fails open and employees
+re-enrol.
+
+**Scoring.** Cosine similarity (−1…1) is mapped to the 0–100 score the threshold
+uses by a fixed piecewise-linear curve (`lib/face/scoring.ts`): cosine 0.363
+(OpenCV's published SFace threshold) = 75, the default threshold **85 = the
+false-accept-rate ≤ 0.1% operating point**, 0.70+ = 100. The anchors are set from
+`scripts/face-calibrate.ts`, an end-to-end comparison run on consented photos (see
+`docs/FACE_VERIFICATION.md`). A probe whose liveness is below the floor
+(`FACE_LIVENESS_MIN`, default 0.5) **scores 0** — a mismatch under the existing
+flag/block rules — and the raw similarity and liveness are kept in
+`hr.attendance_events.device_info.face` for the reviewer.
 
 **Enrollment.** Two steps, orchestrated by the client:
 1. **Upload the avatar** — `POST /users/me/photo` (self) or `POST /users/:id/photo`
@@ -579,31 +593,38 @@ is normalized to 0–100 at the driver boundary.
    (DPDP — `photo_consent_at` stamped; false/absent → 422 `PHOTO_CONSENT_REQUIRED`).
 2. **Enroll** — `POST /hr/attendance/face/enroll { user_id, consent }` (no image).
    A member may enroll **themselves**; hr_admin/org_admin may enroll anyone in-org.
-   hr-service reads the avatar (`FACE_NO_PHOTO` if none), registers it with
-   CompreFace (subject id = user UUID; re-enrollment replaces the faces), and stamps
-   `face_enrolled_at` / `face_consent_at`. Self-service re-enrollment is rate-limited
+   hr-service reads the avatar (`FACE_NO_PHOTO` if none) and runs the **enrolment
+   quality gate**: exactly one clear face, big enough (eyes ≥ 40 px apart), facing
+   the camera (roll ≤ 15°, yaw ≤ 20°, pitch within range), well lit and sharp.
+   A refused photo returns 400 `FACE_NO_FACE` or `FACE_LOW_QUALITY` with a `reason`
+   and a plain-language retake instruction; nothing is written (enrolment fails
+   closed). A good photo becomes an encrypted template, upserted in **one
+   transaction** with the profile pointer and `face_enrolled_at` /
+   `face_consent_at` (re-enrolment replaces the row). Self-service re-enrollment is rate-limited
    by `photo_change_cooldown_days` (measured from `face_enrolled_at`, so a pre-upload
    check and the enroll re-check always agree; **admins bypass it**) → 422
    `FACE_CHANGE_COOLDOWN`. `GET /hr/attendance/face/me` returns the self context
    (`has_photo`, `enrolled`, `require_face_match`, `can_change_photo`,
    `next_change_allowed_at`) that drives the check-in gate and the upload modal.
 
-Unenroll (`DELETE …/face/enroll/:userId`, admin) drops the subject and clears the
-profile columns (the avatar itself remains). There is no automatic hook from
+Unenroll (`DELETE …/face/enroll/:userId`, admin) hard-deletes the template and clears
+the profile columns in one transaction (the avatar itself remains). There is no automatic hook from
 identity-service user deactivation (that would couple the services) — unenroll-on-exit
 is an ops task, documented in `docs/FACE_VERIFICATION.md`.
 
 **Check-in gate (UI).** When `require_face_match` is on, the check-in button first
 ensures the user is enrolled: no avatar → the shared photo-upload modal opens
 (capture or gallery + consent), then auto-enrolls and proceeds; avatar but not yet
-enrolled → silent enroll; enrolled → straight to the punch. Check-out is never gated.
+enrolled → silent enroll (if the stored avatar fails the quality gate, the upload
+modal reopens with the reason so the employee can retake it); enrolled → straight to
+the punch. Check-out is never gated.
 
 **Retention.** `msq-deploy/retention/retention-cleanup.sh` deletes `punch/**` selfies
 older than each org's `image_retention_days` (using the date embedded in the key, not
 mtime) and never touches `avatar/**`; `setup-cron.sh` installs the daily job.
 
 **Punch integration (check-in AND check-out, after geo/photo validation).** When
-`require_face_match` is on and a photo is present, the CompreFace call happens
+`require_face_match` is on and a photo is present, model inference happens
 **outside the DB transaction** — the event is written afterward with the result:
 
 | Situation | `flag` action | `block` action |
@@ -611,12 +632,14 @@ mtime) and never touches `avatar/**`; `setup-cron.sh` installs the daily job.
 | Not enrolled | record, `face_match_passed=NULL`, review `pending` | **422 `FACE_NOT_ENROLLED`** |
 | score ≥ threshold | record, `passed=true` | record, `passed=true` |
 | score < threshold | record, `passed=false`, review `pending`, **notify manager** | **422 `FACE_MISMATCH`** (payload carries score + threshold) |
-| CompreFace unavailable | record, `passed=NULL`, review `pending` | record, `passed=NULL`, review `pending` |
+| Photo or screen (liveness below the floor) | score 0 → same as score < threshold | score 0 → **422 `FACE_MISMATCH`** |
+| Engine unavailable (model load / inference error, undecryptable template) | record, `passed=NULL`, review `pending` | record, `passed=NULL`, review `pending` |
 
-**Fail-open rule (non-negotiable):** a verification-dependency outage — timeout, 5xx,
-or any driver error — **never rejects a punch**, not even in `block` mode. The event
-is always recorded with `face_match_passed=NULL` and a `pending` review, and the
-error is logged. An attendance event must never be lost to CompreFace being down.
+**Fail-open rule (non-negotiable):** a verification failure — a model that will not
+load, an inference error, a template that cannot be decrypted — **never rejects a
+punch**, not even in `block` mode. The event is always recorded with
+`face_match_passed=NULL` and a `pending` review, and the error is logged. An
+attendance event must never be lost to the face engine.
 
 **Review queue.** `GET /hr/attendance/face-reviews?status=pending` lists flagged
 punches for the approver's scope (same `hr.can_approve` authority as
@@ -1266,7 +1289,8 @@ The Tasks product (`msq-todo`: `tasks-service`, `@task/web`, `todo-web`) follows
 
 **Task code and SLA.** `TASK-<n>` is `task_no`, a per-branch running number from `task.task_counters` via the SECURITY DEFINER trigger (unreachable from a request). `sla_state` is derived from `due_at` in the view — overdue / due within 24h / on track; no policy table. Due dates are stored as **end of the chosen day in the user's timezone** so "due today" is not overdue until the day ends.
 
-**Soft delete runs in the service transaction.** `DELETE /tasks/:id` and `DELETE /task-lists/:id` used to return 500 for everyone: the table RLS hides deleted rows (`USING … NOT is_deleted`) and Postgres re-applies that to an UPDATE's *new* row, so an `app_user` `UPDATE … SET is_deleted = TRUE` is always refused. (The old UI had no delete button, so it was latent.) Both repositories now soft-delete inside `withServiceTx`, fenced by the gateway-verified `org_id`, after the service has decided who may delete (creator or `tasks.edit.any` for tasks, after the same visibility check as a read; owner or `tasks.edit.any` for team / org lists), with the actor set for the audit trigger and an explicit refusal for read-only roles (no `platform.write`), which `withRoleTx` used to enforce. **A private list is owner-only for writes as well as reads**: `loadForWrite` answers 404 to anyone else, admins included, for both `PATCH` and `DELETE /task-lists/:id`. Deleting a list detaches its tasks (`list_id = NULL`), and a standalone task is visible to admins and managers, so an admin delete would have exposed the owner's private tasks. Because RLS no longer backs the delete, `softDeleteTaskList` repeats the rule in SQL (`visibility <> 'private' OR owner_id = caller`) and detaches tasks only when the list row was actually deleted. `DELETE /tasks/:id` loads through `loadVisible`, so a task inside someone else's private list is a 404 for an admin too.
+**Soft delete runs in the service transaction.** `DELETE /tasks/:id` and `DELETE /task-lists/:id` used to return 500 for everyone: the table RLS hides deleted rows (`USING … NOT is_deleted`) and Postgres re-applies that to an UPDATE's *new* row, so an `app_user` `UPDATE … SET is_deleted = TRUE` is always refused. (The old UI had no delete button, so it was latent.) Both repositories now soft-delete inside `withServiceTx`, fenced by the gateway-verified `org_id`, after the service has decided who may delete (creator or `tasks.edit.any` for tasks, after the same visibility check as a read; owner or `tasks.edit.any` for team / org lists), with the actor set for the audit trigger and an explicit refusal for read-only roles (no `platform.write`), which `withRoleTx` used to enforce.
+ **A private list is owner-only for writes as well as reads**: `loadForWrite` answers 404 to anyone else, admins included, for both `PATCH` and `DELETE /task-lists/:id`. Deleting a list detaches its tasks (`list_id = NULL`), and a standalone task is visible to admins and managers, so an admin delete would have exposed the owner's private tasks. Because RLS no longer backs the delete, `softDeleteTaskList` repeats the rule in SQL (`visibility <> 'private' OR owner_id = caller`) and detaches tasks only when the list row was actually deleted. `DELETE /tasks/:id` loads through `loadVisible`, so a task inside someone else's private list is a 404 for an admin too.
 
 **`tasks.assign` on every route.** Handing a task to someone else is an assignment whatever endpoint does it: `POST /tasks`, `PATCH /tasks/:id` and `POST /tasks/bulk` all require `tasks.assign` when `assignee_id` is anyone but the caller (`assertCanAssign` in `tasks.service.ts`). `PATCH` only gates a *change* — an edit form re-sending the current assignee passes — and taking a task yourself never needs it. Seeded roles without the capability: `sales_representative`, `hr_admin`, `read_only`.
 
@@ -1373,7 +1397,7 @@ Two rejected alternatives, both of which fail concretely:
 - **`COMPOSE_FILE=a;b;c`** resolves every merged file's relative paths against the *project* directory, so each product repo's `context: ..` climbs one level above the platform root and the build dies on `GetFileAttributesEx …\msq-lms: The system cannot find the file specified`. `include:` resolves paths against each file's own directory, which is what these files were written for.
 - **`docker network create platform-net` + `external: true`** needs an out-of-band setup step before anything works and leaves four separate projects whose `up`/`down` lifecycles drift apart.
 
-Running a product repo standalone from its own directory still works unchanged; it then needs `DB_CONTAINER_NAME` / `API_GATEWAY_INTERNAL_URL` in its own `.env` pointing at msq-core's containers. Note that Compose interpolates `${VARS}` from the **project** `.env` — the platform root's — so the product repos' variables (`DB_LMS_SVC_USER`, `LEADS_SERVICE_PORT`, the `COMPREFACE_*` set, …) must exist there too; the per-repo `.env` files remain the source for the standalone path.
+Running a product repo standalone from its own directory still works unchanged; it then needs `DB_CONTAINER_NAME` / `API_GATEWAY_INTERNAL_URL` in its own `.env` pointing at msq-core's containers. Note that Compose interpolates `${VARS}` from the **project** `.env` — the platform root's — so the product repos' variables (`DB_LMS_SVC_USER`, `LEADS_SERVICE_PORT`, …) must exist there too; the per-repo `.env` files remain the source for the standalone path.
 
 This single origin is **mandatory for push to work**: a PWA's scope and push subscription are per-origin. On iOS, navigating cross-origin drops the user out of the installed standalone mode into a separate storage jar, breaking the shared session cookie — so every unauthenticated bounce must stay within the same origin. The unified topology eliminates that failure mode and gives every user one install, one icon, one push subscription covering every product.
 

@@ -1147,6 +1147,15 @@ CREATE POLICY tenant_isolation_policy ON hr.employee_profiles AS PERMISSIVE FOR 
 CREATE POLICY self_read_policy ON hr.employee_profiles AS PERMISSIVE FOR SELECT TO app_user
   USING (user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid AND NOT is_deleted);
 
+-- hr.face_templates (1.81.0): RLS forced and NO policy for any role, so every
+-- non-BYPASSRLS role sees zero rows even if a grant slipped through. Only
+-- root_service (hr-service's service transaction) can read or write it — the
+-- employee_notes precedent, taken one step further because this is biometric.
+ALTER TABLE hr.face_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hr.face_templates FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS org_isolation_policy    ON hr.face_templates;
+DROP POLICY IF EXISTS tenant_isolation_policy ON hr.face_templates;
+
 ALTER TABLE hr.holiday_calendars ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hr.holiday_calendars FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_isolation_policy    ON hr.holiday_calendars;

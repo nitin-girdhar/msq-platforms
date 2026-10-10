@@ -1,7 +1,7 @@
 # CRM Monorepo — Database Model
 
 > **Database:** PostgreSQL 14+  
-> **Schema version:** 1.79.0 (see `db_scripts/09_schema_version.sql`)  
+> **Schema version:** 1.81.0 (see `db_scripts/09_schema_version.sql`)  
 > **Primary keys:** UUIDv7 (time-ordered) everywhere, including `geo.*`; SMALLINT identity only on `ext.meta_capi_event_types`  
 > **Source of truth:** the `CREATE TABLE` statements in `db_scripts/02_tables_core.sql` and `03_tables_product.sql`. The column tables below mirror them; the diagrams are generated from them by `docs/tools/gen_db_diagram.py`  
 > **Multi-tenancy:** Row Level Security (RLS) on every operational table  
@@ -13,7 +13,7 @@
 
 <!-- BEGIN GENERATED: gen_db_diagram.py -->
 
-_Generated from the `CREATE TABLE` statements in `db_scripts/` (schema 1.75.0) by `python docs/tools/gen_db_diagram.py` — do not edit by hand, re-run the script after changing `02_tables_core.sql` / `03_tables_product.sql`._
+_Generated from the `CREATE TABLE` statements in `db_scripts/` (schema 1.81.0) by `python docs/tools/gen_db_diagram.py` — do not edit by hand, re-run the script after changing `02_tables_core.sql` / `03_tables_product.sql`._
 
 **Interactive version:** open [`docs/db-schema-atlas.html`](db-schema-atlas.html) in a browser — every column of every table, all foreign keys drawn between them, search, and a per-table panel listing what it references and what references it.
 
@@ -28,8 +28,8 @@ flowchart BT
   geo["<b>geo</b><br/>3 tables"]
   lms["<b>lms</b><br/>13 tables"]
   marketing["<b>marketing</b><br/>5 tables"]
-  ext["<b>ext</b><br/>18 tables"]
-  hr["<b>hr</b><br/>42 tables"]
+  ext["<b>ext</b><br/>24 tables"]
+  hr["<b>hr</b><br/>43 tables"]
   task["<b>task</b><br/>7 tables"]
   audit["<b>audit</b><br/>3 tables"]
   comms["<b>comms</b><br/>1 table"]
@@ -46,12 +46,12 @@ flowchart BT
   lms -- 3 --> marketing
   marketing -- 5 --> entity
   marketing -- 1 --> iam
-  ext -- 18 --> entity
-  ext -- 4 --> iam
-  ext -- 4 --> lms
+  ext -- 22 --> entity
+  ext -- 5 --> iam
+  ext -- 6 --> lms
   ext -- 4 --> marketing
-  hr -- 46 --> entity
-  hr -- 44 --> iam
+  hr -- 47 --> entity
+  hr -- 45 --> iam
   task -- 7 --> entity
   task -- 4 --> iam
   audit -- 1 --> entity
@@ -455,6 +455,29 @@ erDiagram
     UUID id PK
     TEXT ad_account_id UK
   }
+  meta_platform_credentials {
+    UUID id PK
+  }
+  meta_business_portfolios {
+    UUID id PK
+    UUID tenant_id FK
+    TEXT meta_business_id UK
+  }
+  meta_datasets {
+    UUID id PK
+    UUID portfolio_id FK
+    TEXT dataset_id UK
+    UUID credential_id FK
+  }
+  meta_dataset_ad_accounts {
+    UUID dataset_id PK,FK
+    TEXT ad_account_id PK,FK,UK
+  }
+  meta_org_dataset_map {
+    UUID id PK
+    UUID org_id FK
+    UUID dataset_id FK
+  }
   meta_adsets {
     UUID id PK
     UUID tenant_id FK
@@ -482,6 +505,7 @@ erDiagram
     UUID org_id FK
     UUID marketing_lead_id FK
     BIGINT meta_lead_id UK
+    UUID capi_dataset_id FK
   }
   meta_lead_custom_fields {
     UUID id PK
@@ -503,6 +527,16 @@ erDiagram
     UUID tenant_id FK
     UUID stage_id FK,UK
     SMALLINT capi_event_type_id FK
+  }
+  meta_capi_outbox {
+    UUID id PK
+    UUID tenant_id FK
+    UUID org_id FK
+    UUID department_id FK
+    UUID marketing_lead_id FK
+    UUID dataset_id FK
+    UUID stage_id FK
+    SMALLINT event_type_id FK
   }
   meta_lead_addresses {
     UUID meta_lead_id PK,FK
@@ -531,15 +565,26 @@ erDiagram
   meta_campaigns }o--o| campaign_type_rules : "matched_rule_id"
   meta_campaigns }o--o| users : "archived_by"
   meta_campaigns }o--o| users : "confirmed_by"
+  meta_datasets }o--o| meta_platform_credentials : "credential_id"
+  meta_datasets }o--|| meta_business_portfolios : "portfolio_id"
+  meta_dataset_ad_accounts }o--|| meta_datasets : "dataset_id"
+  meta_dataset_ad_accounts |o--|| meta_ad_accounts : "ad_account_id"
+  meta_org_dataset_map }o--|| meta_datasets : "dataset_id"
   meta_lead_inbox }o--o| meta_tenant_config : "integration_id"
   meta_lead_inbox }o--o| marketing_leads : "resolved_lead_id"
   meta_lead_inbox }o--o| users : "resolved_by"
   meta_leads }o--o| marketing_leads : "marketing_lead_id"
+  meta_leads }o--o| meta_datasets : "capi_dataset_id"
   meta_lead_custom_fields }o--|| meta_leads : "meta_lead_id"
   meta_capi_outbound_logs }o--|| marketing_leads : "marketing_lead_id"
   meta_capi_outbound_logs }o--o| meta_leads : "meta_lead_id"
   lead_stage_capi_event_map }o--|| meta_capi_event_types : "capi_event_type_id"
   lead_stage_capi_event_map |o--|| lead_stage : "stage_id"
+  meta_capi_outbox }o--o| departments : "department_id"
+  meta_capi_outbox }o--|| marketing_leads : "marketing_lead_id"
+  meta_capi_outbox }o--o| lead_stage : "stage_id"
+  meta_capi_outbox }o--|| meta_capi_event_types : "event_type_id"
+  meta_capi_outbox }o--o| meta_datasets : "dataset_id"
   meta_lead_addresses |o--|| meta_leads : "meta_lead_id"
   meta_lead_professional |o--|| meta_leads : "meta_lead_id"
   meta_lead_demographics |o--|| meta_leads : "meta_lead_id"
@@ -581,6 +626,11 @@ erDiagram
     UUID employment_type_id FK
     UUID department_id FK
     UUID designation_id FK
+  }
+  face_templates {
+    UUID id PK
+    UUID org_id FK
+    UUID user_id FK
   }
   holiday_calendars {
     UUID id PK
@@ -798,6 +848,7 @@ erDiagram
   employee_profiles }o--o| employment_types : "employment_type_id"
   employee_profiles }o--o| departments : "department_id"
   employee_profiles }o--o| designations : "designation_id"
+  face_templates }o--|| users : "user_id"
   holidays }o--|| holiday_calendars : "calendar_id"
   leave_policies }o--|| leave_types : "leave_type_id"
   leave_requests }o--|| users : "user_id"
@@ -2977,10 +3028,10 @@ Job-title catalog, org-scoped (not tenant-scoped — a designation is defined pe
 | probation_end_date  | DATE        |                                                                                                                                                |
 | weekly_off_pattern  | SMALLINT[]  | NOT NULL, DEFAULT '{0,6}' — 0=Sunday..6=Saturday                                                                                               |
 | metadata            | JSONB       | NOT NULL, DEFAULT '{}'                                                                                                                         |
-| reference_photo_url | TEXT        | Face verification — **dormant**, superseded by the shared avatar (`iam.users.photo_key`); see Architecture.md → "Face verification"            |
-| face_subject_id     | TEXT        | dormant, same note                                                                                                                             |
-| face_enrolled_at    | TIMESTAMPTZ | dormant, same note                                                                                                                             |
-| face_consent_at     | TIMESTAMPTZ | dormant, same note                                                                                                                             |
+| reference_photo_url | TEXT        | Face verification: mirrors the enrolled avatar key (`iam.users.photo_key`); see Architecture.md → "Face verification"                          |
+| face_subject_id     | TEXT        | `hr.face_templates.id` of the ACTIVE template (1.81.0); NULL = not enrolled                                                                    |
+| face_enrolled_at    | TIMESTAMPTZ | Last successful enrolment; the self-service photo-change cooldown counts from here                                                             |
+| face_consent_at     | TIMESTAMPTZ | DPDP consent recorded at enrolment                                                                                                             |
 | is_active           | BOOLEAN     | NOT NULL, DEFAULT TRUE                                                                                                                         |
 | is_deleted          | BOOLEAN     | NOT NULL, DEFAULT FALSE                                                                                                                        |
 | deleted_at          | TIMESTAMPTZ |                                                                                                                                                |
@@ -2990,6 +3041,28 @@ Job-title catalog, org-scoped (not tenant-scoped — a designation is defined pe
 | updated_at          | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                                                                            |
 
 **Triggers:** `hr.set_employee_profile_tenant_id()` (derives `tenant_id` from `org_id`), `hr.soft_delete_employee_profile()`.
+
+---
+
+### hr.face_templates
+
+Encrypted face embeddings for attendance face match (schema 1.81.0). One row per (org, user), produced by hr-service's in-process ONNX engine (YuNet + SFace) from the enrolled avatar; `hr.employee_profiles.face_subject_id` points at the active row. Re-enrolment replaces the row in place.
+
+| Column        | Type        | Constraints                                                                                     |
+| ------------- | ----------- | ----------------------------------------------------------------------------------------------- |
+| id            | UUID        | PK, DEFAULT gen_uuidv7()                                                                        |
+| org_id        | UUID        | NOT NULL, FK → entity.organizations(id) ON DELETE RESTRICT                                      |
+| user_id       | UUID        | NOT NULL, FK → iam.users(id) ON DELETE RESTRICT                                                 |
+| model_version | TEXT        | NOT NULL — a template from another model is never compared (verification fails open)           |
+| embedding_enc | TEXT        | NOT NULL, CHECK `LIKE 'enc:v1:%'` — AES-256-GCM ciphertext under `FACE_TEMPLATE_KEY` (hr-service) |
+| quality       | JSONB       | NOT NULL, DEFAULT '{}' — enrolment measurements (sharpness, light, pose, size), numbers only     |
+| created_by    | UUID        |                                                                                                 |
+| created_at    | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                             |
+| updated_at    | TIMESTAMPTZ | NOT NULL, DEFAULT CLOCK_TIMESTAMP()                                                             |
+
+**Unique:** `uq_face_templates_org_user (org_id, user_id)`. **Index:** `idx_face_templates_user (user_id)`.
+
+**Biometric — deliberately off the house pattern:** no `is_deleted` / soft-delete trigger (unenrolment HARD-deletes: DPDP erasure); no `audit_row_changes` trigger (it would copy ciphertext into `audit.*`); access is **root_service only** — grants revoked from PUBLIC / app_user / tenant_admin / hr_svc / analytics_svc and RLS FORCED with **no policy**. **Triggers:** `set_updated_at`.
 
 ---
 

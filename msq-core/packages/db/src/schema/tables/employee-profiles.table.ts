@@ -31,7 +31,8 @@ export const employeeProfilesTable = hrSchema.table('employee_profiles', {
   // 0=Sunday .. 6=Saturday
   weeklyOffPattern:  smallint('weekly_off_pattern').array().notNull().default(sql`'{0,6}'`),
   metadata:          jsonb('metadata').notNull().default({}),
-  // Face-verification enrollment (dormant until Prompt 11)
+  // Face-verification enrollment. faceSubjectId = hr.face_templates.id of the active
+  // template (NULL = not enrolled); the encrypted template itself lives there.
   referencePhotoUrl: text('reference_photo_url'),
   faceSubjectId:     text('face_subject_id'),
   faceEnrolledAt:    timestamp('face_enrolled_at', { withTimezone: true }),

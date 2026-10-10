@@ -28,3 +28,4 @@ packages:
 allowBuilds:
   esbuild: true
   sharp: true
+  onnxruntime-node: true

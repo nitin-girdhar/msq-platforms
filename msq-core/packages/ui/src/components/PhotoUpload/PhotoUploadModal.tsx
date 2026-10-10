@@ -26,6 +26,8 @@ interface Props {
   consentLabel?: string;
   /** Locks capture when a change isn't allowed (cooldown). Null = allowed. */
   gate?: PhotoUploadGate | null;
+  /** Shown above the capture area, e.g. why a previous photo was not usable. */
+  notice?: string | null;
   /** Receives the captured JPEG data URL + the consent flag. Throws to surface an error. */
   onSubmit: (dataUrl: string, consent: boolean) => Promise<void>;
 }
@@ -65,6 +67,7 @@ export default function PhotoUploadModal({
   title = 'Profile photo',
   consentLabel = 'I consent to my photo being stored and used to verify my attendance.',
   gate,
+  notice,
   onSubmit,
 }: Props) {
   const [stage, setStage] = useState<Stage>({ status: 'choose' });
@@ -225,6 +228,9 @@ export default function PhotoUploadModal({
         </p>
       ) : (
         <div className="flex flex-col gap-3">
+          {notice && (
+            <p className="rounded-lg bg-status-due-container px-3 py-2 text-sm text-on-status-due-container">{notice}</p>
+          )}
           {/* Height is viewport-relative (not aspect-square) so the preview,
               consent checkbox and any error all fit between the pinned header
               and footer — the body never has to scroll. */}

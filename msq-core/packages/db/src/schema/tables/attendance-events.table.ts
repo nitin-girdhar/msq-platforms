@@ -6,7 +6,8 @@ import { organizationsTable } from './organizations.table';
 
 // Append-only raw punches. INSERT own rows only via app_user; no update/delete
 // for non-service roles. Corrections go through regularization, never row edits.
-// Face-result columns are dormant until the face-verification increment.
+// Face-result columns are written when the org's require_face_match rule is on;
+// device_info.face carries the engine's similarity/liveness numbers.
 export const attendanceEventsTable = hrSchema.table('attendance_events', {
   id:                 uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   userId:             uuid('user_id').notNull().references(() => usersTable.id, { onDelete: 'restrict' }),

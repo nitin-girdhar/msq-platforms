@@ -115,7 +115,7 @@ services:
       HR_SERVICE_URL: http://hr-service:${HR_SERVICE_PORT}
       # Profile-photo (avatar) storage. MUST resolve to the SAME shared blob
       # volume hr-service mounts so the avatar identity writes is the exact
-      # file hr-service enrolls with CompreFace.
+      # file hr-service builds the face template from.
       # Container path is hardcoded, NOT interpolated: .env holds a *host* path
       # for natively-run services, which would be meaningless inside Linux.
       BLOB_STORAGE_DRIVER: ${BLOB_STORAGE_DRIVER:-local}

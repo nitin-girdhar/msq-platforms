@@ -372,6 +372,14 @@ GRANT SELECT, INSERT, UPDATE ON hr.employee_profiles TO tenant_admin;
 REVOKE DELETE                ON hr.employee_profiles FROM app_user, tenant_admin;
 GRANT ALL PRIVILEGES         ON hr.employee_profiles TO root_service;
 
+-- hr.face_templates (1.81.0): biometric templates. root_service ONLY — hr-service
+-- reaches it through its service transaction after its own capability checks.
+-- The schema's ALTER DEFAULT PRIVILEGES hand every new hr table to app_user /
+-- tenant_admin (SELECT) and hr_svc (SELECT/INSERT/UPDATE); take that back
+-- explicitly (RLS is also forced with no policy — see 08).
+REVOKE ALL            ON hr.face_templates FROM PUBLIC, app_user, tenant_admin, hr_svc, analytics_svc;
+GRANT ALL PRIVILEGES  ON hr.face_templates TO root_service;
+
 GRANT SELECT, INSERT, UPDATE ON hr.holiday_calendars TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.holiday_calendars TO tenant_admin;
 REVOKE DELETE                ON hr.holiday_calendars FROM app_user, tenant_admin;

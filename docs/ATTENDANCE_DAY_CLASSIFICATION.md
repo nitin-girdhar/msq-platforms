@@ -327,7 +327,8 @@ shift, and enrol employee A.
 Also confirm the two blind spots are closed:
 
 - **Null-score pendings.** Punch as a **not-enrolled** employee, and again with
-  CompreFace stopped (`docker stop compreface-api`). Both are `pending` with a
+  the face engine broken (start hr-service with `FACE_TEMPLATE_KEY` changed, so
+  the stored template cannot be decrypted). Both are `pending` with a
   **null** score, and both must still show the badge and appear in the queue —
   previously they rendered as a grey dash and vanished.
 - **Every punch is viewable.** On the 4-punch split-shift day, the photo modal
@@ -404,14 +405,19 @@ makes the badge survive a logout or a missed moment.
 ### Operational warning
 
 Withholding applies to **every** pending cause, not just genuine mismatches.
-`resolvePunchFace` fails open on a face-service outage — `passed = null`,
-`review = 'pending'` — so if `require_face_match` is on and CompreFace is
-unreachable, **every punch org-wide stops counting until reviewed**. The same
-applies to an employee who was never enrolled.
+`resolvePunchFace` fails open on a face-engine failure — `passed = null`,
+`review = 'pending'` — so if `require_face_match` is on and the engine cannot
+verify (models missing from the image, `FACE_TEMPLATE_KEY` unset or changed),
+**every punch org-wide stops counting until reviewed**. The same applies to an
+employee who was never enrolled.
 
-`COMPREFACE_API_KEY` defaults to an empty string, so an org that enables the rule
-without setting the key hits this immediately. Watch the queue depth after
-enabling face matching; if it spikes, check CompreFace before assuming fraud.
+`FACE_TEMPLATE_KEY` defaults to an empty string (hr-service logs a warning at
+startup in production), so an org that enables the rule without the key set hits
+this immediately: nobody can enrol. Watch the queue depth after enabling face
+matching; if it spikes, check the hr-service log for `[face]` errors before
+assuming fraud. A punch that fails the liveness check is different: it scores 0
+and is a real mismatch (`passed = false`), with the numbers in
+`device_info.face`.
 
 ## 6. Where the logic lives
 

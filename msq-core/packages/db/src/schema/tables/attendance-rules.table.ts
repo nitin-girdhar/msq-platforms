@@ -6,7 +6,7 @@ import { tenantsTable } from './tenants.table';
 
 // Attendance capture rules. Scoped like hr.hr_settings: org_id NULL = the
 // tenant-wide default, an org row overrides it, at most one row per scope.
-// Face-verification columns are dormant until the face-verification increment.
+// Face-verification rule columns drive hr-service's in-process face engine (lib/face).
 export const attendanceRulesTable = hrSchema.table('attendance_rules', {
   id:                    uuid('id').primaryKey().default(sql`gen_uuidv7()`),
   tenantId:              uuid('tenant_id').notNull().references(() => tenantsTable.id, { onDelete: 'cascade' }),

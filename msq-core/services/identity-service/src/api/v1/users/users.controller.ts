@@ -19,8 +19,8 @@ const USER_MGMT_MIN_RANK = 40;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // May this actor send the affected user a notification email for a Team action?
-// The checkbox is opt-out (undefined = the admin left it ticked), ANDed with the
-// admin.team.notify capability. The capability is authoritative for EVERY role,
+// The checkbox is opt-in (the admin must tick it; undefined = not sent), ANDed
+// with the admin.team.notify capability. The capability is authoritative for EVERY role,
 // anchor roles included: unlike the admin.team.manage create-gate there is no
 // per-tenant-copy blind spot to work around here — admin.team.notify ships with
 // a back-fill pinned to admin.team.manage (03_roles_and_grants.sql, schema
@@ -33,7 +33,7 @@ async function mayNotify(
   tenantId: string,
   roleName: string | null,
 ): Promise<boolean> {
-  if (sendFlag === false) return false;
+  if (sendFlag !== true) return false;
   return hasCapability(tenantId, roleName ?? '', CAPABILITY.ADMIN_TEAM_NOTIFY);
 }
 

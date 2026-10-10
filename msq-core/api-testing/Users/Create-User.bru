@@ -30,7 +30,7 @@ body:json {
 }
 
 docs {
-  send_email_notification (optional, default true): when true AND the acting
+  send_email_notification (optional, default false: opt-in, nothing is sent unless true): when true AND the acting
   admin holds admin.team.notify (or rank >= org_admin), identity-service emails
   the new user their login URL + temporary password via communication-service.
   Set false to skip the email. Ignored — no email — if the actor lacks the

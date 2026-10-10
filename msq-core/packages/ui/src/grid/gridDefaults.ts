@@ -62,6 +62,41 @@ export const GRID_DEFAULT_COL_DEF = {
   suppressMovable: false,
   filterParams: TEXT_FILTER_PARAMS,
   cellStyle: { fontSize: '0.8125rem', color: 'var(--color-on-surface)' },
+  // AG Grid's own default minWidth is 20px. With `sizeColumnsToFit()` that let a
+  // narrow viewport crush columns without an explicit floor to ~40px (Cycle 10:
+  // "Follow-up Required" at 45px, Team "Status" at 44px). Every column now has a
+  // 120px floor unless it sets its own; below the summed floors the grid scrolls
+  // sideways instead.
+  minWidth: 120,
+  // Long labels ("Follow-up Required") wrap in the header rather than truncate.
+  wrapHeaderText: true,
+  autoHeaderHeight: true,
+};
+
+/**
+ * Column sizing presets — one policy for every grid so columns look the same
+ * across screens. Spread into a column def: `{ colId, headerName, ...GRID_COL.text }`.
+ *
+ *   text     equal-share flexible column (names, descriptions, FK labels)
+ *   wide     the primary text column; takes twice a `text` share
+ *   badge    status / boolean / chip columns: fixed range, never stretches
+ *   number   counts, ranks, sort order
+ *   date     dates / timestamps
+ *   actions  pinned right row-action column, exact width
+ *
+ * Fixed-range columns do not grow when the screen is wide, so the slack goes to
+ * the `text` columns evenly — a Status chip is never wider than the Name beside it.
+ */
+export const GRID_COL = {
+  text: { flex: 1, minWidth: 160 },
+  wide: { flex: 2, minWidth: 220 },
+  badge: { width: 130, minWidth: 120, maxWidth: 170 },
+  number: { width: 110, minWidth: 100, maxWidth: 140 },
+  date: { width: 170, minWidth: 150, maxWidth: 210 },
+  actions: (width = 100) => ({
+    width, minWidth: width, maxWidth: width,
+    pinned: 'right' as const, resizable: false, sortable: false, filter: false, editable: false,
+  }),
 };
 
 /**

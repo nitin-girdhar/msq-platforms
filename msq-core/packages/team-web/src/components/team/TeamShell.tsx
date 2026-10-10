@@ -11,6 +11,7 @@ import type { TeamRow, TeamScope } from '../../lib/types';
 import TeamTable from './TeamTable';
 import CreateUserModal from './CreateUserModal';
 import EditUserModal from './EditUserModal';
+import type { TeamExtraTab } from '../../lib/extra-tabs';
 
 interface Props {
   users: TeamRow[];
@@ -42,6 +43,8 @@ interface Props {
    *  it is reads as if users had vanished. Products leave it unset: their actors
    *  only ever see their own tenant. */
   tenantName?: string | undefined;
+  /** Tabs the host adds to the edit drawer beside Account (admin-web: the HR profile). Absent = plain Account form. */
+  extraTabs?: ReadonlyArray<TeamExtraTab>;
 }
 
 const SCOPE_LABEL: Record<TeamScope, string> = {
@@ -58,7 +61,7 @@ const SCOPE_EMPTY: Record<TeamScope, string> = {
 
 export default function TeamShell({
   users, actor, total, orgs, myOrgs, branchesFailed, scope, leadProduct = 'lms', title = 'Team', scopeLabel,
-  tenantName,
+  tenantName, extraTabs,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SessionUser | null>(null);
@@ -203,6 +206,7 @@ export default function TeamShell({
           actor={actor}
           leadProduct={leadProduct}
           canNotify={canNotify}
+          {...(extraTabs ? { extraTabs } : {})}
         />
       )}
     </>

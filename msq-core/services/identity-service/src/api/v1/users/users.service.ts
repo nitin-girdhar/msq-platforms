@@ -2,10 +2,10 @@ import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import type { RoleTxContext } from '@platform/db';
-import { toApiRow, toApiRows, capabilitiesFor } from '@platform/db';
+import { toApiRow, toApiRows, capabilitiesFor, getActiveTenantModulesByTenantId } from '@platform/db';
 import { ROLE_RANK } from '@platform/auth-constants';
 import type { UserRole } from '@platform/auth-constants';
-import { canGrantRole, canManageUser, canOverridePasswordPolicy, canSeeOrgFilter, checkMoveUserBranchAccess } from '@platform/authz';
+import { canGrantRole, canManageUser, canOverridePasswordPolicy, canSeeOrgFilter, checkMoveUserBranchAccess, modulesToProducts } from '@platform/authz';
 import { ANCHOR_RANK, can, resolveScope, CAPABILITY, type CapabilityHolder } from '@platform/rbac';
 import { createStrongPasswordSchema } from '@platform/validation';
 import type { CreateUserInput, UpdateUserInput, ResetPasswordInput, AddOrgMappingInput, OrgAssignmentInput } from '@platform/validation';
@@ -689,6 +689,7 @@ async function syncHrProfile(
   homeOrgId: string,
   isActive: boolean,
   dateOfJoining?: string,
+  exit?: { dateOfExit?: string | null; exitIfMissing?: boolean; exitReason?: string },
 ): Promise<boolean> {
   // The tenant comes from the branch itself, not the actor: a super_admin's
   // session tenant is not necessarily the one they are managing.
@@ -706,6 +707,9 @@ async function syncHrProfile(
     homeOrgId,
     isActive,
     dateOfJoining,
+    ...(exit?.dateOfExit !== undefined ? { dateOfExit: exit.dateOfExit } : {}),
+    ...(exit?.exitIfMissing ? { exitIfMissing: true } : {}),
+    ...(exit?.exitReason ? { exitReason: exit.exitReason } : {}),
     actorId: ctx.user_id,
   });
 }
@@ -832,6 +836,134 @@ export async function createUser(
   }
 }
 
+interface DeactivationHandover {
+  total: number;
+  byOrg: Record<string, number>;
+}
+
+// Deactivation takes the user's login away in every branch at once (is_active is
+// one flag on iam.users), but leads belong to a branch. Handing over only the
+// home branch's leads stranded the rest on an account nobody can open, visible
+// only to org-wide viewers and re-routable by nothing.
+//
+//   home branch   reassign_leads_to as always (undefined = leave them, which is
+//                 what API callers that never sent it got before)
+//   other branch  reassign_leads_by_org[org], and NULL (unassign) when absent, so
+//                 a hand-rolled PATCH can never strand them either
+//
+// Throws before any lead moves if a requested target is unusable; a leads-service
+// failure part-way leaves earlier branches handed over, which is safe to retry
+// (the second pass finds nothing left on the user there).
+async function handOverLeadsOnDeactivation(
+  ctx: RoleTxContext,
+  targetUserId: string,
+  homeOrgId: string,
+  data: UpdateUserInput,
+  skipOrgIds: ReadonlySet<string>,
+): Promise<DeactivationHandover> {
+  const tenantId = await resolveTenantId(ctx);
+  // Leads exist only where the tenant licenses LMS. Without it there is nothing
+  // to hand over in the other branches, and the leads-service call would be a
+  // pointless dependency (the Team UI skips the same step when no lead product is
+  // served). The home branch keeps its old behaviour either way.
+  const tenantHasLms = await tenantLicensesLms(tenantId);
+  if (!tenantHasLms && data.reassign_leads_to === undefined) return { total: 0, byOrg: {} };
+  const mapped = tenantHasLms ? await repo.getMappedOrgIdsInTenant(targetUserId, tenantId) : [];
+  const orgIds = [...new Set([homeOrgId, ...mapped])].filter((id) => !skipOrgIds.has(id));
+  return runLeadHandover(
+    ctx, targetUserId, tenantId, orgIds, homeOrgId,
+    tenantHasLms ? data : { ...data, reassign_leads_by_org: undefined },
+  );
+}
+
+// A branch taken off a user who stays active. Same hazard as deactivation, same
+// answer: the leads they hold THERE need a new owner before the access goes.
+// `removedOrgIds` are branches whose mapping is being dropped by this save; the
+// branch a home move is leaving is NOT among them (moveUserBranch owns it).
+async function handOverLeadsOnBranchRemoval(
+  ctx: RoleTxContext,
+  targetUserId: string,
+  removedOrgIds: string[],
+  data: UpdateUserInput,
+): Promise<DeactivationHandover> {
+  if (removedOrgIds.length === 0) return { total: 0, byOrg: {} };
+  const tenantId = await resolveTenantId(ctx);
+  if (!(await tenantLicensesLms(tenantId))) return { total: 0, byOrg: {} };
+  return runLeadHandover(ctx, targetUserId, tenantId, removedOrgIds, null, data);
+}
+
+async function tenantLicensesLms(tenantId: string): Promise<boolean> {
+  return modulesToProducts(await getActiveTenantModulesByTenantId(tenantId)).has('lms');
+}
+
+// Validates the chosen owners, then reassigns branch by branch. `homeOrgId` is
+// null when no branch in the list is a home branch (removal), so every branch
+// takes reassign_leads_by_org and defaults to unassign.
+async function runLeadHandover(
+  ctx: RoleTxContext,
+  targetUserId: string,
+  tenantId: string,
+  orgIds: string[],
+  homeOrgId: string | null,
+  data: UpdateUserInput,
+): Promise<DeactivationHandover> {
+  // Annotated: UpdateUserInput is `any` (refineOrgAssignments erases the output
+  // type), so nothing here is inferred.
+  const explicit: Record<string, string | null> = data.reassign_leads_by_org ?? {};
+
+  // Home is covered by reassign_leads_to and a branch move by its own saga; any
+  // other key must be one of the branches being handed over, in this tenant.
+  const strayKeys = Object.keys(explicit).filter((id) => id === homeOrgId || !orgIds.includes(id));
+  if (strayKeys.length > 0) {
+    throw new BadRequestError(
+      'reassign_leads_by_org can only name a branch, other than their home branch, that is being removed or deactivated for this user',
+    );
+  }
+
+  // Which branches may this actor pick a NEW owner in? Same predicate as
+  // resolveAssignments. A branch the actor cannot manage is not refused outright
+  // - the change was already allowed - but its leads can only be unassigned,
+  // never handed to a user of the actor's choosing.
+  const manageable = checkMoveUserBranchAccess(ctx.role)
+    ? new Set(orgIds)
+    : new Set(await repo.getManageableOrgIds(ctx.user_id, orgIds));
+
+  for (const [orgId, to] of Object.entries(explicit)) {
+    if (to === null) continue;
+    if (to === targetUserId) {
+      throw new BadRequestError('Leads cannot be reassigned to the same user');
+    }
+    if (!manageable.has(orgId)) {
+      throw new ForbiddenError('You cannot choose a new lead owner in a branch you do not manage; leave it unassigned');
+    }
+    // Pinned to the branch the leads sit in: that is where the new owner has to
+    // be able to hold them (the picker offers exactly this set).
+    const eligible = await repo.isLeadAssignableInOrg({ ...ctx, org_id: orgId }, to, orgId, tenantId);
+    if (!eligible) {
+      throw new BadRequestError(
+        'Selected user cannot take over leads in that branch. Pick an active member of the branch who works on leads.',
+      );
+    }
+  }
+
+  const result: DeactivationHandover = { total: 0, byOrg: {} };
+  for (const orgId of orgIds) {
+    let to: string | null;
+    if (orgId === homeOrgId) {
+      // Deactivation: a missing value means unassign, never "leave them". Leads
+      // on an account that can no longer log in are exactly the bug this exists
+      // to prevent (a branch MOVE keeps the three-valued rule; it is not here).
+      to = data.reassign_leads_to ?? null;
+    } else {
+      to = explicit[orgId] ?? null;
+    }
+    const moved = await repo.reassignUserLeadsInOrg(ctx, targetUserId, orgId, to);
+    result.byOrg[orgId] = moved;
+    result.total += moved;
+  }
+  return result;
+}
+
 export async function updateUser(
   ctx: RoleTxContext, actorRank: number, targetUserId: string, data: UpdateUserInput, notify = false,
   requestedTenantId?: string,
@@ -900,6 +1032,13 @@ export async function updateUser(
   ) {
     throw new BadRequestError('reassign_leads_to can only be set together with org_id or org_assignments, or when deactivating a user');
   }
+  if (
+    data.reassign_leads_by_org !== undefined &&
+    data.is_active !== false &&
+    data.org_assignments === undefined
+  ) {
+    throw new BadRequestError('reassign_leads_by_org can only be set when deactivating a user or saving branch access');
+  }
 
   const fields: UpdateUserFields = {};
   if (data.first_name !== undefined)            fields.first_name = data.first_name;
@@ -929,7 +1068,20 @@ export async function updateUser(
   const targetOrgId = (beforeUser as Record<string, unknown> | null)?.['org_id'] as string ?? ctx.org_id;
   const targetCtx: RoleTxContext = { ...ctx, org_id: targetOrgId };
   // What the HR profile must mirror once this update is done.
-  const isActiveAfter = data.is_active ?? Boolean((beforeUser as Record<string, unknown>)['is_active']);
+  const wasActive = Boolean((beforeUser as Record<string, unknown>)['is_active']);
+  const isActiveAfter = data.is_active ?? wasActive;
+  // HR's exit date follows the account: deactivating files a last working day (the one given, else
+  // today unless HR already set one); reactivating clears it. A plain edit never touches it, so a
+  // notice-period date HR set on an active person survives every Team save.
+  const hrExit: { dateOfExit?: string | null; exitIfMissing?: boolean; exitReason?: string } | undefined =
+    data.is_active === false && wasActive
+      ? {
+          ...(data.last_working_day ? { dateOfExit: data.last_working_day } : { exitIfMissing: true }),
+          ...(data.exit_reason ? { exitReason: data.exit_reason } : {}),
+        }
+      : data.is_active === true && !wasActive
+        ? { dateOfExit: null }
+        : undefined;
 
   if (data.role_name !== undefined) {
     const roleRow = await repo.resolveRoleByName(data.role_name, targetOrgId);
@@ -984,6 +1136,28 @@ export async function updateUser(
     }
   }
 
+  // Deactivation: hand over the leads in EVERY branch the user holds, before the
+  // account goes dark. Done ahead of the is_active write (the same
+  // reassign-then-change order moveUserBranch uses) so a failure here leaves the
+  // user active and the request retryable, rather than deactivated with leads
+  // stranded on a login nobody can use.
+  //
+  // A branch move owns the leads in the branch being left (moveUserBranch
+  // reassigns them with reassign_leads_to), so that branch is skipped here.
+  const homeBranchWillMove = data.org_assignments !== undefined
+    ? data.home_org_id !== undefined
+      && data.home_org_id !== targetOrgId
+      && !data.org_assignments.some((a: { org_id: string }) => a.org_id === targetOrgId)
+    : data.org_id !== undefined && data.org_id !== targetOrgId;
+  let leadHandover: DeactivationHandover = { total: 0, byOrg: {} };
+  let branchRemovalHandover: DeactivationHandover = { total: 0, byOrg: {} };
+  if (data.is_active === false) {
+    leadHandover = await handOverLeadsOnDeactivation(
+      ctx, targetUserId, targetOrgId, data,
+      homeBranchWillMove ? new Set([targetOrgId]) : new Set<string>(),
+    );
+  }
+
   // fields may legitimately be empty (e.g. an org-only branch move below) — don't
   // treat "nothing to SET" as "user not found"; only call the generic UPDATE when
   // there's something for it to do.
@@ -1018,6 +1192,19 @@ export async function updateUser(
     const homeAssignment = resolved.find((a) => a.org_id === newHomeOrgId)!;
     const homeMoved = newHomeOrgId !== targetOrgId;
     const stillHoldsOldOrg = resolved.some((a) => a.org_id === targetOrgId);
+
+    // A branch dropped from the set takes its leads' owner with it: hand them over
+    // BEFORE the mapping goes, so a failure leaves access intact and the save
+    // retryable. Deactivation already swept every branch above, so skip then; the
+    // old home being left by a move is moveUserBranch's, not ours.
+    if (data.is_active !== false) {
+      const keep = new Set(resolved.map((r) => r.org_id));
+      const activeOrgIds = await repo.getMappedOrgIdsInTenant(targetUserId, await resolveTenantId(ctx), true);
+      const removedOrgIds = activeOrgIds.filter(
+        (id) => !keep.has(id) && !(homeMoved && !stillHoldsOldOrg && id === targetOrgId),
+      );
+      branchRemovalHandover = await handOverLeadsOnBranchRemoval(ctx, targetUserId, removedOrgIds, data);
+    }
 
     // Home moving OUT of a branch the user is also leaving strands their open
     // leads there, so it takes the reassign-then-move saga. Home moving between
@@ -1056,6 +1243,7 @@ export async function updateUser(
         added: reconcile.added,
         updated: reconcile.updated,
         removed: reconcile.removed,
+        ...(branchRemovalHandover.total > 0 ? { reassigned_leads_by_org: branchRemovalHandover.byOrg } : {}),
         ...(reconcile.managerGrantedInOrg ? { manager_granted_in_org: reconcile.managerGrantedInOrg } : {}),
       },
     });
@@ -1079,10 +1267,16 @@ export async function updateUser(
     }
 
     if (data.is_active === false) {
-      await logActivity({ action_type: 'user_deactivated', performed_by: ctx.user_id, subject_user_id: targetUserId, org_id: newHomeOrgId });
+      await logActivity({
+        action_type: 'user_deactivated',
+        performed_by: ctx.user_id,
+        subject_user_id: targetUserId,
+        org_id: newHomeOrgId,
+        new_value: { reassigned_leads: leadHandover.total, reassigned_leads_by_org: leadHandover.byOrg },
+      });
       await revokeAllUserSessions(targetUserId, { revokedBy: ctx.user_id, reason: 'user_deactivated' });
     }
-    return { hr_profile_synced: await syncHrProfile(ctx, targetUserId, newHomeOrgId, isActiveAfter) };
+    return { hr_profile_synced: await syncHrProfile(ctx, targetUserId, newHomeOrgId, isActiveAfter, undefined, hrExit) };
   }
 
   const isMovingBranch = data.org_id !== undefined && data.org_id !== targetOrgId;
@@ -1106,22 +1300,20 @@ export async function updateUser(
     });
   }
 
-  // A deactivated user can no longer log in, so any leads still open in their
-  // hands need a new owner — reassign within the SAME org (deactivation never
-  // moves a branch; that's isMovingBranch's job, which already handled its own
-  // reassignment above if requested).
-  let deactivationReassignedCount = 0;
-  if (data.is_active === false && !isMovingBranch && data.reassign_leads_to !== undefined) {
-    deactivationReassignedCount = await repo.reassignUserLeadsInOrg(ctx, targetUserId, targetOrgId, data.reassign_leads_to ?? null);
-  }
-
+  // Leads were already handed over, per branch, by handOverLeadsOnDeactivation
+  // above — before the is_active write, so a failure there never leaves a dead
+  // login holding leads.
   if (data.is_active === false) {
     await logActivity({
       action_type: 'user_deactivated',
       performed_by: ctx.user_id,
       subject_user_id: targetUserId,
       org_id: targetOrgId,
-      ...(data.reassign_leads_to !== undefined ? { new_value: { reassigned_to: data.reassign_leads_to, reassigned_leads: deactivationReassignedCount } } : {}),
+      new_value: {
+        ...(data.reassign_leads_to !== undefined ? { reassigned_to: data.reassign_leads_to } : {}),
+        reassigned_leads: leadHandover.total,
+        reassigned_leads_by_org: leadHandover.byOrg,
+      },
     });
   } else if (data.is_active === true) {
     await logActivity({ action_type: 'user_reactivated', performed_by: ctx.user_id, subject_user_id: targetUserId, org_id: targetOrgId });
@@ -1158,7 +1350,7 @@ export async function updateUser(
   }
 
   return {
-    hr_profile_synced: await syncHrProfile(ctx, targetUserId, isMovingBranch ? data.org_id! : targetOrgId, isActiveAfter),
+    hr_profile_synced: await syncHrProfile(ctx, targetUserId, isMovingBranch ? data.org_id! : targetOrgId, isActiveAfter, undefined, hrExit),
   };
 }
 
@@ -1170,9 +1362,27 @@ export async function deleteUser(
 ) {
   await assertTargetInScope(ctx, targetUserId, requestedTenantId);
   await assertCanManageTarget(actorRank, targetUserId);
+  // Deleting deactivates the account in every branch (softDeleteUser also
+  // switches off every mapping), so it has the same duty as a deactivation: no
+  // lead may be left on it. There is no request body to name an owner, so they
+  // are unassigned, before the account goes so a failure here is retryable.
+  const scoped = (await scopeContext(ctx, { tenant_id: requestedTenantId })).ctx;
+  const target = await repo.getUserByIdAsService(targetUserId);
+  const homeOrgId = (target as Record<string, unknown> | null)?.['org_id'] as string | undefined;
+  const handover = homeOrgId
+    ? await handOverLeadsOnDeactivation(
+        scoped, targetUserId, homeOrgId, { reassign_leads_to: null } as UpdateUserInput, new Set<string>(),
+      )
+    : { total: 0, byOrg: {} };
   await repo.softDeleteUser(ctx, targetUserId);
   await revokeAllUserSessions(targetUserId, { revokedBy: ctx.user_id, reason: 'user_deleted' });
-  await logActivity({ action_type: 'user_deactivated', performed_by: ctx.user_id, subject_user_id: targetUserId, org_id: ctx.org_id });
+  await logActivity({
+    action_type: 'user_deactivated',
+    performed_by: ctx.user_id,
+    subject_user_id: targetUserId,
+    org_id: ctx.org_id,
+    new_value: { reassigned_leads: handover.total, reassigned_leads_by_org: handover.byOrg },
+  });
 }
 
 export async function resetPassword(

@@ -71,9 +71,9 @@ export const createUserSchema = refineOrgAssignments(
     role_name: z.string().optional(),
     manager_id: z.string().uuid().optional(),
     force_password_change: z.boolean().optional(),
-    // Email the new user their login details + temporary password. Undefined is
-    // treated as true in the service (the admin opted in by default); the send
-    // is additionally gated on the actor holding admin.team.notify.
+    // Email the new user their login details + temporary password. Opt-in:
+    // only an explicit true sends (undefined = not sent); the send is
+    // additionally gated on the actor holding admin.team.notify.
     send_email_notification: z.boolean().optional(),
     org_assignments: z.array(orgAssignmentSchema).min(1).optional(),
     home_org_id: z.string().uuid().optional(),
@@ -103,14 +103,29 @@ export const updateUserSchema = refineOrgAssignments(
     is_active: z.boolean().optional(),
     force_password_change: z.boolean().optional(),
     // Email the user when this edit changes their branch access / home branch.
-    // Undefined is treated as true in the service; the send is additionally
-    // gated on the actor holding admin.team.notify and on a branch actually
-    // having changed (a plain profile edit sends nothing).
+    // Opt-in: only an explicit true sends (undefined = not sent); the send is
+    // additionally gated on the actor holding admin.team.notify and on a branch
+    // actually having changed (a plain profile edit sends nothing).
     send_email_notification: z.boolean().optional(),
+    // Deactivation only: the last working day HR records as hr.employee_profiles.date_of_exit
+    // (YYYY-MM-DD, may be in the future for a notice period) and an optional reason. Omitted on a
+    // deactivation = today, unless HR already recorded an exit date. Ignored unless is_active is false.
+    last_working_day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be YYYY-MM-DD').optional(),
+    exit_reason: z.string().trim().max(100).optional(),
     // Legacy single-branch move. When org_assignments is present the home branch
     // comes from home_org_id instead and this is ignored.
     org_id: z.string().uuid().optional(),
     reassign_leads_to: z.string().uuid().nullable().optional(),
+    // Deactivation, or a save whose org_assignments drops a branch: who takes over
+    // the leads the user holds in each branch being deactivated/removed that is
+    // NOT the home branch, keyed by branch id (reassign_leads_to covers the home
+    // branch). A branch left out is unassigned rather than left on a login with
+    // no access there, and null says so explicitly. Bounded so a hostile body cannot fan out into
+    // hundreds of cross-service calls.
+    reassign_leads_by_org: z
+      .record(z.string().uuid(), z.string().uuid().nullable())
+      .refine((m) => Object.keys(m).length <= 100, 'Too many branches')
+      .optional(),
     org_assignments: z.array(orgAssignmentSchema).min(1).optional(),
     home_org_id: z.string().uuid().optional(),
   }),
@@ -126,9 +141,9 @@ export const resetPasswordSchema = z.object({
   // in the service — an admin handing out a temporary password is the norm —
   // but an admin who deliberately set a final password can send false.
   force_password_change: z.boolean().optional(),
-  // Email the user that their password was reset. Undefined is treated as true
-  // in the service; the send is additionally gated on the actor holding
-  // admin.team.notify. The temporary password is included only when it was
+  // Email the user that their password was reset. Opt-in: only an explicit
+  // true sends (undefined = not sent); the send is additionally gated on the
+  // actor holding admin.team.notify. The temporary password is included only when it was
   // system-generated (new_password absent).
   send_email_notification: z.boolean().optional(),
 });

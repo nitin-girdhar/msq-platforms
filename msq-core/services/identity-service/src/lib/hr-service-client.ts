@@ -10,6 +10,11 @@ export interface SyncEmployeeProfileParams {
   isActive: boolean;
   /** YYYY-MM-DD; only used when hr-service creates the profile. */
   dateOfJoining?: string | undefined;
+  /** Exit date: a YYYY-MM-DD sets it, null clears it (reactivation), undefined leaves it alone. */
+  dateOfExit?: string | null | undefined;
+  /** Deactivation without an explicit date: hr-service files today unless HR already recorded one. */
+  exitIfMissing?: boolean | undefined;
+  exitReason?: string | undefined;
   actorId: string;
 }
 
@@ -40,6 +45,9 @@ export async function syncEmployeeProfileViaHrService(
         home_org_id: params.homeOrgId,
         is_active: params.isActive,
         ...(params.dateOfJoining ? { date_of_joining: params.dateOfJoining } : {}),
+        ...(params.dateOfExit !== undefined ? { date_of_exit: params.dateOfExit } : {}),
+        ...(params.exitIfMissing ? { exit_if_missing: true } : {}),
+        ...(params.exitReason ? { exit_reason: params.exitReason } : {}),
         actor_id: params.actorId,
       }),
       timeoutMs: config.hrServiceTimeoutMs,

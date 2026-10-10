@@ -110,11 +110,11 @@ describe('sessionDestination', () => {
   beforeEach(splitTopology);
 
   it('lands an HRMS-only tenant on HR, not the CRM dashboard', () => {
-    expect(sessionDestination(['hr'], sessionWith(HR_ONLY))).toBe(`${HOST}/hrms/attendance`);
+    expect(sessionDestination(['hr'], sessionWith(HR_ONLY))).toBe(`${HOST}/hrms/dashboard`);
   });
 
   it('lands an HR-only user in an LMS+HR tenant on HR', () => {
-    expect(sessionDestination(['lms', 'hr'], sessionWith(HR_ONLY))).toBe(`${HOST}/hrms/attendance`);
+    expect(sessionDestination(['lms', 'hr'], sessionWith(HR_ONLY))).toBe(`${HOST}/hrms/dashboard`);
   });
 
   it('still prefers LMS when the user can use it', () => {
@@ -130,7 +130,7 @@ describe('sessionDestination', () => {
 
   it('falls back to a bare path in single-host dev', () => {
     singleHostDev();
-    expect(sessionDestination(['hr'], sessionWith(HR_ONLY))).toBe('/attendance');
+    expect(sessionDestination(['hr'], sessionWith(HR_ONLY))).toBe('/dashboard');
   });
 });
 

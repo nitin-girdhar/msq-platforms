@@ -75,19 +75,19 @@ describe('usableProducts', () => {
 describe('landingFor', () => {
   it('follows lms → hr → task priority', () => {
     expect(landingFor(['hr', 'lms'], ORIGINS)).toBe('https://apps.app.com/lms/dashboard/leads');
-    expect(landingFor(['task', 'hr'], ORIGINS)).toBe('https://apps.app.com/hrms/attendance');
+    expect(landingFor(['task', 'hr'], ORIGINS)).toBe('https://apps.app.com/hrms/dashboard');
     expect(landingFor(['task'], ORIGINS)).toBe('https://apps.app.com/todo/tasks');
   });
 
   it('keeps the product path prefix in the landing URL', () => {
     // The whole point of the base-URL generalization: /hrms must survive into
     // the landing URL, or the user lands on auth-web's root instead of HR.
-    expect(landingFor(['hr'], ORIGINS)).toBe('https://apps.app.com/hrms/attendance');
+    expect(landingFor(['hr'], ORIGINS)).toBe('https://apps.app.com/hrms/dashboard');
   });
 
   it('skips a product with no configured base URL rather than linking a broken host', () => {
     expect(landingFor(['lms', 'hr'], { ...ORIGINS, lms: '' })).toBe(
-      'https://apps.app.com/hrms/attendance',
+      'https://apps.app.com/hrms/dashboard',
     );
   });
 
@@ -109,16 +109,16 @@ describe('productHref', () => {
     // The shipped bug: from HR, the HRMS chip pointed at a bare '/attendance',
     // which the browser resolved against the origin root — auth-web — and 404'd.
     process.env['__NEXT_ROUTER_BASEPATH'] = '/hrms';
-    expect(productHref('hr', ORIGINS, true)).toBe('/hrms/attendance');
+    expect(productHref('hr', ORIGINS, true)).toBe('/hrms/dashboard');
   });
 
   it('leaves an inactive chip cross-origin, prefix already in the base URL', () => {
     process.env['__NEXT_ROUTER_BASEPATH'] = '/lms';
-    expect(productHref('hr', ORIGINS, false)).toBe('https://apps.app.com/hrms/attendance');
+    expect(productHref('hr', ORIGINS, false)).toBe('https://apps.app.com/hrms/dashboard');
   });
 
   it('degrades to the bare path with no basePath — single-host dev', () => {
-    expect(productHref('hr', ORIGINS, true)).toBe('/attendance');
+    expect(productHref('hr', ORIGINS, true)).toBe('/dashboard');
     expect(productHref('task', ORIGINS, true)).toBe('/tasks');
   });
 

@@ -484,7 +484,8 @@ detailed report (§7) and the nightly job — and is then mapped to a cell
 | on_leave, unpaid type (loss of pay) | `LOP` | 0 |
 | weekly_off | `WO` | 1 week-off — **every** weekly off inside employment is paid |
 | holiday (non-optional) | `H` | 1 holiday |
-| absent, missed_punch, a finished day never marked | `A` | 0 |
+| missed_punch | `MP` | 0 — never auto-paid; HR regularizes the day (manual override), after which it shows the approved status |
+| absent, a finished day never marked | `A` | 0 |
 | before DOJ / after exit / today not yet marked / after today | blank | 0 |
 
 Total Paid Days = Present + Weekoff Paid + Paid Leave + Holidays. **Final Paid

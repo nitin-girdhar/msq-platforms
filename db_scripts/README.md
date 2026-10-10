@@ -162,12 +162,12 @@ single-transaction file that takes a production database from one schema version
 next (the `one_time/apply_*.sql` parts in version order, then `04`–`08` and `10`, then the
 `09` rows). Append a line to its `$Order` list for each new schema version, rebuild, and
 rehearse on a fresh prod clone (`one_time/refresh_from_prod.ps1`) before shipping. See
-`msq-deploy/DB_ROLLOUT_1.56.0_to_1.81.0.md`.
+`msq-deploy/DB_ROLLOUT_1.56.0_to_1.83.0.md`.
 
 `one_time/apply_capability_walls.sql` (schema 1.76.0, registered in `build_prod_rollout.ps1`) is the capability
 cleanup: new/merged/removed keys plus the grants that keep the rank-to-capability cutover
 behaviour-neutral. Run it as a dry run first (`sed 's/^COMMIT;/ROLLBACK;/' ... | psql`: it rolls back and prints every changed
-grant), take the `*_bak_20261008` copies it names, then run it for real. It is included in `msq-deploy/DB_ROLLOUT_1.56.0_to_1.81.0.sql` (the builder's default target).
+grant), take the `*_bak_20261008` copies it names, then run it for real. It is included in `msq-deploy/DB_ROLLOUT_1.56.0_to_1.83.0.sql` (the builder's default target).
 
 ### Default branch per tenant
 
@@ -186,3 +186,11 @@ transaction as every new tenant. For tenants that already exist without one, run
 ## Attendance face templates (1.81.0)
 
 `one_time/apply_face_templates.sql` (+ `_dryrun`) creates `hr.face_templates` — the AES-256-GCM-encrypted face embeddings hr-service's in-process ONNX engine produces (CompreFace is gone) — with its trigger, index, root_service-only grants and forced RLS with no policy, then clears the enrolment columns of any `hr.employee_profiles` row whose `face_subject_id` has no template behind it (every CompreFace-era enrolment, since that path never ran; those employees re-enrol on their next check-in). Idempotent, one transaction, no schema_versions row (09 owns 1.81.0). Run it **before** the new hr-service image, and set `FACE_TEMPLATE_KEY` in that environment's `.env` first (back the key up). Applied to local only (2026-10-10); UAT/prod pending. The scripts in `one_time/` are gitignored by design — copy them to the server.
+
+## Branch list for the employee directory (1.82.0)
+
+`one_time/apply_user_branches_fn_1_82.sql` (+ `_dryrun`) creates `iam.fn_user_branches(uuid[])` — a `SECURITY DEFINER`, tenant-fenced, display-only list of each person's active branches (id + name). It exists because `iam.user_org_mapping` is FORCE RLS and exposes only the current org to `app_user`, so a plain join would show `+0` for everyone. No table, column or policy changes; idempotent and transactional. Run it **before** the new `hr-service` image. The builder (`tools/build_prod_rollout.ps1`) knows the step but its default `-ToVersion` is still 1.81.0 — pass `-ToVersion 1.82.0` to include it.
+
+## Transferred-out leads visible again (1.83.0)
+
+`one_time/apply_transfer_source_visible_1_83.sql` (+ `_dryrun`) is a **data fix only** — no table, column or view change. `transferLead` used to set `lms.marketing_leads.superseded_by` on the source row, but that column marks a stale re-submission duplicate and every lead list, the Leads History report and the analytics/stats views filter `superseded_by IS NULL`, so a transferred-out lead vanished from its own branch (and the `transferred_out` counters stayed 0). The code no longer sets it; the one-shot clears it on rows that are the source of a completed `lms.lead_links` transfer and point at its destination lead (dedup duplicates are untouched) and refreshes the two column comments. Idempotent, one transaction, no schema_versions row (09 owns 1.83.0). Either order with the new `leads-service` image is safe. The builder knows the step; pass `-ToVersion 1.83.0` to include it. Local/UAT/prod: pending — run the `_dryrun` first.

@@ -228,7 +228,14 @@ export default function LeadDashboardShell({ actor, enabledModules }: {
   `GRID_DEFAULT_COL_DEF` from `@platform/ui-kit/grid` to `defaultColDef` — never re-declare the
   literal. It carries the shared case-/accent-insensitive column-filter params, and it
   intentionally leaves `filter` to each column so `filter: false` and number/date columns are
-  unaffected. A column with a label-rendering `cellRenderer` (a status/source badge) must have a
+  unaffected. It also sets a 120px `minWidth` floor and wrapping headers (AG Grid's own default
+  floor is 20px, which let `sizeColumnsToFit()` crush columns to ~40px on a narrow screen).
+  **Size columns with the `GRID_COL` presets** (`text`, `wide`, `badge`, `number`, `date`,
+  `actions(w)`) rather than ad-hoc `width` numbers: fixed-range columns never stretch, so the
+  slack on a wide screen is shared evenly by the `text` columns and a Status chip is never wider
+  than the Name beside it. Below the summed floors the grid scrolls sideways with the key and
+  action columns pinned — never fit-to-shrink. Below ~900px prefer a card list (see
+  `LeadsTable`, `EmployeeProfilesManager`). A column with a label-rendering `cellRenderer` (a status/source badge) must have a
   `valueGetter` returning that same label, or its filter won't match the text on screen.
 
 ---

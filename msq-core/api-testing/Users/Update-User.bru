@@ -30,7 +30,11 @@ body:json {
 }
 
 docs {
-  send_email_notification (optional, default true): only acted on when this PATCH
+  last_working_day (optional, YYYY-MM-DD) and exit_reason (optional, max 100): only with
+  is_active=false. HR records them as the profile's exit date and reason. Omitted date =
+  today unless HR already set one; reactivating (is_active=true) clears the exit date.
+
+  send_email_notification (optional, default false: opt-in, nothing is sent unless true): only acted on when this PATCH
   actually changes the user's branch access or home branch (a plain profile edit
   sends nothing). When true AND the acting admin holds admin.team.notify (or rank
   >= org_admin), the user is emailed which branches were added/removed and the
@@ -49,4 +53,22 @@ docs {
   manager_id: omit it to leave the reporting line untouched. Sending it (even
   the same value) supersedes today's line; null closes it, which also removes
   the user's leave approver chain.
+
+  Deactivating ("is_active": false) hands over the user's leads in EVERY branch
+  they hold, not only home:
+    reassign_leads_to        home branch. uuid = new owner, null OR omitted =
+                             unassign (a deactivation never leaves leads on the
+                             account; omitted still means "leave them" for a
+                             branch MOVE).
+    reassign_leads_by_org    { "<org_id>": "<user uuid>" | null } for each OTHER
+                             branch. A branch left out is unassigned. Only valid
+                             together with is_active:false; a key that is the
+                             home branch, or not one of the user's branches, is a
+                             400. A uuid must be an active, lead-working member
+                             of THAT branch and the actor must manage it.
+  reassign_leads_by_org is also accepted together with org_assignments: every
+  branch the new set drops (other than the old home a move is leaving) has its
+  leads handed over / unassigned before the mapping is deactivated.
+  Leads are handed over before the account is deactivated, so a failure leaves
+  the user active and the request can simply be retried.
 }

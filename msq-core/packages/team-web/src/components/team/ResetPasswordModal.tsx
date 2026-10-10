@@ -50,7 +50,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
   const [confirm, setConfirm] = useState('');
   const [show, setShow] = useState(false);
   const [overridePolicy, setOverridePolicy] = useState(false);
-  const [sendEmailNotification, setSendEmailNotification] = useState(true);
+  const [sendEmailNotification, setSendEmailNotification] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -63,7 +63,7 @@ export default function ResetPasswordModal({ open, onClose, userId, email, actor
     setConfirm('');
     setShow(false);
     setOverridePolicy(false);
-    setSendEmailNotification(true);
+    setSendEmailNotification(false);
     setError(null);
     setResult(null);
   };

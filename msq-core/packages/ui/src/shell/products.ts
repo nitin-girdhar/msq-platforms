@@ -33,7 +33,7 @@ const PRODUCT_CAPABILITY_ROOTS: Record<ProductKey, readonly CapabilityKey[]> = {
 // Landing path within each product origin. Stable product entry points.
 export const PRODUCT_LANDING: Record<ProductKey, string> = {
   lms: '/dashboard/leads',
-  hr: '/attendance',
+  hr: '/dashboard',
   task: '/tasks',
 };
 

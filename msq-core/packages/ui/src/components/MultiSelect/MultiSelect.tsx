@@ -117,7 +117,7 @@ export default function MultiSelect({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex min-h-[34px] w-full min-w-[140px] flex-wrap items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-lowest px-2 py-1 text-left shadow-sm transition-colors hover:border-primary focus:outline-none disabled:cursor-not-allowed disabled:bg-surface-container-low aria-expanded:border-primary aria-expanded:ring-2 aria-expanded:ring-primary/20"
+        className="flex min-h-[34px] w-full min-w-0 flex-wrap items-center gap-1 rounded-lg border border-outline-variant bg-surface-container-lowest px-2 py-1 text-left shadow-sm transition-colors hover:border-primary focus:outline-none disabled:cursor-not-allowed disabled:bg-surface-container-low aria-expanded:border-primary aria-expanded:ring-2 aria-expanded:ring-primary/20"
       >
         {selected.length === 0 ? (
           <span className="text-xs text-outline">{placeholder}</span>

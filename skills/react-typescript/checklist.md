@@ -38,6 +38,7 @@ Run every item before marking a frontend task complete or opening a PR.
 - [ ] Reused generic primitives come from `@platform/ui-kit` (`Modal`, `Pagination`, …), not re-implemented
 - [ ] AG Grid `defaultColDef` is `GRID_DEFAULT_COL_DEF` from `@platform/ui-kit/grid`, not a local literal
 - [ ] Every badge/label column has a `valueGetter` returning the displayed label so filters match it
+- [ ] Grid columns are sized with `GRID_COL` presets (or carry an explicit `minWidth`); checked at 1366 / 1024 / 820 / 390 px — `node suites/visual/grid-layout.mjs`
 
 ## Auth & access
 - [ ] Session resolved server-side via `getServerSession()` and passed down as props

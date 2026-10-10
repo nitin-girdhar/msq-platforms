@@ -6,7 +6,7 @@ import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, GridReadyEvent, GridSizeChangedEvent, ICellRendererParams } from 'ag-grid-community';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
 import type { LookupTableDef } from '@/src/lib/lookupTableConfig';
-import { GRID_DEFAULT_COL_DEF, scalePx } from '@platform/ui-kit/grid';
+import { GRID_COL, GRID_DEFAULT_COL_DEF, scalePx } from '@platform/ui-kit/grid';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -87,7 +87,7 @@ export default function LookupTable({ config, rows, onEdit }: Props) {
   const columnDefs = useMemo((): ColDef<LookupRow>[] => {
     const cols: ColDef<LookupRow>[] = [
       {
-        colId: 'name', headerName: 'Name', width: 220, minWidth: 180, sortable: true, filter: true, editable: false,
+        colId: 'name', headerName: 'Name', ...GRID_COL.wide, pinned: 'left', sortable: true, filter: true, editable: false,
         valueGetter: (p) => (hasLabelField ? p.data?.label ?? p.data?.name ?? '' : p.data?.name ?? ''),
         cellRenderer: nameCellRenderer,
       },
@@ -98,7 +98,7 @@ export default function LookupTable({ config, rows, onEdit }: Props) {
 
       if (field.type === 'boolean') {
         cols.push({
-          colId: field.key, headerName: field.label, width: 150, sortable: true, filter: true, editable: false,
+          colId: field.key, headerName: field.label, ...GRID_COL.badge, sortable: true, filter: true, editable: false,
           valueGetter: (p) => (p.data?.[field.key] ? 'Yes' : 'No'),
           cellRenderer: (p: ICellRendererParams<LookupRow>) => (
             <span className={p.data?.[field.key] ? 'text-on-status-success-container' : 'text-outline'}>
@@ -116,28 +116,27 @@ export default function LookupTable({ config, rows, onEdit }: Props) {
         const labelKey = `${base}_label`;
         const nameKey = `${base}_name`;
         cols.push({
-          colId: field.key, headerName: field.label, width: 180, sortable: true, filter: true, editable: false,
+          colId: field.key, headerName: field.label, ...GRID_COL.text, sortable: true, filter: true, editable: false,
           valueGetter: (p) => (p.data?.[labelKey] ?? p.data?.[nameKey] ?? p.data?.[field.key] ?? '—') as string,
         });
         continue;
       }
 
       cols.push({
-        colId: field.key, headerName: field.label, width: 200, minWidth: 140, sortable: true, filter: true, editable: false,
+        colId: field.key, headerName: field.label, ...(field.type === 'number' ? GRID_COL.number : GRID_COL.text), sortable: true, filter: true, editable: false,
         valueGetter: (p) => (p.data?.[field.key] ?? '') as string | number,
       });
     }
 
     cols.push({
-      colId: 'status', headerName: 'Status', width: 130, sortable: true, filter: true, editable: false,
+      colId: 'status', headerName: 'Status', ...GRID_COL.badge, sortable: true, filter: true, editable: false,
       valueGetter: (p) => (p.data?.is_active ? 'Active' : 'Inactive'),
       cellRenderer: statusCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center' },
     });
 
     cols.push({
-      colId: '__actions', headerName: '', width: 100, minWidth: 100, maxWidth: 100,
-      pinned: 'right', sortable: false, filter: false, editable: false, resizable: false,
+      colId: '__actions', headerName: '', ...GRID_COL.actions(100),
       cellRenderer: actionsCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end' },
     });

@@ -29,7 +29,7 @@ import {
 import { canCreateUser } from '../../lib/permissions';
 import type { TeamRow } from '../../lib/types';
 import UserStatusBadge from './UserStatusBadge';
-import { GRID_DEFAULT_COL_DEF, scalePx } from '@platform/ui-kit/grid';
+import { GRID_COL, GRID_DEFAULT_COL_DEF, scalePx } from '@platform/ui-kit/grid';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -234,7 +234,7 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
     if (branches.length === 0) return <span className="italic text-outline">—</span>;
     const all = branches.map((b) => b.org_name).join(', ');
     return (
-      <div className="flex items-center gap-1.5 leading-tight" title={all}>
+      <div className="flex min-w-0 items-center gap-1.5 leading-tight" title={all}>
         <span className="truncate text-sm text-on-surface">{branches[0]!.org_name}</span>
         {branches.length > 1 && (
           <span className="shrink-0 rounded-full bg-surface-container px-1.5 py-0.5 text-[0.625rem] font-semibold text-on-surface-variant">
@@ -250,7 +250,7 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
     if (!u?.manager_id) return <span className="italic text-outline">—</span>;
     const manager = userById.get(u.manager_id);
     return (
-      <div className="flex flex-col justify-center leading-tight">
+      <div className="flex min-w-0 flex-col justify-center leading-tight">
         <p className="truncate text-sm leading-tight text-on-surface">{u.manager_name ?? '—'}</p>
         {manager?.role_label && <p className="truncate text-[0.6875rem] leading-tight text-on-surface-variant">{manager.role_label}</p>}
       </div>
@@ -281,20 +281,20 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
 
   const columnDefs = useMemo((): ColDef<SessionUser>[] => [
     {
-      colId: 'name', headerName: 'Name', width: 240, minWidth: 200, sortable: true, filter: true, editable: false,
+      colId: 'name', headerName: 'Name', ...GRID_COL.wide, pinned: 'left', sortable: true, filter: true, editable: false,
       valueGetter: (p) => displayName(p.data as SessionUser) || '',
       cellRenderer: nameCellRenderer,
     },
     {
-      colId: 'email', headerName: 'Email', width: 240, minWidth: 200, sortable: true, filter: true, editable: false,
+      colId: 'email', headerName: 'Email', ...GRID_COL.wide, sortable: true, filter: true, editable: false,
       valueGetter: (p) => p.data?.email ?? '',
     },
     {
-      colId: 'role_label', headerName: 'Role', width: 160, sortable: true, filter: true, editable: false,
+      colId: 'role_label', headerName: 'Role', ...GRID_COL.text, sortable: true, filter: true, editable: false,
       valueGetter: (p) => p.data?.role_label || p.data?.role || '',
     },
     {
-      colId: 'org_name', headerName: 'Branch', width: 160, sortable: true, filter: true, editable: false,
+      colId: 'org_name', headerName: 'Branch', ...GRID_COL.text, sortable: true, filter: true, editable: false,
       // Every branch, so AG Grid's own column filter, sort and CSV export all
       // see the full membership rather than just the home branch the cell leads
       // with.
@@ -303,7 +303,7 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
       cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
-      colId: 'manager_name', headerName: 'Manager', width: 180, sortable: true, filter: true, editable: false,
+      colId: 'manager_name', headerName: 'Manager', ...GRID_COL.text, sortable: true, filter: true, editable: false,
       valueGetter: (p) => p.data?.manager_name ?? '',
       cellRenderer: managerCellRenderer,
     },
@@ -311,21 +311,20 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
     // column would be an empty stripe down the grid.
     ...(showDepth
       ? [{
-          colId: 'report_depth', headerName: 'Reports', width: 130, sortable: true, filter: false, editable: false,
+          colId: 'report_depth', headerName: 'Reports', ...GRID_COL.badge, sortable: true, filter: false, editable: false,
           valueGetter: (p: { data?: TeamRow }) => p.data?.report_depth ?? null,
           cellRenderer: depthCellRenderer,
           cellStyle: { display: 'flex', alignItems: 'center' },
         } as ColDef<SessionUser>]
       : []),
     {
-      colId: 'status', headerName: 'Status', width: 130, sortable: true, filter: true, editable: false,
+      colId: 'status', headerName: 'Status', ...GRID_COL.badge, sortable: true, filter: true, editable: false,
       valueGetter: (p) => (p.data?.is_active ? 'Active' : 'Inactive'),
       cellRenderer: statusCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
-      colId: '__actions', headerName: '', width: 120, minWidth: 120, maxWidth: 120,
-      pinned: 'right', sortable: false, filter: false, editable: false, resizable: false,
+      colId: '__actions', headerName: '', ...GRID_COL.actions(120),
       cellRenderer: actionsCellRenderer,
       cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end' },
     },
@@ -334,7 +333,10 @@ export default function TeamTable({ users, currentUserId, actorRank, orgs, canMa
   // Flex columns can leave a leftover blank strip after the last column if the
   // grid's own width settles after AG Grid's initial measurement (e.g. sidebar
   // collapses, layout reflows post-hydration). Forcing a fit on ready + on any
-  // container resize keeps columns filling the full width with no gap.
+  // container resize keeps columns filling the full width with no gap. Every
+  // column carries a real minWidth, so on a narrow viewport the fit stops at
+  // those widths and the grid scrolls sideways (name + actions pinned) instead
+  // of crushing badges and branch names into each other.
   const [gridApi, setGridApi] = useState<GridApi<SessionUser> | null>(null);
   const onGridReady = useCallback((params: GridReadyEvent<SessionUser>) => {
     params.api.sizeColumnsToFit();

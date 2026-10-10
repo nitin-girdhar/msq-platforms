@@ -62,7 +62,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
   const [mobileError, setMobileError] = useState<string | null>(null);
   const [dateOfJoining, setDateOfJoining] = useState(todayLocal);
   const [forcePasswordChange, setForcePasswordChange] = useState(true);
-  const [sendEmailNotification, setSendEmailNotification] = useState(true);
+  const [sendEmailNotification, setSendEmailNotification] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<CreateSuccess | null>(null);
@@ -108,7 +108,7 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs,
     setMobileError(null);
     setDateOfJoining(todayLocal());
     setForcePasswordChange(true);
-    setSendEmailNotification(true);
+    setSendEmailNotification(false);
     setError(null);
     setSuccess(null);
     a.reset();

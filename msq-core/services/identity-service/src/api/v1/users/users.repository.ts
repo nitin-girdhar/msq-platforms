@@ -1203,6 +1203,35 @@ export async function updateUser(
   });
 }
 
+// Every branch this user holds (or held) a mapping in, inside one tenant.
+// Deactivation walks these to hand over leads in each branch, not just home.
+//
+// Inactive mappings are included on purpose: a lead is not removed when its
+// owner's access to the branch is revoked, so a branch the user was taken out of
+// can still hold leads assigned to them. Reassigning in a branch with none is a
+// no-op UPDATE.
+//
+// Service connection, same as getWeightTypesByOrgForUser: it reads one user's
+// mappings across branches, which no single-org RLS context can see. The tenant
+// join is the fence — a mapping outside the actor's tenant is never returned.
+export async function getMappedOrgIdsInTenant(
+  userId: string,
+  tenantId: string,
+  activeOnly = false,
+): Promise<string[]> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT DISTINCT uom.org_id
+      FROM iam.user_org_mapping uom
+      JOIN entity.organizations o ON o.id = uom.org_id
+      WHERE uom.user_id = ${userId}::uuid
+        AND o.tenant_id = ${tenantId}::uuid
+        AND (NOT ${activeOnly} OR uom.is_active)
+    `)) as Array<{ org_id: string }>;
+    return rows.map((r) => r.org_id);
+  });
+}
+
 // Reassigns a user's still-open leads to another active user in the SAME org —
 // used when deactivating a user, since their login goes away but their open
 // leads in that branch still need an owner. Leads are LMS-owned data (N-5) —

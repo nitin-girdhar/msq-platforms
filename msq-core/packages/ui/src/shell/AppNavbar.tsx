@@ -44,7 +44,7 @@ interface Props {
   // A page filter that sits right beside the branch pill — lms-web's Leads
   // "Type" filter. Same slot contract again: the host decides what renders and
   // on which page (the component may return null), the navbar only places it.
-  // Inline on sm+; on mobile it drops to the second row, like scopeSlot.
+  // Inline on xl+; below that it drops to the second row, like scopeSlot.
   filterSlot?: React.ReactNode;
   // Product search (LMS lead search). Same slot contract: the host owns what
   // renders; the bar places it left of the branch pill. The component handles
@@ -119,14 +119,14 @@ export default function AppNavbar({
   // case — it renders nothing off its own page — so it joins the has-[] test via
   // its wrapper, which is :empty exactly when the filter chose not to render.
   const mobileRowClass = scopeSlot
-    ? 'flex flex-col gap-2 border-t border-outline-variant px-2 py-1.5 sm:hidden'
-    : 'flex flex-col gap-2 sm:hidden has-[nav,[data-slot=filter]:not(:empty)]:border-t has-[nav,[data-slot=filter]:not(:empty)]:border-outline-variant has-[nav,[data-slot=filter]:not(:empty)]:px-2 has-[nav,[data-slot=filter]:not(:empty)]:py-1.5';
+    ? 'flex flex-col gap-2 border-t border-outline-variant px-2 py-1.5 xl:hidden'
+    : 'flex flex-col gap-2 xl:hidden has-[nav,[data-slot=filter]:not(:empty)]:border-t has-[nav,[data-slot=filter]:not(:empty)]:border-outline-variant has-[nav,[data-slot=filter]:not(:empty)]:px-2 has-[nav,[data-slot=filter]:not(:empty)]:py-1.5';
   return (
     <header className="sticky top-0 z-30 shrink-0 bg-surface-container-lowest shadow-card">
       <div className="flex h-16 min-w-0 items-center gap-2 px-2 sm:gap-3 sm:px-5">
         <HamburgerButton />
         {/* Logo + title. With brandInSidebar the rail owns them on desktop. */}
-        <div className={`flex min-w-0 shrink-0 items-center gap-3 ${brandInSidebar ? 'lg:hidden' : ''}`}>
+        <div className={`flex min-w-0 shrink items-center gap-3 ${brandInSidebar ? 'lg:hidden' : ''}`}>
           <BrandMark brand={{ homeHref, name: brandName }} compact />
           <span className="hidden h-5 w-px shrink-0 bg-outline-variant sm:block" />
           <NavbarTitle title={title} withBrand={titleWithBrand} brandName={brandName} />
@@ -144,15 +144,15 @@ export default function AppNavbar({
             actor's session branch would be a second, contradictory scope
             control that none of its pages read. */}
         {!scopeSlot && <BranchSwitcher user={user} homeHref={homeHref} />}
-        {filterSlot && <div className="hidden items-center sm:flex">{filterSlot}</div>}
-        {/* Inline on sm+; on mobile both the scope controls and the switcher drop
+        {filterSlot && <div className="hidden items-center xl:flex">{filterSlot}</div>}
+        {/* Inline on xl+ (1280px); below that both the scope controls and the switcher drop
             to their own full-width rows below so they don't get squeezed out by
             the rest of the bar. Rendering each twice (rather than reflowing one
             instance) is what lets the mobile copy be full-width while the
             desktop copy stays a compact inline group — only one is ever
             visible, the other is display:none. */}
-        {scopeSlot && <div className="hidden items-center gap-2 sm:flex">{scopeSlot}</div>}
-        <div className="hidden items-center gap-2 sm:flex">
+        {scopeSlot && <div className="hidden items-center gap-2 xl:flex">{scopeSlot}</div>}
+        <div className="hidden items-center gap-2 xl:flex">
           <ProductSwitcher
             licensedProducts={licensedProducts}
             actor={user}

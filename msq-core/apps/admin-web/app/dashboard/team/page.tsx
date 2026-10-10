@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation';
-import { TeamShell, canOpenTeam } from '@platform/team-web';
+import { canOpenTeam } from '@platform/team-web';
 import { loadTeamData, type TeamScope } from '@platform/team-web/server';
 import { getServerSession } from '@/src/lib/server-session';
 import LoadError from '@/components/common/LoadError';
+import TeamWithHr from '@/components/team/TeamWithHr';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +40,7 @@ export default async function TeamPage({
   }
 
   return (
-    <TeamShell
+    <TeamWithHr
       users={data.users}
       actor={session}
       total={data.total}

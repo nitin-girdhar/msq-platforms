@@ -16,3 +16,4 @@ export { default as TeamShell } from './components/team/TeamShell';
 export { canOpenTeam, canManageTeam, canCreateUser } from './lib/permissions';
 
 export type { AssignableUser } from './lib/api';
+export type { TeamExtraTab, TeamExtraTabContext } from './lib/extra-tabs';

@@ -19,12 +19,22 @@ import {
 } from '@platform/ui-kit';
 import { users as usersApi, type AssignableUser } from '../../lib/api';
 import ResetPasswordModal from './ResetPasswordModal';
+import type { TeamExtraTab } from '../../lib/extra-tabs';
 
 const PHONE_RE = /^(\+91[\s-]?)?[6-9]\d{9}$/;
 
 // The submit button lives in the Modal's pinned footer, outside the <form>;
 // the HTML `form` attribute is what still wires it to this form.
 const FORM_ID = 'admin-edit-user-form';
+
+// Reasons offered when deactivating from a host that also edits the HR profile. The server stores
+// the text as given (max 100); these are only the common choices.
+const EXIT_REASONS = ['Resignation', 'Termination', 'End of contract', 'Retirement', 'Other'] as const;
+
+function todayLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 interface Props {
   open: boolean;
@@ -48,10 +58,15 @@ interface Props {
    *  reset in the nested modal) — the actor holds admin.team.notify. Advisory:
    *  identity-service re-checks the grant before sending. */
   canNotify: boolean;
+  /**
+   * Tabs the host adds beside Account (the HR profile in admin-web). Absent or empty = the drawer is the
+   * plain Account form, exactly as before. When present, deactivating also asks for a last working day.
+   */
+  extraTabs?: ReadonlyArray<TeamExtraTab>;
 }
 
 export default function EditUserModal({
-  open, onClose, user, currentUserId, actorRank, actorRole, orgs, myOrgs, branchesFailed, actor, leadProduct, canNotify,
+  open, onClose, user, currentUserId, actorRank, actorRole, orgs, myOrgs, branchesFailed, actor, leadProduct, canNotify, extraTabs,
 }: Props) {
   const router = useRouter();
   // lookup-admin's selected tenant — every call below names it (see lib/api).
@@ -62,9 +77,14 @@ export default function EditUserModal({
   const [mobile, setMobile] = useState(user.mobile ?? '');
   const [mobileError, setMobileError] = useState<string | null>(null);
   const [forcePasswordChange, setForcePasswordChange] = useState(user.force_password_change);
-  // Opt-out notification for a branch/home-branch change made by this edit.
-  // Ignored server-side for a plain profile edit (no branch change).
-  const [sendEmailNotification, setSendEmailNotification] = useState(true);
+  // 'account' (the form below) or an extra tab's id. Extra tabs mount on first visit and then stay
+  // mounted, so switching tabs never discards what was typed in another one.
+  const [tab, setTab] = useState<string>('account');
+  const [visited, setVisited] = useState<ReadonlySet<string>>(new Set());
+  const hasExtraTabs = (extraTabs?.length ?? 0) > 0;
+  // Opt-in notification for a branch/home-branch change made by this edit: off
+  // until the admin ticks it. Ignored server-side for a plain profile edit.
+  const [sendEmailNotification, setSendEmailNotification] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Saved, but hr-service could not keep the member's HR profile in step.
@@ -88,9 +108,15 @@ export default function EditUserModal({
     setMobile(user.mobile ?? '');
     setMobileError(null);
     setForcePasswordChange(user.force_password_change);
-    setSendEmailNotification(true);
+    setSendEmailNotification(false);
+    setTab('account');
+    setVisited(new Set());
+    setLastWorkingDay(todayLocal());
+    setExitReason('');
     setDeactivating(false);
     setDeactivateReassignTo('');
+    setOtherBranchReassign({});
+    setOtherBranchCandidates({});
   }, [user]);
 
   useEffect(() => {
@@ -196,6 +222,82 @@ export default function EditUserModal({
   const [reassignLeadsTo, setReassignLeadsTo] = useState('');
   const [deactivating, setDeactivating] = useState(false);
   const [deactivateReassignTo, setDeactivateReassignTo] = useState('');
+  // HR's last working day for this deactivation (only asked when the host also edits the HR profile).
+  const [lastWorkingDay, setLastWorkingDay] = useState(todayLocal());
+  const [exitReason, setExitReason] = useState('');
+
+  // Deactivation takes the login away everywhere, but leads belong to a branch:
+  // every OTHER branch they work leads in needs its own new owner. Picked per
+  // branch (key = branch id, '' = leave unassigned); the server unassigns any
+  // branch not named, so a skipped picker never strands leads.
+  const [otherBranchReassign, setOtherBranchReassign] = useState<Record<string, string>>({});
+  const [otherBranchCandidates, setOtherBranchCandidates] = useState<Record<string, AssignableUser[]>>({});
+  const [otherBranchesLoading, setOtherBranchesLoading] = useState(false);
+
+  const otherLeadBranches = useMemo(() => {
+    // Only the LMS owns leads the server can reassign; the tasks product has no
+    // per-branch lead hand-over.
+    if (leadProduct !== 'lms' || !existing) return [];
+    return existing
+      .filter((m) => m.org_id !== user.org_id)
+      // Roles are tenant-owned; a role not in the catalog yet is kept (guessing
+      // "no leads" would skip a hand-over that was needed).
+      .filter((m) => roles.find((r) => r.id === m.role_id)?.works_leads !== false)
+      .map((m) => ({
+        id: m.org_id,
+        name: [...orgs, ...myOrgs].find((o) => o.id === m.org_id)?.name ?? 'Another branch',
+      }));
+  }, [leadProduct, existing, roles, orgs, myOrgs, user.org_id]);
+
+  // Branches the admin has just un-ticked, other than the home branch being left
+  // (that one has its own panel above). The user stays active and keeps their
+  // other branches, so the leads they hold in each removed branch need an owner
+  // before the access is dropped.
+  const removedLeadBranches = useMemo(() => {
+    if (leadProduct !== 'lms' || !existing) return [];
+    const kept = new Set(a.assignments.map((x) => x.org_id));
+    return existing
+      .filter((m) => m.org_id !== user.org_id && !kept.has(m.org_id))
+      .filter((m) => roles.find((r) => r.id === m.role_id)?.works_leads !== false)
+      .map((m) => ({
+        id: m.org_id,
+        name: [...orgs, ...myOrgs].find((o) => o.id === m.org_id)?.name ?? 'Another branch',
+      }));
+  }, [leadProduct, existing, a.assignments, roles, orgs, myOrgs, user.org_id]);
+
+  // Everything whose candidates must be loaded: the other branches while the
+  // deactivate panel is open, plus every branch being removed.
+  const candidateBranches = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string }>();
+    if (deactivating) otherLeadBranches.forEach((b) => byId.set(b.id, b));
+    removedLeadBranches.forEach((b) => byId.set(b.id, b));
+    return [...byId.values()];
+  }, [deactivating, otherLeadBranches, removedLeadBranches]);
+  const otherBranchKey = candidateBranches.map((b) => b.id).join(',');
+
+  useEffect(() => {
+    if (!open || candidateBranches.length === 0) {
+      setOtherBranchesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setOtherBranchesLoading(true);
+    Promise.all(
+      candidateBranches.map((b) =>
+        usersApi.assignable({ product: 'lms', orgId: b.id }, adminScope)
+          .then((res) => [b.id, res.data.filter((u) => u.id !== user.id)] as const)
+          // A branch the actor cannot list candidates for simply offers none:
+          // its leads are unassigned, which the panel says.
+          .catch(() => [b.id, [] as AssignableUser[]] as const),
+      ),
+    ).then((pairs) => {
+      if (cancelled) return;
+      setOtherBranchCandidates(Object.fromEntries(pairs));
+    }).finally(() => { if (!cancelled) setOtherBranchesLoading(false); });
+    return () => { cancelled = true; };
+    // otherBranchKey stands in for candidateBranches' identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, otherBranchKey, user.id, adminScope]);
 
   // The confirmation panel sits at the BOTTOM of the form (it is the last thing
   // you do, not the first), but the button that opens it lives in the footer —
@@ -283,6 +385,21 @@ export default function EditUserModal({
         return;
       }
     }
+    // Same rule for every other branch being dropped: someone there inherits the
+    // leads when anyone eligible remains; unassigning is only for an empty branch.
+    if (removedLeadBranches.length > 0) {
+      if (otherBranchesLoading) {
+        setError('Still loading who can take over their leads — try again in a moment.');
+        return;
+      }
+      const unchosen = removedLeadBranches.find(
+        (b) => (otherBranchCandidates[b.id]?.length ?? 0) > 0 && !otherBranchReassign[b.id],
+      );
+      if (unchosen) {
+        setError(`Choose who inherits their open leads in ${unchosen.name}.`);
+        return;
+      }
+    }
     setMobileError(null);
     const patch: Record<string, unknown> = {};
     if (firstName !== (user.first_name ?? '')) patch.first_name = firstName;
@@ -315,6 +432,14 @@ export default function EditUserModal({
       // A role without lms.leads gets no picker, but any stray leads (say from an
       // earlier sales role) are still unassigned rather than left behind.
       else if (leadProduct && leavingBranch) patch.reassign_leads_to = null;
+      // One owner per branch being dropped ('' = nobody left there, unassign). The
+      // server unassigns any branch it is not told about, so this only ever adds
+      // a choice; it can never be the reason leads are left on the user.
+      if (removedLeadBranches.length > 0) {
+        patch.reassign_leads_by_org = Object.fromEntries(
+          removedLeadBranches.map((b) => [b.id, otherBranchReassign[b.id] || null]),
+        );
+      }
     }
 
     if (Object.keys(patch).length === 0) {
@@ -327,24 +452,8 @@ export default function EditUserModal({
 
   const handleToggleActive = async () => {
     if (user.is_active) {
-      // Deactivating: give the admin a chance to move this user's open leads
-      // before the account goes dark, rather than submitting immediately.
-      //
-      // Unless there is no product to hold leads at all, in which case the
-      // confirmation panel does not render and opening it would leave the click
-      // doing nothing visible. Submit straight through instead.
-      if (!leadProduct) {
-        const ok = await submitPatch({ is_active: false });
-        if (ok) handleClose();
-        return;
-      }
-      // Their role doesn't work leads: nothing to choose, so no panel. Still an
-      // explicit null so any stray leads are unassigned, not left on a dead account.
-      if (!holdsLeads) {
-        const ok = await submitPatch({ is_active: false, reassign_leads_to: null });
-        if (ok) handleClose();
-        return;
-      }
+      // Always confirm first: the panel carries the last working day HR will record, and, where they
+      // hold leads, who inherits them. Panels for leads only render when there is something to hand over.
       setDeactivating(true);
       return;
     }
@@ -354,17 +463,36 @@ export default function EditUserModal({
 
   const confirmDeactivate = async () => {
     // Always sent, null included — see the note on the same key in handleSave.
-    const patch: Record<string, unknown> = {
-      is_active: false,
-      reassign_leads_to: deactivateReassignTo || null,
-    };
+    const patch: Record<string, unknown> = { is_active: false };
+    if (leadProduct) {
+      // Nothing was asked for the home branch when their role there holds no leads.
+      patch.reassign_leads_to = holdsLeads ? (deactivateReassignTo || null) : null;
+      if (otherLeadBranches.length > 0) {
+        patch['reassign_leads_by_org'] = Object.fromEntries(
+          otherLeadBranches.map((b) => [b.id, otherBranchReassign[b.id] || null]),
+        );
+      }
+    }
+    // HR records the exit from this: the day they leave (may be in the future for a notice period).
+    if (hasExtraTabs) {
+      patch.last_working_day = lastWorkingDay;
+      if (exitReason) patch.exit_reason = exitReason;
+    }
     const ok = await submitPatch(patch);
     if (ok) handleClose();
   };
 
   const locked = pending;
 
-  const footer = (
+  const onAccount = tab === 'account';
+  const footer = !onAccount ? (
+    <div className="flex justify-end">
+      <button type="button" onClick={handleClose} disabled={locked}
+        className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2 min-h-[2.75rem] sm:min-h-0 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-60">
+        Close
+      </button>
+    </div>
+  ) : (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div className="flex gap-2">
         {canSetPassword && (
@@ -407,7 +535,31 @@ export default function EditUserModal({
   return (
     <>
       <Sheet open={open} onClose={handleClose} title={`Edit ${user.name || user.email}`} locked={locked} maxWidth="sm:max-w-2xl" footer={footer}>
-        <form id={FORM_ID} onSubmit={handleSave} className="flex flex-col gap-4" noValidate>
+        {hasExtraTabs && (
+          <div role="tablist" aria-label="Member details" className="-mt-1 mb-4 flex gap-1 overflow-x-auto border-b border-outline-variant">
+            {[{ id: 'account', label: 'Account' }, ...(extraTabs ?? []).map((t) => ({ id: t.id, label: t.label }))].map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.id}
+                disabled={locked}
+                onClick={() => { setTab(t.id); setVisited((prev) => new Set(prev).add(t.id)); }}
+                className={`-mb-px shrink-0 border-b-2 px-3 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${tab === t.id ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {(extraTabs ?? []).map((t) =>
+          visited.has(t.id) ? (
+            <div key={t.id} role="tabpanel" hidden={tab !== t.id}>
+              {t.render({ userId: user.id, name: user.name || user.email, isSelf })}
+            </div>
+          ) : null,
+        )}
+        <form id={FORM_ID} onSubmit={handleSave} className={`${onAccount ? 'flex' : 'hidden'} flex-col gap-4`} noValidate>
           {error && (
             <div role="alert" className="rounded-xl border border-status-overdue/30 bg-status-overdue-container px-3 py-2 text-xs text-on-status-overdue-container">
               {error}
@@ -553,6 +705,43 @@ export default function EditUserModal({
             </div>
           )}
 
+          {removedLeadBranches.length > 0 && (
+            <div className="flex flex-col gap-2 rounded-xl border border-l-4 border-primary-fixed-dim border-l-primary bg-primary-fixed px-3 py-2.5">
+              <p className="text-[0.78125rem] font-medium leading-snug text-primary">
+                {removedLeadBranches.length === 1 ? 'A branch is' : 'Branches are'} being removed from this
+                user. Their open leads there need a new owner.
+              </p>
+              {removedLeadBranches.map((b) => {
+                const candidates = (otherBranchCandidates[b.id] ?? []).map((u) => ({
+                  id: u.id, name: u.full_name, email: u.email, role_label: u.role_label,
+                }));
+                const nobody = !otherBranchesLoading && candidates.length === 0;
+                return (
+                  <div key={b.id} className="flex flex-col gap-2">
+                    <label className="text-xs font-bold text-on-surface">
+                      Reassign their leads in {b.name} to
+                    </label>
+                    <UserPicker
+                      value={otherBranchReassign[b.id] ?? ''}
+                      onChange={(id: string) => setOtherBranchReassign((prev) => ({ ...prev, [b.id]: id }))}
+                      users={candidates}
+                      disabled={locked || otherBranchesLoading}
+                      allowEmpty={candidates.length === 0}
+                      emptyLabel="— No one left in this branch: unassign them —"
+                      placeholder={otherBranchesLoading ? 'Loading…' : 'Select a user…'}
+                    />
+                    {nobody && (
+                      <p className="text-[0.6875rem] text-primary">
+                        No one else in {b.name} works on leads, so these leads will be left unassigned
+                        and can be picked up later.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <ManagerSelect
             value={a.managerId}
             onChange={a.setManagerId}
@@ -592,32 +781,100 @@ export default function EditUserModal({
             <span>Require password change on next login</span>
           </label>
 
-          {deactivating && leadProduct && (
+          {deactivating && (
             <div ref={deactivatePanelRef} className="flex flex-col gap-2 rounded-xl border border-l-4 border-status-overdue/30 border-l-status-overdue bg-status-overdue-container px-3 py-2.5">
               <p className="text-[0.78125rem] font-medium leading-snug text-on-status-overdue-container">
-                Deactivating removes their access immediately. Their open leads in {user.org_name || 'their branch'}{' '}
-                need a new owner.
+                Deactivating removes their access in every branch, immediately.
+                {leadProduct && (holdsLeads || otherLeadBranches.length > 0) && (
+                  <>
+                    {' '}Their open leads
+                    {holdsLeads ? <> in {user.org_name || 'their branch'}{otherLeadBranches.length > 0 ? ' and their other branches' : ''}</> : ' in their other branches'}{' '}
+                    need a new owner.
+                  </>
+                )}
               </p>
-              <label className="text-xs font-bold text-on-surface">Reassign their leads to</label>
-              <UserPicker
-                value={deactivateReassignTo}
-                onChange={setDeactivateReassignTo}
-                users={leadCandidates}
-                disabled={locked || lmsUsersLoading}
-                allowEmpty={leadCandidates.length === 0}
-                emptyLabel="— No one left in this branch: unassign them —"
-                placeholder={lmsUsersLoading ? 'Loading…' : 'Select a user…'}
-              />
-              {!lmsUsersLoading && leadCandidates.length === 0 && (
-                <p className="text-[0.6875rem] text-on-surface-variant">
-                  No one else in this branch works on leads, so these leads will be left unassigned
-                  and can be picked up later.
-                </p>
+              {hasExtraTabs && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="eu-lwd" className="text-xs font-bold text-on-surface">Last working day *</label>
+                    <input
+                      id="eu-lwd"
+                      type="date"
+                      value={lastWorkingDay}
+                      onChange={(e) => setLastWorkingDay(e.target.value)}
+                      disabled={locked}
+                      className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
+                    />
+                    <p className="text-[0.6875rem] text-on-surface-variant">HR lists them as Exited from this day.</p>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="eu-exit-reason" className="text-xs font-bold text-on-surface">Reason</label>
+                    <select
+                      id="eu-exit-reason"
+                      value={exitReason}
+                      onChange={(e) => setExitReason(e.target.value)}
+                      disabled={locked}
+                      className="rounded-xl border border-outline-variant bg-surface-container-lowest px-3 py-2 text-sm text-on-surface shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-surface-container-low"
+                    >
+                      <option value="">— not recorded —</option>
+                      {EXIT_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                </div>
               )}
+              {holdsLeads && (
+                <>
+                  <label className="text-xs font-bold text-on-surface">
+                    Reassign their leads in {user.org_name || 'their branch'} to
+                  </label>
+                  <UserPicker
+                    value={deactivateReassignTo}
+                    onChange={setDeactivateReassignTo}
+                    users={leadCandidates}
+                    disabled={locked || lmsUsersLoading}
+                    allowEmpty={leadCandidates.length === 0}
+                    emptyLabel="— No one left in this branch: unassign them —"
+                    placeholder={lmsUsersLoading ? 'Loading…' : 'Select a user…'}
+                  />
+                  {!lmsUsersLoading && leadCandidates.length === 0 && (
+                    <p className="text-[0.6875rem] text-on-surface-variant">
+                      No one else in this branch works on leads, so these leads will be left unassigned
+                      and can be picked up later.
+                    </p>
+                  )}
+                </>
+              )}
+              {otherLeadBranches.map((b) => {
+                const candidates = (otherBranchCandidates[b.id] ?? []).map((u) => ({
+                  id: u.id, name: u.full_name, email: u.email, role_label: u.role_label,
+                }));
+                return (
+                  <div key={b.id} className="flex flex-col gap-2">
+                    <label className="text-xs font-bold text-on-surface">
+                      Reassign their leads in {b.name} to
+                    </label>
+                    <UserPicker
+                      value={otherBranchReassign[b.id] ?? ''}
+                      onChange={(id: string) => setOtherBranchReassign((prev) => ({ ...prev, [b.id]: id }))}
+                      users={candidates}
+                      disabled={locked || otherBranchesLoading}
+                      allowEmpty={candidates.length === 0}
+                      emptyLabel="— No one left in this branch: unassign them —"
+                      placeholder={otherBranchesLoading ? 'Loading…' : 'Select a user…'}
+                    />
+                    {!otherBranchesLoading && candidates.length === 0 && (
+                      <p className="text-[0.6875rem] text-on-surface-variant">
+                        No one else in {b.name} works on leads, so these leads will be left unassigned
+                        and can be picked up later.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => { setDeactivating(false); setDeactivateReassignTo(''); }}
+                  onClick={() => { setDeactivating(false); setDeactivateReassignTo(''); setOtherBranchReassign({}); setExitReason(''); }}
                   disabled={locked}
                   className="rounded-lg border border-outline bg-surface-container-lowest px-3 py-1.5 text-xs font-semibold text-on-surface hover:bg-surface-container-low disabled:cursor-not-allowed disabled:opacity-60"
                 >
@@ -626,7 +883,16 @@ export default function EditUserModal({
                 <button
                   type="button"
                   onClick={confirmDeactivate}
-                  disabled={locked || lmsUsersLoading || (leadCandidates.length > 0 && !deactivateReassignTo)}
+                  disabled={
+                    locked || lmsUsersLoading || otherBranchesLoading
+                    || (hasExtraTabs && !lastWorkingDay)
+                    || (holdsLeads && leadCandidates.length > 0 && !deactivateReassignTo)
+                    // Every other branch with someone eligible must name an owner too;
+                    // only a branch with nobody left may be unassigned.
+                    || otherLeadBranches.some(
+                      (b) => (otherBranchCandidates[b.id]?.length ?? 0) > 0 && !otherBranchReassign[b.id],
+                    )
+                  }
                   className="rounded-lg border border-status-overdue/30 bg-status-overdue px-3 py-1.5 text-xs font-semibold text-on-primary hover:bg-status-overdue disabled:cursor-not-allowed disabled:border-status-overdue/30 disabled:bg-status-overdue disabled:text-on-primary"
                 >
                   Confirm deactivation

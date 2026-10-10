@@ -1532,6 +1532,29 @@ app.post('/hr/employees/:userId/notes', { ...withAuth }, async (req, reply) => {
   return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/notes`, req, reply, req.userCtx);
 });
 
+// HR editing another person's personal details and emergency contacts (Admin -> Team -> Edit).
+// hr-service proves hr.employees.manage and fences to the caller's org; the gateway only authenticates.
+app.get('/hr/employees/:userId/personal', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/personal`, req, reply, req.userCtx);
+});
+app.put('/hr/employees/:userId/personal', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/personal`, req, reply, req.userCtx);
+});
+app.post('/hr/employees/:userId/contacts', { ...withAuth }, async (req, reply) => {
+  const { userId } = req.params as { userId: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/contacts`, req, reply, req.userCtx);
+});
+app.patch('/hr/employees/:userId/contacts/:id', { ...withAuth }, async (req, reply) => {
+  const { userId, id } = req.params as { userId: string; id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/contacts/${id}`, req, reply, req.userCtx);
+});
+app.delete('/hr/employees/:userId/contacts/:id', { ...withAuth }, async (req, reply) => {
+  const { userId, id } = req.params as { userId: string; id: string };
+  return proxyTo(config.hrServiceUrl, `/api/v1/employees/${userId}/contacts/${id}`, req, reply, req.userCtx);
+});
+
 // Comp-off claims (schema 1.59.0). The static `queue` route is registered before the
 // `:id` ones so it is never captured as an id.
 app.post('/hr/leave/comp-off', { ...withAuth }, async (req, reply) => {

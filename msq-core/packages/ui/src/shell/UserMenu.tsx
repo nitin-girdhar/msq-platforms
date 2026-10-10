@@ -172,13 +172,13 @@ export default function UserMenu({ user, loginUrl, changePasswordUrl }: Props) {
         title={label}
       >
         <PhotoAvatar src={photoSrc} label={label} sizeClass="h-8 w-8 ring-1 ring-outline-variant" />
-        <span className="hidden max-w-[160px] flex-col text-left leading-tight sm:flex">
+        <span className="hidden max-w-[160px] flex-col text-left leading-tight min-[1400px]:flex">
           <span className="truncate text-label-md font-semibold text-on-surface">{label}</span>
           <span className="truncate text-label-sm font-normal normal-case tracking-normal text-outline">
             {user.role_label ?? user.role.replace(/_/g, ' ')}
           </span>
         </span>
-        <svg className="hidden h-3.5 w-3.5 text-on-surface-variant sm:block" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+        <svg className="hidden h-3.5 w-3.5 text-on-surface-variant min-[1400px]:block" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
           <path
             fillRule="evenodd"
             d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"

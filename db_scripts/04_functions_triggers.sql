@@ -303,6 +303,31 @@ RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
   SELECT tenant_id FROM entity.organizations WHERE id = p_org_id AND NOT is_deleted
 $$;
 
+-- iam.fn_user_branches (1.82.0): the active branches of a set of users, for
+-- display only (HRMS Employees "+N" chip, Team edit "Also works in").
+--
+-- SECURITY DEFINER because iam.user_org_mapping is FORCE ROW LEVEL SECURITY and
+-- its app_user policies only expose rows in the CURRENT org (or the caller's
+-- own), so an invoker-rights read from an HR admin would count one branch per
+-- person -- "+0" for everyone -- rather than raise. Widening that table's policy
+-- is not an option (it also gates WRITES).
+--
+-- Fenced to the session's tenant (app.current_tenant_id, which withRoleTx sets):
+-- an unset GUC compares NULL and returns nothing, so it fails closed. Returns
+-- only branch id + name for user ids the caller already holds; no role, no
+-- weights, no person data. Never use it for an access decision.
+DROP FUNCTION IF EXISTS iam.fn_user_branches(UUID[]) CASCADE;
+CREATE FUNCTION iam.fn_user_branches(p_user_ids UUID[])
+RETURNS TABLE (user_id UUID, org_id UUID, org_name TEXT)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+  SELECT m.user_id, m.org_id, o.name
+  FROM iam.user_org_mapping m
+  JOIN entity.organizations o ON o.id = m.org_id AND NOT o.is_deleted
+  WHERE m.user_id = ANY(p_user_ids)
+    AND m.is_active
+    AND o.tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid
+$$;
+
 -- The EFFECTIVE role a user acts with in one org — the single place the
 -- "which role row applies here" question is answered, so the rank resolver, the
 -- Tier C role resolver and identity-service's login query cannot drift apart.

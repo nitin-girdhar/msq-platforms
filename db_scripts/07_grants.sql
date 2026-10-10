@@ -247,6 +247,9 @@ GRANT EXECUTE ON FUNCTION iam.fn_org_active_users(UUID)  TO app_user, tenant_adm
 -- every role that touches that table has to be able to call it.
 GRANT EXECUTE ON FUNCTION iam.fn_mapping_org(UUID)       TO app_user, tenant_admin;
 GRANT EXECUTE ON FUNCTION entity.fn_org_tenant(UUID)     TO app_user, tenant_admin;
+-- Display-only branch list for HRMS Employees / Team edit (1.82.0). SECURITY DEFINER,
+-- tenant-fenced; hr_svc named explicitly (see the lms_svc note below).
+GRANT EXECUTE ON FUNCTION iam.fn_user_branches(UUID[])   TO app_user, tenant_admin, hr_svc;
 GRANT EXECUTE ON FUNCTION iam.fn_user_org_rank(UUID,UUID) TO app_user, tenant_admin;
 -- Replaces the bare fn_user_org_rank >= 980 term in the iam.user_org_mapping,
 -- iam.users and iam.reporting_lines WRITE policies. SECURITY DEFINER, so its

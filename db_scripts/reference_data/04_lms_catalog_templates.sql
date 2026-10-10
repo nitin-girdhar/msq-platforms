@@ -44,12 +44,12 @@ DECLARE
   v_unqualified UUID;
   v_transferred UUID;
 BEGIN
-  SELECT id INTO v_contacting  FROM lms.lead_stage WHERE name = 'contacting';
-  SELECT id INTO v_on_hold     FROM lms.lead_stage WHERE name = 'on_hold';
-  SELECT id INTO v_qualified   FROM lms.lead_stage WHERE name = 'qualified';
-  SELECT id INTO v_converted   FROM lms.lead_stage WHERE name = 'converted';
-  SELECT id INTO v_unqualified FROM lms.lead_stage WHERE name = 'unqualified';
-  SELECT id INTO v_transferred FROM lms.lead_stage WHERE name = 'transferred_out';
+  SELECT id INTO v_contacting  FROM lms.lead_stage WHERE name = 'contacting' AND tenant_id IS NULL;
+  SELECT id INTO v_on_hold     FROM lms.lead_stage WHERE name = 'on_hold' AND tenant_id IS NULL;
+  SELECT id INTO v_qualified   FROM lms.lead_stage WHERE name = 'qualified' AND tenant_id IS NULL;
+  SELECT id INTO v_converted   FROM lms.lead_stage WHERE name = 'converted' AND tenant_id IS NULL;
+  SELECT id INTO v_unqualified FROM lms.lead_stage WHERE name = 'unqualified' AND tenant_id IS NULL;
+  SELECT id INTO v_transferred FROM lms.lead_stage WHERE name = 'transferred_out' AND tenant_id IS NULL;
 
   -- contacting outcomes
   INSERT INTO lms.lead_stage_outcome (stage_id, name, label, requires_comment, sort_order) VALUES

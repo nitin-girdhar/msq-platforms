@@ -770,7 +770,9 @@ CREATE TABLE IF NOT EXISTS marketing.ad_campaigns (
 -- city TEXT = free-text (monorepo); city_id/state_id/country_id = structured FK (EXISTING).
 -- is_active: false when the record has been superseded or transferred out.
 -- superseded_by: old row → newer active row (same-org re-submission or walk-in dedup).
---   All cross-org transfers and merge audit trail live in lms.lead_links.
+--   All cross-org transfers and merge audit trail live in lms.lead_links. A transferred-out
+--   lead is NOT superseded: it stays visible in its branch (is_active = FALSE, stage
+--   transferred_out) because every list/report hides rows with superseded_by set.
 -- embedding column stub: uncomment after pgvector confirmed.
 CREATE TABLE IF NOT EXISTS lms.marketing_leads (
   id               UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
@@ -847,7 +849,7 @@ CREATE TABLE IF NOT EXISTS lms.marketing_leads (
 COMMENT ON COLUMN lms.marketing_leads.is_active IS
   'FALSE when this record has been superseded by a newer submission or transferred out. Filter WHERE is_active = TRUE for the live lead pipeline.';
 COMMENT ON COLUMN lms.marketing_leads.superseded_by IS
-  'Points forward to the newer active lead that replaced this one (same org). Set on both re-submission duplicates and walk-in dedup. Cross-org transfers are tracked in lms.lead_links.';
+  'Points forward to the newer active lead that replaced this one (same org). Set ONLY on re-submission duplicates and walk-in dedup; every list/report hides rows that carry it. A transferred-out lead is NOT superseded: it stays visible in its branch (is_active = FALSE, stage transferred_out) and the cross-org link lives in lms.lead_links.';
 
 -- ── LEAD_LINKS ────────────────────────────────────────────────────
 -- Audit trail for all lead-to-lead relationships:
